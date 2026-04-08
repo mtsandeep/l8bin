@@ -6,3 +6,14 @@ members = [
     "cli",
 ]
 resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.metadata.release]
+shared-version = true
+tag-name = "v{{version}}"
+tag-prefix = false
+consolidate-commits = true
+pre-release-hook = ["git", "pull", "--rebase"]

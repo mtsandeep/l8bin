@@ -1,0 +1,24 @@
+name: Deploy Landing Page
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches: [main]
+    paths:
+      - 'landing/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mtsandeep/l8bin-action@v1
+        with:
+          server: ${{ secrets.L8B_SERVER }}
+          token: ${{ secrets.L8B_TOKEN }}
+          project_id: landing
+          port: '80'
+          path: landing

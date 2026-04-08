@@ -21,7 +21,9 @@ function StatusDot({ status }: { status: string }) {
 
 function formatMem(bytes: number | null) {
   if (!bytes) return '—';
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  const gb = bytes / 1024 / 1024 / 1024;
+  if (gb < 1) return `${Math.round(bytes / 1024 / 1024)} MB`;
+  return `${gb.toFixed(1)} GB`;
 }
 
 // ── Add Node Wizard ────────────────────────────────────────────────────────────
@@ -43,7 +45,7 @@ function AddNodeWizard({ onClose, onAdded }: AddNodeWizardProps) {
   const [connecting, setConnecting] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const installCommand = `curl -sSL https://l8b.in | sh -s agent`;
+  const installCommand = `curl -sSL https://l8b.in | bash -s agent`;
 
   function copyCommand() {
     navigator.clipboard.writeText(installCommand);

@@ -545,7 +545,7 @@
       <p class="text-zinc-500 mb-10">Stop deleting your work to save $5. Just bin it.</p>
       <div class="inline-block p-px bg-gradient-to-r from-violet-500 to-fuchsia-600 rounded-xl mb-4">
         <div class="bg-night-900 px-6 py-4 rounded-[11px] flex items-center gap-4">
-          <code class="text-white font-mono text-sm">curl -sSL l8b.in | sh</code>
+          <code class="text-white font-mono text-sm">curl -sSL l8b.in | bash</code>
           <button onclick="copyInstall()" id="copy-btn" class="text-zinc-500 hover:text-violet-400 transition" title="Copy">
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>
@@ -559,7 +559,8 @@
   <!-- Footer -->
   <footer class="py-8 border-t border-white/5 text-center">
     <p class="text-xs text-zinc-600 mb-1">Engineers, not salesmen. LiteBin is for portfolios, demos, and experiments.</p>
-    <p class="font-mono text-xs text-zinc-700">L8B_STACK // BUILT_WITH_RUST</p>
+    <p class="text-xs text-zinc-700 mb-1">This page is running on LiteBin too — on a 512 MB VPS alongside other demo apps.</p>
+    <p class="font-mono text-xs text-zinc-700">L8B_STACK // BUILT_WITH_RUST // SELF_HOSTED</p>
   </footer>
 
   <script>
@@ -579,7 +580,7 @@
 
     // Copy install command
     function copyInstall() {
-      navigator.clipboard.writeText('curl -sSL l8b.in | sh').then(() => {
+      navigator.clipboard.writeText('curl -sSL l8b.in | bash').then(() => {
         const btn = document.getElementById('copy-btn');
         const orig = btn.innerHTML;
         btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';

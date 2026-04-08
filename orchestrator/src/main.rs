@@ -162,8 +162,12 @@ async fn main() -> anyhow::Result<()> {
     let local_available = sys.available_memory() as i64;
     let local_cpu = sys.cpus().len() as f64;
     let local_disks = sysinfo::Disks::new_with_refreshed_list();
-    let local_disk_free: i64 = local_disks.iter().map(|d| d.available_space() as i64).sum();
-    let local_disk_total: i64 = local_disks.iter().map(|d| d.total_space() as i64).sum();
+    let local_root = local_disks.iter().find(|d| d.mount_point() == std::path::Path::new("/"));
+    let (local_disk_free, local_disk_total) = match local_root {
+        Some(d) => (d.available_space() as i64, d.total_space() as i64),
+        None => (local_disks.iter().map(|d| d.available_space() as i64).sum(),
+                 local_disks.iter().map(|d| d.total_space() as i64).sum()),
+    };
     let now_mem = chrono::Utc::now().timestamp();
     sqlx::query(
         "UPDATE nodes SET total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, public_ip = ?, last_seen_at = ?, updated_at = ? WHERE id = 'local'",

@@ -14,10 +14,14 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
     let memory_available = sys.available_memory();
     let cpu_cores = sys.cpus().len() as u32;
 
-    // Disk free — sum free space across all disks
+    // Disk — use root filesystem only (avoid summing tmpfs, overlays, etc.)
     let disks = Disks::new_with_refreshed_list();
-    let disk_free: u64 = disks.iter().map(|d| d.available_space()).sum();
-    let disk_total: u64 = disks.iter().map(|d| d.total_space()).sum();
+    let root_disk = disks.iter().find(|d| d.mount_point() == std::path::Path::new("/"));
+    let (disk_free, disk_total) = match root_disk {
+        Some(d) => (d.available_space(), d.total_space()),
+        None => (disks.iter().map(|d| d.available_space()).sum(),
+                 disks.iter().map(|d| d.total_space()).sum()),
+    };
 
     // Container count from Docker
     let container_count = state
@@ -29,6 +33,7 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
     let image_stats = state.docker.image_stats().await;
 
     Json(HealthReport {
+        version: env!("CARGO_PKG_VERSION").to_string(),
         memory_available,
         memory_total,
         cpu_cores,

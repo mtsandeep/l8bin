@@ -5,7 +5,7 @@ Deploy apps to your LiteBin server from the terminal.
 ## Install
 
 ```bash
-curl -fsSL https://l8b.in | sh -s cli
+curl -fsSL https://l8b.in | bash -s cli
 ```
 
 ## Authentication

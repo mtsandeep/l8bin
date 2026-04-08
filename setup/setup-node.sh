@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# DEPRECATED: Use 'curl -sSL l8b.in | sh -s agent' instead.
+# DEPRECATED: Use 'curl -sSL l8b.in | bash -s agent' instead.
 # This script is kept for backward compatibility.
 
 # LiteBin Agent Node Setup Script

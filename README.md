@@ -6,13 +6,13 @@ Self-hosted PaaS. Deploy apps from your dashboard, CLI, or GitHub Actions.
 
 ```bash
 # Master server (orchestrator + dashboard + Caddy)
-curl -sSL https://l8b.in | sh -s master
+curl -sSL https://l8b.in | bash-s master
 
 # Worker node
-curl -sSL https://l8b.in | sh -s agent
+curl -sSL https://l8b.in | bash-s agent
 
 # CLI only
-curl -sSL https://l8b.in | sh -s cli
+curl -sSL https://l8b.in | bash-s cli
 ```
 
 ---
@@ -22,7 +22,7 @@ curl -sSL https://l8b.in | sh -s cli
 Run on a Linux VPS with Docker installed. Requires a domain with DNS pointed to the server.
 
 ```bash
-curl -sSL https://l8b.in | sh -s master
+curl -sSL https://l8b.in | bash-s master
 ```
 
 The installer will prompt for:
@@ -41,22 +41,22 @@ After setup:
 
 ### Multi-node (optional)
 
-During setup, answer **yes** to "Will you connect worker nodes?". The installer generates mTLS certificates and prints a base64 bundle. Save it — you'll need it when setting up each worker node.
-
-#### Rotating mTLS certificates
-
-If you need to regenerate certificates (e.g. after a compromise or periodic rotation):
+To add worker nodes, run the multi-node setup on the master server:
 
 ```bash
-# On the master server — regenerates all certs, prints new base64 bundle
-curl -sSL https://l8b.in | sh -s certs
+# On the master — generates mTLS certs, prints a cert bundle
+curl -sSL https://l8b.in | bash -s certs
 ```
 
-This **invalidates all existing agent connections**. After regeneration, update each agent:
+This generates ECDSA P-256 mTLS certificates, configures the master, and prints a compact cert bundle.
+
+#### To regenerate certificates
+
+Re-run the same command. This **invalidates all existing agent connections** — update each agent afterward:
 
 ```bash
-# On each worker node — prompts for new base64 bundle
-curl -sSL https://l8b.in | sh -s agent --update-certs
+# On each worker node — prompts for new cert bundle
+curl -sSL https://l8b.in | bash -s agent --update-certs
 ```
 
 ---
@@ -68,7 +68,7 @@ Run on a separate Linux server. Requires Docker.
 You can also start this from the **dashboard** -> **Nodes** -> **Add Node**, which shows the install command to copy.
 
 ```bash
-curl -sSL https://l8b.in | sh -s agent
+curl -sSL https://l8b.in | bash -s agent
 ```
 
 The installer will prompt for:
@@ -78,7 +78,7 @@ The installer will prompt for:
 | Master dashboard URL | Your master's dashboard URL (e.g. `https://l8bin.example.com`) |
 | Node name | A name for this worker (e.g. `worker-1`) |
 | Agent port | Host port for the agent (default: `5083`) |
-| Cert bundle | Paste the base64 bundle from master setup |
+| Cert bundle | Paste the cert bundle from the multi-node setup |
 
 After setup, go to the master dashboard -> **Nodes** -> **Add Node**, enter the node name and the worker's public IP, then click **Connect**.
 
@@ -103,7 +103,7 @@ Dashboard deploys only support pre-built images from public registries. Private 
 Install the CLI:
 
 ```bash
-curl -sSL https://l8b.in | sh -s cli
+curl -sSL https://l8b.in | bash-s cli
 ```
 
 Log in to your server:

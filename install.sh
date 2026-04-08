@@ -19,6 +19,14 @@ warn()  { echo -e "${YELLOW}==> ${NC}$1"; }
 error() { echo -e "${RED}Error:${NC} $1" >&2; }
 die()   { error "$1"; exit 1; }
 
+_tty_read() {
+  if [ ! -t 0 ] && [ -t 1 ]; then
+    read -r "$@" < /dev/tty
+  else
+    read -r "$@"
+  fi
+}
+
 prompt() {
   local msg="$1" var="$2" default="${3:-}"
   if [ -n "$default" ]; then
@@ -26,7 +34,8 @@ prompt() {
   else
     echo -ne "${CYAN}${msg}${NC}: "
   fi
-  read -r value
+  local value
+  _tty_read value
   eval "$var=\"${value:-$default}\""
 }
 
@@ -34,7 +43,7 @@ prompt_yes() {
   local msg="$1" default="${2:-n}"
   local yn
   echo -ne "${CYAN}${msg}${NC} [${default}]: "
-  read -r yn
+  _tty_read yn
   yn="${yn:-$default}"
   [[ "$yn" =~ ^[Yy]$ ]]
 }
@@ -147,18 +156,14 @@ base64_decode() {
 
 configure_ufw() {
   if command -v ufw &>/dev/null; then
-    info "Configuring UFW firewall..."
-    ufw --force reset
-    ufw default deny incoming
-    ufw default allow outgoing
+    info "Opening required ports..."
     ufw allow 80/tcp
     ufw allow 443/tcp
     ufw allow 443/udp
     ufw allow 5083/tcp
-    ufw --force enable
-    info "UFW configured."
+    info "Ports 80, 443, 5083 opened."
   else
-    warn "UFW not found. Configure your firewall manually (ports 80, 443, 5083)."
+    warn "UFW not found. Make sure ports 80, 443, 5083 are open on your firewall."
   fi
 }
 
@@ -226,6 +231,18 @@ install_master() {
 
   ensure_docker
   ensure_docker_compose
+
+  # Check for existing installation
+  if [ -f "${install_dir}/docker-compose.yml" ]; then
+    if docker compose -f "${install_dir}/docker-compose.yml" ps --format '{{.Names}}' 2>/dev/null | grep -q "litebin"; then
+      echo ""
+      warn "LiteBin is already running in ${install_dir}"
+      if ! prompt_yes "Continue and reinstall?"; then
+        info "Cancelled."
+        exit 0
+      fi
+    fi
+  fi
 
   # Get release
   local release_url
@@ -307,7 +324,7 @@ DASH_DOCKERFILE
     echo ""
     local mode_choice
     echo -ne "${CYAN}Choose routing mode [1]: ${NC}"
-    read -r mode_choice
+    _tty_read mode_choice
     case "${mode_choice:-1}" in
       2) routing_mode="cloudflare_dns" ;;
       *) routing_mode="master_proxy" ;;
@@ -320,72 +337,6 @@ DASH_DOCKERFILE
     prompt "Cloudflare Zone ID" cf_zone_id ""
     [ -z "$cf_api_token" ] && die "Cloudflare API token is required for cloudflare_dns mode"
     [ -z "$cf_zone_id" ] && die "Cloudflare Zone ID is required for cloudflare_dns mode"
-  fi
-
-  # Multi-node certs (skip on localhost/Windows dev)
-  local multi_node="false"
-  local cert_bundle=""
-  if [ "$DOMAIN" != "localhost" ]; then
-    echo ""
-    if prompt_yes "Will you connect worker nodes?"; then
-      multi_node="true"
-      info "Generating mTLS certificates..."
-
-      local certs_tmp
-      certs_tmp=$(mktemp -d)
-
-      # Generate CA
-      openssl genrsa -out "${certs_tmp}/ca-key.pem" 4096 2>/dev/null
-      chmod 600 "${certs_tmp}/ca-key.pem" 2>/dev/null || true
-      openssl req -new -x509 -days 3650 \
-        -key "${certs_tmp}/ca-key.pem" \
-        -out "${certs_tmp}/ca.pem" \
-        -subj "/CN=LiteBin Root CA/O=LiteBin" 2>/dev/null
-
-      # Generate master cert
-      openssl genrsa -out "${certs_tmp}/server-key.pem" 4096 2>/dev/null
-      chmod 600 "${certs_tmp}/server-key.pem" 2>/dev/null || true
-      openssl req -new \
-        -key "${certs_tmp}/server-key.pem" \
-        -out "${certs_tmp}/server.csr" \
-        -subj "/CN=${DOMAIN}/O=LiteBin Master" 2>/dev/null
-      openssl x509 -req -days 3650 \
-        -in "${certs_tmp}/server.csr" \
-        -CA "${certs_tmp}/ca.pem" \
-        -CAkey "${certs_tmp}/ca-key.pem" \
-        -CAcreateserial \
-        -out "${certs_tmp}/server.pem" \
-        -extfile <(printf "subjectAltName=DNS:%s" "$DOMAIN") 2>/dev/null
-
-      # Copy master certs to certs dir
-      cp "${certs_tmp}/ca.pem" "${certs_dir}/ca.pem"
-      cp "${certs_tmp}/server.pem" "${certs_dir}/server.pem"
-      cp "${certs_tmp}/server-key.pem" "${certs_dir}/server-key.pem"
-      chmod 600 "${certs_dir}/server-key.pem" 2>/dev/null || true
-
-      # Generate a node cert for the first agent
-      local node_name
-      prompt "Name for the first worker node" node_name "worker-1"
-
-      openssl genrsa -out "${certs_tmp}/node-key.pem" 4096 2>/dev/null
-      chmod 600 "${certs_tmp}/node-key.pem" 2>/dev/null || true
-      openssl req -new \
-        -key "${certs_tmp}/node-key.pem" \
-        -out "${certs_tmp}/node.csr" \
-        -subj "/CN=${node_name}/O=LiteBin Node" 2>/dev/null
-      openssl x509 -req -days 3650 \
-        -in "${certs_tmp}/node.csr" \
-        -CA "${certs_tmp}/ca.pem" \
-        -CAkey "${certs_tmp}/ca-key.pem" \
-        -CAcreateserial \
-        -out "${certs_tmp}/node.pem" 2>/dev/null
-
-      # Base64 encode the cert bundle for the agent
-      cert_bundle=$(tar -cf - -C "${certs_tmp}" ca.pem node.pem node-key.pem | base64_encode)
-
-      rm -rf "${certs_tmp}"
-      info "Certificates generated."
-    fi
   fi
 
   # -- Generate .env -----------------------------------------------------
@@ -425,17 +376,6 @@ EOF
 # Cloudflare DNS
 CLOUDFLARE_API_TOKEN=${cf_api_token}
 CLOUDFLARE_ZONE_ID=${cf_zone_id}
-EOF
-  fi
-
-  if [ "$multi_node" = "true" ]; then
-    cat >> "${install_dir}/.env" <<EOF
-
-# Multi-node mTLS
-MASTER_CA_CERT_PATH=/certs/ca.pem
-MASTER_CLIENT_CERT_PATH=/certs/server.pem
-MASTER_CLIENT_KEY_PATH=/certs/server-key.pem
-HEARTBEAT_INTERVAL_SECS=30
 EOF
   fi
 
@@ -485,11 +425,6 @@ EOF
 CADDYFILE
 
   # -- Generate docker-compose.yml --------------------------------------
-  local certs_mount=""
-  if [ "$multi_node" = "true" ]; then
-    certs_mount="      - ${certs_dir}:/certs:ro"
-  fi
-
   cat > "${install_dir}/docker-compose.yml" <<COMPOSE_EOF
 services:
   orchestrator:
@@ -502,7 +437,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - orchestrator-data:/app/data
       - ./projects:/app/projects
-${certs_mount}
     env_file:
       - .env
     depends_on:
@@ -555,7 +489,8 @@ COMPOSE_EOF
   # -- Start ------------------------------------------------------------
   echo ""
   info "Starting LiteBin..."
-  (cd "$install_dir" && docker compose up -d --build)
+  (cd "$install_dir" && docker compose up -d --build 2>&1 | tail -5)
+  echo ""
 
   # -- Done -------------------------------------------------------------
   local dashboard_url
@@ -575,35 +510,21 @@ COMPOSE_EOF
   echo "    1. Open the dashboard and create an admin account"
   echo "    2. Deploy apps using any of these methods:"
   echo "       a) GitHub Actions:  add a workflow that uses l8b-action"
-  echo "       b) CLI:        curl -sSL ${L8B_IN} | sh -s cli  then  l8b ship"
+  echo "       b) CLI:        curl -sSL ${L8B_IN} | bash -s cli  then  l8b ship"
   echo "       c) Dashboard:  add from the web UI(only prebuilt images)"
   echo ""
-
-  if [ "$multi_node" = "true" ]; then
-    echo -e "  ${BOLD}Worker node setup:${NC}"
-    echo "    Run this on your worker node:"
-    echo ""
-    echo -e "    ${DIM}curl -sSL ${L8B_IN} | sh -s agent${NC}"
-    echo ""
-    echo -e "    When prompted, paste this cert bundle:"
-    echo ""
-    echo -e "    ${CYAN}${cert_bundle}${NC}"
-    echo ""
-    echo -e "    ${DIM}(This bundle is shown only once. Save it if needed for additional nodes.)${NC}"
-    echo ""
-  fi
 
   echo -e "  Manage LiteBin:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
 }
 
-# -- Cert Regeneration ------------------------------------------------------
+# -- Worker Node Setup ------------------------------------------------------
 regenerate_certs() {
   local install_dir certs_dir
 
-  # Cert regeneration is only supported on the master (Linux)
+  # Only supported on the master (Linux)
   local platform
   platform=$(detect_platform)
-  [ "$platform" != "linux" ] && die "Certificate regeneration requires running on the master server (Linux)."
+  [ "$platform" != "linux" ] && die "Worker setup requires running on the master server (Linux)."
 
   # Find existing install directory
   if [ "$(id -u)" -eq 0 ] && [ -d "/opt/litebin" ]; then
@@ -611,7 +532,7 @@ regenerate_certs() {
   elif [ -d "${HOME}/litebin" ]; then
     install_dir="${HOME}/litebin"
   else
-    die "LiteBin installation not found. Run 'install.sh master' first."
+    die "LiteBin installation not found. Run the master setup first."
   fi
 
   certs_dir="${install_dir}/certs"
@@ -619,7 +540,7 @@ regenerate_certs() {
   # Check if certs already exist
   if [ -f "${certs_dir}/ca.pem" ]; then
     echo ""
-    echo -e "  ${YELLOW}Warning: Existing mTLS certificates found in ${certs_dir}${NC}"
+    echo -e "  ${YELLOW}Warning: Existing mTLS certificates found.${NC}"
     echo -e "  ${YELLOW}All connected worker nodes will lose access until their certs are updated.${NC}"
     echo ""
     if ! prompt_yes "Continue and regenerate certificates?"; then
@@ -628,24 +549,19 @@ regenerate_certs() {
     fi
   fi
 
-  # Prompt for domain (needed for master cert SAN)
+  # Get domain from .env
   local domain
-  if [ -f "${install_dir}/.env" ]; then
-    domain=$(grep '^DOMAIN=' "${install_dir}/.env" | cut -d= -f2)
-  fi
-  if [ -z "$domain" ]; then
-    domain=$(prompt "Domain name (used for master certificate)" DOMAIN "")
-  fi
-  [ -z "$domain" ] && die "Domain is required"
+  domain=$(grep '^DOMAIN=' "${install_dir}/.env" | cut -d= -f2)
+  [ -z "$domain" ] && die "Domain not found in .env"
 
-  info "Regenerating mTLS certificates..."
+  info "Generating mTLS certificates (ECDSA P-256)..."
 
   mkdir -p "$certs_dir"
   local certs_tmp
   certs_tmp=$(mktemp -d)
 
-  # Generate CA
-  openssl genrsa -out "${certs_tmp}/ca-key.pem" 4096 2>/dev/null \
+  # Generate CA (ECDSA P-256)
+  openssl ecparam -genkey -name prime256v1 -noout -out "${certs_tmp}/ca-key.pem" 2>/dev/null \
     || die "Failed to generate CA key (is openssl installed?)"
   chmod 600 "${certs_tmp}/ca-key.pem" 2>/dev/null || true
   openssl req -new -x509 -days 3650 \
@@ -654,8 +570,8 @@ regenerate_certs() {
     -subj "/CN=LiteBin Root CA/O=LiteBin" 2>/dev/null \
     || die "Failed to generate CA certificate"
 
-  # Generate master cert
-  openssl genrsa -out "${certs_tmp}/server-key.pem" 4096 2>/dev/null \
+  # Generate master cert (ECDSA P-256)
+  openssl ecparam -genkey -name prime256v1 -noout -out "${certs_tmp}/server-key.pem" 2>/dev/null \
     || die "Failed to generate server key"
   chmod 600 "${certs_tmp}/server-key.pem" 2>/dev/null || true
   openssl req -new \
@@ -664,7 +580,6 @@ regenerate_certs() {
     -subj "/CN=${domain}/O=LiteBin Master" 2>/dev/null \
     || die "Failed to generate server CSR"
 
-  # Write SAN extension to a file (process substitution doesn't work on all shells)
   printf "subjectAltName=DNS:%s" "$domain" > "${certs_tmp}/san.ext"
   openssl x509 -req -days 3650 \
     -in "${certs_tmp}/server.csr" \
@@ -681,35 +596,33 @@ regenerate_certs() {
   cp "${certs_tmp}/server-key.pem" "${certs_dir}/server-key.pem"
   chmod 600 "${certs_dir}/server-key.pem" 2>/dev/null || true
 
-  # Generate a node cert for the first agent
+  # Generate node cert (ECDSA P-256)
   local node_name
-  prompt "Name for the first worker node (or leave blank to skip)" node_name "worker-1"
+  prompt "Name for the worker node" node_name "worker-1"
 
-  local cert_bundle=""
-  if [ -n "$node_name" ]; then
-    openssl genrsa -out "${certs_tmp}/node-key.pem" 4096 2>/dev/null \
-      || die "Failed to generate node key"
-    chmod 600 "${certs_tmp}/node-key.pem" 2>/dev/null || true
-    openssl req -new \
-      -key "${certs_tmp}/node-key.pem" \
-      -out "${certs_tmp}/node.csr" \
-      -subj "/CN=${node_name}/O=LiteBin Node" 2>/dev/null \
-      || die "Failed to generate node CSR"
-    openssl x509 -req -days 3650 \
-      -in "${certs_tmp}/node.csr" \
-      -CA "${certs_tmp}/ca.pem" \
-      -CAkey "${certs_tmp}/ca-key.pem" \
-      -CAcreateserial \
-      -out "${certs_tmp}/node.pem" 2>/dev/null \
-      || die "Failed to sign node certificate"
+  openssl ecparam -genkey -name prime256v1 -noout -out "${certs_tmp}/node-key.pem" 2>/dev/null \
+    || die "Failed to generate node key"
+  chmod 600 "${certs_tmp}/node-key.pem" 2>/dev/null || true
+  openssl req -new \
+    -key "${certs_tmp}/node-key.pem" \
+    -out "${certs_tmp}/node.csr" \
+    -subj "/CN=${node_name}/O=LiteBin Node" 2>/dev/null \
+    || die "Failed to generate node CSR"
+  openssl x509 -req -days 3650 \
+    -in "${certs_tmp}/node.csr" \
+    -CA "${certs_tmp}/ca.pem" \
+    -CAkey "${certs_tmp}/ca-key.pem" \
+    -CAcreateserial \
+    -out "${certs_tmp}/node.pem" 2>/dev/null \
+    || die "Failed to sign node certificate"
 
-    cert_bundle=$(tar -cf - -C "${certs_tmp}" ca.pem node.pem node-key.pem | base64_encode)
-  fi
+  local cert_bundle
+  cert_bundle=$(tar -cf - -C "${certs_tmp}" ca.pem node.pem node-key.pem | base64_encode)
 
   rm -rf "${certs_tmp}"
-  info "Certificates regenerated."
+  info "Certificates generated."
 
-  # Ensure .env has mTLS config
+  # Add mTLS config to .env
   if ! grep -q "MASTER_CA_CERT_PATH" "${install_dir}/.env" 2>/dev/null; then
     cat >> "${install_dir}/.env" <<EOF
 
@@ -722,34 +635,31 @@ EOF
     info "Added mTLS config to .env"
   fi
 
+  # Add certs mount to docker-compose.yml if missing
+  if ! grep -q "/certs:ro" "${install_dir}/docker-compose.yml" 2>/dev/null; then
+    sed -i '/\.\.\/projects:\/app\/projects/a\      - '"${certs_dir}"':/certs:ro' "${install_dir}/docker-compose.yml"
+    info "Added certs mount to docker-compose.yml"
+  fi
+
   # Restart orchestrator to pick up new certs
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "litebin-orchestrator"; then
-    info "Restarting orchestrator to load new certificates..."
-    (cd "$install_dir" && docker compose restart orchestrator 2>/dev/null)
+    info "Restarting orchestrator to load certificates..."
+    (cd "$install_dir" && docker compose up -d --build 2>&1 | tail -3)
   fi
 
   echo ""
-  echo -e "  ${BOLD}Certificates regenerated!${NC}"
+  echo -e "  ${GREEN}${BOLD}Worker node certificates ready!${NC}"
   echo ""
-
-  if [ -n "$cert_bundle" ]; then
-    echo -e "  ${BOLD}Update each worker node by running:${NC}"
-    echo ""
-    echo -e "    ${DIM}curl -sSL ${L8B_IN} | sh -s agent --update-certs${NC}"
-    echo ""
-    echo -e "    ${DIM}When prompted, paste this cert bundle:${NC}"
-    echo ""
-    echo -e "    ${CYAN}${cert_bundle}${NC}"
-    echo ""
-    echo -e "    ${DIM}(This bundle is shown only once. Save it if needed for additional nodes.)${NC}"
-    echo ""
-  else
-    echo -e "  ${BOLD}To add a worker node, re-run:${NC}"
-    echo -e "    ${DIM}curl -sSL ${L8B_IN} | sh -s certs${NC}"
-    echo ""
-  fi
-
-  echo -e "  Manage LiteBin:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
+  echo -e "  Run this on your worker node:"
+  echo ""
+  echo -e "    ${DIM}curl -sSL ${L8B_IN} | bash -s agent${NC}"
+  echo ""
+  echo -e "  When prompted, paste this cert bundle:"
+  echo ""
+  echo -e "    ${CYAN}${cert_bundle}${NC}"
+  echo ""
+  echo -e "  Then go to Dashboard -> Nodes -> Add Node to connect."
+  echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
 }
 
 # -- Agent Install -----------------------------------------------------------
@@ -769,7 +679,7 @@ install_agent() {
     elif [ -d "${HOME}/litebin/certs" ]; then
       certs_dir="${HOME}/litebin/certs"
     else
-      die "LiteBin agent not found. Run 'curl -sSL ${L8B_IN} | sh -s agent' first."
+      die "LiteBin agent not found. Run 'curl -sSL ${L8B_IN} | bash -s agent' first."
     fi
 
     echo ""
@@ -777,7 +687,7 @@ install_agent() {
     echo ""
     local cert_bundle
     echo -ne "  ${CYAN}Paste the base64 cert bundle from the master:${NC} "
-    read -r cert_bundle
+    _tty_read cert_bundle
     [ -z "$cert_bundle" ] && die "Cert bundle is required"
 
     info "Updating certificates..."
@@ -887,11 +797,11 @@ AGENT_DOCKERFILE
   # Certs
   echo ""
   echo -e "  Paste the base64 cert bundle from the master setup."
-  echo -e "  ${DIM}(Run 'curl -sSL ${L8B_IN} | sh -s master' on the master to generate one.)${NC}"
+  echo -e "  ${DIM}(Run 'curl -sSL ${L8B_IN} | bash -s master' on the master to generate one.)${NC}"
   echo ""
   local cert_bundle
   echo -ne "${CYAN}Cert bundle:${NC} "
-  read -r cert_bundle
+  _tty_read cert_bundle
   [ -z "$cert_bundle" ] && die "Cert bundle is required"
 
   info "Decoding certificates..."
@@ -955,11 +865,11 @@ AGENT_DOCKERFILE
 
 # -- Interactive Menu --------------------------------------------------------
 show_menu() {
-  # If stdin is not a terminal, print help and exit
-  if [ ! -t 0 ]; then
+  # If no terminal at all (piped in CI/script), print usage and exit
+  if ! [ -t 0 ] && ! [ -t 1 ]; then
     echo -e "${BOLD}LiteBin Installer${NC}"
     echo ""
-    echo "Usage:  curl -sSL ${L8B_IN} | sh -s <mode>"
+    echo "Usage:  curl -sSL ${L8B_IN} | bash -s <mode>"
     echo ""
     echo "Modes:"
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
@@ -967,9 +877,9 @@ show_menu() {
     echo "  cli       Install the l8b CLI tool"
     echo ""
     echo "Examples:"
-    echo "  curl -sSL ${L8B_IN} | sh -s master"
-    echo "  curl -sSL ${L8B_IN} | sh -s agent"
-    echo "  curl -sSL ${L8B_IN} | sh -s cli"
+    echo "  curl -sSL ${L8B_IN} | bash -s master"
+    echo "  curl -sSL ${L8B_IN} | bash -s agent"
+    echo "  curl -sSL ${L8B_IN} | bash -s cli"
     exit 1
   fi
 
@@ -988,11 +898,11 @@ show_menu() {
   echo "    1) Master Server (orchestrator + dashboard + Caddy)"
   echo "    2) Agent Node (worker daemon)"
   echo "    3) CLI only (l8b deploy tool)"
-  echo "    4) Regenerate mTLS certificates"
+  echo "    4) Setup multi-node (generate/regenerate mTLS certs)"
   echo ""
   local choice
   echo -ne "  ${CYAN}Enter your choice [1-4]:${NC} "
-  read -r choice
+  _tty_read choice
   echo ""
 
   case "$choice" in
@@ -1013,13 +923,13 @@ case "${1:-}" in
   -h|--help|"help")
     echo -e "${BOLD}LiteBin Installer${NC}"
     echo ""
-    echo "Usage:  curl -sSL ${L8B_IN} | sh -s <mode>"
+    echo "Usage:  curl -sSL ${L8B_IN} | bash -s <mode>"
     echo ""
     echo "Modes:"
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
     echo "  agent     Set up a worker node (Linux only)"
     echo "  cli       Install the l8b CLI tool"
-    echo "  certs     Regenerate mTLS certificates (run on master)"
+    echo "  certs     Setup multi-node / regenerate mTLS certs (run on master)"
     ;;
   "")       show_menu ;;
   *)        die "Unknown mode: $1. Run with --help for usage." ;;

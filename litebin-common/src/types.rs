@@ -86,6 +86,7 @@ impl Default for ImageStats {
 /// Agent health response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthReport {
+    pub version: String,
     pub memory_available: u64,
     pub memory_total: u64,
     pub cpu_cores: u32,

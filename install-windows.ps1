@@ -80,6 +80,20 @@ if (-not $InstallDir) {
     $InstallDir = Join-Path (Get-Location) "litebin"
 }
 
+# -- Check for existing installation -----------------------------------------
+if ((Test-Path "$InstallDir\docker-compose.yml") -and (-not $Clean)) {
+    $running = docker compose -f "$InstallDir\docker-compose.yml" ps --format "{{.Names}}" 2>$null
+    if ($running) {
+        Write-Host ""
+        Write-Host "  Warning: LiteBin is already running in $InstallDir" -ForegroundColor Yellow
+        $reply = Read-Host "  Continue and reinstall? [y/N]"
+        if ($reply -notmatch '^[Yy]') {
+            Write-Info "Cancelled."
+            exit 0
+        }
+    }
+}
+
 $OrchDir = Join-Path $InstallDir "orchestrator"
 $DashDir = Join-Path $InstallDir "dashboard"
 $ProjectsDir = Join-Path $InstallDir "projects"
@@ -320,7 +334,7 @@ Write-Host "  Next steps:"
 Write-Host "    1. Open the dashboard and create an admin account"
 Write-Host "    2. Deploy apps using any of these methods:"
 Write-Host "       a) GitHub Actions:  add a workflow that uses l8b-action"
-Write-Host "       b) CLI:        curl -sSL $L8B_IN | sh -s cli  then  l8b ship"
+Write-Host "       b) CLI:        curl -sSL $L8B_IN | bash -s cli  then  l8b ship"
 Write-Host "       c) Dashboard:  add from the web UI (only prebuilt images)"
 Write-Host ""
 Write-Host "  Manage LiteBin:  " -NoNewline; Write-Host "cd $InstallDir && docker compose logs -f" -ForegroundColor DarkGray

@@ -147,7 +147,7 @@
                 <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <code class="text-sm text-zinc-300">curl -sSL https://l8b.in | sh</code>
+                <code class="text-sm text-zinc-300">curl -sSL https://l8b.in | bash</code>
               </div>
               <div class="glass rounded-xl p-6 mb-6">
                 <p class="text-sm text-zinc-400 mb-4">The installer will prompt for:</p>
@@ -182,12 +182,19 @@
             <!-- Step 3: Configure Agent -->
             <div id="setup-step-3" class="step-detail hidden">
               <h2 class="text-2xl font-bold text-white mb-4">Add Worker Nodes (Optional)</h2>
-              <p class="text-zinc-400 mb-6">On each worker server (with Docker installed), run:</p>
+              <p class="text-zinc-400 mb-6">First, generate mTLS certificates on the master server (skip if already configured):</p>
               <div class="code-block mb-4 relative group">
                 <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <code class="text-sm text-zinc-300">curl -sSL https://l8b.in | sh -s agent</code>
+                <code class="text-sm text-zinc-300">curl -sSL https://l8b.in | bash -s certs</code>
+              </div>
+              <p class="text-zinc-400 mb-4">Save the cert bundle it prints. Then on each worker server run:</p>
+              <div class="code-block mb-4 relative group">
+                <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <code class="text-sm text-zinc-300">curl -sSL https://l8b.in | bash -s agent</code>
               </div>
               <div class="glass rounded-xl p-6 mb-6">
                 <p class="text-sm text-zinc-400 mb-4">The installer will prompt for:</p>
@@ -195,7 +202,7 @@
                   <li class="flex gap-3"><span class="text-violet-400">→</span><span>Master dashboard URL</span></li>
                   <li class="flex gap-3"><span class="text-violet-400">→</span><span>Node name (e.g. <code class="text-violet-300 bg-white/5 px-1 rounded">worker-1</code>)</span></li>
                   <li class="flex gap-3"><span class="text-violet-400">→</span><span>Agent port (default: 5083)</span></li>
-                  <li class="flex gap-3"><span class="text-violet-400">→</span><span>mTLS cert bundle from master setup</span></li>
+                  <li class="flex gap-3"><span class="text-violet-400">→</span><span>mTLS cert bundle from the <code class="text-violet-300 bg-white/5 px-1 rounded">certs</code> command above</span></li>
                 </ul>
               </div>
               <div class="bg-violet-500/10 border border-violet-500/20 rounded-xl p-4 mb-6">
@@ -265,7 +272,7 @@
                 <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <code class="text-sm text-zinc-300">curl -sSL https://l8b.in | sh -s cli</code>
+                <code class="text-sm text-zinc-300">curl -sSL https://l8b.in | bash -s cli</code>
               </div>
 
               <p class="text-sm text-zinc-400 mb-3">Login to your master:</p>
