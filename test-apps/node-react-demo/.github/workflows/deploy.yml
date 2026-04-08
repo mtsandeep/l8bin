@@ -1,0 +1,46 @@
+name: Build & Deploy to LiteBin
+
+on:
+  push:
+    branches: [main]
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Railpack
+        run: curl -sSL https://railpack.io/install.sh | bash
+
+      - name: Build image with Railpack
+        run: railpack build -t ${{ env.IMAGE_NAME }} .
+
+      - name: Push image to GHCR
+        run: docker push ${{ env.IMAGE_NAME }}
+
+      - name: Notify LiteBin Orchestrator
+        run: |
+          curl -sf -X POST "${{ secrets.LiteBin_URL }}/deploy" \
+            -H "Authorization: Bearer ${{ secrets.DEPLOY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "project_id": "${{ secrets.PROJECT_ID }}",
+              "image": "${{ env.IMAGE_NAME }}",
+              "port": 3000
+            }'

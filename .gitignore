@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+target/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# SQLite
+*.db
+*.db-journal
+*.db-wal
+data/
+
+# Logs
+*.log
+
+# pnpm
+.pnpm-store/
+
+# projects
+projects/
+
+# Load test binaries
+test-apps/load-tests/k6.exe
+
+#planning docs
+docs/planning/

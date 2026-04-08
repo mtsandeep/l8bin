@@ -1,0 +1,25 @@
+{
+  "name": "litebin-test-app",
+  "version": "1.0.0",
+  "description": "A simple Express + React demo app for testing Litebin PaaS",
+  "main": "server/index.js",
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev:server": "node server/index.js",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "compression": "^1.7.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.0"
+  }
+}

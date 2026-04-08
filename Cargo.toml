@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "litebin-common",
+    "orchestrator",
+    "agent",
+    "cli",
+]
+resolver = "2"

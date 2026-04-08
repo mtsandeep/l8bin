@@ -1,0 +1,41 @@
+{
+	admin 0.0.0.0:2019
+}
+
+# Static fallback — orchestrator replaces this via /load on startup.
+# Ensures the dashboard is reachable even before the orchestrator syncs routes.
+:80 {
+	handle /auth/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /projects {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /projects/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /deploy {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /deploy-tokens* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /images/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /nodes* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /settings* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /health {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /caddy/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle {
+		reverse_proxy litebin-dashboard:80
+	}
+}

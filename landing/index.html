@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiteBin — The 58MB Self-Hosted PaaS</title>
+  <meta name="description" content="Host 30+ apps on a tiny VPS. Scale to zero. Wake in seconds. The Rust-native PaaS for serial builders." />
+<!-- v2 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ["Outfit","sans-serif"], mono: ["JetBrains Mono","monospace"] },
+          colors: { night: { 950:"#030308", 900:"#0a0912", 800:"#131222", 700:"#1a1830" } }
+        }
+      }
+    };
+  </script>
+  <style>
+    :root { --vio:#7c3aed; --vio-l:#8b5cf6; --vio-g:rgba(124,58,237,0.15); }
+    .glow { box-shadow: 0 0 50px -12px var(--vio-g); }
+    .glass { background:rgba(255,255,255,0.02); backdrop-filter:blur(12px); border:1px solid rgba(255,255,255,0.06); }
+    .grad-text { background:linear-gradient(135deg,#a78bfa,#f472b6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    #glitch-title .char { display:inline-block; }
+    #glitch-title .char.glitching { animation:cg .18s ease-in-out; }
+    @keyframes cg { 0%,100%{transform:translate(0)} 25%{transform:translate(-2px,2px)} 75%{transform:translate(2px,-2px)} }
+    .bar-fill { transition: width 1.2s cubic-bezier(.4,0,.2,1); }
+    html { scroll-behavior:smooth; }
+    .nav-link { position:relative; }
+    .nav-link::after { content:''; position:absolute; bottom:-2px; left:0; width:0; height:1px; background:var(--vio-l); transition:width .2s; }
+    .nav-link:hover::after { width:100%; }
+    .dot-grid { background-image:radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px); background-size:28px 28px; }
+    .fade-in { opacity:0; transform:translateY(16px); transition:opacity .55s ease, transform .55s ease; }
+    .fade-in.visible { opacity:1; transform:translateY(0); }
+    .term-cursor { display:inline-block; width:7px; height:14px; background:#8b5cf6; animation:blink .8s step-end infinite; vertical-align:middle; margin-left:1px; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    .tl { font-size:.78rem; font-family:'JetBrains Mono',monospace; line-height:1.9; white-space:pre; }
+    .tl.cmd { color:#e4e4e7; } .tl.ans { color:#a1a1aa; } .tl.ok { color:#34d399; } .tl.info { color:#71717a; } .tl.url { color:#a78bfa; font-weight:600; }
+    .ws-row { transition: background .35s, border-color .35s; }
+    .ws-row.active { background:rgba(255,255,255,0.05); border-color:rgba(255,255,255,0.09) !important; }
+    @keyframes wake-fill { 0%{width:5%} 80%{width:88%} 100%{width:94%} }
+    .wake-anim { animation: wake-fill 2s ease-out forwards; }
+  </style>
+</head>
+<body class="bg-night-950 text-zinc-300 antialiased selection:bg-violet-500/30">
+
+  <!-- WIP Banner -->
+  <div class="bg-violet-500/10 border-b border-violet-500/20 px-4 py-2 text-center">
+    <p class="text-xs text-violet-300 font-mono">✨ New — Try it out for demos & testing. Expect some rough edges.</p>
+  </div>
+
+  <!-- Nav -->
+  <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="#" class="font-black text-white tracking-tighter font-mono text-lg">L8BIN<span class="text-violet-500">.</span></a>
+      <div class="hidden md:flex items-center gap-8 text-sm text-zinc-400">
+        <a href="#usecases" class="nav-link hover:text-white transition">Use Cases</a>
+        <a href="#how" class="nav-link hover:text-white transition">How it works</a>
+        <a href="#compare" class="nav-link hover:text-white transition">Compare</a>
+        <a href="quickstart.html" class="nav-link hover:text-white transition">Docs</a>
+      </div>
+      <div class="flex items-center gap-3">
+        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
+        <a href="#start" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Get Started</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="relative overflow-hidden pt-16 pb-20">
+    <div class="absolute inset-0 dot-grid"></div>
+    <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] bg-[radial-gradient(ellipse_at_top,rgba(124,58,237,0.14),transparent_65%)]"></div>
+    <div class="max-w-6xl mx-auto px-6 relative z-10">
+      <div class="grid lg:grid-cols-2 gap-10 items-center">
+        <!-- Left: headline + CTA -->
+        <div>
+          <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-violet-500/25 bg-violet-500/8 text-violet-400 text-xs font-mono mb-5">
+            <span class="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse"></span>
+            THE 58MB CONTROL PLANE
+          </span>
+          <h1 id="glitch-title" data-variants="LITEBIN|L8BIN|L8B.IN|L8BIN"
+            class="text-6xl lg:text-8xl font-black text-white tracking-tighter leading-none mb-5"></h1>
+          <p class="text-lg text-zinc-400 leading-relaxed mb-8">
+            Ship <span class="text-white font-semibold">30+ apps</span> on a tiny VPS.
+            Scale to zero automatically. Wake in seconds.<br/>
+            <span class="text-violet-400 font-semibold">Resting stack: &lt;58MB.</span>
+          </p>
+          <div class="flex flex-col sm:flex-row gap-3">
+            <a href="#start" class="px-7 py-3.5 bg-white text-night-950 font-bold rounded-xl hover:bg-violet-200 transition text-sm text-center">Get Started Free</a>
+            <a href="https://aggressive.l8b.in" target="_blank" class="px-7 py-3.5 glass rounded-xl text-sm font-semibold hover:bg-white/5 transition flex items-center justify-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>See Live Demo
+            </a>
+          </div>
+        </div>
+        <!-- Right: memory card -->
+        <div class="glass rounded-2xl p-7 glow">
+          <div class="flex justify-between items-center mb-5">
+            <p class="text-xs font-mono text-zinc-500 uppercase tracking-widest">Idle Memory Footprint</p>
+            <span class="text-xs font-mono text-emerald-400 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>MEASURED</span>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Orchestrator (Rust)</span><span class="font-bold text-white">9.4 MB</span></div>
+              <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-cyan-500 rounded-full bar-fill" style="width:0%" data-w="16%"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Dashboard (React)</span><span class="font-bold text-white">13.2 MB</span></div>
+              <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-fuchsia-500 rounded-full bar-fill" style="width:0%" data-w="23%"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Caddy Proxy</span><span class="font-bold text-white">20.8 MB</span></div>
+              <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-amber-500 rounded-full bar-fill" style="width:0%" data-w="36%"></div></div>
+            </div>
+            <div class="pt-4 border-t border-white/10 flex justify-between items-center">
+              <span class="text-sm font-mono text-zinc-400">Total Resting Stack</span>
+              <span class="text-2xl font-black text-violet-400">43.4 <span class="text-base text-zinc-500 font-normal">/ 58 MB</span></span>
+            </div>
+          </div>
+          <p class="text-xs text-zinc-600 mt-3 italic">* Sleep-state RAM only.</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Terminal -->
+  <section class="py-20 border-t border-white/5 bg-night-900/40">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="grid lg:grid-cols-2 gap-12 items-start">
+        <div class="fade-in">
+          <h2 class="text-3xl font-black text-white uppercase tracking-tight mb-3">Deploy in <span class="text-violet-400">one command.</span></h2>
+          <p class="text-zinc-500 text-sm leading-relaxed mb-6">No YAML. No CI config. No Dockerfile needed. Point the CLI at any directory and ship. Railpack auto-detects Node, Python, Go, PHP, and more.</p>
+          <ul class="space-y-3 text-sm text-zinc-500">
+            <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Builds on your laptop — zero CPU pressure on the VPS</span></li>
+            <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Streams compressed image directly — no registry needed</span></li>
+            <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Works from GitHub Actions too</span></li>
+          </ul>
+        </div>
+        <div class="fade-in">
+          <div class="rounded-xl overflow-hidden border border-white/10 shadow-2xl shadow-violet-900/20">
+            <div class="h-9 bg-zinc-800/80 flex items-center px-4 gap-2 border-b border-white/5">
+              <span class="w-3 h-3 rounded-full bg-red-500/60"></span>
+              <span class="w-3 h-3 rounded-full bg-amber-500/60"></span>
+              <span class="w-3 h-3 rounded-full bg-emerald-500/60"></span>
+              <span class="ml-3 text-xs font-mono text-zinc-500">~/my-app</span>
+            </div>
+            <div class="bg-[#0d0d0f] p-5" style="min-height:380px">
+              <div id="term-lines"></div>
+              <span class="term-cursor" id="term-cursor"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Use Cases -->
+  <section id="usecases" class="py-24 border-t border-white/5">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="text-center mb-14">
+        <h2 class="text-4xl font-black text-white tracking-tighter mb-3">A place for your <span class="grad-text">Side-Quests.</span></h2>
+        <p class="text-zinc-500 font-mono text-sm">Stop deleting your work to save $5. Just bin it.</p>
+      </div>
+      <div class="grid md:grid-cols-3 gap-6">
+        <div class="p-7 glass rounded-2xl hover:border-violet-500/30 transition group">
+          <div class="text-3xl mb-4">📂</div>
+          <h3 class="text-lg font-bold text-white mb-2">The "Live" Resume</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Stop sending recruiters dead GitHub links. Host your entire project history. They click, the app wakes, and you look like a pro.</p>
+          <p class="mt-5 text-xs font-mono text-zinc-600 uppercase tracking-widest">Portfolios & Resumes</p>
+        </div>
+        <div class="p-7 glass rounded-2xl hover:border-fuchsia-500/30 transition group">
+          <div class="text-3xl mb-4">🚇</div>
+          <h3 class="text-lg font-bold text-white mb-2">Beyond Local Tunnels</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">ngrok works for 5 minutes. When you need a persistent URL for demos or client reviews, put it on a real server.</p>
+          <p class="mt-5 text-xs font-mono text-zinc-600 uppercase tracking-widest">Demos & Testing</p>
+        </div>
+        <div class="p-7 glass rounded-2xl hover:border-rose-500/30 transition group">
+          <div class="text-3xl mb-4">🚀</div>
+          <h3 class="text-lg font-bold text-white mb-2">Micro-SaaS & MVPs</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Got a 2 AM idea? Deploy the API instantly. If the idea flops, it costs nothing to keep it sitting in the bin "just in case."</p>
+          <p class="mt-5 text-xs font-mono text-zinc-600 uppercase tracking-widest">Indie Hackers & Startups</p>
+        </div>
+      </div>
+      <div class="mt-12 p-8 bg-violet-500/5 border border-violet-500/20 rounded-2xl text-center">
+        <p class="text-xl font-bold text-white italic">"Like <span class="text-violet-400">Serverless</span>, but you own the metal. <span class="text-violet-400">No per-app fees</span> — just your VPS cost."</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works -->
+  <section id="how" class="py-24 border-t border-white/5 bg-night-900/40">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl font-black text-white uppercase tracking-tight mb-2">The L8B Lifecycle</h2>
+      <p class="text-zinc-500 font-mono text-xs uppercase tracking-widest mb-14">Zero-Waste Resource Management</p>
+      <div class="grid md:grid-cols-3 gap-10 relative">
+        <div class="hidden md:block absolute top-10 left-0 w-full h-px bg-gradient-to-r from-transparent via-white/8 to-transparent pointer-events-none"></div>
+        <div class="relative">
+          <div class="w-10 h-10 bg-night-800 border border-violet-500/40 rounded-xl flex items-center justify-center text-violet-400 font-black text-sm mb-5 relative z-10">01</div>
+          <h3 class="font-bold text-white uppercase tracking-tight mb-2">Ship Remote</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Build images on your <span class="text-zinc-200">laptop or GitHub Actions</span>. Stream the finished image to your server. Your VPS stays cool while you deploy.</p>
+        </div>
+        <div class="relative">
+          <div class="w-10 h-10 bg-night-800 border border-fuchsia-500/40 rounded-xl flex items-center justify-center text-fuchsia-400 font-black text-sm mb-5 relative z-10">02</div>
+          <h3 class="font-bold text-white uppercase tracking-tight mb-2">Smart Sleep</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">The <span class="text-zinc-200 italic">Janitor</span> stops containers after inactivity (15m default, configurable). Host 30 apps on a server with room for 5.</p>
+        </div>
+        <div class="relative">
+          <div class="w-10 h-10 bg-night-800 border border-rose-500/40 rounded-xl flex items-center justify-center text-rose-400 font-black text-sm mb-5 relative z-10">03</div>
+          <h3 class="font-bold text-white uppercase tracking-tight mb-2">Fast Wake</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Requests trigger the <span class="text-zinc-200 italic">Waker</span>. The proxy holds the TCP connection, boots the container, and serves traffic. Loading page shown instantly — <span class="text-zinc-200">no 502s.</span></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sleep & Wake -->
+  <section class="py-24 border-t border-white/5 relative overflow-hidden">
+    <div class="absolute inset-0 dot-grid"></div>
+    <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(124,58,237,0.09),transparent_70%)]"></div>
+    <div class="max-w-6xl mx-auto px-6 relative z-10">
+      <div class="text-center mb-12 fade-in">
+        <h2 class="text-3xl font-black text-white mb-2 uppercase tracking-tight">See it <span class="text-fuchsia-400">Sleep</span> & <span class="text-violet-400">Wake</span>.</h2>
+        <p class="text-zinc-500 text-sm">The core feature — live on real LiteBin instances.</p>
+      </div>
+      <!-- Wake cycle widget -->
+      <div class="mb-12 fade-in">
+        <div class="glass rounded-2xl p-6">
+          <p class="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-5">Container Lifecycle</p>
+          <div class="grid md:grid-cols-2 gap-5 items-center">
+            <!-- State rows -->
+            <div class="space-y-1.5">
+              <div id="si-0" class="ws-row flex items-center gap-3 p-3 rounded-xl border border-transparent">
+                <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0"></div>
+                <div><div class="text-xs font-mono font-semibold text-zinc-300">RUNNING</div><div class="text-xs text-zinc-600">Serving traffic · memory in use</div></div>
+              </div>
+              <div id="si-1" class="ws-row flex items-center gap-3 p-3 rounded-xl border border-transparent">
+                <div class="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0"></div>
+                <div><div class="text-xs font-mono font-semibold text-zinc-500">IDLE</div><div class="text-xs text-zinc-600">No requests · sleep timer ticking</div></div>
+              </div>
+              <div id="si-2" class="ws-row flex items-center gap-3 p-3 rounded-xl border border-transparent">
+                <div class="w-2.5 h-2.5 rounded-full bg-zinc-600 shrink-0"></div>
+                <div><div class="text-xs font-mono font-semibold text-zinc-500">SLEEPING</div><div class="text-xs text-zinc-600">Stopped · 0 MB · route removed</div></div>
+              </div>
+              <div id="si-3" class="ws-row flex items-center gap-3 p-3 rounded-xl border border-transparent">
+                <div class="w-2.5 h-2.5 rounded-full bg-violet-500 shrink-0"></div>
+                <div><div class="text-xs font-mono font-semibold text-zinc-500">WAKING</div><div class="text-xs text-zinc-600">Request in · container starting</div></div>
+              </div>
+            </div>
+            <!-- Mini browser preview -->
+            <div class="rounded-xl overflow-hidden border border-white/10">
+              <div class="h-7 bg-zinc-800/80 flex items-center px-3 gap-2 border-b border-white/5">
+                <div class="flex gap-1"><span class="w-2 h-2 rounded-full bg-red-500/50"></span><span class="w-2 h-2 rounded-full bg-amber-500/50"></span><span class="w-2 h-2 rounded-full bg-emerald-500/50"></span></div>
+                <div class="flex-1 flex justify-center"><div class="bg-zinc-700/40 rounded px-2 py-0.5"><span id="ap-url" class="text-xs font-mono text-zinc-400">myapp.l8b.in</span></div></div>
+              </div>
+              <div class="relative bg-night-800" style="height:148px">
+                <!-- RUNNING -->
+                <div id="ap-0" class="absolute inset-0 p-4 flex flex-col gap-2" style="opacity:1;transition:opacity .4s">
+                  <div class="h-3.5 bg-violet-500/25 rounded-md w-3/5"></div>
+                  <div class="h-2 bg-white/6 rounded w-full mt-0.5"></div>
+                  <div class="h-2 bg-white/5 rounded w-4/5"></div>
+                  <div class="h-2 bg-white/5 rounded w-3/5"></div>
+                  <div class="flex gap-2 mt-2.5">
+                    <div class="h-6 bg-violet-500/30 border border-violet-500/25 rounded-md w-16 flex items-center justify-center"><div class="h-1.5 bg-violet-300/50 rounded w-8"></div></div>
+                    <div class="h-6 bg-white/5 rounded-md w-12"></div>
+                  </div>
+                  <div class="absolute bottom-2.5 right-3 flex items-center gap-1.5">
+                    <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <span class="text-xs font-mono text-emerald-400">live</span>
+                  </div>
+                </div>
+                <!-- IDLE -->
+                <div id="ap-1" class="absolute inset-0 p-4 flex flex-col gap-2" style="opacity:0;transition:opacity .4s">
+                  <div class="h-3.5 bg-violet-500/12 rounded-md w-3/5"></div>
+                  <div class="h-2 bg-white/3 rounded w-full mt-0.5"></div>
+                  <div class="h-2 bg-white/3 rounded w-4/5"></div>
+                  <div class="h-2 bg-white/3 rounded w-3/5"></div>
+                  <div class="flex gap-2 mt-2.5">
+                    <div class="h-6 bg-violet-500/10 rounded-md w-16"></div>
+                    <div class="h-6 bg-white/3 rounded-md w-12"></div>
+                  </div>
+                  <div class="absolute bottom-2.5 right-3 flex items-center gap-1.5">
+                    <div class="w-1.5 h-1.5 rounded-full bg-amber-500/80"></div>
+                    <span class="text-xs font-mono text-amber-500/70">idle · sleeping soon</span>
+                  </div>
+                </div>
+                <!-- SLEEPING -->
+                <div id="ap-2" class="absolute inset-0 bg-night-950 flex flex-col items-center justify-center gap-2" style="opacity:0;transition:opacity .4s">
+                  <span class="text-2xl leading-none">💤</span>
+                  <p class="text-xs font-mono text-zinc-500">Container stopped</p>
+                  <p class="text-xs text-zinc-700 font-mono">0 MB in use</p>
+                </div>
+                <!-- WAKING -->
+                <div id="ap-3" class="absolute inset-0 bg-night-950 flex flex-col items-center justify-center gap-3" style="opacity:0;transition:opacity .4s">
+                  <div class="w-5 h-5 border-2 border-violet-500/30 border-t-violet-400 rounded-full animate-spin"></div>
+                  <p class="text-xs font-mono text-zinc-400">Waking your app…</p>
+                  <div class="w-28 h-1 bg-white/5 rounded-full overflow-hidden">
+                    <div id="wake-prog" class="h-full bg-violet-500 rounded-full" style="width:5%"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p id="wake-msg" class="text-xs text-zinc-600 mt-5 font-mono text-center">Container is running and serving traffic.</p>
+        </div>
+      </div>
+      <!-- Demo links -->
+      <div class="grid md:grid-cols-2 gap-5 fade-in">
+        <a href="https://aggressive.l8b.in" target="_blank" class="p-6 glass rounded-2xl hover:border-fuchsia-500/40 transition group flex items-start gap-4">
+          <div class="w-10 h-10 bg-fuchsia-500/10 rounded-xl flex items-center justify-center shrink-0"><span class="text-fuchsia-400">⚡</span></div>
+          <div>
+            <div class="flex items-center gap-2 mb-1"><h4 class="font-bold text-white">Aggressive Demo</h4><span class="text-xs font-mono text-fuchsia-400 bg-fuchsia-500/10 px-1.5 py-0.5 rounded">60s sleep</span></div>
+            <p class="text-xs text-zinc-500 mb-2">Sleeps after 60 seconds. Come back after a minute and see the wake animation live.</p>
+            <span class="text-fuchsia-400 font-mono text-xs group-hover:underline">aggressive.l8b.in →</span>
+          </div>
+        </a>
+        <a href="https://portfolio.l8b.in" target="_blank" class="p-6 glass rounded-2xl hover:border-violet-500/40 transition group flex items-start gap-4">
+          <div class="w-10 h-10 bg-violet-500/10 rounded-xl flex items-center justify-center shrink-0"><span class="text-violet-400">📁</span></div>
+          <div>
+            <div class="flex items-center gap-2 mb-1"><h4 class="font-bold text-white">Portfolio Demo</h4><span class="text-xs font-mono text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded">15m sleep</span></div>
+            <p class="text-xs text-zinc-500 mb-2">Real-world sleep timer. Stays warm longer, still fully scales to zero when idle.</p>
+            <span class="text-violet-400 font-mono text-xs group-hover:underline">portfolio.l8b.in →</span>
+          </div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard Preview -->
+  <section class="py-20 border-t border-white/5 bg-night-900/40">
+    <div class="max-w-6xl mx-auto px-6 fade-in">
+      <div class="text-center mb-10">
+        <h2 class="text-3xl font-black text-white uppercase tracking-tight mb-2">One Dashboard. <span class="text-fuchsia-400">All Your Apps.</span></h2>
+        <p class="text-zinc-500 text-sm">Deploy, stop, wake, and manage everything from a clean web UI — or skip it entirely and use the CLI.</p>
+      </div>
+      <img src="dashboard.png" alt="L8BIN Dashboard" class="rounded-2xl border-2 border-white/10 shadow-2xl shadow-violet-900/20 glow w-full">
+    </div>
+  </section>
+
+  <!-- Multi-Node -->
+  <section class="py-24 border-t border-white/5 bg-night-900/40">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="grid lg:grid-cols-2 gap-16 items-center">
+        <div>
+          <h2 class="text-3xl font-black text-white mb-5 uppercase tracking-tight">One Master.<br/><span class="text-violet-400">Unlimited Bins.</span></h2>
+          <p class="text-zinc-400 leading-relaxed mb-6 text-sm">Manage a fleet of cheap droplets from a single command center. LiteBin uses <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">mTLS</code> to secure communication between your Master and Agents.</p>
+          <ul class="space-y-3 text-sm text-zinc-500">
+            <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Reconciliation loop — Master enforces state from above.</span></li>
+            <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Smart scheduling — deploy to the least-loaded node.</span></li>
+            <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Ultra-lean agent — ~10MB footprint per node.</span></li>
+            <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Optional Cloudflare DNS — agents stay reachable even if the master is down.</span></li>
+          </ul>
+        </div>
+        <div class="glass rounded-2xl p-8 glow relative overflow-hidden">
+          <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(139,92,246,0.08),transparent)]"></div>
+          <div class="relative z-10 flex flex-col items-center gap-4">
+            <div class="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs font-mono">MASTER ORCHESTRATOR</div>
+            <div class="flex items-center gap-1">
+              <div class="w-px h-6 bg-violet-500/40 mx-auto"></div>
+            </div>
+            <div class="flex gap-3 flex-wrap justify-center">
+              <div class="px-3 py-2 glass rounded-lg text-xs font-mono text-zinc-400">AGENT-EU-1</div>
+              <div class="px-3 py-2 glass rounded-lg text-xs font-mono text-zinc-400">AGENT-US-W</div>
+              <div class="px-3 py-2 glass rounded-lg text-xs font-mono text-zinc-400">AGENT-IN-1</div>
+            </div>
+            <p class="text-xs text-zinc-600 mt-2 font-mono">All connected via mTLS</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stack -->
+  <section class="py-20 border-t border-white/5">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-2xl font-black text-white mb-8 uppercase tracking-tight">The L8B Stack.</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div class="p-5 glass rounded-xl"><div class="text-orange-400 font-bold mb-1 text-sm">Rust</div><p class="text-xs text-zinc-500 font-mono leading-snug">Memory-safe control plane.</p></div>
+        <div class="p-5 glass rounded-xl"><div class="text-blue-400 font-bold mb-1 text-sm">Bollard</div><p class="text-xs text-zinc-500 font-mono leading-snug">Async Docker API.</p></div>
+        <div class="p-5 glass rounded-xl"><div class="text-violet-400 font-bold mb-1 text-sm">SQLite</div><p class="text-xs text-zinc-500 font-mono leading-snug">WAL-mode, low-memory persistence.</p></div>
+        <div class="p-5 glass rounded-xl"><div class="text-emerald-400 font-bold mb-1 text-sm">Caddy</div><p class="text-xs text-zinc-500 font-mono leading-snug">Dynamic edge proxy.</p></div>
+        <div class="p-5 glass rounded-xl"><div class="text-fuchsia-400 font-bold mb-1 text-sm">Railpack</div><p class="text-xs text-zinc-500 font-mono leading-snug">Zero-config builds.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Compare -->
+  <section id="compare" class="py-24 border-t border-white/5 bg-night-900/40">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="mb-10">
+        <h2 class="text-2xl font-black text-white uppercase tracking-tight mb-1">How It Stacks Up.</h2>
+        <p class="text-zinc-500 text-sm font-mono">An honest look. We know our lane.</p>
+      </div>
+      <div class="overflow-x-auto rounded-2xl border border-white/8 bg-night-950">
+        <table class="w-full text-left text-sm border-collapse">
+          <thead>
+            <tr class="border-b border-white/8 bg-white/3">
+              <th class="p-4 text-zinc-500 font-semibold text-xs uppercase w-44"></th>
+              <th class="p-4 text-zinc-400 font-semibold text-xs uppercase">Cloud (Vercel / Render)</th>
+              <th class="p-4 text-zinc-400 font-semibold text-xs uppercase">Coolify / Dokku</th>
+              <th class="p-4 text-violet-400 font-semibold text-xs uppercase bg-violet-500/5">LiteBin (L8B)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/5 text-zinc-500 text-xs">
+            <tr>
+              <td class="p-4 text-zinc-300 font-semibold text-sm">Idle stack overhead</td>
+              <td class="p-4">N/A — proprietary infra, you don't see it</td>
+              <td class="p-4">~500 MB+ just to keep the platform running</td>
+              <td class="p-4 text-violet-400 bg-violet-500/3 font-bold text-sm">&lt; 58 MB total resting stack</td>
+            </tr>
+            <tr>
+              <td class="p-4 text-zinc-300 font-semibold text-sm">Hosting model</td>
+              <td class="p-4">Managed SaaS — per app / per seat pricing</td>
+              <td class="p-4">Self-hosted, always-on, VPS cost only</td>
+              <td class="p-4 text-violet-400 bg-violet-500/3 font-bold text-sm">Self-hosted, scale-to-zero, VPS cost only</td>
+            </tr>
+            <tr>
+              <td class="p-4 text-zinc-300 font-semibold text-sm">Deploy from laptop</td>
+              <td class="p-4">Yes — pushes to their cloud via CLI</td>
+              <td class="p-4">No — needs a registry or git repo</td>
+              <td class="p-4 text-violet-400 bg-violet-500/3 font-bold text-sm">Yes — <code class="font-mono text-xs">l8b ship</code> streams image directly, no registry</td>
+            </tr>
+            <tr>
+              <td class="p-4 text-zinc-300 font-semibold text-sm">GitHub Actions CI</td>
+              <td class="p-4">First-class, native integration</td>
+              <td class="p-4">Via webhooks or registry push</td>
+              <td class="p-4 text-violet-400 bg-violet-500/3 font-bold text-sm">Yes — deploy token, one <code class="font-mono text-xs">curl</code> step</td>
+            </tr>
+            <tr class="border-t-2 border-violet-500/20">
+              <td class="p-4 text-zinc-300 font-semibold text-sm">Made for</td>
+              <td class="p-4">High-traffic production apps</td>
+              <td class="p-4">Production self-hosted workloads</td>
+              <td class="p-4 text-violet-400 bg-violet-500/3 font-bold text-sm">Demos, portfolios &amp; low-traffic apps that just need to be live — without paying per-app forever</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-xs text-zinc-700 mt-3 font-mono">* Comparisons are approximate</p>
+    </div>
+  </section>
+
+  <!-- VPS Providers + Not For Production -->
+  <section class="py-20 border-t border-white/5">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="grid lg:grid-cols-2 gap-12">
+        <div>
+          <h3 class="text-lg font-bold text-white mb-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>Need a VPS?</h3>
+          <p class="text-sm text-zinc-500 mb-6">LiteBin thrives on tiny, high-value boxes.</p>
+          <div class="grid grid-cols-2 gap-3">
+            <a href="https://www.hetzner.com/cloud" class="inline-flex items-center justify-between px-4 py-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition font-mono text-sm text-emerald-300 font-semibold"><div><div>Hetzner Cloud</div><div class="text-xs text-emerald-500/60 font-normal mt-0.5">from ~$4/mo</div></div><span>→</span></a>
+            <a href="https://www.digitalocean.com/" class="inline-flex items-center justify-between px-4 py-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition font-mono text-sm text-emerald-300 font-semibold"><div><div>DigitalOcean</div><div class="text-xs text-emerald-500/60 font-normal mt-0.5">from $4/mo</div></div><span>→</span></a>
+            <a href="https://www.vultr.com/" class="inline-flex items-center justify-between px-4 py-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition font-mono text-sm text-emerald-300 font-semibold"><div><div>Vultr VPS</div><div class="text-xs text-emerald-500/60 font-normal mt-0.5">from $2.50/mo</div></div><span>→</span></a>
+            <a href="https://www.lowendbox.com/" class="inline-flex items-center justify-between px-4 py-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition font-mono text-sm text-emerald-300 font-semibold"><div><div>Maybe LowEndBox?</div><div class="text-xs text-emerald-500/60 font-normal mt-0.5">from $1/mo</div></div><span>→</span></a>
+          </div>
+          <p class="text-xs text-zinc-600 mt-3 italic">These links earn a small commission at no extra cost to you.</p>
+        </div>
+        <div>
+          <h3 class="text-lg font-bold text-white mb-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-rose-500"></span>For production, look here.</h3>
+          <p class="text-sm text-zinc-500 mb-6">If your app handles real customer data or needs high availability, <strong class="text-zinc-300">use battle-tested platforms.</strong></p>
+          <p class="text-xs text-zinc-600 mb-3 uppercase tracking-widest">Managed / Cloud</p>
+          <div class="flex flex-wrap gap-2 opacity-50 hover:opacity-100 transition duration-500 mb-5">
+            <span class="px-3 py-1.5 glass rounded-full text-xs font-bold text-zinc-400">RENDER</span>
+            <span class="px-3 py-1.5 glass rounded-full text-xs font-bold text-zinc-400">FLY.IO</span>
+            <span class="px-3 py-1.5 glass rounded-full text-xs font-bold text-zinc-400">VERCEL</span>
+            <span class="px-3 py-1.5 glass rounded-full text-xs font-bold text-zinc-400">CLOUDFLARE</span>
+          </div>
+          <p class="text-xs text-zinc-600 mb-3 uppercase tracking-widest">Self-Hosted</p>
+          <div class="flex flex-wrap gap-2 opacity-50 hover:opacity-100 transition duration-500">
+            <span class="px-3 py-1.5 glass rounded-full text-xs font-bold text-zinc-400">COOLIFY</span>
+            <span class="px-3 py-1.5 glass rounded-full text-xs font-bold text-zinc-400">DOKKU</span>
+            <span class="px-3 py-1.5 glass rounded-full text-xs font-bold text-zinc-400">CAPROVER</span>
+            <span class="px-3 py-1.5 glass rounded-full text-xs font-bold text-zinc-400">SWIFTWAVE</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Roadmap -->
+  <section id="roadmap" class="py-24 border-t border-white/5 bg-night-900/40">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-2xl font-black text-white mb-2 uppercase tracking-tight">Ideas</h2>
+      <p class="text-zinc-500 mb-10 text-sm">Things I might build. No promises.</p>
+      <div class="glass rounded-2xl overflow-hidden flex flex-col md:flex-row min-h-[280px]">
+        <div class="md:w-52 border-b md:border-b-0 md:border-r border-white/8 flex md:flex-col">
+          <button onclick="switchTab('migrations')" id="tab-migrations" class="tab-btn flex-1 p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-cyan-500 bg-white/5">
+            <span class="w-1.5 h-1.5 rounded-full bg-cyan-500 shrink-0"></span><span class="font-semibold text-white text-xs">App Migrations</span>
+          </button>
+          <button onclick="switchTab('backup')" id="tab-backup" class="tab-btn flex-1 p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
+            <span class="w-1.5 h-1.5 rounded-full bg-fuchsia-500 shrink-0"></span><span class="font-semibold text-white text-xs">Backup & Restore</span>
+          </button>
+          <button onclick="switchTab('duplicate')" id="tab-duplicate" class="tab-btn flex-1 p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
+            <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span><span class="font-semibold text-white text-xs">App Duplication</span>
+          </button>
+          <button onclick="switchTab('handover')" id="tab-handover" class="tab-btn flex-1 p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span><span class="font-semibold text-white text-xs">Client Handover</span>
+          </button>
+        </div>
+        <div class="flex-1 p-8">
+          <div id="content-migrations" class="tab-content">
+            <h3 class="text-lg font-bold text-white mb-3">App Migration</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed mb-5">Move apps between agents with one command. Upgrade servers or rebalance your fleet without manual exports and redeploys.</p>
+            <ul class="space-y-2 text-sm text-zinc-500">
+              <li class="flex gap-3"><span class="text-cyan-500">→</span> One command: <code class="font-mono text-xs bg-white/5 px-1.5 py-0.5 rounded">l8b move app agent-2</code></li>
+              <li class="flex gap-3"><span class="text-cyan-500">→</span> Volume data syncs automatically</li>
+              <li class="flex gap-3"><span class="text-cyan-500">→</span> Upgrade servers without starting over</li>
+            </ul>
+          </div>
+          <div id="content-backup" class="tab-content hidden">
+            <h3 class="text-lg font-bold text-white mb-3">Backup & Restore</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed mb-5">Create snapshots of any app — files, database, and env vars included. Download for safekeeping, upload to restore anywhere.</p>
+            <ul class="space-y-2 text-sm text-zinc-500">
+              <li class="flex gap-3"><span class="text-fuchsia-500">→</span> One-click snapshot — files, DB, env vars</li>
+              <li class="flex gap-3"><span class="text-fuchsia-500">→</span> Download and store anywhere</li>
+              <li class="flex gap-3"><span class="text-fuchsia-500">→</span> Upload to restore on any agent</li>
+            </ul>
+          </div>
+          <div id="content-duplicate" class="tab-content hidden">
+            <h3 class="text-lg font-bold text-white mb-3">App Duplication</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed mb-5">Test fearlessly. Create isolated copies of any app with full data and config — perfect for feature branches.</p>
+            <ul class="space-y-2 text-sm text-zinc-500">
+              <li class="flex gap-3"><span class="text-amber-500">→</span> Instant copy of data volumes</li>
+              <li class="flex gap-3"><span class="text-amber-500">→</span> Isolated environment variables</li>
+              <li class="flex gap-3"><span class="text-amber-500">→</span> Branch deploys without rebuild</li>
+            </ul>
+          </div>
+          <div id="content-handover" class="tab-content hidden">
+            <h3 class="text-lg font-bold text-white mb-3">Client Handover</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed mb-5">Develop client demos with L8B convenience. When done, detach the agent and leave only Docker running. Hand the server to your client — clean, zero dependencies.</p>
+            <ul class="space-y-2 text-sm text-zinc-500">
+              <li class="flex gap-3"><span class="text-emerald-500">→</span> Develop with full L8B workflow</li>
+              <li class="flex gap-3"><span class="text-emerald-500">→</span> Detach agent, keep containers</li>
+              <li class="flex gap-3"><span class="text-emerald-500">→</span> Client gets a running server, not a login</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section id="start" class="py-24 border-t border-white/5">
+    <div class="max-w-2xl mx-auto px-6 text-center">
+      <h2 class="text-4xl font-black text-white tracking-tighter mb-3 uppercase italic">Ship <span class="text-violet-500">Everything.</span></h2>
+      <p class="text-zinc-500 mb-10">Stop deleting your work to save $5. Just bin it.</p>
+      <div class="inline-block p-px bg-gradient-to-r from-violet-500 to-fuchsia-600 rounded-xl mb-4">
+        <div class="bg-night-900 px-6 py-4 rounded-[11px] flex items-center gap-4">
+          <code class="text-white font-mono text-sm">curl -sSL l8b.in | sh</code>
+          <button onclick="copyInstall()" id="copy-btn" class="text-zinc-500 hover:text-violet-400 transition" title="Copy">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
+      </div>
+      <p class="text-xs text-zinc-600 font-mono mb-3">Linux · macOS · Windows — x64 / arm64</p>
+      <p class="text-sm text-zinc-500">New to LiteBin? <a href="quickstart.html" class="text-violet-400 hover:underline">View Quick Start →</a></p>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="py-8 border-t border-white/5 text-center">
+    <p class="text-xs text-zinc-600 mb-1">Engineers, not salesmen. LiteBin is for portfolios, demos, and experiments.</p>
+    <p class="font-mono text-xs text-zinc-700">L8B_STACK // BUILT_WITH_RUST</p>
+  </footer>
+
+  <script>
+    // Tab switching
+    const TAB_COLORS = { migrations:'#06b6d4', backup:'#d946ef', duplicate:'#f59e0b', handover:'#10b981' };
+    function switchTab(name) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(el => {
+        el.style.borderLeftColor = 'transparent';
+        el.classList.remove('bg-white/5');
+      });
+      document.getElementById('content-' + name).classList.remove('hidden');
+      const btn = document.getElementById('tab-' + name);
+      btn.style.borderLeftColor = TAB_COLORS[name];
+      btn.classList.add('bg-white/5');
+    }
+
+    // Copy install command
+    function copyInstall() {
+      navigator.clipboard.writeText('curl -sSL l8b.in | sh').then(() => {
+        const btn = document.getElementById('copy-btn');
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        btn.classList.add('text-emerald-400');
+        setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('text-emerald-400'); }, 2500);
+      });
+    }
+
+    // Animate memory bars on load
+    document.querySelectorAll('.bar-fill[data-w]').forEach(el => {
+      setTimeout(() => { el.style.width = el.dataset.w; }, 300);
+    });
+
+    // Scroll fade-in
+    const fadeObs = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); fadeObs.unobserve(e.target); } });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.fade-in').forEach(el => fadeObs.observe(el));
+
+    // Terminal animation
+    const TERM_LINES = [
+      { t:'$ l8b ship',                         c:'cmd', s:55,  p:260 },
+      { t:'Deploy to: New project',              c:'ans', s:30,  p:80  },
+      { t:'Project name: myapp',                 c:'ans', s:30,  p:110 },
+      { t:'  :: Creating project myapp...',      c:'info', s:8,  p:320 },
+      { t:'  ✔ Project created',                 c:'ok',  s:8,  p:80  },
+      { t:'App port: 3000',                           c:'ans',  s:30, p:120 },
+      { t:'  🔍 Detected: Node.js 20 · Express',      c:'info', s:8,  p:60  },
+      { t:'  ✔ Railpack image ready',                 c:'ok',   s:8,  p:700 },
+      { t:'  📦 Image built — 129.04 MiB',            c:'info', s:8,  p:60  },
+      { t:'  🗜️  Compressed to 46.45 MiB',            c:'info', s:8,  p:180 },
+      { t:'  Uploading  ▓▓▓▓▓▓▓▓▓▓▓▓  100%',         c:'info', s:18, p:320 },
+      { t:'  ✔ Deploy successful!',                   c:'ok',   s:8,  p:100 },
+      { t:'  🌐 Live at: https://myapp.l8b.in',       c:'url',  s:10, p:0   },
+    ];
+    function runTerminal() {
+      const container = document.getElementById('term-lines');
+      const cursor = document.getElementById('term-cursor');
+      if (!container) return;
+      container.innerHTML = '';
+      let li = 0, ci = 0;
+      function next() {
+        if (li >= TERM_LINES.length) {
+          setTimeout(() => { container.style.opacity='0'; setTimeout(() => { container.style.opacity='1'; runTerminal(); }, 600); }, 5000);
+          return;
+        }
+        const line = TERM_LINES[li];
+        if (ci === 0) {
+          const el = document.createElement('div');
+          el.className = 'tl ' + line.c;
+          el.id = 'tl-' + li;
+          container.appendChild(el);
+        }
+        const el = document.getElementById('tl-' + li);
+        if (ci < line.t.length) {
+          el.textContent += line.t[ci];
+          ci++;
+          const spd = line.s !== undefined ? line.s : (Math.random() * 8 + 3);
+          setTimeout(next, spd);
+        } else {
+          li++; ci = 0;
+          const pause = TERM_LINES[li - 1]?.p ?? 60;
+          setTimeout(next, pause);
+        }
+      }
+      container.style.transition = 'opacity .5s';
+      next();
+    }
+    const termObs = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) { runTerminal(); termObs.disconnect(); }
+    }, { threshold: 0.3 });
+    const termEl = document.getElementById('term-lines');
+    if (termEl) termObs.observe(termEl.parentElement);
+
+    // Wake cycle
+    const WS_MSGS = [
+      'Container is running and serving traffic.',
+      'No requests for 10m — idle timer started.',
+      'Container stopped. Memory freed. Routes removed.',
+      'Request received → Waker is starting the container…',
+    ];
+    let wsIdx = 0;
+    function stepWake() {
+      for (let i = 0; i < 4; i++) {
+        const row = document.getElementById('si-' + i);
+        const panel = document.getElementById('ap-' + i);
+        if (row) row.classList.remove('active');
+        if (panel) panel.style.opacity = '0';
+      }
+      const row = document.getElementById('si-' + wsIdx);
+      const panel = document.getElementById('ap-' + wsIdx);
+      if (row) row.classList.add('active');
+      if (panel) panel.style.opacity = '1';
+      if (wsIdx === 3) {
+        const prog = document.getElementById('wake-prog');
+        if (prog) { prog.style.transition='none'; prog.style.width='5%'; requestAnimationFrame(() => { prog.style.transition='width 2s ease-out'; prog.style.width='88%'; }); }
+      }
+      const msg = document.getElementById('wake-msg');
+      if (msg) msg.textContent = WS_MSGS[wsIdx];
+      wsIdx = (wsIdx + 1) % 4;
+    }
+    stepWake();
+    setInterval(stepWake, 2400);
+
+    // Glitch title
+    document.addEventListener('DOMContentLoaded', () => {
+      const el = document.getElementById('glitch-title');
+      if (!el) return;
+      const variants = el.dataset.variants.split('|');
+      const glitchChars = '!@#$%^&*_+-[]{}|<>?~';
+      const glitchColors = ['#22d3ee','#e879f9','#fbbf24','#34d399','#f472b6','#a78bfa'];
+      let idx = 0;
+
+      function setText(text) {
+        el.innerHTML = '';
+        [...text].forEach(ch => {
+          const s = document.createElement('span');
+          s.className = 'char';
+          s.textContent = ch;
+          if (ch === '.' || /[0-9]/.test(ch)) s.style.color = '#7c3aed';
+          el.appendChild(s);
+        });
+      }
+
+      function glitchTo(to) {
+        const maxLen = Math.max(el.children.length, to.length);
+        while (el.children.length < maxLen) { const s = document.createElement('span'); s.className='char'; el.appendChild(s); }
+        while (el.children.length > maxLen) el.removeChild(el.lastChild);
+        const chars = el.querySelectorAll('.char');
+        let step = 0;
+        const iv = setInterval(() => {
+          step++;
+          for (let i = 0; i < maxLen; i++) {
+            const target = to[i] || '';
+            if (step > 6) {
+              chars[i].textContent = target;
+              chars[i].style.color = (target === '.' || /[0-9]/.test(target)) ? '#7c3aed' : '';
+            } else if (Math.random() < 0.6) {
+              chars[i].textContent = glitchChars[Math.floor(Math.random() * glitchChars.length)];
+              chars[i].style.color = glitchColors[Math.floor(Math.random() * glitchColors.length)];
+            }
+          }
+          if (step >= 10) {
+            clearInterval(iv);
+            while (el.children.length > to.length) el.removeChild(el.lastChild);
+          }
+        }, 55);
+      }
+
+      setText(variants[0]);
+
+      setInterval(() => {
+        idx = (idx + 1) % variants.length;
+        glitchTo(variants[idx]);
+      }, 3000);
+
+      setInterval(() => {
+        const chars = el.querySelectorAll('.char');
+        if (chars.length && Math.random() < 0.3) {
+          const c = chars[Math.floor(Math.random() * chars.length)];
+          c.classList.add('glitching');
+          setTimeout(() => c.classList.remove('glitching'), 100);
+        }
+      }, 200);
+    });
+  </script>
+</body>
+</html>

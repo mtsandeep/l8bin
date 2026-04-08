@@ -1,0 +1,100 @@
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
+    container_name: litebin-orchestrator
+    restart: unless-stopped
+    ports:
+      - "5080:5080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - orchestrator-data:/app/data
+      - ./projects:/app/projects
+    env_file:
+      - .env
+    depends_on:
+      - caddy
+    networks:
+      - litebin-network
+    profiles:
+      - master
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    container_name: litebin-dashboard
+    restart: unless-stopped
+    networks:
+      - litebin-network
+    profiles:
+      - master
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: litebin-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      # Persist Caddy's internal root CA across restarts
+      - caddy-root:/root/.local/share/caddy
+    networks:
+      - litebin-network
+
+  # Local agent for development/testing multi-node flows without a second server.
+  # Usage: docker compose --profile agent up
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: litebin-agent-local
+    restart: unless-stopped
+    ports:
+      - "5083:8443"
+      - "8080:80"      # agent Caddy HTTP (dev only)
+      - "8444:443"     # agent Caddy HTTPS (dev only)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./projects:/app/projects
+    env_file:
+      - .env
+    networks:
+      - litebin-network
+    profiles:
+      - agent
+
+  # Caddy sidecar for the agent (Mode B — cloudflare_dns).
+  # Shares the agent's network namespace so Caddy can proxy to containers.
+  # Usage: docker compose --profile agent up
+  agent-caddy:
+    image: caddy:2-alpine
+    container_name: litebin-agent-caddy
+    restart: unless-stopped
+    network_mode: "service:agent"
+    volumes:
+      - caddy-agent-data:/data
+      - caddy-agent-config:/config
+    profiles:
+      - agent
+
+networks:
+  litebin-network:
+    name: litebin-network
+    driver: bridge
+
+volumes:
+  orchestrator-data:
+  caddy-data:
+  caddy-config:
+  caddy-root:
+  caddy-agent-data:
+  caddy-agent-config:
