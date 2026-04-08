@@ -18,10 +18,10 @@ $ErrorActionPreference = "Stop"
 $Repo = "mtsandeep/l8bin"
 $L8B_IN = "https://l8b.in"
 
-# ── Colors ──────────────────────────────────────────────────────────────────
+# -- Colors ------------------------------------------------------------------
 function Write-Step($msg) {
     Write-Host ""
-    Write-Host "── $msg ──" -ForegroundColor Cyan
+    Write-Host "-- $msg --" -ForegroundColor Cyan
 }
 
 function Write-Info($msg) {
@@ -32,7 +32,7 @@ function Write-Err($msg) {
     Write-Host "Error: $msg" -ForegroundColor Red
 }
 
-# ── Clean ──────────────────────────────────────────────────────────────────
+# -- Clean ------------------------------------------------------------------
 if ($Clean) {
     Write-Step "Cleaning up"
     $dir = if ($InstallDir) { $InstallDir } else { Join-Path $env:USERPROFILE "litebin" }
@@ -49,7 +49,7 @@ if ($Clean) {
     exit 0
 }
 
-# ── Banner ─────────────────────────────────────────────────────────────────
+# -- Banner -----------------------------------------------------------------
 Write-Host ""
 Write-Host "  ██╗      █████╗ ██████╗ ██╗███╗   ██╗" -ForegroundColor Magenta
 Write-Host "  ██║     ██╔══██╗██╔══██╗██║████╗  ██║" -ForegroundColor Magenta
@@ -61,7 +61,7 @@ Write-Host ""
 Write-Host "  LiteBin for Windows" -ForegroundColor White
 Write-Host ""
 
-# ── Prerequisites ──────────────────────────────────────────────────────────
+# -- Prerequisites ----------------------------------------------------------
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Err "Docker Desktop is required. Install it from https://docs.docker.com/desktop/setup/install/windows-install/"
     exit 1
@@ -75,7 +75,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Info "Docker Compose available"
 
-# ── Install directory ───────────────────────────────────────────────────────
+# -- Install directory -------------------------------------------------------
 if (-not $InstallDir) {
     $InstallDir = Join-Path (Get-Location) "litebin"
 }
@@ -84,10 +84,10 @@ $OrchDir = Join-Path $InstallDir "orchestrator"
 $DashDir = Join-Path $InstallDir "dashboard"
 $ProjectsDir = Join-Path $InstallDir "projects"
 
-# ── Detect arch ─────────────────────────────────────────────────────────────
+# -- Detect arch -------------------------------------------------------------
 $Arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64" } else { "x86_64" }
 
-# ── Get latest release ──────────────────────────────────────────────────────
+# -- Get latest release ------------------------------------------------------
 $ReleaseDir = $env:L8B_RELEASE_DIR
 
 if ($ReleaseDir) {
@@ -107,12 +107,12 @@ if ($ReleaseDir) {
     $ReleaseBase = "https://github.com/$Repo/releases/download/$Tag"
 }
 
-# ── Create directories ──────────────────────────────────────────────────────
+# -- Create directories ------------------------------------------------------
 foreach ($d in @($InstallDir, $OrchDir, $DashDir, $ProjectsDir)) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 
-# ── Orchestrator binary ─────────────────────────────────────────────────────
+# -- Orchestrator binary -----------------------------------------------------
 $orchFile = Join-Path $OrchDir "litebin-orchestrator"
 
 if ($ReleaseDir) {
@@ -127,7 +127,7 @@ if ($ReleaseDir) {
 $orchMB = [math]::Round((Get-Item $orchFile).Length / 1MB, 1)
 Write-Info "  litebin-orchestrator-$Arch-linux  (${orchMB} MB)"
 
-# ── Dashboard ──────────────────────────────────────────────────────────────
+# -- Dashboard --------------------------------------------------------------
 $dashDist = Join-Path $DashDir "dist"
 New-Item -ItemType Directory -Force -Path $dashDist | Out-Null
 
@@ -146,7 +146,7 @@ if ($ReleaseDir -and (Test-Path (Join-Path $ReleaseDir "l8b-dashboard-dist"))) {
 $dashKB = [math]::Round((Get-ChildItem $dashDist -Recurse | Measure-Object -Property Length -Sum).Sum / 1KB, 1)
 Write-Info "  l8b-dashboard-dist  (${dashKB} KB)"
 
-# ── Generate orchestrator Dockerfile ───────────────────────────────────────
+# -- Generate orchestrator Dockerfile ---------------------------------------
 Set-Content -Path (Join-Path $OrchDir "Dockerfile") -Value @"
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -158,14 +158,14 @@ EXPOSE 5080
 CMD ["/app/litebin-orchestrator"]
 "@
 
-# ── Generate dashboard Dockerfile ──────────────────────────────────────────
+# -- Generate dashboard Dockerfile ------------------------------------------
 Set-Content -Path (Join-Path $DashDir "Dockerfile") -Value @"
 FROM nginx:alpine
 COPY dist/ /usr/share/nginx/html/
 EXPOSE 80
 "@
 
-# ── Generate .env ──────────────────────────────────────────────────────────
+# -- Generate .env ----------------------------------------------------------
 $Timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 Set-Content -Path (Join-Path $InstallDir ".env") -Value @"
 # LiteBin Master Configuration
@@ -197,7 +197,7 @@ JANITOR_INTERVAL_SECS=300
 ROUTING_MODE=master_proxy
 "@
 
-# ── Generate Caddyfile ────────────────────────────────────────────────────
+# -- Generate Caddyfile ----------------------------------------------------
 Set-Content -Path (Join-Path $InstallDir "Caddyfile") -Value @"
 {
 	admin 0.0.0.0:2019
@@ -240,7 +240,7 @@ Set-Content -Path (Join-Path $InstallDir "Caddyfile") -Value @"
 }
 "@
 
-# ── Generate docker-compose.yml ────────────────────────────────────────────
+# -- Generate docker-compose.yml --------------------------------------------
 Set-Content -Path (Join-Path $InstallDir "docker-compose.yml") -Value @"
 services:
   orchestrator:
@@ -297,13 +297,13 @@ volumes:
   caddy-root:
 "@
 
-# ── Start ──────────────────────────────────────────────────────────────────
+# -- Start ------------------------------------------------------------------
 Write-Step "Starting LiteBin"
 Push-Location $InstallDir
 docker compose up -d --build
 Pop-Location
 
-# ── Done ───────────────────────────────────────────────────────────────────
+# -- Done -------------------------------------------------------------------
 if ($Domain -eq "localhost") {
     $DashboardUrl = "https://${DashboardSub}.localhost"
 } else {

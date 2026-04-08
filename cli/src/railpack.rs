@@ -131,6 +131,7 @@ async fn download_railpack(bin_path: &Path) -> Result<String> {
 
     #[cfg(unix)]
     {
+        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(bin_path, std::fs::Permissions::from_mode(0o755))?;
     }
 

@@ -4,12 +4,17 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0)'
+        required: true
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  build-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,39 +26,26 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Add targets
-        run: rustup target add aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-apple-darwin
+        run: rustup target add aarch64-unknown-linux-gnu
 
-      # ── CLI ──────────────────────────────────────────────
       - name: Build CLI (linux x86_64)
         run: cargo build --release -p l8b --target x86_64-unknown-linux-gnu
 
       - name: Build CLI (linux aarch64)
         run: cargo build --release -p l8b --target aarch64-unknown-linux-gnu
 
-      - name: Build CLI (windows x86_64)
-        run: cargo build --release -p l8b --target x86_64-pc-windows-msvc
-
-      - name: Build CLI (macOS x86_64)
-        run: cargo build --release -p l8b --target x86_64-apple-darwin
-
-      - name: Build CLI (macOS aarch64)
-        run: cargo build --release -p l8b --target aarch64-apple-darwin
-
-      # ── Orchestrator ────────────────────────────────────
       - name: Build Orchestrator (linux x86_64)
         run: cargo build --release -p litebin-orchestrator --target x86_64-unknown-linux-gnu
 
       - name: Build Orchestrator (linux aarch64)
         run: cargo build --release -p litebin-orchestrator --target aarch64-unknown-linux-gnu
 
-      # ── Agent ───────────────────────────────────────────
       - name: Build Agent (linux x86_64)
         run: cargo build --release --bin litebin-agent --target x86_64-unknown-linux-gnu
 
       - name: Build Agent (linux aarch64)
         run: cargo build --release --bin litebin-agent --target aarch64-unknown-linux-gnu
 
-      # ── Dashboard ───────────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -68,52 +60,113 @@ jobs:
           tar -czf ../l8b-dashboard.tar.gz dist/
           cd ../dashboard && zip -r ../l8b-dashboard.zip dist/
 
-      # ── Package ─────────────────────────────────────────
-      - name: Rename binaries
-        working-directory: target
+      - name: Stage artifacts
         run: |
-          # CLI
-          cp x86_64-unknown-linux-gnu/release/l8b l8b-x86_64-linux
-          cp aarch64-unknown-linux-gnu/release/l8b l8b-aarch64-linux
-          cp x86_64-pc-windows-msvc/release/l8b.exe l8b-x86_64-windows.exe
-          cp x86_64-apple-darwin/release/l8b l8b-x86_64-macos
-          cp aarch64-apple-darwin/release/l8b l8b-aarch64-macos
-          # Orchestrator
-          cp x86_64-unknown-linux-gnu/release/litebin-orchestrator litebin-orchestrator-x86_64-linux
-          cp aarch64-unknown-linux-gnu/release/litebin-orchestrator litebin-orchestrator-aarch64-linux
-          # Agent
-          cp x86_64-unknown-linux-gnu/release/litebin-agent litebin-agent-x86_64-linux
-          cp aarch64-unknown-linux-gnu/release/litebin-agent litebin-agent-aarch64-linux
+          mkdir -p staging
+          cp target/x86_64-unknown-linux-gnu/release/l8b staging/l8b-x86_64-linux
+          cp target/aarch64-unknown-linux-gnu/release/l8b staging/l8b-aarch64-linux
+          cp target/x86_64-unknown-linux-gnu/release/litebin-orchestrator staging/litebin-orchestrator-x86_64-linux
+          cp target/aarch64-unknown-linux-gnu/release/litebin-orchestrator staging/litebin-orchestrator-aarch64-linux
+          cp target/x86_64-unknown-linux-gnu/release/litebin-agent staging/litebin-agent-x86_64-linux
+          cp target/aarch64-unknown-linux-gnu/release/litebin-agent staging/litebin-agent-aarch64-linux
+          cp l8b-dashboard.tar.gz staging/
+          cp l8b-dashboard.zip staging/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: staging/*
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add targets
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Build CLI (macOS aarch64)
+        run: cargo build --release -p l8b
+
+      - name: Build CLI (macOS x86_64)
+        run: cargo build --release -p l8b --target x86_64-apple-darwin
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p staging
+          cp target/release/l8b staging/l8b-aarch64-macos
+          cp target/x86_64-apple-darwin/release/l8b staging/l8b-x86_64-macos
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: staging/*
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build CLI (windows x86_64)
+        run: cargo build --release -p l8b
+
+      - name: Stage artifact
+        run: |
+          mkdir staging
+          Copy-Item target/release/l8b.exe staging/l8b-x86_64-windows.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: staging/*
+
+  release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Generate checksums
-        working-directory: target
+        working-directory: artifacts
         run: |
-          sha256sum l8b-x86_64-linux > ../checksums.txt
-          sha256sum l8b-aarch64-linux >> ../checksums.txt
-          sha256sum l8b-x86_64-windows.exe >> ../checksums.txt
-          sha256sum l8b-x86_64-macos >> ../checksums.txt
-          sha256sum l8b-aarch64-macos >> ../checksums.txt
-          sha256sum litebin-orchestrator-x86_64-linux >> ../checksums.txt
-          sha256sum litebin-orchestrator-aarch64-linux >> ../checksums.txt
-          sha256sum litebin-agent-x86_64-linux >> ../checksums.txt
-          sha256sum litebin-agent-aarch64-linux >> ../checksums.txt
-          cd .. && sha256sum l8b-dashboard.tar.gz >> checksums.txt
-          sha256sum l8b-dashboard.zip >> checksums.txt
+          sha256sum linux/l8b-x86_64-linux > checksums.txt
+          sha256sum linux/l8b-aarch64-linux >> checksums.txt
+          sha256sum windows/l8b-x86_64-windows.exe >> checksums.txt
+          sha256sum macos/l8b-x86_64-macos >> checksums.txt
+          sha256sum macos/l8b-aarch64-macos >> checksums.txt
+          sha256sum linux/litebin-orchestrator-x86_64-linux >> checksums.txt
+          sha256sum linux/litebin-orchestrator-aarch64-linux >> checksums.txt
+          sha256sum linux/litebin-agent-x86_64-linux >> checksums.txt
+          sha256sum linux/litebin-agent-aarch64-linux >> checksums.txt
+          sha256sum linux/l8b-dashboard.tar.gz >> checksums.txt
+          sha256sum linux/l8b-dashboard.zip >> checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            target/l8b-x86_64-linux
-            target/l8b-aarch64-linux
-            target/l8b-x86_64-windows.exe
-            target/l8b-x86_64-macos
-            target/l8b-aarch64-macos
-            target/litebin-orchestrator-x86_64-linux
-            target/litebin-orchestrator-aarch64-linux
-            target/litebin-agent-x86_64-linux
-            target/litebin-agent-aarch64-linux
-            l8b-dashboard.tar.gz
-            l8b-dashboard.zip
-            checksums.txt
+            artifacts/linux/l8b-x86_64-linux
+            artifacts/linux/l8b-aarch64-linux
+            artifacts/windows/l8b-x86_64-windows.exe
+            artifacts/macos/l8b-x86_64-macos
+            artifacts/macos/l8b-aarch64-macos
+            artifacts/linux/litebin-orchestrator-x86_64-linux
+            artifacts/linux/litebin-orchestrator-aarch64-linux
+            artifacts/linux/litebin-agent-x86_64-linux
+            artifacts/linux/litebin-agent-aarch64-linux
+            artifacts/linux/l8b-dashboard.tar.gz
+            artifacts/linux/l8b-dashboard.zip
+            artifacts/checksums.txt
           generate_release_notes: true
