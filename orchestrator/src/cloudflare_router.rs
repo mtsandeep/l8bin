@@ -410,6 +410,50 @@ impl CloudflareDnsRouter {
             }
         }
 
+        // Also keep DNS records for sleeping projects that have custom domains,
+        // so the domain still resolves and reaches the waker.
+        let sleeping_cd: Vec<(String, Option<String>, String)> = sqlx::query_as(
+            "SELECT p.id, p.node_id, p.custom_domain FROM projects p \
+             WHERE p.status IN ('stopped', 'stopping') \
+             AND p.custom_domain IS NOT NULL AND p.custom_domain != ''",
+        )
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default();
+
+        for (_project_id, node_id, custom_domain) in &sleeping_cd {
+            let node_ip = match node_id.as_deref() {
+                Some(nid) if nid != "local" => {
+                    let row: Option<(Option<String>,)> = sqlx::query_as(
+                        "SELECT public_ip FROM nodes WHERE id = ?",
+                    )
+                    .bind(nid)
+                    .fetch_optional(&self.db)
+                    .await
+                    .unwrap_or(None);
+                    row.and_then(|(ip,)| ip)
+                }
+                _ => {
+                    if self.config.public_ip.is_empty() {
+                        continue;
+                    }
+                    Some(self.config.public_ip.clone())
+                }
+            };
+
+            if let Some(ip) = node_ip {
+                if !ip.is_empty() {
+                    desired.insert(custom_domain.clone(), ip.clone());
+                    let www = if custom_domain.starts_with("www.") {
+                        custom_domain[4..].to_string()
+                    } else {
+                        format!("www.{}", custom_domain)
+                    };
+                    desired.insert(www, ip);
+                }
+            }
+        }
+
         let domain_suffix = format!(".{}", domain);
 
         // List existing A records for our domain

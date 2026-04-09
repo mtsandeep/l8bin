@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO="mtsandeep/l8bin"
 L8B_IN="${L8B_IN:-https://l8b.in}"
+CHANGELOG_URL="${CHANGELOG_URL:-https://github.com/${REPO}/releases}"
 
 # -- Colors ------------------------------------------------------------------
 RED='\033[0;31m'
@@ -232,15 +233,11 @@ install_master() {
   ensure_docker
   ensure_docker_compose
 
-  # Check for existing installation
+  # Check for existing installation → redirect to update
   if [ -f "${install_dir}/docker-compose.yml" ]; then
     if docker compose -f "${install_dir}/docker-compose.yml" ps --format '{{.Names}}' 2>/dev/null | grep -q "litebin"; then
-      echo ""
-      warn "LiteBin is already running in ${install_dir}"
-      if ! prompt_yes "Continue and reinstall?"; then
-        info "Cancelled."
-        exit 0
-      fi
+      update_master
+      exit $?
     fi
   fi
 
@@ -514,6 +511,9 @@ COMPOSE_EOF
   echo ""
 
   echo -e "  Manage LiteBin:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
+
+  # Save installed version
+  echo "$release_url" > "${install_dir}/.version"
 }
 
 # -- Worker Node Setup ------------------------------------------------------
@@ -862,6 +862,246 @@ AGENT_DOCKERFILE
   echo -e "  View logs: ${DIM}docker logs -f litebin-agent${NC}"
 }
 
+# -- Master Update -----------------------------------------------------------
+update_master() {
+  local platform arch
+
+  platform=$(detect_platform)
+  arch=$(detect_arch)
+
+  # Find install directory
+  local install_dir
+  if [ "$(id -u)" -eq 0 ] && [ -d "/opt/litebin" ]; then
+    install_dir="/opt/litebin"
+  elif [ -d "${HOME}/litebin" ]; then
+    install_dir="${HOME}/litebin"
+  else
+    die "LiteBin not found. Run 'curl -sSL ${L8B_IN} | bash -s master' to install."
+  fi
+
+  ensure_docker
+  ensure_docker_compose
+
+  # Get current version
+  local current_version="unknown"
+  if [ -f "${install_dir}/.version" ]; then
+    current_version=$(cat "${install_dir}/.version")
+  fi
+
+  # Get latest release
+  local latest_release
+  latest_release=$(get_latest_release)
+
+  echo ""
+  echo -e "${BOLD}LiteBin Update${NC}"
+  echo ""
+  echo -e "  Current version:  ${CYAN}${current_version}${NC}"
+  echo -e "  Latest version:   ${CYAN}${latest_release}${NC}"
+  echo ""
+  echo -e "  Changelog: ${DIM}${CHANGELOG_URL}${NC}"
+  echo ""
+
+  local target_release
+
+  if [ "$current_version" = "$latest_release" ]; then
+    if ! prompt_yes "Already up to date. Reinstall?"; then
+      info "Cancelled."
+      exit 0
+    fi
+    target_release="$latest_release"
+  else
+    echo "  Options:"
+    echo -e "    1) Update to ${CYAN}${latest_release}${NC} (latest)"
+    echo "    2) Enter a specific version"
+    echo ""
+    local choice
+    echo -ne "  ${CYAN}Choose [1]:${NC} "
+    _tty_read choice
+    case "${choice:-1}" in
+      2)
+        prompt "Enter version (e.g. v0.1.2)" target_release ""
+        [ -z "$target_release" ] && die "Version is required"
+        # Verify release exists on GitHub
+        if [ -z "${L8B_RELEASE_DIR:-}" ]; then
+          if ! curl -sf "https://api.github.com/repos/${REPO}/releases/tags/${target_release}" 2>/dev/null | grep -q '"tag_name"'; then
+            die "Release ${target_release} not found. Check available releases at ${CHANGELOG_URL}"
+          fi
+        fi
+        ;;
+      *)
+        target_release="$latest_release"
+        ;;
+    esac
+  fi
+
+  # Confirm
+  echo ""
+  if ! prompt_yes "Update from ${current_version} to ${target_release}?"; then
+    info "Cancelled."
+    exit 0
+  fi
+
+  # Early check: docker-compose.yml changes (before downloading anything)
+  # If compose changed, user can review and decide to proceed or exit
+  local compose_changed=false
+  local tmp_compose
+  tmp_compose=$(mktemp)
+
+  local orch_volumes="      - /var/run/docker.sock:/var/run/docker.sock
+      - orchestrator-data:/app/data
+      - ./projects:/app/projects"
+  if grep -q "MASTER_CA_CERT_PATH" "${install_dir}/.env" 2>/dev/null; then
+    local certs_dir
+    if [ "$(id -u)" -eq 0 ] && [ -d "/etc/litebin/certs" ]; then
+      certs_dir="/etc/litebin/certs"
+    else
+      certs_dir="${install_dir}/certs"
+    fi
+    orch_volumes="${orch_volumes}
+      - ${certs_dir}:/certs:ro"
+  fi
+
+  cat > "$tmp_compose" <<COMPOSE_EOF
+services:
+  orchestrator:
+    build: ./orchestrator
+    container_name: litebin-orchestrator
+    restart: unless-stopped
+    volumes:
+${orch_volumes}
+    env_file:
+      - .env
+    depends_on:
+      - caddy
+    networks:
+      - litebin-network
+
+  dashboard:
+    build: ./dashboard
+    container_name: litebin-dashboard
+    restart: unless-stopped
+    networks:
+      - litebin-network
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: litebin-caddy
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - caddy-root:/root/.local/share/caddy
+    networks:
+      - litebin-network
+
+networks:
+  litebin-network:
+    name: litebin-network
+    driver: bridge
+
+volumes:
+  orchestrator-data:
+  caddy-data:
+  caddy-config:
+  caddy-root:
+COMPOSE_EOF
+
+  if ! diff -q "$tmp_compose" "${install_dir}/docker-compose.yml" >/dev/null 2>&1; then
+    compose_changed=true
+    echo ""
+    warn "docker-compose.yml needs to be updated in this version:"
+    echo ""
+    diff "${install_dir}/docker-compose.yml" "$tmp_compose" || true
+    echo ""
+    echo -e "  Review the changelog for details: ${DIM}${CHANGELOG_URL}${NC}"
+    echo ""
+    if ! prompt_yes "Apply these changes?"; then
+      info "Skipped. Update docker-compose.yml manually if needed, then re-run the update."
+      rm -f "$tmp_compose"
+      exit 0
+    fi
+    cp "$tmp_compose" "${install_dir}/docker-compose.yml"
+    info "docker-compose.yml updated"
+  fi
+  rm -f "$tmp_compose"
+
+  # Backup database before restart
+  info "Backing up database..."
+  local backup_ok=false
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "litebin-orchestrator"; then
+    local backup_path="${install_dir}/backups/litebin.db.$(date +%Y%m%d%H%M%S)"
+    mkdir -p "${install_dir}/backups"
+    if docker cp litebin-orchestrator:/app/data/litebin.db "$backup_path" 2>/dev/null; then
+      info "Database backed up to ${backup_path}"
+      backup_ok=true
+    fi
+  fi
+  if [ "$backup_ok" = false ]; then
+    warn "Could not backup database (orchestrator not running or no data yet)"
+  fi
+
+  # Download new orchestrator binary
+  download_and_verify \
+    "https://github.com/${REPO}/releases/download/${target_release}/litebin-orchestrator-${arch}-linux" \
+    "${install_dir}/orchestrator/litebin-orchestrator" \
+    "orchestrator ${target_release} (${arch})"
+  chmod +x "${install_dir}/orchestrator/litebin-orchestrator"
+
+  # Download new dashboard
+  if [ -n "${L8B_RELEASE_DIR:-}" ] && [ -d "${L8B_RELEASE_DIR}/l8b-dashboard-dist" ]; then
+    info "Using local dashboard..."
+    mkdir -p "${install_dir}/dashboard/dist"
+    cp -r "${L8B_RELEASE_DIR}/l8b-dashboard-dist/." "${install_dir}/dashboard/dist/"
+  else
+    local tmp_tar="/tmp/l8b-dashboard.tar.gz"
+    download_and_verify \
+      "https://github.com/${REPO}/releases/download/${target_release}/l8b-dashboard.tar.gz" \
+      "$tmp_tar" \
+      "dashboard ${target_release}"
+    tar -xzf "$tmp_tar" -C "${install_dir}/dashboard/"
+    rm -f "$tmp_tar"
+  fi
+
+  # Save installed version
+  echo "$target_release" > "${install_dir}/.version"
+
+  # Confirm restart
+  echo ""
+  if ! prompt_yes "Restart LiteBin now?"; then
+    info "Update ready. Restart manually when ready:"
+    echo -e "  ${DIM}cd ${install_dir} && docker compose up -d --build${NC}"
+    exit 0
+  fi
+
+  # Restart
+  info "Restarting LiteBin..."
+  (cd "$install_dir" && docker compose up -d --build 2>&1 | tail -5)
+
+  # Verify
+  echo ""
+  info "Waiting for services to start..."
+  sleep 3
+
+  if [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" = "true" ]; then
+    echo ""
+    echo -e "${GREEN}${BOLD}  LiteBin ${target_release} is running!${NC}"
+    echo ""
+    echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
+  else
+    warn "Orchestrator may not have started successfully."
+    echo -e "  Check logs: ${DIM}cd ${install_dir} && docker compose logs -f orchestrator${NC}"
+  fi
+}
+
 # -- Interactive Menu --------------------------------------------------------
 show_menu() {
   # If no terminal at all (piped in CI/script), print usage and exit
@@ -874,11 +1114,13 @@ show_menu() {
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
     echo "  agent     Set up a worker node (Linux only)"
     echo "  cli       Install the l8b CLI tool"
+    echo "  update    Update LiteBin to the latest version"
     echo ""
     echo "Examples:"
     echo "  curl -sSL ${L8B_IN} | bash -s master"
     echo "  curl -sSL ${L8B_IN} | bash -s agent"
     echo "  curl -sSL ${L8B_IN} | bash -s cli"
+    echo "  curl -sSL ${L8B_IN} | bash -s update"
     exit 1
   fi
 
@@ -898,9 +1140,10 @@ show_menu() {
   echo "    2) Agent Node (worker daemon)"
   echo "    3) CLI only (l8b deploy tool)"
   echo "    4) Setup multi-node (generate/regenerate mTLS certs)"
+  echo "    5) Update LiteBin"
   echo ""
   local choice
-  echo -ne "  ${CYAN}Enter your choice [1-4]:${NC} "
+  echo -ne "  ${CYAN}Enter your choice [1-5]:${NC} "
   _tty_read choice
   echo ""
 
@@ -909,7 +1152,8 @@ show_menu() {
     2) install_agent ;;
     3) install_cli ;;
     4) regenerate_certs ;;
-    *) die "Invalid choice. Enter 1, 2, 3, or 4." ;;
+    5) update_master ;;
+    *) die "Invalid choice. Enter 1, 2, 3, 4, or 5." ;;
   esac
 }
 
@@ -919,6 +1163,7 @@ case "${1:-}" in
   agent)   install_agent ;;
   cli)     install_cli ;;
   certs)   regenerate_certs ;;
+  update)  update_master ;;
   -h|--help|"help")
     echo -e "${BOLD}LiteBin Installer${NC}"
     echo ""
@@ -928,6 +1173,7 @@ case "${1:-}" in
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
     echo "  agent     Set up a worker node (Linux only)"
     echo "  cli       Install the l8b CLI tool"
+    echo "  update    Update LiteBin to the latest version"
     echo "  certs     Setup multi-node / regenerate mTLS certs (run on master)"
     ;;
   "")       show_menu ;;

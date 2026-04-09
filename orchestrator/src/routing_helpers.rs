@@ -70,6 +70,48 @@ pub async fn resolve_routes(
     Ok(routes)
 }
 
+/// Resolve routes for sleeping projects that have custom domains.
+/// These routes point to the orchestrator waker so that visiting a custom domain
+/// of a sleeping app triggers the wake (same as the `*.{domain}` catch-all does for subdomains).
+pub async fn resolve_sleeping_custom_domain_routes(
+    db: &SqlitePool,
+    domain: &str,
+    orchestrator_upstream: &str,
+) -> anyhow::Result<Vec<ProjectRoute>> {
+    let sleeping = sqlx::query_as::<_, Project>(
+        "SELECT * FROM projects WHERE status IN ('stopped', 'stopping') AND custom_domain IS NOT NULL AND custom_domain != ''",
+    )
+    .fetch_all(db)
+    .await?;
+
+    let mut routes = Vec::with_capacity(sleeping.len());
+    for project in &sleeping {
+        let node_public_ip = match project.node_id.as_deref() {
+            Some(node_id) if node_id != "local" => {
+                let row: Option<(Option<String>,)> = sqlx::query_as(
+                    "SELECT public_ip FROM nodes WHERE id = ?",
+                )
+                .bind(node_id)
+                .fetch_optional(db)
+                .await?;
+                row.and_then(|(ip,)| ip)
+            }
+            _ => None,
+        };
+
+        routes.push(ProjectRoute {
+            project_id: project.id.clone(),
+            subdomain_host: format!("{}.{}", project.id, domain),
+            upstream: orchestrator_upstream.to_string(),
+            custom_domain: project.custom_domain.clone(),
+            node_id: project.node_id.clone(),
+            node_public_ip,
+        });
+    }
+
+    Ok(routes)
+}
+
 /// Background task that debounces route sync signals.
 /// Receives signals via the channel, waits 500ms after the first signal
 /// to batch any rapid-fire completions, then performs a single sync.
@@ -104,13 +146,19 @@ pub async fn run_route_sync(
         };
 
         let orchestrator_upstream = format!("litebin-orchestrator:{}", config.port);
-        let routes = match resolve_routes(&all_running, &db, &config.domain).await {
+        let mut routes = match resolve_routes(&all_running, &db, &config.domain).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "route sync: failed to resolve routes");
                 continue;
             }
         };
+
+        // Include sleeping custom domain routes so they reach the waker
+        match resolve_sleeping_custom_domain_routes(&db, &config.domain, &orchestrator_upstream).await {
+            Ok(sleeping_cd_routes) => routes.extend(sleeping_cd_routes),
+            Err(e) => tracing::warn!(error = %e, "route sync: failed to resolve sleeping custom domain routes"),
+        }
 
         let r = router.read().await.clone();
         if let Err(e) = r

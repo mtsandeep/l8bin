@@ -347,34 +347,57 @@ pub async fn wake(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let subdomain = host
-        .split('.')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let domain_suffix = format!(".{}", state.config.domain);
 
-    if subdomain.is_empty() {
-        return (StatusCode::NOT_FOUND, "unknown project").into_response();
-    }
-
-    let project = match sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE id = ?",
-    )
-    .bind(&subdomain)
-    .fetch_optional(&state.db)
-    .await
-    {
-        Ok(Some(p)) => p,
-        Ok(None) => {
-            return (StatusCode::NOT_FOUND, format!("project '{}' not found", subdomain))
-                .into_response();
+    let project = if host.ends_with(&domain_suffix) {
+        // Subdomain URL (e.g., myapp.l8b.in) — extract project ID
+        let subdomain = host.split('.').next().unwrap_or("");
+        if subdomain.is_empty() {
+            return (StatusCode::NOT_FOUND, "unknown project").into_response();
         }
-        Err(e) => {
-            tracing::error!(error = %e, "waker: db error");
-            return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+        match sqlx::query_as::<_, crate::db::models::Project>(
+            "SELECT * FROM projects WHERE id = ?",
+        )
+        .bind(subdomain)
+        .fetch_optional(&state.db)
+        .await
+        {
+            Ok(Some(p)) => Some(p),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::error!(error = %e, "waker: db error");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+            }
+        }
+    } else {
+        // Custom domain URL (e.g., app.example.com) — look up by custom_domain
+        let host_clean = host.split(':').next().unwrap_or(host);
+        match sqlx::query_as::<_, crate::db::models::Project>(
+            "SELECT * FROM projects WHERE custom_domain = ?",
+        )
+        .bind(host_clean)
+        .fetch_optional(&state.db)
+        .await
+        {
+            Ok(Some(p)) => Some(p),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::error!(error = %e, "waker: db error (custom_domain lookup)");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+            }
         }
     };
 
+    let project = match project {
+        Some(p) => p,
+        None => {
+            return (StatusCode::NOT_FOUND, format!("project not found for host '{}'", host))
+                .into_response();
+        }
+    };
+
+    // Use project.id as the canonical key for everything (wake locks, display, etc.)
+    let project_id = project.id.clone();
     let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 
     // Fast path: already running with a port — just resync Caddy and return loading page
@@ -388,7 +411,7 @@ pub async fn wake(
                     .unwrap_or(true);
 
                 if !actually_running {
-                    tracing::info!(project = %subdomain, "waker: container down despite DB=running");
+                    tracing::info!(project = %project_id, "waker: container down despite DB=running");
                 } else {
                     // Port may have drifted (e.g. Docker daemon restarted) — verify and fix
                     if let Ok(actual_port) = state.docker.inspect_mapped_port(container_id).await {
@@ -400,25 +423,25 @@ pub async fn wake(
                             )
                             .bind(actual_port as i64)
                             .bind(now)
-                            .bind(&subdomain)
+                            .bind(&project_id)
                             .execute(&state.db)
                             .await;
-                            tracing::info!(project = %subdomain, old = %db_port, new = %actual_port, "waker: port drifted, updated DB");
+                            tracing::info!(project = %project_id, old = %db_port, new = %actual_port, "waker: port drifted, updated DB");
                         }
                     }
                     let _ = state.route_sync_tx.send(());
-                    return loading_page_html(&subdomain).into_response();
+                    return loading_page_html(&project_id).into_response();
                 }
             } else {
                 let _ = state.route_sync_tx.send(());
-                return loading_page_html(&subdomain).into_response();
+                return loading_page_html(&project_id).into_response();
             }
         } else {
             let _ = state.route_sync_tx.send(());
-            return loading_page_html(&subdomain).into_response();
+            return loading_page_html(&project_id).into_response();
         }
     } else if project.status == "running" && project.mapped_port.is_none() {
-        tracing::info!(project = %subdomain, "waker: running but mapped_port is null, recreating");
+        tracing::info!(project = %project_id, "waker: running but mapped_port is null, recreating");
     }
 
     if !project.auto_start_enabled {
@@ -457,17 +480,17 @@ pub async fn wake(
         completed: std::sync::atomic::AtomicBool::new(false),
     });
 
-    match state.wake_locks.entry(subdomain.clone()) {
+    match state.wake_locks.entry(project_id.clone()) {
         dashmap::mapref::entry::Entry::Vacant(entry) => {
             let guard = entry.insert(guard);
 
             let is_stopped = project.status == "stopped";
             let state_clone = state.clone();
             let project_clone = project.clone();
-            let subdomain_bg = subdomain.clone();
+            let project_id_bg = project_id.clone();
             let guard_bg = guard.clone();
 
-            tracing::info!(project = %subdomain, "waker: spawning background wake");
+            tracing::info!(project = %project_id, host = %host, "waker: spawning background wake");
 
             tokio::spawn(async move {
                 let wake_fut = if is_stopped {
@@ -485,26 +508,26 @@ pub async fn wake(
                 if success {
                     let _ = state_clone.route_sync_tx.send(());
                     guard_bg.notify.notify_waiters();
-                    state_clone.wake_locks.remove(&subdomain_bg);
+                    state_clone.wake_locks.remove(&project_id_bg);
                 } else {
                     if result.is_err() {
-                        tracing::error!(project = %subdomain_bg, "waker: background wake timed out");
+                        tracing::error!(project = %project_id_bg, "waker: background wake timed out");
                     } else {
-                        tracing::error!(project = %subdomain_bg, "waker: background wake failed");
+                        tracing::error!(project = %project_id_bg, "waker: background wake failed");
                     }
                     guard_bg.notify.notify_waiters();
                     // Keep the lock so subsequent requests see the failure.
                     // Auto-clear after 60s to allow retry.
                     let locks = state_clone.wake_locks.clone();
-                    let sd = subdomain_bg.clone();
+                    let pid = project_id_bg.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                        locks.remove(&sd);
+                        locks.remove(&pid);
                     });
                 }
             });
 
-            loading_page_html(&subdomain).into_response()
+            loading_page_html(&project_id).into_response()
         }
         dashmap::mapref::entry::Entry::Occupied(entry) => {
             let guard = entry.get().clone();
@@ -514,8 +537,8 @@ pub async fn wake(
             {
                 return error_page_html().into_response();
             }
-            tracing::info!(project = %subdomain, "waker: wake already in progress");
-            loading_page_html(&subdomain).into_response()
+            tracing::info!(project = %project_id, "waker: wake already in progress");
+            loading_page_html(&project_id).into_response()
         }
     }
 }
