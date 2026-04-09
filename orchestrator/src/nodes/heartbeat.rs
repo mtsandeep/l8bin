@@ -54,13 +54,9 @@ async fn refresh_local_node(state: &AppState) {
     let total = sys.total_memory() as i64;
     let available = sys.available_memory() as i64;
     let cpu = sys.cpus().len() as f64;
-    let disks = sysinfo::Disks::new_with_refreshed_list();
-    let root_disk = disks.iter().find(|d| d.mount_point() == std::path::Path::new("/"));
-    let (disk_free, disk_total) = match root_disk {
-        Some(d) => (d.available_space() as i64, d.total_space() as i64),
-        None => (disks.iter().map(|d| d.available_space() as i64).sum(),
-                 disks.iter().map(|d| d.total_space() as i64).sum()),
-    };
+    let (df, dt) = litebin_common::sys::disk_space();
+    let disk_free = df as i64;
+    let disk_total = dt as i64;
     let container_count = state.docker.running_container_count().await.unwrap_or(0) as i64;
     let now = chrono::Utc::now().timestamp();
 

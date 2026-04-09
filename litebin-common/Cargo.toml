@@ -18,6 +18,7 @@ tokio = { version = "1.51", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 urlencoding = "2"
 shlex = "1"
+sysinfo = "0.33"
 
 [dev-dependencies]
 proptest = "1"

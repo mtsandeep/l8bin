@@ -460,8 +460,8 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                       </span>
                     )}
                     {node.total_cpu && <span>{Math.round(node.total_cpu)} vCPU</span>}
-                    {node.disk_total != null && node.disk_free != null && (
-                      <span>{formatBytes(node.disk_total - node.disk_free)} disk used</span>
+                    {node.disk_free != null && (
+                      <span>{formatBytes(node.disk_free)} disk free</span>
                     )}
                     {node.container_count > 0 && <span>{node.container_count} containers</span>}
                     {node.last_seen_at && (

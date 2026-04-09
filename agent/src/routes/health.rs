@@ -1,6 +1,6 @@
 use axum::{extract::State, Json};
 use litebin_common::types::HealthReport;
-use sysinfo::{Disks, System};
+use sysinfo::System;
 
 use crate::AgentState;
 
@@ -14,14 +14,7 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
     let memory_available = sys.available_memory();
     let cpu_cores = sys.cpus().len() as u32;
 
-    // Disk — use root filesystem only (avoid summing tmpfs, overlays, etc.)
-    let disks = Disks::new_with_refreshed_list();
-    let root_disk = disks.iter().find(|d| d.mount_point() == std::path::Path::new("/"));
-    let (disk_free, disk_total) = match root_disk {
-        Some(d) => (d.available_space(), d.total_space()),
-        None => (disks.iter().map(|d| d.available_space()).sum(),
-                 disks.iter().map(|d| d.total_space()).sum()),
-    };
+    let (disk_free, disk_total) = litebin_common::sys::disk_space();
 
     // Container count from Docker
     let container_count = state
