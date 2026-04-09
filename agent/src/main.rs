@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all("projects")?;
 
     // Init Docker manager
-    let docker_network = std::env::var("DOCKER_NETWORK").unwrap_or_else(|_| "litebin-apps".to_string());
+    let docker_network = std::env::var("DOCKER_NETWORK").unwrap_or_else(|_| "litebin-network".to_string());
     let memory_limit: i64 = 256 * 1024 * 1024;
     let cpu_limit: f64 = 0.5;
     let docker = Arc::new(DockerManager::new(

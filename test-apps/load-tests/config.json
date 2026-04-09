@@ -1,5 +1,5 @@
 {
-  "base_url": "http://localhost:5080",
+  "base_url": "https://l8bin.localhost",
   "username": "admin",
   "password": "passcode"
 }

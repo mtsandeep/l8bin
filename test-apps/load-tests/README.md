@@ -50,7 +50,7 @@ Environment variables (all prefixed `L8B_` to avoid Windows collisions):
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `L8B_BASE_URL` | `http://localhost:5080` | Orchestrator URL |
+| `L8B_BASE_URL` | `https://l8bin.localhost` | Dashboard/API URL |
 | `L8B_USERNAME` | `admin` | Login username |
 | `L8B_PASSWORD` | `passcode` | Login password |
 | `L8B_DEPLOY_COUNT` | `20` | Number of apps to deploy |

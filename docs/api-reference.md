@@ -2,7 +2,7 @@
 
 ## Orchestrator API
 
-Base URL: `https://l8bin.example.com` (or `http://localhost:5080` locally)
+Base URL: `https://l8bin.example.com` (or `https://l8bin.localhost` locally)
 
 ### Authentication
 

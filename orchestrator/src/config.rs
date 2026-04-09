@@ -31,7 +31,7 @@ impl Config {
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite:./data/litebin.db".into()),
             docker_network: env::var("DOCKER_NETWORK")
-                .unwrap_or_else(|_| "litebin-apps".into()),
+                .unwrap_or_else(|_| "litebin-network".into()),
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into()),
             port: env::var("PORT")
                 .unwrap_or_else(|_| "5080".into())

@@ -11,7 +11,7 @@ All configuration is done via environment variables in `.env` after install.
 | `POKE_SUBDOMAIN` | `poke` | Wake-report endpoint subdomain |
 | `CADDY_ADMIN_URL` | `http://caddy:2019` | Caddy admin API URL |
 | `DATABASE_URL` | `sqlite:./data/litebin.db` | SQLite database path |
-| `DOCKER_NETWORK` | `litebin-apps` | Docker bridge network for app containers |
+| `DOCKER_NETWORK` | `litebin-network` | Docker bridge network shared by all services and app containers |
 | `HOST` | `0.0.0.0` | Orchestrator bind address |
 | `PORT` | `5080` | Orchestrator API port |
 | `DEFAULT_AUTO_STOP_MINS` | `15` | Minutes before idle apps are stopped |

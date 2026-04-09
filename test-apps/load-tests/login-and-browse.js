@@ -3,7 +3,7 @@ import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 
 // --- Config (override via env vars) ---
-const BASE_URL = __ENV.L8B_BASE_URL || 'http://localhost:5080';
+const BASE_URL = __ENV.L8B_BASE_URL || 'https://l8bin.localhost';
 const USERNAME = __ENV.L8B_USERNAME || 'admin';
 const PASSWORD = __ENV.L8B_PASSWORD || 'passcode';
 

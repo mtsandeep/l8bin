@@ -4,7 +4,7 @@
 
 # Static fallback — orchestrator replaces this via /load on startup.
 # Ensures the dashboard is reachable even before the orchestrator syncs routes.
-:80 {
+{$DASHBOARD_SUBDOMAIN}.{$DOMAIN} {
 	handle /auth/* {
 		reverse_proxy litebin-orchestrator:5080
 	}

@@ -122,7 +122,7 @@ impl DockerManager {
         port_bindings.insert(
             port_str.clone(),
             Some(vec![PortBinding {
-                host_ip: Some("127.0.0.1".to_string()),
+                host_ip: Some("0.0.0.0".to_string()),
                 host_port: Some(mapped_port.map_or("0".to_string(), |p| p.to_string())),
             }]),
         );

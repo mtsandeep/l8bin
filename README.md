@@ -188,8 +188,7 @@ iex (irm https://l8b.in/windows.ps1) -Clean
 
 | Component | URL |
 |-----------|-----|
-| Dashboard | `https://l8bin.localhost` |
-| API | `http://localhost:5080` |
+| Dashboard & API | `https://l8bin.localhost` |
 
 Caddy generates a self-signed TLS certificate for `*.localhost`. Your browser will show a certificate warning — trust it or import the root cert from Docker.
 
@@ -229,7 +228,7 @@ All config is in `.env` after install. Key variables:
 | `DOMAIN` | Your server domain | *(required on Linux)* |
 | `DASHBOARD_SUBDOMAIN` | Dashboard subdomain | `l8bin` |
 | `ROUTING_MODE` | `master_proxy` or `cloudflare_dns` | `master_proxy` |
-| `IDLE_TIMEOUT_SECS` | Seconds before idle apps sleep | `900` (15 min) |
+| `DEFAULT_AUTO_STOP_MINS` | Mins before idle apps sleep | `900` (15 min) |
 | `JANITOR_INTERVAL_SECS` | Janitor check interval | `300` (5 min) |
 
 See [`.env.example`](.env.example) for the full list.

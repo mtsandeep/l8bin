@@ -168,7 +168,6 @@ COPY litebin-orchestrator /app/litebin-orchestrator
 RUN chmod +x /app/litebin-orchestrator
 WORKDIR /app
 RUN mkdir -p /app/data
-EXPOSE 5080
 CMD ["/app/litebin-orchestrator"]
 "@
 
@@ -197,14 +196,14 @@ CADDY_ADMIN_URL=http://caddy:2019
 DATABASE_URL=sqlite:./data/litebin.db
 
 # Docker
-DOCKER_NETWORK=litebin-apps
+DOCKER_NETWORK=litebin-network
 
 # Server
 HOST=0.0.0.0
 PORT=5080
 
 # Sleep / Janitor
-IDLE_TIMEOUT_SECS=900
+DEFAULT_AUTO_STOP_MINS=15
 JANITOR_INTERVAL_SECS=300
 
 # Routing
@@ -217,7 +216,7 @@ Set-Content -Path (Join-Path $InstallDir "Caddyfile") -Value @"
 	admin 0.0.0.0:2019
 }
 
-:80 {
+{$DASHBOARD_SUBDOMAIN}.{$DOMAIN} {
 	handle /auth/* {
 		reverse_proxy litebin-orchestrator:5080
 	}
@@ -261,8 +260,6 @@ services:
     build: ./orchestrator
     container_name: litebin-orchestrator
     restart: unless-stopped
-    ports:
-      - "5080:5080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - orchestrator-data:/app/data
@@ -285,6 +282,8 @@ services:
     image: caddy:2-alpine
     container_name: litebin-caddy
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "80:80"
       - "443:443"
@@ -328,7 +327,7 @@ Write-Host ""
 Write-Host "  LiteBin is running!" -ForegroundColor Green -BackgroundColor Black
 Write-Host ""
 Write-Host "  Dashboard:  " -NoNewline; Write-Host "$DashboardUrl" -ForegroundColor Cyan
-Write-Host "  API:        " -NoNewline; Write-Host "http://${Domain}:5080" -ForegroundColor Cyan
+Write-Host "  API:        " -NoNewline; Write-Host "$DashboardUrl (proxied via Caddy)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Next steps:"
 Write-Host "    1. Open the dashboard and create an admin account"

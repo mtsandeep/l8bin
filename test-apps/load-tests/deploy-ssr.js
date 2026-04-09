@@ -2,7 +2,7 @@ import http from 'k6/http';
 import { check } from 'k6';
 
 // --- Config ---
-const BASE_URL = __ENV.L8B_BASE_URL || 'http://localhost:5080';
+const BASE_URL = __ENV.L8B_BASE_URL || 'https://l8bin.localhost';
 const USERNAME = __ENV.L8B_USERNAME || 'admin';
 const PASSWORD = __ENV.L8B_PASSWORD || 'passcode';
 const COUNT = parseInt(__ENV.L8B_DEPLOY_COUNT || '20');

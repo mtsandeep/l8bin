@@ -74,21 +74,20 @@ When a request hits a sleeping app:
 
 In Mode B, the agent handles this autonomously using only the Docker API — no master or database needed.
 
-## Network Isolation
+## Network
 
 ```
 Host
-+-- litebin-network (management)
-|   +-- orchestrator (5080)
++-- litebin-network (shared)
+|   +-- orchestrator (5080, internal only)
 |   +-- dashboard (internal only)
 |   +-- caddy (80/443)
-+-- litebin-apps (tenant workloads)
-|   +-- app-1 (port 50001)
-|   +-- app-2 (port 50002)
-+-- agent (5083)
+|   +-- app-1 (internal only)
+|   +-- app-2 (internal only)
+|   +-- agent (5083)
 ```
 
-App containers are isolated on a dedicated Docker bridge network, separate from management traffic.
+All services and app containers share a single Docker bridge network. Caddy routes traffic internally — no ports are exposed on the host except 80/443.
 
 ## mTLS (Master <-> Agent)
 

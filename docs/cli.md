@@ -20,7 +20,7 @@ The CLI supports two auth methods:
 ### Login (session-based)
 
 ```bash
-l8b login --server https://example.com
+l8b login --server https://l8bin.example.com
 ```
 
 Prompts for username and password. Saves the session to `~/.config/litebin/session.json`.
@@ -40,13 +40,13 @@ Set the `L8B_TOKEN` environment variable or use `--token`:
 ```bash
 # Environment variable (recommended for CI/CD)
 export L8B_TOKEN=your-token-here
-l8b deploy --project myapp --server https://example.com --port 3000
+l8b deploy --project myapp --server https://l8bin.example.com --port 3000
 
 # CLI flag
-l8b deploy --project myapp --server https://example.com --port 3000 --token your-token-here
+l8b deploy --project myapp --server https://l8bin.example.com --port 3000 --token your-token-here
 
 # Save to config so you don't need to pass it every time
-l8b config set --server https://example.com --token your-token-here
+l8b config set --server https://l8bin.example.com --token your-token-here
 l8b deploy --project myapp --port 3000
 ```
 
@@ -78,7 +78,7 @@ Global flags (available on all commands):
 
 | Flag | Env | Description |
 |------|-----|-------------|
-| `--server` | `L8B_SERVER` | Server URL |
+| `--server` | `L8B_SERVER` | Orchestrator dashboard URL (e.g. `https://l8bin.example.com`) |
 | `--token` | `L8B_TOKEN` | Deploy token |
 
 ### Build strategy
@@ -198,7 +198,7 @@ For advanced options (custom Dockerfile, resource limits, node selection), use `
 Log in to a LiteBin server interactively.
 
 ```bash
-l8b login --server https://example.com
+l8b login --server https://l8bin.example.com
 ```
 
 ### `l8b logout`
@@ -215,19 +215,19 @@ Save configuration so you don't need to pass flags every time.
 
 ```bash
 # Save server URL
-l8b config set --server https://example.com
+l8b config set --server https://l8bin.example.com
 
 # Save deploy token
 l8b config set --token your-token-here
 
 # Save both
-l8b config set --server https://example.com --token your-token-here
+l8b config set --server https://l8bin.example.com --token your-token-here
 ```
 
 Config is saved to `~/.config/litebin/config.toml`:
 
 ```toml
-server = "https://example.com"
+server = "https://l8bin.example.com"
 token = "your-token-here"
 ```
 
