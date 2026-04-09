@@ -10,8 +10,9 @@ pub async fn upload_tar(
     project_id: &str,
     tar_path: &Path,
     node_id: Option<&str>,
+    ci_mode: bool,
 ) -> Result<String> {
-    upload_tar_inner(client, server, project_id, tar_path, node_id, false).await
+    upload_tar_inner(client, server, project_id, tar_path, node_id, ci_mode).await
 }
 
 async fn upload_tar_inner(
@@ -20,7 +21,7 @@ async fn upload_tar_inner(
     project_id: &str,
     tar_path: &Path,
     node_id: Option<&str>,
-    quiet: bool,
+    ci_mode: bool,
 ) -> Result<String> {
     let file_len = std::fs::metadata(tar_path)?.len();
 
@@ -29,7 +30,7 @@ async fn upload_tar_inner(
         url.push_str(&format!("&node_id={}", node));
     }
 
-    let pb = if !quiet {
+    let pb = if !ci_mode {
         let pb = indicatif::ProgressBar::new(file_len);
         pb.set_style(
             indicatif::ProgressStyle::default_bar()
@@ -51,7 +52,7 @@ async fn upload_tar_inner(
                 pb.reset();
                 pb.set_message(format!("Retrying ({}/{})", attempt + 1, 3));
             }
-            if !quiet {
+            if !ci_mode {
                 eprintln!("  Upload failed, retrying ({}/{})...", attempt + 1, 3);
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -95,7 +96,7 @@ async fn upload_tar_inner(
                 if let Some(pb) = &pb {
                     pb.finish_and_clear();
                 }
-                if !quiet {
+                if !ci_mode {
                     println!("  Upload complete");
                 }
                 let json: serde_json::Value = resp.json().await?;

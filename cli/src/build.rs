@@ -104,21 +104,14 @@ pub struct SavedImage {
 }
 
 /// Detect build strategy and produce a Docker image tar file.
+/// When `ci_mode` is true, build logs are suppressed to prevent secret leakage.
 pub async fn build_project(
     project_dir: &Path,
     dockerfile: Option<&str>,
     image_tag: &str,
+    ci_mode: bool,
 ) -> Result<SavedImage> {
-    build_project_inner(project_dir, dockerfile, image_tag, false).await
-}
-
-/// Like `build_project` but captures output: shows summary on success, full log on failure.
-pub async fn build_project_quiet(
-    project_dir: &Path,
-    dockerfile: Option<&str>,
-    image_tag: &str,
-) -> Result<SavedImage> {
-    build_project_inner(project_dir, dockerfile, image_tag, true).await
+    build_project_inner(project_dir, dockerfile, image_tag, true, ci_mode).await
 }
 
 async fn build_project_inner(
@@ -126,6 +119,7 @@ async fn build_project_inner(
     dockerfile: Option<&str>,
     image_tag: &str,
     quiet: bool,
+    ci_mode: bool,
 ) -> Result<SavedImage> {
     let has_dockerfile = if let Some(df) = dockerfile {
         project_dir.join(df).exists()
@@ -138,12 +132,12 @@ async fn build_project_inner(
     let _dockerignore_guard = ensure_dockerignore(project_dir);
 
     let result = if has_dockerfile {
-        build_with_docker(project_dir, dockerfile, image_tag, quiet).await
+        build_with_docker(project_dir, dockerfile, image_tag, quiet, ci_mode).await
     } else if cfg!(target_os = "windows") {
         check_docker_available()?;
-        build_with_railpack_docker(project_dir, image_tag, quiet).await
+        build_with_railpack_docker(project_dir, image_tag, quiet, ci_mode).await
     } else {
-        build_with_railpack_native(project_dir, image_tag, quiet).await
+        build_with_railpack_native(project_dir, image_tag, quiet, ci_mode).await
     };
 
     // Temp .dockerignore is cleaned up when _dockerignore_guard drops
@@ -155,8 +149,9 @@ async fn build_with_docker(
     dockerfile: Option<&str>,
     image_tag: &str,
     quiet: bool,
+    ci_mode: bool,
 ) -> Result<SavedImage> {
-    if !quiet {
+    if !quiet && !ci_mode {
         println!("Building with Docker...");
     }
 
@@ -168,9 +163,9 @@ async fn build_with_docker(
     cmd.args(["-t", image_tag, "."]);
     cmd.current_dir(project_dir);
 
-    let spinner = if quiet { Some(create_build_spinner()) } else { None };
+    let spinner = if ci_mode { None } else if quiet { Some(create_build_spinner()) } else { None };
 
-    if quiet {
+    if quiet || ci_mode {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let output = cmd
@@ -179,16 +174,20 @@ async fn build_with_docker(
 
         if !output.status.success() {
             if let Some(s) = &spinner { s.finish_and_clear(); }
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            eprintln!("{}", stdout);
-            eprintln!("{}", stderr);
+            if !ci_mode {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                eprintln!("{}", stdout);
+                eprintln!("{}", stderr);
+            }
             anyhow::bail!("docker build failed with exit code {:?}", output.status.code());
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Some(summary) = parse_docker_summary(&stdout) {
-            if let Some(s) = &spinner { s.suspend(|| println!("  {}", summary)); }
+        if let Some(s) = &spinner {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(summary) = parse_docker_summary(&stdout) {
+                s.suspend(|| println!("  {}", summary));
+            }
         }
     } else {
         let status = cmd
@@ -208,7 +207,7 @@ async fn build_with_docker(
 
 const RAILPACK_IMAGE: &str = crate::config::RAILPACK_IMAGE;
 
-fn ensure_railpack_image(railpack_tag: &str, mise_version: &str) -> Result<()> {
+fn ensure_railpack_image(railpack_tag: &str, mise_version: &str, quiet: bool, ci_mode: bool) -> Result<()> {
     let inspect = Command::new("docker")
         .args(["image", "inspect", "--format", "{{index .Config.Labels \"version\"}}", RAILPACK_IMAGE])
         .output()?;
@@ -216,7 +215,7 @@ fn ensure_railpack_image(railpack_tag: &str, mise_version: &str) -> Result<()> {
     let expected_label = format!("rp={} mise={}", railpack_tag, mise_version);
 
     if inspect.status.success() && current_label == expected_label {
-        println!("  {} Railpack image ready", "✔".green());
+        if !quiet && !ci_mode { println!("  {} Railpack image ready", "✔".green()); }
         return Ok(());
     }
 
@@ -225,7 +224,7 @@ fn ensure_railpack_image(railpack_tag: &str, mise_version: &str) -> Result<()> {
         .args(["rmi", "-f", RAILPACK_IMAGE])
         .output();
 
-    println!("  🔨 Building Railpack image...");
+    if !quiet && !ci_mode { println!("  🔨 Building Railpack image..."); }
 
     let tmp = std::env::temp_dir().join("l8b-railpack-image");
     let _ = std::fs::remove_dir_all(&tmp);
@@ -272,7 +271,7 @@ ENTRYPOINT ["railpack"]
         anyhow::bail!("failed to build Railpack Docker image");
     }
 
-    println!("  {} Railpack image built", "✔".green());
+    if !quiet && !ci_mode { println!("  {} Railpack image built", "✔".green()); }
     Ok(())
 }
 
@@ -280,6 +279,7 @@ async fn build_with_railpack_docker(
     project_dir: &Path,
     image_tag: &str,
     quiet: bool,
+    ci_mode: bool,
 ) -> Result<SavedImage> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -296,10 +296,10 @@ async fn build_with_railpack_docker(
     let railpack_tag = resp["tag_name"].as_str().unwrap_or("v0.23.0");
     let mise_version = crate::mise::fetch_mise_version(railpack_tag).await;
 
-    ensure_railpack_image(railpack_tag, &mise_version)?;
-    ensure_buildkit()?;
+    ensure_railpack_image(railpack_tag, &mise_version, quiet, ci_mode)?;
+    ensure_buildkit(quiet, ci_mode)?;
 
-    let spinner = if quiet { Some(create_build_spinner()) } else { None };
+    let spinner = if ci_mode { None } else if quiet { Some(create_build_spinner()) } else { None };
 
     let project_dir_str = project_dir.to_string_lossy().to_string();
     let max_retries = crate::config::MAX_RETRIES;
@@ -329,7 +329,7 @@ async fn build_with_railpack_docker(
             cmd.arg("--verbose");
         }
 
-        if quiet {
+        if quiet || ci_mode {
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             let output = cmd
                 .output()
@@ -355,15 +355,17 @@ async fn build_with_railpack_docker(
             }
         }
 
-        if attempt < max_retries {
+        if attempt < max_retries && !ci_mode {
             println!("  {} Build failed (attempt {}/{}), retrying...", "!".yellow(), attempt, max_retries);
         }
     }
 
     if let Some(s) = &spinner { s.finish_and_clear(); }
     if let Some((stderr, stdout)) = last_output {
-        eprintln!("{}", stdout);
-        eprintln!("{}", stderr);
+        if !ci_mode {
+            eprintln!("{}", stdout);
+            eprintln!("{}", stderr);
+        }
     }
     anyhow::bail!("railpack build failed after {} attempts", max_retries);
 }
@@ -374,15 +376,16 @@ async fn build_with_railpack_native(
     project_dir: &Path,
     image_tag: &str,
     quiet: bool,
+    ci_mode: bool,
 ) -> Result<SavedImage> {
     let (railpack_bin, railpack_tag) = crate::railpack::ensure_railpack().await?;
     crate::mise::ensure_mise_for_railpack(&railpack_tag).await?;
 
-    let buildkit_host = ensure_buildkit()?;
+    let buildkit_host = ensure_buildkit(quiet, ci_mode)?;
 
-    let spinner = if quiet { Some(create_build_spinner()) } else { None };
+    let spinner = if ci_mode { None } else if quiet { Some(create_build_spinner()) } else { None };
 
-    if !quiet {
+    if !quiet && !ci_mode {
         println!("No Dockerfile found. Building with Railpack...");
     }
 
@@ -398,7 +401,7 @@ async fn build_with_railpack_native(
         cmd.env("BUILDKIT_HOST", &buildkit_host);
         cmd.current_dir(project_dir);
 
-        if quiet {
+        if quiet || ci_mode {
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
             let output = cmd
@@ -408,9 +411,11 @@ async fn build_with_railpack_native(
             if output.status.success() {
                 let result = save_tar(image_tag)?;
                 if let Some(s) = &spinner { s.finish_and_clear(); }
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(summary) = parse_railpack_summary(&stdout) {
-                    println!("  {}", summary);
+                if !ci_mode {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if let Some(summary) = parse_railpack_summary(&stdout) {
+                        println!("  {}", summary);
+                    }
                 }
                 return Ok(result);
             }
@@ -429,7 +434,7 @@ async fn build_with_railpack_native(
             }
         }
 
-        if attempt < max_retries {
+        if attempt < max_retries && !ci_mode {
             println!(
                 "  {} Build failed (attempt {}/{}), retrying...",
                 "!".yellow(),
@@ -441,8 +446,10 @@ async fn build_with_railpack_native(
 
     if let Some(s) = &spinner { s.finish_and_clear(); }
     if let Some((stderr, stdout)) = last_output {
-        eprintln!("{}", stdout);
-        eprintln!("{}", stderr);
+        if !ci_mode {
+            eprintln!("{}", stdout);
+            eprintln!("{}", stderr);
+        }
     }
     anyhow::bail!("railpack build failed after {} attempts", max_retries)
 }
@@ -631,7 +638,7 @@ fn save_tar(image_tag: &str) -> Result<SavedImage> {
     })
 }
 
-fn ensure_buildkit() -> Result<String> {
+fn ensure_buildkit(quiet: bool, ci_mode: bool) -> Result<String> {
     const BUILDKIT_CONTAINER: &str = "buildkit";
     const BUILDKIT_HOST_DEFAULT: &str = "docker-container://buildkit";
 
@@ -655,12 +662,12 @@ fn ensure_buildkit() -> Result<String> {
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if stdout.trim().contains(BUILDKIT_CONTAINER) {
-            println!("  {} BuildKit is running", "✔".green());
+            if !quiet && !ci_mode { println!("  {} BuildKit is running", "✔".green()); }
             return Ok(BUILDKIT_HOST_DEFAULT.to_string());
         }
     }
 
-    println!("  🧑 Starting BuildKit...");
+    if !quiet && !ci_mode { println!("  🧑 Starting BuildKit..."); }
     let output = Command::new("docker")
         .args([
             "run",
@@ -678,7 +685,9 @@ fn ensure_buildkit() -> Result<String> {
         anyhow::bail!("failed to start BuildKit. Make sure Docker is running and try again.");
     }
 
-    let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    println!("  {} BuildKit started — {}", "✔".green(), container_id.dimmed());
+    if !quiet && !ci_mode {
+        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        println!("  {} BuildKit started — {}", "✔".green(), container_id.dimmed());
+    }
     Ok(BUILDKIT_HOST_DEFAULT.to_string())
 }

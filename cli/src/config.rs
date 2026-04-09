@@ -64,7 +64,7 @@ impl CliConfig {
             .join(CONFIG_FILE)
     }
 
-    fn read_config_file() -> Option<CliConfig> {
+    pub fn read_config_file() -> Option<CliConfig> {
         let path = Self::config_path();
         let content = std::fs::read_to_string(&path).ok()?;
         toml::from_str(&content).ok()
@@ -89,4 +89,26 @@ impl CliConfig {
         Ok(())
     }
 
+    /// Show config: redacted in CI mode, raw in normal mode.
+    pub fn show(ci_enabled: bool) -> Result<()> {
+        let path = Self::config_path();
+        if !path.exists() {
+            println!("No config found. Set with:");
+            println!("  l8b config set --server <url>");
+            println!("  l8b config set --token <token>");
+            return Ok(());
+        }
+        if ci_enabled {
+            let cfg = Self::read_config_file().unwrap_or_default();
+            println!(
+                "server: {}",
+                cfg.server.as_deref().unwrap_or("(not set)")
+            );
+            println!("token: {}", if cfg.token.is_some() { "(set)" } else { "(not set)" });
+        } else {
+            let content = std::fs::read_to_string(&path)?;
+            println!("{}", content);
+        }
+        Ok(())
+    }
 }

@@ -269,7 +269,7 @@ async fn build_and_deploy(
         println!("  🪟  Windows detected — using Docker to run Railpack + BuildKit");
     }
     let image_tag = format!("{}/{}:latest", crate::config::IMAGE_PREFIX, project_id);
-    let image = crate::build::build_project_quiet(project_dir, None, &image_tag).await?;
+    let image = crate::build::build_project(project_dir, None, &image_tag, false).await?;
 
     println!("  📦 Image built — {}", HumanBytes(image.image_size));
 
@@ -285,6 +285,7 @@ async fn build_and_deploy(
         project_id,
         Path::new(&image.path),
         None,
+        false,
     )
     .await?;
 

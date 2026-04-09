@@ -25,6 +25,10 @@ pub async fn resolve_routes(
             continue;
         }
 
+        let Some(internal_port) = project.internal_port else {
+            continue;
+        };
+
         let (upstream, node_public_ip) = match project.node_id.as_deref() {
             Some(node_id) if node_id != "local" => {
                 // Remote node — look up the node's host IP and public IP
@@ -48,8 +52,8 @@ pub async fn resolve_routes(
                 }
             }
             _ => {
-                // Local node
-                (format!("host.docker.internal:{}", mapped_port), None)
+                // Local node — route directly via Docker network by container name
+                (format!("litebin-{}:{}", project.id, internal_port), None)
             }
         };
 

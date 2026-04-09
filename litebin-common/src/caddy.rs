@@ -41,15 +41,15 @@ impl CaddyClient {
         let mut routes: Vec<Value> = Vec::new();
 
         for project in projects {
-            let Some(mapped_port) = project.mapped_port else {
-                continue;
-            };
             if project.status != "running" {
                 continue;
             }
+            let Some(internal_port) = project.internal_port else {
+                continue;
+            };
 
             let host = format!("{}.{}", project.id, domain);
-            let upstream = format!("host.docker.internal:{}", mapped_port);
+            let upstream = format!("litebin-{}:{}", project.id, internal_port);
 
             routes.push(json!({
                 "match": [{ "host": [host] }],

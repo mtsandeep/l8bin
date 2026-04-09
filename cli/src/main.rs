@@ -1,5 +1,6 @@
 mod auth;
 mod build;
+mod ci;
 mod config;
 mod deploy;
 mod mise;
@@ -23,6 +24,10 @@ struct Cli {
     /// Deploy token (default: from env L8B_TOKEN or stored config)
     #[arg(long, env = "L8B_TOKEN", global = true)]
     token: Option<String>,
+
+    /// CI mode: suppress verbose output and hide secrets (or set L8B_CI=true)
+    #[arg(long, env = "L8B_CI", global = true)]
+    ci: bool,
 }
 
 #[derive(Subcommand)]
@@ -108,6 +113,19 @@ enum ConfigAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let ci_mode = ci::CiMode::from_flag(cli.ci);
+
+    // Register secrets with GitHub Actions log masking
+    if let Some(ref t) = cli.token {
+        ci_mode.mask_secret(t);
+    } else if let Ok(t) = std::env::var("L8B_TOKEN") {
+        ci_mode.mask_secret(&t);
+    }
+    if let Some(ref s) = cli.server {
+        ci_mode.mask_secret(s);
+    } else if let Ok(s) = std::env::var("L8B_SERVER") {
+        ci_mode.mask_secret(&s);
+    }
 
     match cli.command {
         Commands::Deploy {
@@ -134,19 +152,20 @@ async fn main() -> Result<()> {
             let server = auth::resolve_server(&cfg)?;
 
             let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
-            let image = build::build_project(&path, dockerfile.as_deref(), &image_tag).await?;
+            let image = build::build_project(&path, dockerfile.as_deref(), &image_tag, ci_mode.enabled).await?;
 
-            println!("Uploading image...");
+            ci_mode.println("Uploading image...");
             let image_id = upload::upload_tar(
                 &client,
                 &server,
                 &project,
                 std::path::Path::new(&image.path),
                 node.as_deref(),
+                ci_mode.enabled,
             )
             .await?;
 
-            println!("Deploying...");
+            ci_mode.println("Deploying...");
             let response = deploy::deploy(
                 &client,
                 &server,
@@ -167,6 +186,9 @@ async fn main() -> Result<()> {
             let _ = std::fs::remove_file(&image.path);
         }
         Commands::Ship { path, port } => {
+            if ci_mode.enabled {
+                bail!("'ship' is an interactive command and cannot be used in CI mode. Use 'deploy' instead.");
+            }
             let cfg = config::CliConfig::load(cli.server.as_deref(), None)?;
             let client = auth::authenticated_client(&cfg)?;
             let server = auth::resolve_server(&cfg)?;
@@ -181,19 +203,21 @@ async fn main() -> Result<()> {
         }
         Commands::Config { action } => match action {
             ConfigAction::Set { server, token } => {
+                if let Some(ref t) = token {
+                    ci_mode.mask_secret(t);
+                }
+                if let Some(ref s) = server {
+                    ci_mode.mask_secret(s);
+                }
                 config::CliConfig::save(server.as_deref(), token.as_deref())?;
-                println!("Config saved to {}", config::CliConfig::config_path().display());
+                if ci_mode.enabled {
+                    println!("Config saved.");
+                } else {
+                    println!("Config saved to {}", config::CliConfig::config_path().display());
+                }
             }
             ConfigAction::Show => {
-                let path = config::CliConfig::config_path();
-                if path.exists() {
-                    let content = std::fs::read_to_string(&path)?;
-                    println!("{}", content);
-                } else {
-                    println!("No config found. Set with:");
-                    println!("  l8b config set --server <url>");
-                    println!("  l8b config set --token <token>");
-                }
+                config::CliConfig::show(ci_mode.enabled)?;
             }
         },
     }
