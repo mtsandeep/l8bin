@@ -19,10 +19,11 @@ export default function LoginScreen() {
 
     setIsSubmitting(true);
     try {
+      const normalizedUsername = username.trim().toLowerCase();
       if (needsSetup) {
-        await register(username.trim(), password.trim());
+        await register(normalizedUsername, password.trim());
       } else {
-        await login(username.trim(), password.trim());
+        await login(normalizedUsername, password.trim());
       }
     } catch {
       // Error is handled in AuthContext

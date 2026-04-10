@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Rocket, Loader2, X, ChevronRight, ChevronLeft, Moon, Server } from 'lucide-react';
 import { deployProject, fetchNodes, fetchGlobalSettings, type Node } from '../api';
+import ResourceLimitInput from './ResourceLimitInput';
 
 interface DeployFormProps {
   onDeploy: () => void;
@@ -293,37 +294,41 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
 
             {/* Resource limits */}
             <div className="pt-1 border-t border-slate-700/50 space-y-3">
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-slate-400">Memory limit</span>
-                  <span className="text-xs font-mono text-violet-300">{memMb ?? globalMemMb} MB</span>
-                </div>
-                <input type="range" min={64} max={4096} step={64}
-                  value={memMb ?? globalMemMb}
-                  onChange={e => setMemMb(Number(e.target.value))}
-                  className="w-full accent-violet-500"
-                />
-                <div className="flex justify-between text-[10px] text-slate-600 mt-0.5"><span>64 MB</span><span>4096 MB</span></div>
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-slate-400">CPU limit</span>
-                  <span className="text-xs font-mono text-violet-300">{(cpuLimit ?? globalCpu).toFixed(2)} vCPU</span>
-                </div>
-                <input type="range" min={0.1} max={4} step={0.1}
-                  value={cpuLimit ?? globalCpu}
-                  onChange={e => setCpuLimit(Number(e.target.value))}
-                  className="w-full accent-violet-500"
-                />
-                <div className="flex justify-between text-[10px] text-slate-600 mt-0.5"><span>0.1</span><span>4.0</span></div>
-              </div>
+              <ResourceLimitInput
+                label="Memory limit"
+                value={memMb ?? globalMemMb}
+                onChange={setMemMb}
+                unit="MB"
+                min={64}
+                normalMax={4096}
+                absoluteMax={65536}
+                normalStep={64}
+                overStep={1024}
+                highLabel="high memory"
+                minLabel="64 MB"
+                normalMaxLabel="4 GB"
+              />
+              <ResourceLimitInput
+                label="CPU limit"
+                value={cpuLimit ?? globalCpu}
+                onChange={setCpuLimit}
+                unit="vCPU"
+                min={0.1}
+                normalMax={4}
+                absoluteMax={32}
+                normalStep={0.1}
+                overStep={1}
+                highLabel="high cpu"
+                minLabel="0.1"
+                normalMaxLabel="4 vCPU"
+              />
             </div>
 
             {/* Node picker */}
             <div className="pt-1">
               <div className="flex items-center gap-1.5 text-slate-400 mb-2">
                 <Server size={13} />
-                <span className="text-xs font-medium">Node</span>
+                <span className="text-xs font-medium">Agent Server</span>
               </div>
               <div className="space-y-1">
                 <button

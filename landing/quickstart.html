@@ -4,87 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Quick Start - LiteBin</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              mono: ['JetBrains Mono', 'monospace'],
-            },
-            colors: {
-              night: { 950: "#030308", 900: "#0a0912", 800: "#131222" },
-            },
-          },
-        },
-      };
-    </script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet" />
-    <style>
-      :root {
-        --color-primary: #7c3aed;
-        --color-primary-light: #8b5cf6;
-        --color-primary-dark: #6d28d9;
-        --color-primary-glow: rgba(124, 58, 237, 0.2);
-        --color-secondary: #a855f7;
-        --color-accent-1: #c084fc;
-        --color-accent-2: #10b981;
-        --color-accent-3: #f472b6;
-        --color-bg-darkest: #030308;
-        --color-bg-darker: #0a0912;
-        --color-bg-dark: #131222;
-      }
-      .bg-night-950 { background-color: var(--color-bg-darkest) !important; }
-      .bg-night-900 { background-color: var(--color-bg-darker) !important; }
-      .bg-night-800 { background-color: var(--color-bg-dark) !important; }
-      .step-active { border-left: 4px solid #7c3aed; background: rgba(124, 58, 237, 0.1); }
-      .step-inactive { border-left: 4px solid transparent; }
-      .step-complete { border-left: 4px solid #10b981; }
-      .glass {
-        background: rgba(255, 255, 255, 0.03);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-      }
-      .glow-border {
-        box-shadow: 0 0 20px -5px var(--color-primary-glow);
-      }
-      .code-block {
-        font-family: 'JetBrains Mono', monospace;
-        background: #18181b;
-        border: 1px solid #27272a;
-        border-radius: 8px;
-        padding: 1rem;
-        overflow-x: auto;
-      }
-      .copy-btn:hover { color: #8b5cf6; }
-      .tab-active { border-bottom: 2px solid #7c3aed; color: #7c3aed; }
-      .tab-inactive { border-bottom: 2px solid transparent; color: #71717a; }
-      .tab-inactive:hover { color: #a1a1aa; }
-      .deploy-option {
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        transition: all 0.2s;
-      }
-      .deploy-option:hover {
-        border-color: rgba(124, 58, 237, 0.5);
-        background: rgba(124, 58, 237, 0.05);
-      }
-      .deploy-option.active {
-        border-color: #7c3aed;
-        background: rgba(124, 58, 237, 0.1);
-      }
-      .nav-link { position: relative; }
-      .nav-link::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 0; height: 1px; background: #8b5cf6; transition: width .2s; }
-      .nav-link:hover::after { width: 100%; }
-    </style>
+    <link href="style.css" rel="stylesheet" />
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet" /></noscript>
   </head>
   <body class="bg-night-950 text-zinc-300 antialiased min-h-screen">
     <!-- Nav -->
     <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
       <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-        <a href="index.html" class="font-black text-white tracking-tighter font-mono text-lg">L8BIN<span class="text-violet-500">.</span></a>
+        <a href="/" class="font-black text-white tracking-tighter font-mono text-lg">L8BIN<span class="text-violet-500">.</span></a>
         <div class="flex items-center gap-3">
           <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
-          <a href="index.html" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Back to Home</a>
+          <a href="/" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Back to Home</a>
         </div>
       </div>
     </nav>

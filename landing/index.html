@@ -5,46 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LiteBin — Self-Host Every Side Project. Sleep to Zero. Under 58MB.</title>
   <meta name="description" content="No per-app fees. Deploy as many apps as your disk holds — they sleep to zero when idle, wake in seconds. Self-hosted, open source. Platform overhead: under 58MB." />
-<!-- v2 -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: { sans: ["Outfit","sans-serif"], mono: ["JetBrains Mono","monospace"] },
-          colors: { night: { 950:"#030308", 900:"#0a0912", 800:"#131222", 700:"#1a1830" } }
-        }
-      }
-    };
-  </script>
-  <style>
-    :root { --vio:#7c3aed; --vio-l:#8b5cf6; --vio-g:rgba(124,58,237,0.15); }
-    .glow { box-shadow: 0 0 50px -12px var(--vio-g); }
-    .glass { background:rgba(255,255,255,0.02); backdrop-filter:blur(12px); border:1px solid rgba(255,255,255,0.06); }
-    .grad-text { background:linear-gradient(135deg,#a78bfa,#f472b6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
-    #glitch-title .char { display:inline-block; }
-    #glitch-title .char.glitching { animation:cg .18s ease-in-out; }
-    @keyframes cg { 0%,100%{transform:translate(0)} 25%{transform:translate(-2px,2px)} 75%{transform:translate(2px,-2px)} }
-    .bar-fill { transition: width 1.2s cubic-bezier(.4,0,.2,1); }
-    html { scroll-behavior:smooth; }
-    .nav-link { position:relative; }
-    .nav-link::after { content:''; position:absolute; bottom:-2px; left:0; width:0; height:1px; background:var(--vio-l); transition:width .2s; }
-    .nav-link:hover::after { width:100%; }
-    .dot-grid { background-image:radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px); background-size:28px 28px; }
-    .fade-in { opacity:0; transform:translateY(16px); transition:opacity .55s ease, transform .55s ease; }
-    .fade-in.visible { opacity:1; transform:translateY(0); }
-    .term-cursor { display:inline-block; width:7px; height:14px; background:#8b5cf6; animation:blink .8s step-end infinite; vertical-align:middle; margin-left:1px; }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
-    .tl { font-size:.78rem; font-family:'JetBrains Mono',monospace; line-height:1.9; white-space:pre; }
-    .tl.cmd { color:#e4e4e7; } .tl.ans { color:#a1a1aa; } .tl.ok { color:#34d399; } .tl.info { color:#71717a; } .tl.url { color:#a78bfa; font-weight:600; }
-    .ws-row { transition: background .35s, border-color .35s; }
-    .ws-row.active { background:rgba(255,255,255,0.05); border-color:rgba(255,255,255,0.09) !important; }
-    @keyframes wake-fill { 0%{width:5%} 80%{width:88%} 100%{width:94%} }
-    .wake-anim { animation: wake-fill 2s ease-out forwards; }
-  </style>
+  <link href="style.css" rel="stylesheet" />
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700;800&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'" />
+  <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" /></noscript>
 </head>
-<body class="bg-night-950 text-zinc-300 antialiased selection:bg-violet-500/30">
+<body id="top" class="bg-night-950 text-zinc-300 antialiased selection:bg-violet-500/30">
 
   <!-- WIP Banner -->
   <div class="bg-violet-500/10 border-b border-violet-500/20 px-4 py-2 text-center">
@@ -54,7 +19,7 @@
   <!-- Nav -->
   <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
     <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-      <a href="#" class="font-black text-white tracking-tighter font-mono text-lg">L8BIN<span class="text-violet-500">.</span></a>
+      <a href="/" onclick="event.preventDefault(); history.replaceState(null,'',location.pathname); window.scrollTo({top:0,behavior:'smooth'})" class="font-black text-white tracking-tighter font-mono text-lg">L8BIN<span class="text-violet-500">.</span></a>
       <div class="hidden md:flex items-center gap-8 text-sm text-zinc-400">
         <a href="#usecases" class="nav-link hover:text-white transition">Use Cases</a>
         <a href="#how" class="nav-link hover:text-white transition">How it works</a>
@@ -136,7 +101,7 @@
             </div>
             <div class="pt-4 border-t border-white/10 flex justify-between items-center">
               <span class="text-sm font-mono text-zinc-400">Total Resting Stack</span>
-              <span class="text-2xl font-black text-violet-400"><span id="mv-total">43.4</span> <span class="text-base text-zinc-500 font-normal">/ 58 MB</span></span>
+              <span class="text-2xl font-black text-violet-400"><span id="mv-total">43.4</span> <span class="text-base text-zinc-500 font-normal"> &lt; 58 MB</span></span>
             </div>
           </div>
           <p class="text-xs text-zinc-600 mt-3 italic">* Sleep-state RAM only.</p>

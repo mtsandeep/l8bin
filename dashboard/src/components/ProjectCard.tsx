@@ -18,12 +18,12 @@ import {
   Moon,
   Terminal,
   HardDrive,
-  Check,
   Settings,
   X as XIcon,
 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import LogViewer from "./LogViewer";
+import ResourceLimitInput from "./ResourceLimitInput";
 import { useToast } from "./ToastContext";
 import {
   type Project,
@@ -92,7 +92,7 @@ export default function ProjectCard({
   const [customDomainInput, setCustomDomainInput] = useState(project.custom_domain ?? "");
   const [customDomainSaving, setCustomDomainSaving] = useState(false);
   const [showCustomDomain, setShowCustomDomain] = useState(false);
-  const [timeoutSaveStatus, setTimeoutSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const sleepStateRef = useRef({ autoStop, timeoutMins, autoStart });
 
   // Keep local state in sync when project prop changes (e.g. after refresh)
   useEffect(() => {
@@ -133,17 +133,24 @@ export default function ProjectCard({
     return () => document.removeEventListener("mousedown", handler);
   }, [showCustomDomain]);
 
-  // Close sleep popover on outside click
+  // Close sleep popover on outside click — save on close
   useEffect(() => {
     if (!sleepOpen) return;
     const handler = (e: MouseEvent) => {
       if (popoverContainerRef.current && !popoverContainerRef.current.contains(e.target as Node)) {
         setSleepOpen(false);
+        // Build patch from changed values
+        const snap = sleepStateRef.current;
+        const patch: Parameters<typeof handleSettingsChange>[0] = {};
+        if (autoStop !== snap.autoStop) patch.auto_stop_enabled = autoStop;
+        if (timeoutMins !== snap.timeoutMins) patch.auto_stop_timeout_mins = timeoutMins;
+        if (autoStart !== snap.autoStart) patch.auto_start_enabled = autoStart;
+        if (Object.keys(patch).length > 0) handleSettingsChange(patch);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [sleepOpen]);
+  }, [sleepOpen, autoStop, timeoutMins, autoStart]);
 
   // Close cmd popover on outside click
   useEffect(() => {
@@ -251,15 +258,15 @@ export default function ProjectCard({
           </p>
           <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
             <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-              project.auto_stop_enabled ? 'bg-slate-700/60' : 'bg-slate-800/40'
+              autoStop ? 'bg-slate-700/60' : 'bg-slate-800/40'
             }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${project.auto_stop_enabled ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-              <span className="text-slate-400">Auto-stop{project.auto_stop_enabled && ` · ${project.auto_stop_timeout_mins}m`}</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${autoStop ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+              <span className="text-slate-400">Auto-stop{autoStop && ` · ${timeoutMins}m`}</span>
             </span>
             <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-              project.auto_start_enabled ? 'bg-slate-700/60' : 'bg-slate-800/40'
+              autoStart ? 'bg-slate-700/60' : 'bg-slate-800/40'
             }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${project.auto_start_enabled ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${autoStart ? 'bg-emerald-400' : 'bg-slate-600'}`} />
               <span className="text-slate-400">Auto-start</span>
             </span>
           </div>
@@ -350,7 +357,14 @@ export default function ProjectCard({
           {/* Sleep button */}
           <div className="flex-1">
             <button
-              onClick={() => { setSleepOpen((o) => !o); setCmdOpen(false); setShowCustomDomain(false); }}
+              onClick={() => {
+                setSleepOpen((o) => {
+                  if (!o) sleepStateRef.current = { autoStop, timeoutMins, autoStart };
+                  return !o;
+                });
+                setCmdOpen(false);
+                setShowCustomDomain(false);
+              }}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer ${
                 sleepOpen
                   ? "bg-slate-900/80 border-violet-500/40 text-slate-300"
@@ -416,7 +430,7 @@ export default function ProjectCard({
               <button
                 role="switch"
                 aria-checked={autoStop}
-                onClick={() => handleSettingsChange({ auto_stop_enabled: !autoStop })}
+                onClick={() => setAutoStop(!autoStop)}
                 className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStop ? "bg-violet-500" : "bg-slate-600"}`}
               >
                 <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStop ? "translate-x-3.5" : "translate-x-0.5"}`} />
@@ -425,37 +439,13 @@ export default function ProjectCard({
             {autoStop && (
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-300">Idle timeout (mins)</span>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    min={1}
-                    value={timeoutMins}
-                    onChange={(e) => setTimeoutMins(Number(e.target.value))}
-                    className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 text-right focus:outline-none focus:border-violet-500"
-                  />
-                  <button
-                    onClick={(e) => {
-                      const val = Math.max(1, Number(timeoutMins));
-                      setTimeoutMins(val);
-                      setTimeoutSaveStatus('saving');
-                      handleSettingsChange({ auto_stop_timeout_mins: val }).then(() => {
-                        setTimeoutSaveStatus('saved');
-                        setTimeout(() => setTimeoutSaveStatus('idle'), 3000);
-                      }).catch(() => {
-                        setTimeoutSaveStatus('idle');
-                      });
-                      e.currentTarget.blur();
-                    }}
-                    className={`p-1 transition-colors cursor-pointer ${
-                      timeoutSaveStatus === 'saving' ? 'text-slate-400' :
-                      timeoutSaveStatus === 'saved' ? 'text-emerald-400' :
-                      'text-slate-400 hover:text-violet-400'
-                    }`}
-                    title="Save timeout"
-                  >
-                    {timeoutSaveStatus === 'saving' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                  </button>
-                </div>
+                <input
+                  type="number"
+                  min={1}
+                  value={timeoutMins}
+                  onChange={(e) => setTimeoutMins(Number(e.target.value))}
+                  className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 text-right focus:outline-none focus:border-violet-500"
+                />
               </div>
             )}
             <label className="flex items-center justify-between gap-2 cursor-pointer">
@@ -463,7 +453,7 @@ export default function ProjectCard({
               <button
                 role="switch"
                 aria-checked={autoStart}
-                onClick={() => handleSettingsChange({ auto_start_enabled: !autoStart })}
+                onClick={() => setAutoStart(!autoStart)}
                 className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStart ? "bg-violet-500" : "bg-slate-600"}`}
               >
                 <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStart ? "translate-x-3.5" : "translate-x-0.5"}`} />
@@ -511,30 +501,36 @@ export default function ProjectCard({
                 className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
               />
             </div>
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs text-slate-400">Memory limit</span>
-                <span className="text-xs font-mono text-violet-300">{memMb} MB</span>
-              </div>
-              <input type="range" min={64} max={4096} step={64}
-                value={memMb}
-                onChange={(e) => setMemMb(Number(e.target.value))}
-                className="w-full accent-violet-500"
-              />
-              <div className="flex justify-between text-[10px] text-slate-600 mt-0.5"><span>64 MB</span><span>4096 MB</span></div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs text-slate-400">CPU limit</span>
-                <span className="text-xs font-mono text-violet-300">{cpuLimit.toFixed(2)} vCPU</span>
-              </div>
-              <input type="range" min={0.1} max={4} step={0.1}
-                value={cpuLimit}
-                onChange={(e) => setCpuLimit(Number(e.target.value))}
-                className="w-full accent-violet-500"
-              />
-              <div className="flex justify-between text-[10px] text-slate-600 mt-0.5"><span>0.1</span><span>4.0</span></div>
-            </div>
+            <ResourceLimitInput
+              label="Memory limit"
+              value={memMb}
+              onChange={setMemMb}
+              unit="MB"
+              min={64}
+              normalMax={4096}
+              absoluteMax={65536}
+              normalStep={64}
+              overStep={1024}
+              highLabel="high memory"
+              minLabel="64 MB"
+              normalMaxLabel="4 GB"
+              inputClass="bg-slate-700"
+            />
+            <ResourceLimitInput
+              label="CPU limit"
+              value={cpuLimit}
+              onChange={setCpuLimit}
+              unit="vCPU"
+              min={0.1}
+              normalMax={4}
+              absoluteMax={32}
+              normalStep={0.1}
+              overStep={1}
+              highLabel="high cpu"
+              minLabel="0.1"
+              normalMaxLabel="4 vCPU"
+              inputClass="bg-slate-700"
+            />
             <div className="flex gap-2">
               <button
                 onClick={async () => {
