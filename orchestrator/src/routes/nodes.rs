@@ -311,18 +311,17 @@ pub async fn connect_node(
 /// Build the wake_report_url for agents to POST to.
 pub fn format_wake_report_url(state: &AppState) -> String {
     if state.config.ca_cert_path.is_empty() {
-        // Dev mode: direct to orchestrator
+        // Dev mode: direct to orchestrator over HTTP
         format!(
             "http://localhost:{}/internal/wake-report",
             state.config.port
         )
     } else {
-        // Production: use poke subdomain
+        // Production: route through Caddy (port 443) for proper TLS
         format!(
-            "https://{}.{}:{}/internal/wake-report",
+            "https://{}.{}/internal/wake-report",
             state.config.poke_subdomain,
-            state.config.domain,
-            state.config.port
+            state.config.domain
         )
     }
 }
@@ -335,11 +334,11 @@ pub fn format_heartbeat_url(state: &AppState) -> String {
             state.config.port
         )
     } else {
+        // Production: route through Caddy (port 443) for proper TLS
         format!(
-            "https://{}.{}:{}/internal/heartbeat",
+            "https://{}.{}/internal/heartbeat",
             state.config.poke_subdomain,
-            state.config.domain,
-            state.config.port
+            state.config.domain
         )
     }
 }

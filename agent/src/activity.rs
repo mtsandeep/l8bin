@@ -58,7 +58,6 @@ async fn report_hosts_to_master(state: &AgentState, hosts: HashSet<String>) {
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
-        .danger_accept_invalid_certs(true)
         .build()
     {
         Ok(c) => c,
