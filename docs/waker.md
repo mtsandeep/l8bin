@@ -307,6 +307,7 @@ The switch from sleeping → running route happens automatically when `sync_rout
 | Endpoint | What it does |
 |---|---|
 | `POST /internal/wake-report` | Agent reports successful wake (HMAC-signed via `poke.{domain}`). Updates DB, sends debounced route sync signal. |
+| `POST /internal/heartbeat` | Agent reports active hosts from access logs (HMAC-signed via `poke.{domain}`). Updates `last_active_at` for matching running projects. |
 | `POST /nodes/{id}/connect` | Orchestrator pushes config to agent via mTLS: health check + register + set status to `online` |
 
 ---

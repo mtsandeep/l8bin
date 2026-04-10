@@ -47,6 +47,11 @@ services:
       - caddy-config:/config
       # Persist Caddy's internal root CA across restarts
       - caddy-root:/root/.local/share/caddy
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     networks:
       - litebin-network
 
@@ -83,6 +88,11 @@ services:
     volumes:
       - caddy-agent-data:/data
       - caddy-agent-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     profiles:
       - agent
 

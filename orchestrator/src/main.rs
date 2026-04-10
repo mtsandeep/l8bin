@@ -1,3 +1,4 @@
+mod activity;
 mod auth;
 mod cloudflare_router;
 mod config;
@@ -60,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "litebin_orchestrator=info,tower_http=info".into()),
+                .unwrap_or_else(|_| "litebin_orchestrator=info,litebin_common=info,tower_http=info".into()),
         )
         .init();
 
@@ -235,6 +236,9 @@ async fn main() -> anyhow::Result<()> {
     // Spawn heartbeat background task
     tokio::spawn(nodes::heartbeat::run_heartbeat(state.clone()));
 
+    // Spawn activity tracker (updates last_active_at based on real traffic)
+    tokio::spawn(activity::run_activity_tracker(state.clone()));
+
     // Spawn debounced route sync background task
     tokio::spawn(routing_helpers::run_route_sync(
         route_sync_rx,
@@ -306,6 +310,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(routes::health::health_check))
         .route("/caddy/ask", get(routes::caddy::ask))
         .route("/internal/wake-report", post(routes::wake_report::wake_report))
+        .route("/internal/heartbeat", post(routes::heartbeat::heartbeat))
         .fallback(routes::waker::wake)
         .layer(auth::auth_layer(state.clone()))
         .layer(CorsLayer::permissive())

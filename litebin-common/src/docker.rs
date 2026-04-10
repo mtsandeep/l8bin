@@ -290,6 +290,26 @@ impl DockerManager {
         Ok(())
     }
 
+    /// Follow container logs (stdout + stderr) as a stream.
+    /// Returns a stream of `bollard::container::LogOutput` items.
+    pub fn follow_container_logs(
+        &self,
+        container_name: &str,
+        since: Option<i64>,
+    ) -> impl StreamExt<Item = Result<bollard::container::LogOutput, bollard::errors::Error>> + Send + Unpin {
+        use bollard::query_parameters::LogsOptions;
+        let options = LogsOptions {
+            follow: true,
+            stdout: true,
+            stderr: true,
+            since: since.map(|s| s as i32).unwrap_or(0),
+            until: 0,
+            timestamps: false,
+            tail: "0".to_string(),
+        };
+        self.docker.logs(container_name, Some(options))
+    }
+
     /// Returns total host memory in bytes as reported by Docker info.
     pub async fn system_memory(&self) -> anyhow::Result<i64> {
         let info = self.docker.info().await?;

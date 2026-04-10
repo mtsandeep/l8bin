@@ -244,6 +244,7 @@ pub async fn connect_node(
         "secret": secret,
         "domain": state.config.domain,
         "wake_report_url": format_wake_report_url(&state),
+        "heartbeat_url": format_heartbeat_url(&state),
     });
 
     match client
@@ -319,6 +320,23 @@ pub fn format_wake_report_url(state: &AppState) -> String {
         // Production: use poke subdomain
         format!(
             "https://{}.{}:{}/internal/wake-report",
+            state.config.poke_subdomain,
+            state.config.domain,
+            state.config.port
+        )
+    }
+}
+
+/// Build the heartbeat_url for agents to POST activity data to.
+pub fn format_heartbeat_url(state: &AppState) -> String {
+    if state.config.ca_cert_path.is_empty() {
+        format!(
+            "http://localhost:{}/internal/heartbeat",
+            state.config.port
+        )
+    } else {
+        format!(
+            "https://{}.{}:{}/internal/heartbeat",
             state.config.poke_subdomain,
             state.config.domain,
             state.config.port

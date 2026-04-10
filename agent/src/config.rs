@@ -18,6 +18,7 @@ pub struct AgentRegistration {
     pub secret: String,
     pub domain: String,
     pub wake_report_url: String,
+    pub heartbeat_url: String,
 }
 
 impl Config {

@@ -55,6 +55,7 @@ impl MasterProxyRouter {
         dashboard_subdomain: &str,
         poke_subdomain: &str,
     ) -> Value {
+        let logging = crate::heartbeat::caddy_logging_config();
         let mut routes: Vec<Value> = Vec::new();
 
         for p in projects {
@@ -223,13 +224,15 @@ impl MasterProxyRouter {
             "admin": {
                 "listen": "0.0.0.0:2019"
             },
+            "logging": logging["logging"],
             "apps": {
                 "http": {
                     "servers": {
                         "srv0": {
                             "listen": [":80", ":443"],
                             "routes": routes,
-                            "errors": error_routes
+                            "errors": error_routes,
+                            "logs": {}
                         }
                     }
                 },

@@ -59,9 +59,30 @@ Hot-swappable from the dashboard. All agents must be reachable for Mode B.
 
 ## Sleep & Wake
 
+### Activity Tracking
+
+The orchestrator tracks real HTTP traffic to update `last_active_at` in the database, so the janitor only stops truly idle projects — not ones actively serving requests.
+
+**How it works:**
+
+1. Caddy is configured with JSON access logs to stdout (`encoder.format: "json"`, `"logs": {}` on each server)
+2. A background task tails the Caddy container's Docker log stream (`docker logs --follow`)
+3. Each log line is parsed as JSON; `request.host` is extracted into a `HashSet` (deduped)
+4. Every 60 seconds, the batch of unique hosts is flushed — one `UPDATE` query updates `last_active_at` for all matching running projects
+5. Dashboard/poke hosts are filtered out; both subdomains (`myapp.l8b.in`) and custom domains (`app.example.com`) are matched
+
+**Agent nodes** (Mode B): The agent tails its local Caddy logs and sends the batch to the orchestrator via `POST /internal/heartbeat` (HMAC-signed, same pattern as wake-report). The orchestrator handles the DB update for all nodes.
+
+```
+Mode A:  Caddy stdout → Docker stream → orchestrator tailer → DB UPDATE
+Mode B:  Agent-Caddy stdout → Docker stream → agent tailer → HMAC POST → orchestrator → DB UPDATE
+```
+
+Memory overhead is minimal (~10-15 KB) — it's a single async task with a streaming reader and a small HashSet that resets every 60s.
+
 ### Janitor (background task)
 
-Runs on a configurable interval (default: 5 min). Stops idle containers that haven't received traffic within their timeout threshold (default: 15 min).
+Runs on a configurable interval (default: 5 min). Stops idle containers that haven't received traffic within their timeout threshold (default: 15 min). See [janitor.md](janitor.md) for the detailed flow.
 
 ### Waker (forward-auth handler)
 

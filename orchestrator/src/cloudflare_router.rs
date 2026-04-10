@@ -49,9 +49,8 @@ impl CloudflareDnsRouter {
         dashboard_subdomain: &str,
         poke_subdomain: &str,
     ) -> Value {
+        let logging = litebin_common::heartbeat::caddy_logging_config();
         let mut routes: Vec<Value> = Vec::new();
-
-        // Per-project routes for local projects
         for p in local_projects {
             routes.push(json!({
                 "match": [{ "host": [p.subdomain_host] }],
@@ -205,13 +204,15 @@ impl CloudflareDnsRouter {
 
         json!({
             "admin": { "listen": "0.0.0.0:2019" },
+            "logging": logging["logging"],
             "apps": {
                 "http": {
                     "servers": {
                         "srv0": {
                             "listen": [":80", ":443"],
                             "routes": routes,
-                            "errors": error_routes
+                            "errors": error_routes,
+                            "logs": {}
                         }
                     }
                 },
@@ -339,15 +340,18 @@ impl CloudflareDnsRouter {
 
         let ask_endpoint = if orchestrator_url.is_empty() {
             // Fallback: skip on-demand TLS if no orchestrator URL configured
+            let logging = litebin_common::heartbeat::caddy_logging_config();
             return json!({
                 "admin": { "listen": "0.0.0.0:2019" },
+                "logging": logging["logging"],
                 "apps": {
                     "http": {
                         "servers": {
                             "srv0": {
                                 "listen": [":80", ":443"],
                                 "routes": routes,
-                                "errors": error_routes
+                                "errors": error_routes,
+                                "logs": {}
                             }
                         }
                     },
@@ -362,15 +366,19 @@ impl CloudflareDnsRouter {
             format!("http://{}/caddy/ask", orchestrator_url)
         };
 
+        let logging = litebin_common::heartbeat::caddy_logging_config();
+
         json!({
             "admin": { "listen": "0.0.0.0:2019" },
+            "logging": logging["logging"],
             "apps": {
                 "http": {
                     "servers": {
                         "srv0": {
                             "listen": [":80", ":443"],
                             "routes": routes,
-                            "errors": error_routes
+                            "errors": error_routes,
+                            "logs": {}
                         }
                     }
                 },

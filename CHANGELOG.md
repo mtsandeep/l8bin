@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Traffic-based idle detection — janitor now stops only truly idle projects by tracking real HTTP requests via Caddy access logs instead of relying solely on deploy/wake timestamps
 - Unified custom domain wake for both master proxy and cloudflare_dns modes via Caddy Host header rewrite
 - Agent now checks `auto_start_enabled` before waking — shows "currently offline" page when disabled
 - Agent Caddy config persistence (`data/caddy-config.json`) — survives restarts, used as base for local rebuilds

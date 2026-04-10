@@ -1,3 +1,4 @@
+mod activity;
 mod config;
 mod routes;
 mod tls;
@@ -192,6 +193,9 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // Spawn activity reporter (reports active hosts to orchestrator via UDP → HTTP)
+    tokio::spawn(activity::run_activity_reporter(state.clone()));
 
     let app = Router::new()
         .route("/health", get(routes::health::health))

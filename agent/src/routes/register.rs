@@ -8,6 +8,7 @@ pub struct RegisterRequest {
     pub secret: String,
     pub domain: String,
     pub wake_report_url: String,
+    pub heartbeat_url: String,
 }
 
 /// POST /internal/register — called by orchestrator over mTLS to push config.
@@ -20,6 +21,7 @@ pub async fn register(
         secret: req.secret,
         domain: req.domain,
         wake_report_url: req.wake_report_url,
+        heartbeat_url: req.heartbeat_url,
     };
 
     tracing::info!(

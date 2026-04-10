@@ -377,13 +377,15 @@ fn build_config_from_scratch(
 
     json!({
         "admin": { "listen": "0.0.0.0:2019" },
+        "logging": litebin_common::heartbeat::caddy_logging_config()["logging"],
         "apps": {
             "http": {
                 "servers": {
                     "srv0": {
                         "listen": [":80", ":443"],
                         "routes": routes,
-                        "errors": error_routes
+                        "errors": error_routes,
+                        "logs": {}
                     }
                 }
             },
