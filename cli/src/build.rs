@@ -259,11 +259,21 @@ ENTRYPOINT ["railpack"]
 
     std::fs::write(tmp.join("Dockerfile"), &dockerfile)?;
 
-    let status = Command::new("docker")
-        .args(["build", "-t", RAILPACK_IMAGE, "."])
-        .current_dir(&tmp)
-        .status()
-        .context("failed to build Railpack image")?;
+    let mut cmd = Command::new("docker");
+    cmd.args(["build", "-t", RAILPACK_IMAGE, "."])
+        .current_dir(&tmp);
+
+    let status = if ci_mode {
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let output = cmd.output().context("failed to build Railpack image")?;
+        if !output.status.success() {
+            let _ = std::fs::remove_dir_all(&tmp);
+            anyhow::bail!("failed to build Railpack Docker image");
+        }
+        output.status
+    } else {
+        cmd.status().context("failed to build Railpack image")?
+    };
 
     let _ = std::fs::remove_dir_all(&tmp);
 
@@ -378,8 +388,8 @@ async fn build_with_railpack_native(
     quiet: bool,
     ci_mode: bool,
 ) -> Result<SavedImage> {
-    let (railpack_bin, railpack_tag) = crate::railpack::ensure_railpack().await?;
-    crate::mise::ensure_mise_for_railpack(&railpack_tag).await?;
+    let (railpack_bin, railpack_tag) = crate::railpack::ensure_railpack(ci_mode).await?;
+    crate::mise::ensure_mise_for_railpack(&railpack_tag, ci_mode).await?;
 
     let buildkit_host = ensure_buildkit(quiet, ci_mode)?;
 

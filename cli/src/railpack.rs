@@ -7,7 +7,7 @@ use crate::config::MAX_RETRIES;
 
 /// Return the path to the Railpack binary and its version tag,
 /// downloading it if not cached. (Linux / macOS native only — Windows uses Docker.)
-pub async fn ensure_railpack() -> Result<(PathBuf, String)> {
+pub async fn ensure_railpack(ci_mode: bool) -> Result<(PathBuf, String)> {
     let bin_path = railpack_bin_path();
 
     if bin_path.exists() && bin_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
@@ -15,18 +15,18 @@ pub async fn ensure_railpack() -> Result<(PathBuf, String)> {
         return Ok((bin_path, version));
     }
 
-    println!("  {} Railpack not found, downloading...", "::".dimmed());
+    if !ci_mode { println!("  {} Railpack not found, downloading...", "::".dimmed()); }
 
     for attempt in 1..=MAX_RETRIES {
-        match download_railpack(&bin_path).await {
+        match download_railpack(&bin_path, ci_mode).await {
             Ok(version) => {
-                println!("  {} Railpack {} installed", "✔".green(), version);
+                if !ci_mode { println!("  {} Railpack {} installed", "✔".green(), version); }
                 return Ok((bin_path, version));
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&bin_path);
                 if attempt < MAX_RETRIES {
-                    println!("  {} Download failed (attempt {}/{}): {}", "!".yellow(), attempt, MAX_RETRIES, e);
+                    if !ci_mode { println!("  {} Download failed (attempt {}/{}): {}", "!".yellow(), attempt, MAX_RETRIES, e); }
                 } else {
                     anyhow::bail!("Railpack download failed after {} attempts: {}", MAX_RETRIES, e);
                 }
@@ -66,7 +66,7 @@ fn asset_name(version: &str) -> String {
     format!("railpack-v{version}-{arch}-{os}.tar.gz")
 }
 
-async fn download_railpack(bin_path: &Path) -> Result<String> {
+async fn download_railpack(bin_path: &Path, ci_mode: bool) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()?;
@@ -95,7 +95,7 @@ async fn download_railpack(bin_path: &Path) -> Result<String> {
     let temp_dir = std::env::temp_dir();
     let archive_path = temp_dir.join(&name);
 
-    println!("  {} Downloading Railpack {}...", "::".dimmed(), version);
+    if !ci_mode { println!("  {} Downloading Railpack {}...", "::".dimmed(), version); }
     let bytes = client
         .get(download_url)
         .header("User-Agent", "l8b-cli")

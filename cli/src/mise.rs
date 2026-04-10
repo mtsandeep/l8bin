@@ -49,7 +49,7 @@ pub async fn fetch_mise_version(railpack_tag: &str) -> String {
 const MISE_INSTALL_DIR: &str = "/tmp/railpack/mise";
 
 /// Ensure mise is installed where Railpack expects it (Linux/macOS native only).
-pub async fn ensure_mise_for_railpack(railpack_tag: &str) -> Result<()> {
+pub async fn ensure_mise_for_railpack(railpack_tag: &str, ci_mode: bool) -> Result<()> {
     let mise_version = fetch_mise_version(railpack_tag).await;
     let binary_name = format!("mise-{}", mise_version);
     let install_path = PathBuf::from(MISE_INSTALL_DIR).join(&binary_name);
@@ -58,17 +58,17 @@ pub async fn ensure_mise_for_railpack(railpack_tag: &str) -> Result<()> {
         return Ok(());
     }
 
-    println!("  {} Setting up mise for Railpack...", "::".dimmed());
+    if !ci_mode { println!("  {} Setting up mise for Railpack...", "::".dimmed()); }
 
     for attempt in 1..=MAX_RETRIES {
-        match download_and_install(&mise_version, &binary_name).await {
+        match download_and_install(&mise_version, &binary_name, ci_mode).await {
             Ok(()) => {
-                println!("  {} mise v{} installed", "✔".green(), mise_version);
+                if !ci_mode { println!("  {} mise v{} installed", "✔".green(), mise_version); }
                 return Ok(());
             }
             Err(e) => {
                 if attempt < MAX_RETRIES {
-                    println!("  {} Download failed (attempt {}/{}): {}", "!".yellow(), attempt, MAX_RETRIES, e);
+                    if !ci_mode { println!("  {} Download failed (attempt {}/{}): {}", "!".yellow(), attempt, MAX_RETRIES, e); }
                 } else {
                     anyhow::bail!("mise download failed after {} attempts: {}", MAX_RETRIES, e);
                 }
@@ -95,7 +95,7 @@ fn asset_name(version: &str) -> String {
     format!("mise-v{version}-{os}-{arch}.tar.gz")
 }
 
-async fn download_and_install(version: &str, binary_name: &str) -> Result<()> {
+async fn download_and_install(version: &str, binary_name: &str, ci_mode: bool) -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()?;
@@ -106,7 +106,7 @@ async fn download_and_install(version: &str, binary_name: &str) -> Result<()> {
         crate::config::MISE_RELEASE_BASE,
     );
 
-    println!("  {} Downloading mise v{}...", "::".dimmed(), version);
+    if !ci_mode { println!("  {} Downloading mise v{}...", "::".dimmed(), version); }
     let bytes = client
         .get(&download_url)
         .header("User-Agent", "l8b-cli")
