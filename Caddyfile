@@ -21,7 +21,12 @@
 		reverse_proxy litebin-orchestrator:5080
 	}
 	handle /images/* {
-		reverse_proxy litebin-orchestrator:5080
+		reverse_proxy litebin-orchestrator:5080 {
+			transport http {
+				read_timeout 1800s
+				write_timeout 1800s
+			}
+		}
 	}
 	handle /nodes* {
 		reverse_proxy litebin-orchestrator:5080

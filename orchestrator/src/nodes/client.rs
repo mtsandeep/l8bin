@@ -30,6 +30,7 @@ pub fn build_node_client(
         .add_root_certificate(ca_cert)
         .identity(identity)
         .use_rustls_tls()
+        .timeout(std::time::Duration::from_secs(1800)) // 30 min for large image proxying
         .build()?;
 
     Ok(client)

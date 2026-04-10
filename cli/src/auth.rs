@@ -111,6 +111,7 @@ pub fn authenticated_client(config: &CliConfig) -> Result<reqwest::Client> {
 
     let client = reqwest::Client::builder()
         .default_headers(headers)
+        .timeout(std::time::Duration::from_secs(60))
         .build()?;
 
     Ok(client)

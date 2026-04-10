@@ -88,6 +88,7 @@ async fn upload_tar_inner(
         match client
             .post(&url)
             .header("Content-Type", "application/x-tar")
+            .timeout(std::time::Duration::from_secs(1800)) // 30 min for large image uploads
             .body(body)
             .send()
             .await
