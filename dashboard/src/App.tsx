@@ -7,6 +7,7 @@ import ChangePasswordModal from './components/ChangePasswordModal';
 import NodesPage from './components/NodesPage';
 import GlobalSettingsModal from './components/GlobalSettingsModal';
 import { AuthProvider, useAuth } from './components/AuthContext';
+import { ToastProvider } from './components/ToastContext';
 import { type Project, type Node, type ProjectStats, type ServiceStats, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, formatBytes } from './api';
 import { useIntervalWhileVisible } from './hooks';
 
@@ -27,7 +28,8 @@ function AppContent() {
   const [stackExpanded, setStackExpanded] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const { user, loading: authLoading, logout } = useAuth();
-  const userMenuRef = useRef<HTMLDivElement>(null);
+  const userMenuRefMobile = useRef<HTMLDivElement>(null);
+  const userMenuRefDesktop = useRef<HTMLDivElement>(null);
 
   // Fetch nodes and settings once on mount
   useEffect(() => {
@@ -71,9 +73,12 @@ function AppContent() {
   // Close user menu on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as unknown as globalThis.Node)) {
-        setShowUserMenu(false);
-      }
+      const mobileEl = userMenuRefMobile.current;
+      const desktopEl = userMenuRefDesktop.current;
+      const target = e.target as unknown as globalThis.Node;
+      if (mobileEl && mobileEl.contains(target)) return;
+      if (desktopEl && desktopEl.contains(target)) return;
+      setShowUserMenu(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -109,23 +114,62 @@ function AppContent() {
     <div className="min-h-screen bg-slate-950 text-slate-200">
       {/* Header */}
       <header className="border-b border-slate-800/80 bg-slate-900/50 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
-              <Container size={16} className="text-white" />
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+          {/* Mobile: logo left, user right. Desktop: logo left. */}
+          <div className="flex items-center justify-between sm:justify-start sm:gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
+                <Container size={16} className="text-white" />
+              </div>
+              <div>
+                <h1 className="text-base font-semibold text-slate-100 leading-none">
+                  LiteBin
+                </h1>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Container Dashboard
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-base font-semibold text-slate-100 leading-none">
-                LiteBin
-              </h1>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Container Dashboard
-              </p>
+            {/* User dropdown — mobile only here */}
+            <div className="relative sm:hidden" ref={userMenuRefMobile}>
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/50 hover:border-slate-600/50 transition-colors cursor-pointer"
+              >
+                <User size={14} className="text-slate-400" />
+                <span className="text-xs text-slate-300">{user.username}</span>
+                {user.is_admin && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400">
+                    admin
+                  </span>
+                )}
+                <ChevronDown size={12} className="text-slate-500" />
+              </button>
+              {showUserMenu && (
+                <div className="absolute right-0 mt-1 w-44 bg-slate-800 border border-slate-700/50 rounded-lg shadow-xl py-1 z-50">
+                  <button
+                    onClick={() => { setShowUserMenu(false); setShowChangePassword(true); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer"
+                  >
+                    <KeyRound size={14} className="text-slate-400" />
+                    Change Password
+                  </button>
+                  <button
+                    onClick={() => { setShowUserMenu(false); logout(); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                  >
+                    <LogOut size={14} />
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {/* User dropdown */}
-            <div className="relative" ref={userMenuRef}>
+
+          {/* Desktop: profile + action buttons pushed to right */}
+          <div className="flex items-center justify-end gap-3 sm:ml-auto">
+            {/* User dropdown — desktop only */}
+            <div className="relative hidden sm:block" ref={userMenuRefDesktop}>
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/50 hover:border-slate-600/50 transition-colors cursor-pointer"
@@ -161,7 +205,7 @@ function AppContent() {
             <button
               onClick={() => setShowNodes(true)}
               className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-              title="Worker Nodes"
+              title="Agents"
             >
               <Server size={16} />
             </button>
@@ -360,7 +404,9 @@ function AppContent() {
 function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
     </AuthProvider>
   );
 }

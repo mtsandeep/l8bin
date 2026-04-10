@@ -304,7 +304,7 @@ export async function addNode(payload: AddNodePayload): Promise<Node> {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to add node');
+    throw new Error(data.error || 'Failed to add agent');
   }
   return res.json();
 }

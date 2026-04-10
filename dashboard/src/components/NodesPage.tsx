@@ -26,16 +26,16 @@ function formatMem(bytes: number | null) {
   return `${gb.toFixed(1)} GB`;
 }
 
-// ── Add Node Wizard ────────────────────────────────────────────────────────────
+// ── Add Agent Wizard ───────────────────────────────────────────────────────────
 
 type WizardStep = 'form' | 'instructions' | 'connecting';
 
-interface AddNodeWizardProps {
+interface AddAgentWizardProps {
   onClose: () => void;
   onAdded: () => void;
 }
 
-function AddNodeWizard({ onClose, onAdded }: AddNodeWizardProps) {
+function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
   const [step, setStep] = useState<WizardStep>('form');
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
@@ -81,7 +81,7 @@ function AddNodeWizard({ onClose, onAdded }: AddNodeWizardProps) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <Server size={16} className="text-violet-400" />
-            <h2 className="text-sm font-semibold text-slate-100">Add Worker Node</h2>
+            <h2 className="text-sm font-semibold text-slate-100">Add Agent</h2>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-lg leading-none">×</button>
         </div>
@@ -100,7 +100,7 @@ function AddNodeWizard({ onClose, onAdded }: AddNodeWizardProps) {
             </div>
           ))}
           <span className="ml-2 text-xs text-slate-500">
-            {step === 'form' ? 'Node details' : step === 'instructions' ? 'Install agent' : 'Connecting…'}
+            {step === 'form' ? 'Server details' : step === 'instructions' ? 'Install agent' : 'Connecting…'}
           </span>
         </div>
 
@@ -110,10 +110,10 @@ function AddNodeWizard({ onClose, onAdded }: AddNodeWizardProps) {
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs text-slate-400 mb-1">Node name</label>
+                  <label className="block text-xs text-slate-400 mb-1">Agent name</label>
                   <input
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-violet-500"
-                    placeholder="worker-eu-1"
+                    placeholder="server-eu-1"
                     value={name}
                     onChange={e => setName(e.target.value)}
                   />
@@ -176,7 +176,7 @@ function AddNodeWizard({ onClose, onAdded }: AddNodeWizardProps) {
               </div>
               <p className="text-xs text-slate-500">
                 The script installs Docker, configures the firewall, and starts the agent on port <span className="text-slate-300">{port}</span>.
-                Once it's running, click <span className="text-slate-300">Connect</span> to verify and register the node.
+                Once it's running, click <span className="text-slate-300">Connect</span> to verify and register the agent.
               </p>
               {error && (
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400">
@@ -196,7 +196,7 @@ function AddNodeWizard({ onClose, onAdded }: AddNodeWizardProps) {
                   disabled={connecting}
                   className="flex-1 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
                 >
-                  Connect node
+                  Connect
                 </button>
               </div>
             </>
@@ -352,7 +352,7 @@ export default function NodesPage({ onBack }: NodesPageProps) {
       setNodes(n);
       setImageStats(stats);
     } catch {
-      setError('Failed to load nodes');
+      setError('Failed to load agents');
     } finally {
       setLoading(false);
     }
@@ -366,7 +366,7 @@ export default function NodesPage({ onBack }: NodesPageProps) {
       await deleteNode(id);
       await load();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to remove node');
+      setError(e instanceof Error ? e.message : 'Failed to remove agent');
     } finally {
       setRemoving(null);
     }
@@ -398,7 +398,7 @@ export default function NodesPage({ onBack }: NodesPageProps) {
             </button>
             <div className="w-px h-4 bg-slate-700" />
             <Server size={16} className="text-violet-400" />
-            <h1 className="text-sm font-semibold text-slate-100">Worker Nodes</h1>
+            <h1 className="text-sm font-semibold text-slate-100">Agents</h1>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={load} className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors">
@@ -409,7 +409,7 @@ export default function NodesPage({ onBack }: NodesPageProps) {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors"
             >
               <Plus size={13} />
-              Add node
+              Add agent
             </button>
           </div>
         </div>
@@ -428,118 +428,134 @@ export default function NodesPage({ onBack }: NodesPageProps) {
           </div>
         ) : (
           <div className="space-y-3">
-            {nodes.map(node => (
+            {nodes.map(node => {
+              const stats = imageStats.find(s => s.node_id === node.id)?.image_stats;
+              return (
               <div
                 key={node.id}
-                className="flex items-center gap-4 p-4 rounded-xl bg-slate-900/60 border border-slate-800/60 hover:border-slate-700/60 transition-colors"
+                className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/60 hover:border-slate-700/60 transition-colors"
               >
-                <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center shrink-0">
-                  <Server size={16} className="text-slate-400" />
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-slate-100">{node.name}</span>
-                    <span className="text-xs font-mono text-slate-600 truncate max-w-[120px]">({node.id})</span>
-                    {node.id === 'local' && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400">local</span>
+                {/* Top row: icon + name + status */}
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center shrink-0">
+                    <Server size={16} className="text-slate-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-slate-100">{node.name}</span>
+                      {node.id === 'local' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400">local</span>
+                      )}
+                      {node.region && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">{node.region}</span>
+                      )}
+                    </div>
+                    <span className="text-xs font-mono text-slate-600 truncate">{node.id}</span>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-1.5">
+                      <StatusDot status={node.status} />
+                      <span className={`text-xs ${statusColor(node.status)}`}>{node.status}</span>
+                    </div>
+                    {node.fail_count > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">
+                        {node.fail_count} fail{node.fail_count > 1 ? 's' : ''}
+                      </span>
                     )}
-                    {node.region && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">{node.region}</span>
+                    {node.id !== 'local' && (
+                      <button
+                        onClick={() => handleRemove(node.id)}
+                        disabled={removing === node.id}
+                        className="p-1.5 rounded text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
+                        title="Remove agent"
+                      >
+                        {removing === node.id
+                          ? <Loader size={14} className="animate-spin" />
+                          : <Trash2 size={14} />}
+                      </button>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 mt-0.5 text-xs text-slate-500">
-                    <span className="font-mono">
+                </div>
+
+                {/* Details grid */}
+                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
+                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Address</span>
+                    <span className="text-xs text-slate-400 font-mono truncate">
                       {node.id === 'local' ? node.host : `${node.host}:${node.agent_port}`}
                     </span>
-                    {node.total_memory && (
-                      <span>
-                        {node.available_memory != null
-                          ? `${formatMem(node.available_memory)}/${formatMem(node.total_memory)} RAM`
-                          : `${formatMem(node.total_memory)} RAM`}
-                      </span>
-                    )}
-                    {node.total_cpu && <span>{Math.round(node.total_cpu)} vCPU</span>}
-                    {node.disk_free != null && (
-                      <span>{formatBytes(node.disk_free)} disk free</span>
-                    )}
-                    {node.container_count > 0 && <span>{node.container_count} containers</span>}
-                    {node.last_seen_at && (
-                      <span className="flex items-center gap-1">
-                        <Clock size={10} />
-                        {timeAgo(node.last_seen_at)}
-                      </span>
-                    )}
                   </div>
-                  {(() => {
-                    const stats = imageStats.find(s => s.node_id === node.id)?.image_stats;
-                    if (!stats || stats.total_count === 0) return null;
-                    return (
-                      <div className="flex items-center gap-2 mt-1 text-xs">
-                        <span className="text-slate-500">
-                          Images: {stats.total_count} ({formatBytes(stats.total_size)})
-                        </span>
-                        {stats.dangling_count > 0 && (
-                          <span className="flex items-center gap-1.5">
-                            <span className="text-amber-400">
-                              {stats.dangling_count} dangling ({formatBytes(stats.dangling_size)})
-                            </span>
-                            <button
-                              onClick={() =>
-                                setPruneModal({
-                                  nodeId: node.id,
-                                  nodeName: node.name,
-                                  danglingCount: stats.dangling_count,
-                                  danglingSize: stats.dangling_size,
-                                  state: 'confirming',
-                                  reclaimed: null,
-                                  error: '',
-                                })
-                              }
-                              disabled={pruning === node.id}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 transition-colors cursor-pointer"
-                            >
-                              <Trash2 size={11} />
-                              {pruning === node.id ? 'Pruning…' : 'Prune'}
-                            </button>
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
+                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Resources</span>
+                    <span className="text-xs text-slate-400">
+                      {node.total_memory
+                        ? `${node.available_memory != null ? `${formatMem(node.available_memory)}/` : ''}${formatMem(node.total_memory)}`
+                        : '—'}
+                      {node.total_cpu ? ` · ${Math.round(node.total_cpu)} vCPU` : ''}
+                    </span>
+                  </div>
+                  <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
+                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Containers</span>
+                    <span className="text-xs text-slate-400">{node.container_count || 0}</span>
+                  </div>
+                  <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
+                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Disk</span>
+                    <span className="text-xs text-slate-400">
+                      {node.disk_free != null ? `${formatBytes(node.disk_free)} free` : '—'}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
-                  <div className="flex items-center gap-1.5">
-                    <StatusDot status={node.status} />
-                    <span className={`text-xs ${statusColor(node.status)}`}>{node.status}</span>
-                  </div>
-                  {node.fail_count > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">
-                      {node.fail_count} fail{node.fail_count > 1 ? 's' : ''}
+                {/* Last seen + images row */}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  {node.last_seen_at && (
+                    <span className="text-[10px] text-slate-600 flex items-center gap-1">
+                      <Clock size={10} />
+                      Last seen {timeAgo(node.last_seen_at)}
                     </span>
                   )}
-                  {node.id !== 'local' && (
-                    <button
-                      onClick={() => handleRemove(node.id)}
-                      disabled={removing === node.id}
-                      className="p-1.5 rounded text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
-                      title="Remove node"
-                    >
-                      {removing === node.id
-                        ? <Loader size={14} className="animate-spin" />
-                        : <Trash2 size={14} />}
-                    </button>
+                  {stats && stats.total_count > 0 && (
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-slate-500">
+                        Images: {stats.total_count} ({formatBytes(stats.total_size)})
+                      </span>
+                      {stats.dangling_count > 0 && (
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-amber-400">
+                            {stats.dangling_count} dangling ({formatBytes(stats.dangling_size)})
+                          </span>
+                          <button
+                            onClick={() =>
+                              setPruneModal({
+                                nodeId: node.id,
+                                nodeName: node.name,
+                                danglingCount: stats.dangling_count,
+                                danglingSize: stats.dangling_size,
+                                state: 'confirming',
+                                reclaimed: null,
+                                error: '',
+                              })
+                            }
+                            disabled={pruning === node.id}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 transition-colors cursor-pointer"
+                          >
+                            <Trash2 size={11} />
+                            {pruning === node.id ? 'Pruning…' : 'Prune'}
+                          </button>
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
 
       {showAdd && (
-        <AddNodeWizard
+        <AddAgentWizard
           onClose={() => setShowAdd(false)}
           onAdded={load}
         />

@@ -6,6 +6,7 @@ import {
   cleanupDnsRecords,
   timeAgo, type GlobalSettings, type Project, type DeployTokenInfo,
 } from '../api';
+import { useToast } from './ToastContext';
 
 const API_BASE = '';
 
@@ -79,6 +80,7 @@ function GeneralTab() {
   const [saved, setSaved] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<number | null>(null);
+  const { showToast } = useToast();
 
   useEffect(() => {
     fetchGlobalSettings().then(s => {
@@ -111,7 +113,9 @@ function GeneralTab() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save');
+      const msg = e instanceof Error ? e.message : 'Failed to save';
+      setError(msg);
+      showToast(msg);
     } finally {
       setSaving(false);
     }
@@ -283,7 +287,9 @@ function GeneralTab() {
                   const result = await cleanupDnsRecords();
                   setCleanupResult(result.deleted_count);
                 } catch (e) {
-                  setError(e instanceof Error ? e.message : 'Cleanup failed');
+                  const msg = e instanceof Error ? e.message : 'Cleanup failed';
+                  setError(msg);
+                  showToast(msg);
                 } finally {
                   setCleaning(false);
                 }
@@ -336,6 +342,7 @@ function TokensTab() {
   const [creating, setCreating] = useState(false);
   const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const { showToast } = useToast();
 
   const loadTokens = () => {
     setLoading(true);
@@ -370,7 +377,9 @@ function TokensTab() {
           setSelectedProject(p.id);
           setNewProjectId('');
         } catch (e) {
-          setError(e instanceof Error ? e.message : 'Failed to create project');
+          const msg = e instanceof Error ? e.message : 'Failed to create project';
+          setError(msg);
+          showToast(msg);
           return;
         }
       } else {
@@ -391,7 +400,9 @@ function TokensTab() {
       setNewTokenName('');
       setTokens(prev => [resp.token_info, ...prev]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create token');
+      const msg = e instanceof Error ? e.message : 'Failed to create token';
+      setError(msg);
+      showToast(msg);
     } finally {
       setCreating(false);
     }
@@ -403,7 +414,9 @@ function TokensTab() {
       await revokeDeployToken(tokenId);
       setTokens(prev => prev.filter(t => t.id !== tokenId));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to revoke token');
+      const msg = e instanceof Error ? e.message : 'Failed to revoke token';
+      setError(msg);
+      showToast(msg);
     } finally {
       setRevokingId(null);
     }

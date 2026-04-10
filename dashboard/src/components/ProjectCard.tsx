@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import LogViewer from "./LogViewer";
+import { useToast } from "./ToastContext";
 import {
   type Project,
   type Node as ApiNode,
@@ -72,6 +73,7 @@ export default function ProjectCard({
   const [envCopied, setEnvCopied] = useState(false);
   const popoverContainerRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
+  const { showToast } = useToast();
 
   // Local sleep settings state for optimistic updates
   const [autoStop, setAutoStop] = useState(project.auto_stop_enabled);
@@ -90,6 +92,7 @@ export default function ProjectCard({
   const [customDomainInput, setCustomDomainInput] = useState(project.custom_domain ?? "");
   const [customDomainSaving, setCustomDomainSaving] = useState(false);
   const [showCustomDomain, setShowCustomDomain] = useState(false);
+  const [timeoutSaveStatus, setTimeoutSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   // Keep local state in sync when project prop changes (e.g. after refresh)
   useEffect(() => {
@@ -176,6 +179,7 @@ export default function ProjectCard({
       onRefresh();
     } catch (e) {
       console.error(e);
+      showToast(e instanceof Error ? e.message : `${action} failed`);
     } finally {
       setLoading(null);
       setShowDeleteConfirm(false);
@@ -218,6 +222,7 @@ export default function ProjectCard({
       setSettingsError(
         e instanceof Error ? e.message : "Failed to update settings",
       );
+      showToast(e instanceof Error ? e.message : "Failed to update settings");
     }
   };
 
@@ -261,7 +266,7 @@ export default function ProjectCard({
         </div>
         <div className="flex items-center gap-1 ml-2 flex-shrink-0">
           <a
-            href={`https://${project.id}.${domain}`}
+            href={`https://${project.custom_domain || `${project.id}.${domain}`}`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-slate-400 hover:text-sky-400 transition-colors"
@@ -432,13 +437,23 @@ export default function ProjectCard({
                     onClick={(e) => {
                       const val = Math.max(1, Number(timeoutMins));
                       setTimeoutMins(val);
-                      handleSettingsChange({ auto_stop_timeout_mins: val });
+                      setTimeoutSaveStatus('saving');
+                      handleSettingsChange({ auto_stop_timeout_mins: val }).then(() => {
+                        setTimeoutSaveStatus('saved');
+                        setTimeout(() => setTimeoutSaveStatus('idle'), 3000);
+                      }).catch(() => {
+                        setTimeoutSaveStatus('idle');
+                      });
                       e.currentTarget.blur();
                     }}
-                    className="p-1 text-slate-400 hover:text-violet-400 transition-colors cursor-pointer"
+                    className={`p-1 transition-colors cursor-pointer ${
+                      timeoutSaveStatus === 'saving' ? 'text-slate-400' :
+                      timeoutSaveStatus === 'saved' ? 'text-emerald-400' :
+                      'text-slate-400 hover:text-violet-400'
+                    }`}
                     title="Save timeout"
                   >
-                    <Check size={14} />
+                    {timeoutSaveStatus === 'saving' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                   </button>
                 </div>
               </div>
@@ -584,6 +599,7 @@ export default function ProjectCard({
                   onRefresh();
                 } catch (e) {
                   setSettingsError(e instanceof Error ? e.message : "Failed to save");
+                  showToast(e instanceof Error ? e.message : "Failed to save");
                 }
               }}
               className="w-full py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors cursor-pointer"
@@ -614,6 +630,7 @@ export default function ProjectCard({
                         onRefresh();
                       } catch (e) {
                         setSettingsError(e instanceof Error ? e.message : "Failed to remove domain");
+                        showToast(e instanceof Error ? e.message : "Failed to remove domain");
                       } finally {
                         setCustomDomainSaving(false);
                       }
@@ -636,6 +653,7 @@ export default function ProjectCard({
                       onRefresh();
                     } catch (e) {
                       setSettingsError(e instanceof Error ? e.message : "Failed to set domain");
+                      showToast(e instanceof Error ? e.message : "Failed to set domain");
                     } finally {
                       setCustomDomainSaving(false);
                     }
@@ -653,10 +671,25 @@ export default function ProjectCard({
                 </div>
               )}
               <div className="text-[10px] text-slate-600 space-y-0.5">
-                <div>CNAME <span className="text-slate-400 font-mono">{project.custom_domain || 'sub.yourdomain.com'}</span> → <span className="text-slate-400 font-mono">{project.id}.{domain}</span></div>
-                {dnsTarget && (
-                  <div>A record <span className="text-slate-400 font-mono">apex-domain.com</span> → <span className="text-slate-400 font-mono">{dnsTarget}</span> <span className="text-slate-500">(for root domains)</span></div>
-                )}
+                {(() => {
+                  const cd = customDomainInput.trim() || project.custom_domain;
+                  if (!cd) return null;
+                  const parts = cd.split('.');
+                  const isApex = parts.length <= 2;
+                  if (isApex) {
+                    return (
+                      <>
+                        {dnsTarget && (
+                          <div>A record <span className="text-slate-400 font-mono">{cd}</span> → <span className="text-slate-400 font-mono">{dnsTarget}</span></div>
+                        )}
+                        <div>CNAME <span className="text-slate-400 font-mono">{cd}</span> → <span className="text-slate-400 font-mono">{project.id}.{domain}</span> <span className="text-slate-500">(Cloudflare only)</span></div>
+                      </>
+                    );
+                  }
+                  return (
+                    <div>CNAME <span className="text-slate-400 font-mono">{cd}</span> → <span className="text-slate-400 font-mono">{project.id}.{domain}</span></div>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -789,7 +822,10 @@ export default function ProjectCard({
             <button
               onClick={() => {
                 // fire and forget — status will update via polling
-                stopProject(project.id).catch(console.error);
+                stopProject(project.id).catch((e) => {
+                  console.error(e);
+                  showToast(e instanceof Error ? e.message : "Stop failed");
+                });
                 onRefresh();
               }}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors cursor-pointer"
