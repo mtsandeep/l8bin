@@ -1,6 +1,6 @@
 # Release Process
 
-LiteBin uses [cargo-release](https://github.com/crate-ci/cargo-release) to keep all crates in sync with a single version number.
+LiteBin uses [cargo-release](https://github.com/crate-ci/cargo-release) to keep all crates in sync with a single version number and auto-update the changelog.
 
 ## Setup
 
@@ -26,14 +26,66 @@ version = { workspace = true }
 
 When you run `cargo-release`, it:
 
-1. Bumps the version in **all** `Cargo.toml` files
-2. Updates `Cargo.lock`
-3. Commits: `chore: release v<version>`
-4. Creates git tag `v<version>`
-5. Pushes the commit and tag to remote
-6. The `release.yml` GitHub Action picks up the tag and builds all artifacts
+1. Updates the changelog (moves `[Unreleased]` entries to the new version)
+2. Bumps the version in **all** `Cargo.toml` files
+3. Updates `Cargo.lock`
+4. Commits: `chore: release v<version>`
+5. Creates git tag `v<version>`
+6. Pushes the commit and tag to remote
+7. The `release.yml` GitHub Action picks up the tag and builds all artifacts
 
-**You do not need to manually tag commits.** `cargo-release` handles everything.
+**You do not need to manually tag commits or edit the changelog header.** `cargo-release` handles everything.
+
+## Changelog
+
+We maintain a single `CHANGELOG.md` at the workspace root (not per-crate) since LiteBin ships as one unit.
+
+### Format
+
+```markdown
+## [Unreleased]
+
+### Added
+- New feature description
+
+### Changed
+- Change description
+
+### Fixed
+- Bug fix description
+
+## [0.1.5] - 2026-04-10
+
+### Added
+- ...
+
+### Changed
+- ...
+```
+
+### How to update
+
+During development, add entries under `## [Unreleased]` in the appropriate section (`Added`, `Changed`, or `Fixed`). That's it — don't create version headers or dates manually. `cargo-release` handles that on release.
+
+### What happens on release
+
+When you run `cargo-release`, it finds `## [Unreleased]` and transforms it into:
+
+```markdown
+## [Unreleased]
+
+## [0.1.6] - 2026-04-10
+
+### Added
+- (your entries move here)
+...
+```
+
+The old unreleased content becomes the new version entry, and a fresh empty `[Unreleased]` is created for the next cycle.
+
+### Why the config is in cli/Cargo.toml
+
+`cargo-release` applies workspace-level config to every crate. If changelog replacements were in `release.toml`, it would try to find `CHANGELOG.md` in each crate's directory (`litebin-common/`, `orchestrator/`, etc.) and fail. Instead, the replacement config lives only in `cli/Cargo.toml` (as `[package.metadata.release]`), so only the `l8b` package runs it, pointing at `../CHANGELOG.md`. This is a workaround for the fact that `cargo-release` is designed for per-crate changelogs, while we use a single repo-level one.
 
 ## Making a release
 
@@ -86,8 +138,9 @@ All use `env!("CARGO_PKG_VERSION")` which is set at compile time from the worksp
 
 ```
 1. Make your changes on main
-2. Ensure everything builds: cargo build --workspace
-3. Run tests: cargo test --workspace
-4. Release: cargo release patch  (or minor/major)
-5. CI builds and publishes to GitHub Releases automatically
+2. Add changelog entries under ## [Unreleased] in CHANGELOG.md
+3. Ensure everything builds: cargo build --workspace
+4. Run tests: cargo test --workspace
+5. Release: cargo release patch  (or minor/major)
+6. CI builds and publishes to GitHub Releases automatically
 ```
