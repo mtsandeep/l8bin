@@ -4,8 +4,8 @@ use serde_json::Value;
 use crate::AgentState;
 
 /// POST /caddy/sync
-/// Receives a full Caddy JSON config from the orchestrator and pushes it to the
-/// local Caddy sidecar's Admin API.
+/// Receives a full Caddy JSON config from the orchestrator, persists it to disk,
+/// and pushes it to the local Caddy sidecar's Admin API.
 pub async fn sync_caddy(
     State(state): State<AgentState>,
     Json(config): Json<Value>,
@@ -18,10 +18,17 @@ pub async fn sync_caddy(
         }
     };
 
+    // Persist to state + file (so rebuild_local_caddy can use as base)
+    {
+        let mut guard = state.last_caddy_config.write().unwrap();
+        *guard = Some(config.clone());
+    }
+    crate::save_caddy_config_to_file(&config);
+
     let url = format!("{}/load", caddy.admin_url());
     match caddy.post_json(&url, &config).await {
         Ok(resp) if resp.status().is_success() => {
-            tracing::info!("agent caddy config loaded");
+            tracing::info!("agent caddy config loaded and persisted");
             StatusCode::OK
         }
         Ok(resp) => {

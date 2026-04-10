@@ -59,6 +59,29 @@ fn error_page_html() -> Html<String> {
     ))
 }
 
+fn not_found_page_html() -> Html<String> {
+    Html(String::from(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Not Found</title>
+    <style>
+        body { font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
+        .msg { text-align: center; }
+        h2 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
+        p { color: #64748b; margin: 0; font-size: 0.875rem; }
+    </style>
+</head>
+<body>
+    <div class="msg">
+        <h2>Project not found</h2>
+        <p>This project does not exist or has been removed.</p>
+    </div>
+</body>
+</html>"#,
+    ))
+}
+
 /// Recreate a container on a remote agent (no image pull).
 async fn remote_recreate(
     state: &AppState,
@@ -353,7 +376,7 @@ pub async fn wake(
         // Subdomain URL (e.g., myapp.l8b.in) — extract project ID
         let subdomain = host.split('.').next().unwrap_or("");
         if subdomain.is_empty() {
-            return (StatusCode::NOT_FOUND, "unknown project").into_response();
+            return (StatusCode::NOT_FOUND, not_found_page_html()).into_response();
         }
         match sqlx::query_as::<_, crate::db::models::Project>(
             "SELECT * FROM projects WHERE id = ?",
@@ -366,7 +389,7 @@ pub async fn wake(
             Ok(None) => None,
             Err(e) => {
                 tracing::error!(error = %e, "waker: db error");
-                return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+                return (StatusCode::INTERNAL_SERVER_ERROR, not_found_page_html()).into_response();
             }
         }
     } else {
@@ -383,7 +406,7 @@ pub async fn wake(
             Ok(None) => None,
             Err(e) => {
                 tracing::error!(error = %e, "waker: db error (custom_domain lookup)");
-                return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+                return (StatusCode::INTERNAL_SERVER_ERROR, not_found_page_html()).into_response();
             }
         }
     };
@@ -391,8 +414,7 @@ pub async fn wake(
     let project = match project {
         Some(p) => p,
         None => {
-            return (StatusCode::NOT_FOUND, format!("project not found for host '{}'", host))
-                .into_response();
+            return (StatusCode::NOT_FOUND, not_found_page_html()).into_response();
         }
     };
 

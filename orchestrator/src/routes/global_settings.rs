@@ -101,16 +101,9 @@ pub async fn update_settings(
         tracing::info!(routing_mode = %routing_mode, "router hot-swapped");
 
         // Trigger full sync on new router
-        let running_projects = sqlx::query_as::<_, crate::db::models::Project>(
-            "SELECT * FROM projects WHERE status = 'running'"
-        )
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
         let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-        let routes = crate::routing_helpers::resolve_routes(
-            &running_projects, &state.db, &state.config.domain,
+        let routes = crate::routing_helpers::resolve_all_routes(
+            &state.db, &state.config.domain, &orchestrator_upstream,
         )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

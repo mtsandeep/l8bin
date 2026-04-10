@@ -2,6 +2,8 @@ mod config;
 mod routes;
 mod tls;
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use axum::{
     Router,
@@ -30,9 +32,13 @@ pub struct AgentState {
     pub caddy: Option<Arc<CaddyClient>>,
     pub wake_locks: Arc<DashMap<String, Arc<WakeGuard>>>,
     pub registration: Arc<std::sync::RwLock<Option<AgentRegistration>>>,
+    pub last_caddy_config: Arc<std::sync::RwLock<Option<serde_json::Value>>>,
+    pub project_meta: Arc<std::sync::RwLock<HashMap<String, bool>>>,  // project_id → auto_start_enabled
 }
 
 const REGISTRATION_FILE: &str = "data/agent-state.json";
+const CADDY_CONFIG_FILE: &str = "data/caddy-config.json";
+const PROJECT_META_FILE: &str = "data/project-meta.json";
 
 fn load_registration_from_file() -> Result<Option<AgentRegistration>> {
     let data = std::fs::read_to_string(REGISTRATION_FILE)?;
@@ -49,6 +55,48 @@ pub fn save_registration_to_file(reg: &AgentRegistration) -> Result<()> {
     std::fs::write(REGISTRATION_FILE, data)?;
     tracing::info!(node_id = %reg.node_id, "persisted registration to file");
     Ok(())
+}
+
+pub(crate) fn load_caddy_config_from_file() -> Option<serde_json::Value> {
+    let data = std::fs::read_to_string(CADDY_CONFIG_FILE).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&data).ok()?;
+    tracing::info!("loaded persisted caddy config from file");
+    Some(config)
+}
+
+pub(crate) fn save_caddy_config_to_file(config: &serde_json::Value) {
+    if let Some(parent) = std::path::Path::new(CADDY_CONFIG_FILE).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string_pretty(config) {
+        Ok(data) => {
+            if let Err(e) = std::fs::write(CADDY_CONFIG_FILE, data) {
+                tracing::warn!(error = %e, "failed to persist caddy config to file");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "failed to serialize caddy config"),
+    }
+}
+
+pub(crate) fn load_project_meta_from_file() -> Option<HashMap<String, bool>> {
+    let data = std::fs::read_to_string(PROJECT_META_FILE).ok()?;
+    let meta: HashMap<String, bool> = serde_json::from_str(&data).ok()?;
+    tracing::info!("loaded persisted project meta from file");
+    Some(meta)
+}
+
+pub(crate) fn save_project_meta_to_file(meta: &HashMap<String, bool>) {
+    if let Some(parent) = std::path::Path::new(PROJECT_META_FILE).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string_pretty(meta) {
+        Ok(data) => {
+            if let Err(e) = std::fs::write(PROJECT_META_FILE, data) {
+                tracing::warn!(error = %e, "failed to persist project meta to file");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "failed to serialize project meta"),
+    }
 }
 
 #[tokio::main]
@@ -100,6 +148,18 @@ async fn main() -> Result<()> {
         cpu_limit,
     )?);
 
+    // Load persisted Caddy config (if orchestrator previously pushed one)
+    let last_caddy_config: Arc<std::sync::RwLock<Option<serde_json::Value>>> =
+        Arc::new(std::sync::RwLock::new(
+            load_caddy_config_from_file(),
+        ));
+
+    // Load persisted project meta (project_id → auto_start_enabled)
+    let project_meta: Arc<std::sync::RwLock<HashMap<String, bool>>> =
+        Arc::new(std::sync::RwLock::new(
+            load_project_meta_from_file().unwrap_or_default(),
+        ));
+
     let state = AgentState {
         config: cfg.clone(),
         docker,
@@ -110,11 +170,33 @@ async fn main() -> Result<()> {
         },
         wake_locks: Arc::new(DashMap::new()),
         registration: registration.clone(),
+        last_caddy_config: last_caddy_config.clone(),
+        project_meta: project_meta.clone(),
     };
+
+    // Push persisted Caddy config on startup (so routes exist immediately)
+    if let Some(caddy) = &state.caddy {
+        let persisted = last_caddy_config.read().unwrap().clone();
+        if let Some(config) = persisted {
+            let url = format!("{}/load", caddy.admin_url());
+            match caddy.post_json(&url, &config).await {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("loaded persisted caddy config on startup");
+                }
+                Ok(resp) => {
+                    tracing::warn!(status = %resp.status(), "failed to load persisted caddy config on startup");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to load persisted caddy config on startup");
+                }
+            }
+        }
+    }
 
     let app = Router::new()
         .route("/health", get(routes::health::health))
         .route("/internal/register", post(routes::register::register))
+        .route("/internal/project-meta", post(routes::project_meta::update_project_meta))
         .route("/containers/run", post(routes::containers::run_container))
         .route("/containers/recreate", post(routes::containers::recreate_container))
         .route("/containers/start", post(routes::containers::start_container))

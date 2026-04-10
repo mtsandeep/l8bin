@@ -7,9 +7,12 @@ There are two waker implementations depending on routing mode:
 | **Waker runs on** | Orchestrator | Agent (local) |
 | **DB access** | Direct (same process) | None — discovers via Docker API |
 | **Entry point** | `orchestrator/src/routes/waker.rs` | `agent/src/routes/waker.rs` |
-| **Trigger** | Caddy catch-all → orchestrator | Caddy catch-all → agent |
+| **Trigger** | Caddy catch-all / custom domain route → orchestrator | Caddy catch-all / custom domain route → agent |
+| **Custom domain wake** | Caddy rewrites Host to `{id}.{domain}`, waker extracts subdomain | Same — Caddy rewrites Host, agent waker extracts subdomain |
 
 In Mode A, all traffic goes through the master. In Mode B, DNS points directly to the agent node, so the agent handles the wake locally and reports back to master.
+
+Both modes handle sleeping custom domain wakes identically: Caddy has an explicit route for each sleeping custom domain that rewrites the `Host` header to `{project_id}.{domain}` before proxying to the waker. The waker code is unchanged — it just extracts the subdomain from the rewritten Host header.
 
 ---
 
@@ -34,14 +37,21 @@ This means agents are zero-config — just certs and they're ready.
 
 - Project exists in DB with `status = "stopped"`, has a `container_id` and `mapped_port` from last run
 - Caddy has **no** per-project route — only the catch-all `*.{domain} → orchestrator`
+- If the project has a custom domain, Caddy has an explicit route: `{custom_domain} → orchestrator` with `Host` header rewritten to `{project_id}.{domain}` (and the www variant)
 
 ### Request Arrives
 
 ```
+# Subdomain access
 Browser → https://myapp.l8b.in → Cloudflare (wildcard) → Master Caddy
+
+# Custom domain access (sleeping)
+Browser → https://app.example.com → Cloudflare DNS → Master Caddy
 ```
 
-Caddy has no specific route for `myapp.l8b.in`, so the catch-all `*.{domain}` matches → proxies to orchestrator → hits the `wake` handler.
+**Subdomain**: Caddy has no specific route for `myapp.l8b.in`, so the catch-all `*.{domain}` matches → proxies to orchestrator → hits the `wake` handler.
+
+**Custom domain**: Caddy matches the explicit sleeping custom domain route → rewrites `Host` to `myapp.l8b.in` → proxies to orchestrator → hits the `wake` handler. The waker extracts `myapp` from the rewritten Host header (same path as subdomain access).
 
 ### Waker Decision Tree (orchestrator)
 
@@ -130,16 +140,24 @@ T+5s    Browser refresh → Caddy matches myapp.l8b.in
 ### Idle State
 
 - Project exists in DB with `status = "stopped"`, has a `container_id` from last run
-- Agent Caddy has **no** per-project route — only the catch-all `*.{domain} → agent wake handler`
+- Agent Caddy has **no** per-project subdomain route — only the catch-all `*.{domain} → agent wake handler`
+- If the project has a custom domain, Caddy has an explicit route: `{custom_domain} → localhost:{agent_port}` with `Host` header rewritten to `{project_id}.{domain}` (and the www variant)
 - Cloudflare DNS A record (`myapp.l8b.in → agent IP`) still exists (DNS isn't removed on stop)
+- Sleeping custom domain DNS A records are also kept so the domain resolves to the agent
 
 ### Request Arrives
 
 ```
+# Subdomain access
 Browser → https://myapp.l8b.in → Cloudflare DNS (A record) → Agent IP → Agent Caddy
+
+# Custom domain access (sleeping)
+Browser → https://app.example.com → Cloudflare DNS → Agent IP → Agent Caddy
 ```
 
-Caddy has no specific route for `myapp.l8b.in`, so the catch-all `*.{domain}` matches → proxies to agent's own wake handler (registered as `.fallback()`).
+**Subdomain**: Caddy has no specific route for `myapp.l8b.in`, so the catch-all `*.{domain}` matches → proxies to agent's own wake handler (registered as `.fallback()`).
+
+**Custom domain**: Caddy matches the explicit sleeping custom domain route → rewrites `Host` to `myapp.l8b.in` → proxies to agent wake handler. The agent waker extracts `myapp` from the rewritten Host header (same path as subdomain access). No DB or network call needed.
 
 ### Agent Waker Decision Tree
 
@@ -171,13 +189,19 @@ wake() background task
   ├─ docker.inspect_mapped_port(container_id) → get mapped_port
   │
   ├─ rebuild_local_caddy()
+  │   ├─ Read persisted Caddy config (last orchestrator push) from data/caddy-config.json
   │   ├─ List ALL running litebin-* containers via Docker API
-  │   ├─ Inspect port for each
-  │   ├─ Build Caddy config with per-project routes + catch-all
-  │   │   {host: "myapp.l8b.in"} → reverse_proxy → localhost:32771
-  │   │   {host: "other.l8b.in"} → reverse_proxy → localhost:32772
-  │   │   {host: "*.{domain}"}   → reverse_proxy → localhost:{agent_port}  (wake handler)
-  │   └─ POST /load to local Caddy Admin API
+  │   ├─ Merge: keep orchestrator-pushed routes (TLS config, etc.)
+  │   │         + add/update running container subdomain routes from Docker (correct ports)
+  │   │         + upgrade sleeping custom domain routes for running containers to direct proxy
+  │   │   {host: "myapp.l8b.in"}          → reverse_proxy → localhost:32771  (from Docker)
+  │   │   {host: "other.l8b.in"}          → reverse_proxy → localhost:32772  (from Docker)
+  │   │   {host: "app.example.com"}       → reverse_proxy → localhost:32771  (upgraded from sleeping CD)
+  │   │   {host: "www.app.example.com"}   → reverse_proxy → localhost:32771  (upgraded from sleeping CD)
+  │   │   {host: "sleeping.example.com"} → reverse_proxy → localhost:8443  (Host rewrite, still sleeping)
+  │   │   {host: "*.{domain}"}            → reverse_proxy → localhost:{agent_port}  (wake handler)
+  │   ├─ POST /load to local Caddy Admin API
+  │   └─ Save updated config to data/caddy-config.json
   │
   └─ report_wake_to_master() (best-effort, fire-and-forget)
       ├─ POST https://poke.{domain}/internal/wake-report (HMAC-signed)
@@ -187,9 +211,11 @@ wake() background task
       └─ Master: send route_sync signal (debounced batch sync via background task)
 ```
 
-**Key design:** The agent rebuilds Caddy **locally** using only the Docker API. No master or DB needed. This means:
+**Key design:** The agent rebuilds Caddy **locally** starting from the last orchestrator-pushed config as a base. Sleeping custom domain routes and TLS config are preserved from the orchestrator push. Running container routes are added/updated from Docker API discovery. Sleeping custom domain routes for just-woken containers are automatically upgraded to direct proxy routes (no Host rewrite, correct port). No master or DB needed for the wake path. This means:
 
-- Master down + agent up = agent wakes containers and serves traffic independently
+- Master down + agent up = agent wakes containers and serves traffic independently (subdomain + custom domain)
+- Sleeping custom domain wakes work without master (Host rewrite in persisted Caddy config)
+- Custom domain routing works immediately after local wake (upgraded from sleeping to running route)
 - When master comes back, the wake-report or heartbeat reconciliation catches up the DB
 
 ### Mode B Timeline
@@ -216,6 +242,54 @@ T+3s    Browser refresh → Agent Caddy matches myapp.l8b.in
 
 ---
 
+## Custom Domain Wake (Both Modes)
+
+Sleeping custom domain wake works identically in both modes via Caddy Host header rewrite.
+
+### How It Works
+
+```
+Request: app.example.com (sleeping app)
+  ↓ DNS resolves to server IP
+  ↓ Caddy matches explicit sleeping custom domain route
+  ↓ Rewrites Host header: "app.example.com" → "myapp.l8b.in"
+  ↓ Proxies to local waker (orchestrator or agent)
+  ↓ Waker extracts "myapp" from Host → finds container → wakes it
+```
+
+The waker code is unchanged — it always extracts the subdomain from the Host header. The Host rewrite happens entirely in Caddy.
+
+### Caddy Route Structure
+
+**Sleeping custom domain** (both modes):
+```json
+{
+  "match": [{ "host": ["app.example.com"] }],
+  "handle": [{
+    "handler": "reverse_proxy",
+    "upstreams": [{ "dial": "litebin-orchestrator:3000" }],
+    "headers": { "request": { "set": { "Host": ["myapp.l8b.in"] } } }
+  }]
+}
+```
+
+**Running custom domain** (no rewrite, direct proxy):
+```json
+{
+  "match": [{ "host": ["app.example.com"] }],
+  "handle": [{ "handler": "reverse_proxy", "upstreams": [{ "dial": "10.0.1.5:32771" }] }]
+}
+```
+
+The switch from sleeping → running route happens automatically when `sync_routes()` runs after the wake completes. The orchestrator builds the correct routes based on project status.
+
+### Www Variant
+
+- **Sleeping**: `www.app.example.com` also has a Host rewrite route (same as canonical). No 301 redirect while sleeping.
+- **Running**: `www.app.example.com` → 301 redirect to `app.example.com`.
+
+---
+
 ## Agent Endpoints
 
 | Endpoint | What it does |
@@ -223,7 +297,7 @@ T+3s    Browser refresh → Agent Caddy matches myapp.l8b.in
 | `POST /containers/start` | `docker start` existing container, inspect port, return `{mapped_port}` |
 | `POST /containers/recreate` | Remove old, create fresh (no pull), auto-assign port, return `{container_id, mapped_port}` |
 | `POST /containers/run` | Pull image + create + start, auto-assign port, return `{container_id, mapped_port}` |
-| `POST /caddy/sync` | Accept Caddy JSON config, push to local Caddy Admin API |
+| `POST /caddy/sync` | Accept Caddy JSON config, persist to `data/caddy-config.json`, push to local Caddy Admin API |
 | `POST /internal/register` | Receive config from orchestrator (mTLS auth): `{node_id, secret, domain, wake_report_url}`. Persists to `data/agent-state.json`. |
 | `GET /health` | Report node resource usage, no registration needed |
 | `fallback()` | Catch-all wake handler — starts stopped containers, rebuilds local Caddy |
@@ -284,3 +358,32 @@ When master comes back up:
 | Concurrent requests during wake | Single-flight dedup — all get instant loading page | Same |
 | Background wake hangs | 60s timeout, then treated as failure | Same |
 | Master is down | N/A (master IS the waker) | Agent handles locally, reports to master on recovery |
+| Sleeping custom domain wake | Caddy Host rewrite → waker extracts subdomain → wakes | Same — Caddy Host rewrite → agent waker extracts subdomain |
+| Www variant of sleeping custom domain | Same Host rewrite as canonical domain (no redirect while sleeping) | Same |
+| Agent restarts | N/A | Loads persisted Caddy config from `data/caddy-config.json` immediately |
+| Custom domain changed while agent down | N/A | Route updated on next heartbeat; DNS already points to agent |
+
+---
+
+## Caddy Config Persistence (Agent)
+
+The agent persists the last orchestrator-pushed Caddy config to `data/caddy-config.json`. This solves two problems:
+
+1. **Agent restart**: On startup, the persisted config is loaded and pushed to Caddy immediately. No gap waiting for orchestrator to push.
+
+2. **Wake rebuild**: After waking a container, `rebuild_local_caddy()` uses the persisted config as a base instead of building from scratch. This preserves:
+   - Sleeping custom domain routes (with Host rewrite)
+   - TLS configuration (on-demand policies, `/caddy/ask` endpoint)
+   - Any other orchestrator-managed routes
+
+The merge logic:
+- Take all non-catch-all routes from the persisted config
+- Add/update running container subdomain routes from Docker API (correct ports)
+- **Upgrade** sleeping custom domain routes for running containers: detect routes with `headers.request.set.Host` matching a running container's subdomain, replace with direct proxy (no Host rewrite, correct port)
+- Keep sleeping custom domain routes for containers that are still stopped
+- Append the catch-all `*.{domain}` → wake handler
+- Push to Caddy + save updated config
+
+When the orchestrator pushes a new config (via `/caddy/sync`), it replaces the persisted file entirely. This corrects any drift (e.g., removed custom domains, changed upstreams).
+
+**Agent independence**: After one orchestrator push, the agent can operate fully independently. Subdomain and custom domain wake/routing work without master. TLS certs for already-issued domains continue to work. The only thing that requires master is adding NEW custom domains (done through the dashboard).

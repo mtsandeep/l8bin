@@ -71,36 +71,73 @@ impl CloudflareDnsRouter {
             }));
 
             if let Some(cd) = &p.custom_domain {
-                routes.push(json!({
-                    "match": [{ "host": [cd] }],
-                    "handle": [{
-                        "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": p.upstream }],
-                        "handle_response": [{
-                            "match": { "status_code": [502, 503, 504] },
-                            "routes": [{
-                                "handle": [{
-                                    "handler": "reverse_proxy",
-                                    "upstreams": [{ "dial": orchestrator_upstream }]
+                if let Some(ref rewrite) = p.host_rewrite {
+                    // Sleeping custom domain: proxy to orchestrator waker with Host rewrite
+                    let (www_host, _canonical) = if cd.starts_with("www.") {
+                        (cd[4..].to_string(), cd.clone())
+                    } else {
+                        (format!("www.{}", cd), cd.clone())
+                    };
+
+                    routes.push(json!({
+                        "match": [{ "host": [cd] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": orchestrator_upstream }],
+                            "headers": {
+                                "request": {
+                                    "set": { "Host": [rewrite] }
+                                }
+                            }
+                        }]
+                    }));
+
+                    // Www variant also wakes (no redirect while sleeping)
+                    routes.push(json!({
+                        "match": [{ "host": [www_host] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": orchestrator_upstream }],
+                            "headers": {
+                                "request": {
+                                    "set": { "Host": [rewrite] }
+                                }
+                            }
+                        }]
+                    }));
+                } else {
+                    // Running custom domain: proxy to container with 502 fallback
+                    routes.push(json!({
+                        "match": [{ "host": [cd] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": p.upstream }],
+                            "handle_response": [{
+                                "match": { "status_code": [502, 503, 504] },
+                                "routes": [{
+                                    "handle": [{
+                                        "handler": "reverse_proxy",
+                                        "upstreams": [{ "dial": orchestrator_upstream }]
+                                    }]
                                 }]
                             }]
                         }]
-                    }]
-                }));
+                    }));
 
-                let (redirect_from, canonical) = if cd.starts_with("www.") {
-                    (cd[4..].to_string(), cd.clone())
-                } else {
-                    (format!("www.{}", cd), cd.clone())
-                };
-                routes.push(json!({
-                    "match": [{ "host": [redirect_from] }],
-                    "handle": [{
-                        "handler": "static_response",
-                        "status_code": 301,
-                        "headers": { "Location": [format!("https://{}{{{{uri}}}}", canonical)] }
-                    }]
-                }));
+                    let (redirect_from, canonical) = if cd.starts_with("www.") {
+                        (cd[4..].to_string(), cd.clone())
+                    } else {
+                        (format!("www.{}", cd), cd.clone())
+                    };
+                    routes.push(json!({
+                        "match": [{ "host": [redirect_from] }],
+                        "handle": [{
+                            "handler": "static_response",
+                            "status_code": 301,
+                            "headers": { "Location": [format!("https://{}{{{{uri}}}}", canonical)] }
+                        }]
+                    }));
+                }
             }
         }
 
@@ -206,36 +243,78 @@ impl CloudflareDnsRouter {
         let mut routes: Vec<Value> = Vec::new();
 
         for p in agent_projects {
-            routes.push(json!({
-                "match": [{ "host": [p.subdomain_host] }],
-                "handle": [{
-                    "handler": "reverse_proxy",
-                    "upstreams": [{ "dial": p.upstream }]
-                }]
-            }));
-
-            if let Some(cd) = &p.custom_domain {
+            // Only create subdomain route for running projects.
+            // Sleeping projects rely on the catch-all *.{domain} → agent wake handler.
+            if p.host_rewrite.is_none() {
                 routes.push(json!({
-                    "match": [{ "host": [cd] }],
+                    "match": [{ "host": [p.subdomain_host] }],
                     "handle": [{
                         "handler": "reverse_proxy",
                         "upstreams": [{ "dial": p.upstream }]
                     }]
                 }));
+            }
 
-                let (redirect_from, canonical) = if cd.starts_with("www.") {
-                    (cd[4..].to_string(), cd.clone())
+            if let Some(cd) = &p.custom_domain {
+                if let Some(ref rewrite) = p.host_rewrite {
+                    // Sleeping custom domain: proxy to agent waker with Host rewrite
+                    let agent_wake = format!("localhost:{}", agent_port);
+                    let (www_host, _canonical) = if cd.starts_with("www.") {
+                        (cd[4..].to_string(), cd.clone())
+                    } else {
+                        (format!("www.{}", cd), cd.clone())
+                    };
+
+                    routes.push(json!({
+                        "match": [{ "host": [cd] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": agent_wake }],
+                            "headers": {
+                                "request": {
+                                    "set": { "Host": [rewrite] }
+                                }
+                            }
+                        }]
+                    }));
+
+                    // Www variant also wakes (no redirect while sleeping)
+                    routes.push(json!({
+                        "match": [{ "host": [www_host] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": agent_wake }],
+                            "headers": {
+                                "request": {
+                                    "set": { "Host": [rewrite] }
+                                }
+                            }
+                        }]
+                    }));
                 } else {
-                    (format!("www.{}", cd), cd.clone())
-                };
-                routes.push(json!({
-                    "match": [{ "host": [redirect_from] }],
-                    "handle": [{
-                        "handler": "static_response",
-                        "status_code": 301,
-                        "headers": { "Location": [format!("https://{}{{{{uri}}}}", canonical)] }
-                    }]
-                }));
+                    // Running custom domain: proxy to container
+                    routes.push(json!({
+                        "match": [{ "host": [cd] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": p.upstream }]
+                        }]
+                    }));
+
+                    let (redirect_from, canonical) = if cd.starts_with("www.") {
+                        (cd[4..].to_string(), cd.clone())
+                    } else {
+                        (format!("www.{}", cd), cd.clone())
+                    };
+                    routes.push(json!({
+                        "match": [{ "host": [redirect_from] }],
+                        "handle": [{
+                            "handler": "static_response",
+                            "status_code": 301,
+                            "headers": { "Location": [format!("https://{}{{{{uri}}}}", canonical)] }
+                        }]
+                    }));
+                }
             }
         }
 
@@ -556,6 +635,15 @@ impl RoutingProvider for CloudflareDnsRouter {
             if let Err(e) = self.push_agent_caddy(node_id, &agent_config).await {
                 tracing::warn!(node_id, error = %e, "failed to push caddy config to agent");
             }
+
+            // Push project metadata (auto_start_enabled flags) to agent
+            push_project_meta_to_agent(
+                node_id,
+                &self.db,
+                &self.node_clients,
+                &self.config,
+            )
+            .await;
         }
 
         // 3. Cloudflare DNS sync
@@ -564,5 +652,93 @@ impl RoutingProvider for CloudflareDnsRouter {
         }
 
         Ok(())
+    }
+}
+
+/// Push project metadata (auto_start_enabled flags) to a remote agent.
+/// Called during route sync and on settings toggle.
+pub async fn push_project_meta_to_agent(
+    node_id: &str,
+    db: &SqlitePool,
+    node_clients: &DashMap<String, Arc<reqwest::Client>>,
+    config: &Config,
+) {
+    // Query all projects for this node
+    let rows: Vec<(String, bool)> = match sqlx::query_as(
+        "SELECT id, auto_start_enabled FROM projects WHERE node_id = ?",
+    )
+    .bind(node_id)
+    .fetch_all(db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(node_id, error = %e, "failed to query projects for meta push");
+            return;
+        }
+    };
+
+    let projects: HashMap<String, bool> = rows.into_iter().collect();
+
+    let client = match get_node_client(node_clients, node_id) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(node_id, error = %e, "skipping project meta push: no client");
+            return;
+        }
+    };
+
+    let node: Option<(String, i64)> = match sqlx::query_as(
+        "SELECT host, agent_port FROM nodes WHERE id = ?",
+    )
+    .bind(node_id)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(node_id, error = %e, "failed to look up node for meta push");
+            return;
+        }
+    };
+
+    let (host, agent_port) = match node {
+        Some(h) => h,
+        None => return,
+    };
+
+    let base_url = if config.ca_cert_path.is_empty() {
+        format!("http://{}:{}", host, agent_port)
+    } else {
+        format!("https://{}:{}", host, agent_port)
+    };
+
+    let url = format!("{}/internal/project-meta", base_url);
+    let body = json!({ "projects": projects });
+
+    match client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!(node_id, count = projects.len(), "pushed project meta to agent");
+        }
+        Ok(resp) => {
+            tracing::warn!(
+                node_id,
+                status = %resp.status(),
+                "failed to push project meta to agent"
+            );
+        }
+        Err(e) => {
+            tracing::debug!(
+                node_id,
+                error = %e,
+                "project meta push failed (agent may be down)"
+            );
+        }
     }
 }

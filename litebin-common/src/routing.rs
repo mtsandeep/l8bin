@@ -18,6 +18,9 @@ pub struct ProjectRoute {
     pub node_id: Option<String>,
     /// Public-facing IP of the node (for DNS A records in cloudflare_dns mode)
     pub node_public_ip: Option<String>,
+    /// If set, Caddy rewrites the Host header to this value before proxying.
+    /// Used for sleeping custom domain routes so the waker receives the subdomain form.
+    pub host_rewrite: Option<String>,
 }
 
 #[async_trait]
@@ -75,45 +78,81 @@ impl MasterProxyRouter {
 
             // 2. Custom domain route + www redirect
             if let Some(cd) = &p.custom_domain {
-                // Route: custom_domain → same upstream
-                routes.push(json!({
-                    "match": [{ "host": [cd] }],
-                    "handle": [{
-                        "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": p.upstream }],
-                        "handle_response": [{
-                            "match": { "status_code": [502, 503, 504] },
-                            "routes": [{
-                                "handle": [{
-                                    "handler": "reverse_proxy",
-                                    "upstreams": [{ "dial": orchestrator_upstream }]
+                if let Some(ref rewrite) = p.host_rewrite {
+                    // Sleeping custom domain: proxy to orchestrator waker with Host rewrite
+                    let (www_host, _canonical) = if cd.starts_with("www.") {
+                        (cd[4..].to_string(), cd.clone())
+                    } else {
+                        (format!("www.{}", cd), cd.clone())
+                    };
+
+                    routes.push(json!({
+                        "match": [{ "host": [cd] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": orchestrator_upstream }],
+                            "headers": {
+                                "request": {
+                                    "set": { "Host": [rewrite] }
+                                }
+                            }
+                        }]
+                    }));
+
+                    // Www variant also wakes (no redirect while sleeping)
+                    routes.push(json!({
+                        "match": [{ "host": [www_host] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": orchestrator_upstream }],
+                            "headers": {
+                                "request": {
+                                    "set": { "Host": [rewrite] }
+                                }
+                            }
+                        }]
+                    }));
+                } else {
+                    // Running custom domain: proxy to container with 502 fallback
+                    routes.push(json!({
+                        "match": [{ "host": [cd] }],
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": p.upstream }],
+                            "handle_response": [{
+                                "match": { "status_code": [502, 503, 504] },
+                                "routes": [{
+                                    "handle": [{
+                                        "handler": "reverse_proxy",
+                                        "upstreams": [{ "dial": orchestrator_upstream }]
+                                    }]
                                 }]
                             }]
                         }]
-                    }]
-                }));
+                    }));
 
-                // www redirect: if custom_domain is "app.example.com",
-                // redirect "www.app.example.com" → "https://app.example.com{uri}"
-                // If custom_domain is "www.app.example.com",
-                // redirect "app.example.com" → "https://www.app.example.com{uri}"
-                let (redirect_from, canonical) = if cd.starts_with("www.") {
-                    let bare = &cd[4..];
-                    (bare.to_string(), cd.clone())
-                } else {
-                    (format!("www.{}", cd), cd.clone())
-                };
+                    // www redirect: if custom_domain is "app.example.com",
+                    // redirect "www.app.example.com" → "https://app.example.com{uri}"
+                    // If custom_domain is "www.app.example.com",
+                    // redirect "app.example.com" → "https://www.app.example.com{uri}"
+                    let (redirect_from, canonical) = if cd.starts_with("www.") {
+                        let bare = &cd[4..];
+                        (bare.to_string(), cd.clone())
+                    } else {
+                        (format!("www.{}", cd), cd.clone())
+                    };
 
-                routes.push(json!({
-                    "match": [{ "host": [redirect_from] }],
-                    "handle": [{
-                        "handler": "static_response",
-                        "status_code": 301,
-                        "headers": {
-                            "Location": [format!("https://{}{{{{uri}}}}", canonical)]
-                        }
-                    }]
-                }));
+                    routes.push(json!({
+                        "match": [{ "host": [redirect_from] }],
+                        "handle": [{
+                            "handler": "static_response",
+                            "status_code": 301,
+                            "headers": {
+                                "Location": [format!("https://{}{{{{uri}}}}", canonical)]
+                            }
+                        }]
+                    }));
+                }
             }
         }
 

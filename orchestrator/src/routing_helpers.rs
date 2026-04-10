@@ -64,6 +64,7 @@ pub async fn resolve_routes(
             custom_domain: project.custom_domain.clone(),
             node_id: project.node_id.clone(),
             node_public_ip,
+            host_rewrite: None,
         });
     }
 
@@ -73,7 +74,7 @@ pub async fn resolve_routes(
 /// Resolve routes for sleeping projects that have custom domains.
 /// These routes point to the orchestrator waker so that visiting a custom domain
 /// of a sleeping app triggers the wake (same as the `*.{domain}` catch-all does for subdomains).
-pub async fn resolve_sleeping_custom_domain_routes(
+async fn resolve_sleeping_custom_domain_routes(
     db: &SqlitePool,
     domain: &str,
     orchestrator_upstream: &str,
@@ -106,7 +107,31 @@ pub async fn resolve_sleeping_custom_domain_routes(
             custom_domain: project.custom_domain.clone(),
             node_id: project.node_id.clone(),
             node_public_ip,
+            host_rewrite: Some(format!("{}.{}", project.id, domain)),
         });
+    }
+
+    Ok(routes)
+}
+
+/// Resolve all routes: running projects + sleeping custom domain routes.
+/// This is the single entry point that every call site should use.
+pub async fn resolve_all_routes(
+    db: &SqlitePool,
+    domain: &str,
+    orchestrator_upstream: &str,
+) -> anyhow::Result<Vec<ProjectRoute>> {
+    let all_running = sqlx::query_as::<_, Project>(
+        "SELECT * FROM projects WHERE status = 'running'",
+    )
+    .fetch_all(db)
+    .await?;
+
+    let mut routes = resolve_routes(&all_running, db, domain).await?;
+
+    match resolve_sleeping_custom_domain_routes(db, domain, orchestrator_upstream).await {
+        Ok(sleeping_cd_routes) => routes.extend(sleeping_cd_routes),
+        Err(e) => tracing::warn!(error = %e, "failed to resolve sleeping custom domain routes"),
     }
 
     Ok(routes)
@@ -132,33 +157,14 @@ pub async fn run_route_sync(
         while rx.try_recv().is_ok() {}
 
         // Perform a single route sync for the entire batch
-        let all_running = match sqlx::query_as::<_, crate::db::models::Project>(
-            "SELECT * FROM projects WHERE status = 'running'",
-        )
-        .fetch_all(&db)
-        .await
-        {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(error = %e, "route sync: failed to fetch running projects");
-                continue;
-            }
-        };
-
         let orchestrator_upstream = format!("litebin-orchestrator:{}", config.port);
-        let mut routes = match resolve_routes(&all_running, &db, &config.domain).await {
+        let routes = match resolve_all_routes(&db, &config.domain, &orchestrator_upstream).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "route sync: failed to resolve routes");
                 continue;
             }
         };
-
-        // Include sleeping custom domain routes so they reach the waker
-        match resolve_sleeping_custom_domain_routes(&db, &config.domain, &orchestrator_upstream).await {
-            Ok(sleeping_cd_routes) => routes.extend(sleeping_cd_routes),
-            Err(e) => tracing::warn!(error = %e, "route sync: failed to resolve sleeping custom domain routes"),
-        }
 
         let r = router.read().await.clone();
         if let Err(e) = r

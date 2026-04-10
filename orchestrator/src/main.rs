@@ -209,13 +209,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Sync routes for any previously running projects (retry up to 5 times)
-    let running_projects =
-        sqlx::query_as::<_, db::models::Project>("SELECT * FROM projects WHERE status = 'running'")
-            .fetch_all(&db)
-            .await?;
     let orchestrator_upstream = format!("litebin-orchestrator:{}", config.port);
     for attempt in 1..=5 {
-        let routes = routing_helpers::resolve_routes(&running_projects, &db, &config.domain).await.unwrap_or_default();
+        let routes = routing_helpers::resolve_all_routes(&db, &config.domain, &orchestrator_upstream).await.unwrap_or_default();
         let r = router.read().await.clone();
         match r
             .sync_routes(&routes, &config.domain, &orchestrator_upstream, &config.dashboard_subdomain, &config.poke_subdomain)

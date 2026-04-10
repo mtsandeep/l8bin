@@ -61,19 +61,8 @@ async fn sweep(
 
     // 2. Resync routes — stopped projects are now excluded, so requests hit the
     //    waker instead of a dead upstream (eliminates the 502/timeout window)
-    let running_projects =
-        sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE status = 'running'")
-            .fetch_all(&state.db)
-            .await?;
-
-    let mut routes = crate::routing_helpers::resolve_routes(&running_projects, &state.db, &state.config.domain).await?;
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-
-    // Include sleeping custom domain routes so they reach the waker
-    match crate::routing_helpers::resolve_sleeping_custom_domain_routes(&state.db, &state.config.domain, &orchestrator_upstream).await {
-        Ok(sleeping_cd_routes) => routes.extend(sleeping_cd_routes),
-        Err(e) => tracing::warn!(error = %e, "janitor: failed to resolve sleeping custom domain routes"),
-    }
+    let routes = crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await?;
 
     router
         .sync_routes(&routes, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain)

@@ -68,11 +68,70 @@ Runs on a configurable interval (default: 5 min). Stops idle containers that hav
 When a request hits a sleeping app:
 
 1. Return a loading page immediately
-2. Start the container in the background (single-flight dedup)
-3. Rebuild Caddy routes
-4. Browser auto-refreshes and hits the running container
+2. Check `auto_start_enabled` — if disabled, show "currently offline" page
+3. Start the container in the background (single-flight dedup)
+4. Rebuild Caddy routes
+5. Browser auto-refreshes and hits the running container
 
 In Mode B, the agent handles this autonomously using only the Docker API — no master or database needed.
+
+See [waker.md](waker.md) for detailed wake-on-request flow diagrams.
+
+### Custom Domain Wake
+
+Sleeping custom domain wakes work identically in both modes via Caddy Host header rewrite. The orchestrator encodes sleeping custom domain routes with `host_rewrite` on `ProjectRoute` — Caddy rewrites the Host header from `app.example.com` to `myapp.l8b.in` before proxying to the local waker. The waker code is unchanged — it just extracts the subdomain.
+
+### User-Facing Error Pages
+
+All waker responses use consistent HTML templates (same in both modes):
+
+| Page | Status | Shown when |
+|---|---|---|
+| Loading | 200 | Container is being started |
+| Error | 503 | Container failed to start (30s auto-retry) |
+| Offline | 503 | `auto_start_enabled` is disabled |
+| Not Found | 404 | Project doesn't exist or was removed |
+
+## Agent Independence (Mode B)
+
+After one successful orchestrator push, an agent can operate fully independently:
+
+| Capability | Works without master? |
+|---|---|
+| Wake sleeping containers (subdomain) | Yes |
+| Wake sleeping containers (custom domain) | Yes — Host rewrite in persisted Caddy config |
+| Route traffic to running containers | Yes — local Caddy rebuild from persisted config |
+| Check `auto_start_enabled` before waking | Yes — project metadata persisted locally |
+| Serve traffic after restart | Yes — persisted Caddy config + project metadata loaded on startup |
+| Issue new TLS certificates | No — on-demand TLS needs orchestrator's `/caddy/ask` endpoint |
+| Add new custom domains | No — done through dashboard (runs on orchestrator) |
+
+### Agent Persistence
+
+The agent persists three files to `data/` for restart resilience:
+
+| File | Content | Updated by |
+|---|---|---|
+| `agent-state.json` | Node registration (node_id, secret, domain, wake_report_url) | `/internal/register` |
+| `caddy-config.json` | Last orchestrator-pushed Caddy JSON config | `/caddy/sync` |
+| `project-meta.json` | Project ID → `auto_start_enabled` mapping | `/internal/project-meta` |
+
+### Caddy Config Merge (Agent Local Wake)
+
+After waking a container, the agent rebuilds Caddy locally starting from the persisted orchestrator config as a base:
+
+1. Take all non-catch-all routes from persisted config (sleeping custom domains, TLS config)
+2. Add/update running container routes from Docker API (correct ports)
+3. Upgrade sleeping custom domain routes for just-woken containers to direct proxy (no Host rewrite)
+4. Append catch-all `*.{domain}` → agent wake handler
+5. Push to Caddy + save updated config
+
+### Project Metadata Push
+
+The orchestrator pushes `auto_start_enabled` flags to agents via `POST /internal/project-meta`. Pushed on two triggers:
+
+1. **Route sync** — covers deploy, stop, start, custom domain changes
+2. **Settings toggle** — immediate push when `auto_start_enabled` is changed in dashboard
 
 ## Network
 
@@ -160,4 +219,3 @@ Root CA (self-signed, 4096-bit RSA)
 Additional tables: `users`, `deploy_tokens`, `settings`.
 
 See [security.md](security.md) for the full security architecture and threat model.
-See [waker.md](waker.md) for detailed wake-on-request flow diagrams.

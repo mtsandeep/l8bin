@@ -410,23 +410,8 @@ pub async fn deploy(
     }
 
     // 7. Sync Caddy routes
-    let all_projects =
-        match sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE status = 'running'")
-            .fetch_all(&state.db)
-            .await
-        {
-            Ok(p) => p,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": format!("database error: {e}")})),
-                )
-                    .into_response();
-            }
-        };
-
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-    let route_entries = match crate::routing_helpers::resolve_routes(&all_projects, &state.db, &state.config.domain).await {
+    let route_entries = match crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "failed to resolve routes");

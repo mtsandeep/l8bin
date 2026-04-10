@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Unified custom domain wake for both master proxy and cloudflare_dns modes via Caddy Host header rewrite
+- Agent now checks `auto_start_enabled` before waking — shows "currently offline" page when disabled
+- Agent Caddy config persistence (`data/caddy-config.json`) — survives restarts, used as base for local rebuilds
+- Agent project metadata persistence (`data/project-meta.json`) — stores `auto_start_enabled` flags pushed by orchestrator
+- `POST /internal/project-meta` endpoint on agent for receiving project metadata from orchestrator
+- Sleeping custom domain routes upgraded to direct proxy on agent local wake
+
+### Changed
+- Agent waker rebuilds Caddy from persisted orchestrator config instead of building from scratch
+
 ## [0.1.4] - 2026-04-10
 
 ### Added

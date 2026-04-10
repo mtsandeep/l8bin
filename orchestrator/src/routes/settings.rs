@@ -197,5 +197,20 @@ pub async fn update_project_settings(
             )
         })?;
 
+    // Push project meta to agent if auto_start_enabled changed and project is on a remote node
+    if has_auto_start_enabled {
+        if let Some(ref node_id) = updated.node_id {
+            if node_id != "local" {
+                crate::cloudflare_router::push_project_meta_to_agent(
+                    node_id,
+                    &state.db,
+                    &state.node_clients,
+                    &state.config,
+                )
+                .await;
+            }
+        }
+    }
+
     Ok(Json(updated))
 }

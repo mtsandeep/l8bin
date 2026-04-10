@@ -593,14 +593,9 @@ pub async fn cleanup_unused_image(state: &AppState, node_id: Option<&str>, image
 }
 
 pub async fn sync_caddy(state: &AppState) {
-    let running = sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE status = 'running'",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
-
-    let routes = match crate::routing_helpers::resolve_routes(&running, &state.db, &state.config.domain).await {
+    let routes = match crate::routing_helpers::resolve_all_routes(
+        &state.db, &state.config.domain, &format!("litebin-orchestrator:{}", state.config.port),
+    ).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "failed to resolve routes");

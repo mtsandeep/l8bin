@@ -230,13 +230,8 @@ async fn set_project_running(state: &AppState, project: &Project) {
         .await;
 
     // Sync routes
-    let all_running = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE status = 'running'")
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
-
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-    let routes = crate::routing_helpers::resolve_routes(&all_running, &state.db, &state.config.domain).await.unwrap_or_default();
+    let routes = crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await.unwrap_or_default();
     let _ = state
         .router
         .read()
