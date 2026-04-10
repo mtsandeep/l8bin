@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-04-10
+
 ### Added
 - Traffic-based idle detection — janitor now stops only truly idle projects by tracking real HTTP requests via Caddy access logs instead of relying solely on deploy/wake timestamps
 - Unified custom domain wake for both master proxy and cloudflare_dns modes via Caddy Host header rewrite
