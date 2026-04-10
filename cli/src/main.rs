@@ -190,6 +190,14 @@ async fn main() -> Result<()> {
                 bail!("'ship' is an interactive command and cannot be used in CI mode. Use 'deploy' instead.");
             }
             let cfg = config::CliConfig::load(cli.server.as_deref(), None)?;
+            if auth::load_session().is_none() {
+                let server = dialoguer::Input::<String>::new()
+                    .with_prompt("Server URL")
+                    .default(cfg.server.clone().unwrap_or_default())
+                    .interact_text()?;
+                auth::login(&server).await?;
+            }
+            let cfg = config::CliConfig::load(cli.server.as_deref(), None)?;
             let client = auth::authenticated_client(&cfg)?;
             let server = auth::resolve_server(&cfg)?;
             ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port).await?;

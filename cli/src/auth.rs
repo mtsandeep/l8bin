@@ -44,6 +44,11 @@ pub fn clear_session() -> Result<()> {
 }
 
 pub async fn login(server: &str) -> Result<()> {
+    let server = if server.starts_with("http://") || server.starts_with("https://") {
+        server.to_string()
+    } else {
+        format!("https://{}", server)
+    };
     println!("Server: {}", server);
     let username = dialoguer::Input::<String>::new()
         .with_prompt("Username")
@@ -92,7 +97,8 @@ pub async fn login(server: &str) -> Result<()> {
 }
 
 /// Build a reqwest client with the appropriate auth headers.
-/// Priority: deploy token > session cookie
+/// Priority: deploy token > session cookie.
+/// Returns an error if neither a token nor a session is available.
 pub fn authenticated_client(config: &CliConfig) -> Result<reqwest::Client> {
     let mut headers = reqwest::header::HeaderMap::new();
 
@@ -107,6 +113,8 @@ pub fn authenticated_client(config: &CliConfig) -> Result<reqwest::Client> {
             "Cookie",
             HeaderValue::from_str(&session.cookie).map_err(|e| anyhow::anyhow!("invalid session cookie: {}", e))?,
         );
+    } else {
+        anyhow::bail!("not authenticated. Run: l8b login --server <url>  or  set L8B_TOKEN");
     }
 
     let client = reqwest::Client::builder()
