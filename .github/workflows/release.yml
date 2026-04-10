@@ -133,6 +133,8 @@ jobs:
     needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -169,4 +171,4 @@ jobs:
             artifacts/linux/l8b-dashboard.tar.gz
             artifacts/linux/l8b-dashboard.zip
             artifacts/checksums.txt
-          generate_release_notes: true
+          body_path: CHANGELOG.md

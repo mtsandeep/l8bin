@@ -1,18 +1,25 @@
 # LiteBin | L8Bin
 
-Self-hosted PaaS. Deploy apps from your dashboard, CLI, or GitHub Actions.
+> **Not a production platform.** LiteBin is built for engineers who want their side projects, demos, and portfolio apps actually running — not just in a local Docker container. Ship a build straight from your laptop, let it sleep to zero when nobody's looking, and wake it in seconds when someone is. One cheap VPS, as many apps as your disk holds, zero per-app fees.
+>
+> → [l8bin.com](https://l8bin.com) for the full picture.
+
+Self-hosted App Manager. Deploy apps from your dashboard, CLI, or GitHub Actions.
 
 ## Quick Start
 
 ```bash
-# Master server (orchestrator + dashboard + Caddy)
-curl -sSL https://l8b.in | bash-s master
+# Interactive — asks what to install
+curl -sSL https://l8b.in | bash
 
-# Worker node
-curl -sSL https://l8b.in | bash-s agent
+# Master server (orchestrator + dashboard + Caddy)
+curl -sSL https://l8b.in | bash -s master
+
+# Agent
+curl -sSL https://l8b.in | bash -s agent
 
 # CLI only
-curl -sSL https://l8b.in | bash-s cli
+curl -sSL https://l8b.in | bash -s cli
 ```
 
 ---
@@ -22,7 +29,7 @@ curl -sSL https://l8b.in | bash-s cli
 Run on a Linux VPS with Docker installed. Requires a domain with DNS pointed to the server.
 
 ```bash
-curl -sSL https://l8b.in | bash-s master
+curl -sSL https://l8b.in | bash -s master
 ```
 
 The installer will prompt for:
@@ -41,7 +48,7 @@ After setup:
 
 ### Multi-node (optional)
 
-To add worker nodes, run the multi-node setup on the master server:
+To add agents, run the multi-node setup on the master server:
 
 ```bash
 # On the master — generates mTLS certs, prints a cert bundle
@@ -55,13 +62,13 @@ This generates ECDSA P-256 mTLS certificates, configures the master, and prints 
 Re-run the same command. This **invalidates all existing agent connections** — update each agent afterward:
 
 ```bash
-# On each worker node — prompts for new cert bundle
+# On each agent — prompts for new cert bundle
 curl -sSL https://l8b.in | bash -s agent --update-certs
 ```
 
 ---
 
-## Worker Node Setup
+## Agent Setup
 
 Run on a separate Linux server. Requires Docker.
 
@@ -103,7 +110,7 @@ Dashboard deploys only support pre-built images from public registries. Private 
 Install the CLI:
 
 ```bash
-curl -sSL https://l8b.in | bash-s cli
+curl -sSL https://l8b.in | bash -s cli
 ```
 
 Log in to your server:
@@ -140,18 +147,18 @@ name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: l8bin/l8bin-action@v1
+      - uses: mtsandeep/l8bin-action@v1
         with:
           server: ${{ secrets.L8B_SERVER }}
           token: ${{ secrets.L8B_TOKEN }}
           project_id: myapp
-          port: 3000
 ```
 
 ---

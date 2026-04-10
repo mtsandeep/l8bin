@@ -72,17 +72,20 @@
         border-color: #7c3aed;
         background: rgba(124, 58, 237, 0.1);
       }
+      .nav-link { position: relative; }
+      .nav-link::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 0; height: 1px; background: #8b5cf6; transition: width .2s; }
+      .nav-link:hover::after { width: 100%; }
     </style>
   </head>
   <body class="bg-night-950 text-zinc-300 antialiased min-h-screen">
     <!-- Nav -->
-    <nav class="border-b border-white/5 bg-night-950/80 backdrop-blur-xl sticky top-0 z-50">
-      <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-        <a href="index.html" class="flex items-center gap-2 group">
-          <span class="text-2xl font-black text-white tracking-tighter group-hover:text-violet-400 transition">L8B</span>
-          <span class="text-xs font-mono text-zinc-500">// QUICK START</span>
-        </a>
-        <a href="index.html" class="text-sm text-zinc-400 hover:text-white transition">Back to Home</a>
+    <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
+      <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+        <a href="index.html" class="font-black text-white tracking-tighter font-mono text-lg">L8BIN<span class="text-violet-500">.</span></a>
+        <div class="flex items-center gap-3">
+          <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
+          <a href="index.html" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Back to Home</a>
+        </div>
       </div>
     </nav>
 
@@ -275,6 +278,48 @@
                 <code class="text-sm text-zinc-300">curl -sSL https://l8b.in | bash -s cli</code>
               </div>
 
+              <!-- Add to PATH -->
+              <div class="mb-6">
+                <p class="text-sm text-zinc-400 mb-3">Make <code class="text-violet-300 bg-white/5 px-1 rounded">l8b</code> available in your terminal:</p>
+                <div class="flex gap-1 mb-3 bg-white/3 border border-white/8 rounded-lg p-1 inline-flex">
+                  <button onclick="switchPathTab('unix')" id="ptab-unix" class="ptab px-3 py-1.5 rounded text-xs font-mono font-semibold transition bg-white/8 text-white">Linux / macOS</button>
+                  <button onclick="switchPathTab('win')" id="ptab-win" class="ptab px-3 py-1.5 rounded text-xs font-mono font-semibold transition text-zinc-500 hover:text-zinc-300">Windows</button>
+                </div>
+
+                <div id="pcontent-unix">
+                  <p class="text-xs text-zinc-500 mb-2">Installed to <code class="text-zinc-400 bg-white/5 px-1 rounded">~/.local/bin</code>. Add to your shell profile so it persists:</p>
+                  <div class="code-block mb-2 relative group">
+                    <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <pre class="text-sm text-zinc-300"><code># bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+
+# zsh (default on macOS)
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc</code></pre>
+                  </div>
+                  <p class="text-xs text-zinc-500">Verify: <code class="text-zinc-400 bg-white/5 px-1 rounded">which l8b</code> should print the path.</p>
+                </div>
+
+                <div id="pcontent-win" class="hidden">
+                  <p class="text-xs text-zinc-500 mb-2">Installed to <code class="text-zinc-400 bg-white/5 px-1 rounded">%USERPROFILE%\.local\bin</code>. Run in PowerShell or Command Prompt to add it permanently:</p>
+                  <div class="code-block mb-3 relative group">
+                    <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <code class="text-sm text-zinc-300">setx PATH "%PATH%;%USERPROFILE%\.local\bin"</code>
+                  </div>
+                  <p class="text-xs text-zinc-500 mb-2">Or in PowerShell (permanent, user scope):</p>
+                  <div class="code-block mb-3 relative group">
+                    <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <code class="text-sm text-zinc-300">[Environment]::SetEnvironmentVariable('Path', $env:Path + ';' + "$env:USERPROFILE\.local\bin", 'User')</code>
+                  </div>
+                  <p class="text-xs text-zinc-500">Restart your terminal, then verify: <code class="text-zinc-400 bg-white/5 px-1 rounded">l8b --help</code></p>
+                </div>
+              </div>
+
               <p class="text-sm text-zinc-400 mb-3">Login to your master:</p>
               <div class="code-block mb-4 relative group">
                 <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
@@ -355,7 +400,7 @@ ghcr.io/org/app:latest</code>
           <!-- GitHub Actions -->
           <div id="deploy-actions" class="deploy-detail hidden">
             <h3 class="text-xl font-bold text-white mb-4">Deploy via GitHub Actions</h3>
-            <p class="text-zinc-400 mb-6">Auto-deploy on every push to main.</p>
+            <p class="text-zinc-400 mb-6">Auto-deploy on every push to main, or trigger a deploy manually from the GitHub Actions UI.</p>
 
             <p class="text-sm text-zinc-400 mb-3">Create <code class="text-violet-400">.github/workflows/deploy.yml</code>:</p>
             <div class="code-block mb-6 relative group">
@@ -366,6 +411,7 @@ ghcr.io/org/app:latest</code>
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -414,10 +460,25 @@ jobs:
     </div>
 
     <!-- Footer -->
-    <footer class="py-8 text-center border-t border-white/5 mt-12">
-      <p class="text-xs text-zinc-600 font-mono">
-        L8B // QUICK START // <a href="index.html" class="text-violet-400 hover:underline">Back to Home</a>
-      </p>
+    <footer class="py-12 px-6 border-t border-white/5 text-center">
+      <p class="text-xs font-mono text-zinc-600 mb-1">This page woke up on a 512 MB VPS — alongside all of these:</p>
+      <p class="text-xs text-zinc-700 mb-4">1 vCPU · 512 MB · 10 GB</p>
+      <div class="flex flex-wrap justify-center gap-2 mb-6">
+        <a href="https://l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
+          <span class="px-1.5 py-0.5 rounded bg-zinc-500/15 text-zinc-500 text-[10px]">Static</span>This page
+        </a>
+        <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
+          <span class="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-600 text-[10px]">Next.js SSR</span>coming soon
+        </a>
+        <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
+          <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 text-[10px]">Fastify + PG</span>coming soon
+        </a>
+        <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
+          <span class="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 text-[10px]">React SPA</span>coming soon
+        </a>
+      </div>
+      <p class="text-xs text-zinc-700 mb-1">Engineers, not salesmen. LiteBin is for portfolios, demos, and experiments.</p>
+      <p class="font-mono text-xs text-zinc-700">L8Bin // BUILT_WITH_RUST // SELF_HOSTED</p>
     </footer>
 
     <script>
@@ -488,6 +549,20 @@ jobs:
         selected.querySelector('.w-12').classList.add('bg-violet-500/20');
         selected.querySelector('svg').classList.remove('text-zinc-400');
         selected.querySelector('svg').classList.add('text-violet-400');
+      }
+
+      // Path tab switching
+      function switchPathTab(os) {
+        document.querySelectorAll('[id^="pcontent-"]').forEach(el => el.classList.add('hidden'));
+        document.getElementById('pcontent-' + os).classList.remove('hidden');
+
+        document.querySelectorAll('.ptab').forEach(el => {
+          el.classList.remove('bg-white/8', 'text-white');
+          el.classList.add('text-zinc-500');
+        });
+        const active = document.getElementById('ptab-' + os);
+        active.classList.remove('text-zinc-500');
+        active.classList.add('bg-white/8', 'text-white');
       }
 
       // Copy code functionality
