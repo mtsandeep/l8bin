@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `FLUSH_INTERVAL_SECS` env var — configurable activity tracker flush interval (default 60s), controls how often idle timestamps are written to the database
+
 ## [0.1.6] - 2026-04-10
 
 ### Added

@@ -10,6 +10,7 @@ pub struct Config {
     pub port: u16,
     pub default_auto_stop_mins: i64,
     pub janitor_interval_secs: u64,
+    pub flush_interval_secs: u64,
     pub ca_cert_path: String,
     pub client_cert_path: String,
     pub client_key_path: String,
@@ -41,6 +42,9 @@ impl Config {
                 .parse()?,
             janitor_interval_secs: env::var("JANITOR_INTERVAL_SECS")
                 .unwrap_or_else(|_| "300".into()) // 5 minutes
+                .parse()?,
+            flush_interval_secs: env::var("FLUSH_INTERVAL_SECS")
+                .unwrap_or_else(|_| "60".into())
                 .parse()?,
             ca_cert_path: env::var("MASTER_CA_CERT_PATH").unwrap_or_default(),
             client_cert_path: env::var("MASTER_CLIENT_CERT_PATH").unwrap_or_default(),

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use tracing::{debug, error, info};
 
-use litebin_common::heartbeat::{self, FLUSH_INTERVAL_SECS};
+use litebin_common::heartbeat;
 
 use crate::AppState;
 
@@ -21,7 +21,7 @@ pub async fn run_activity_tracker(state: AppState) {
     heartbeat::run_docker_log_tailer(
         state.docker.as_ref().clone(),
         caddy_container,
-        FLUSH_INTERVAL_SECS,
+        state.config.flush_interval_secs,
         move |hosts| {
             let state = state.clone();
             let dashboard_host = dashboard_host.clone();

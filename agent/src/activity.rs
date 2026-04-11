@@ -4,7 +4,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use tracing::{debug, warn};
 
-use litebin_common::heartbeat::{self, FLUSH_INTERVAL_SECS};
+use litebin_common::heartbeat;
 
 use crate::AgentState;
 
@@ -20,7 +20,10 @@ pub async fn run_activity_reporter(state: AgentState) {
     heartbeat::run_docker_log_tailer(
         state.docker.as_ref().clone(),
         caddy_container,
-        FLUSH_INTERVAL_SECS,
+        std::env::var("FLUSH_INTERVAL_SECS")
+            .unwrap_or_else(|_| "60".into())
+            .parse()
+            .unwrap_or(60),
         move |hosts| {
             let state = state.clone();
             async move {
