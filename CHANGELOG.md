@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-04-11
+
 ### Fixed
 - Fix cert path mismatch in `configure_multi_server`, default agent port to 5083 in dashboard, add delete confirmation modal for agents
 - Use `curl -fsSL` (fail early on errors) instead of `curl -sSL` across all install scripts
