@@ -49,26 +49,20 @@ pub async fn select_node(
 
     const MIN_DISK_FREE: i64 = 2 * 1024 * 1024 * 1024; // 2 GB
 
-    let candidates: Vec<_> = nodes
-        .into_iter()
-        .filter(|n| n.disk_free.unwrap_or(0) >= MIN_DISK_FREE)
-        .collect();
-
-    if candidates.is_empty() {
-        return Err(anyhow!("no available nodes (all nodes filtered: insufficient disk space)"));
-    }
-
-    let best = candidates
-        .into_iter()
+    let best = nodes
+        .iter()
         .min_by_key(|n| {
             let total = n.total_memory.unwrap_or(0).max(1);
             let available = n.available_memory.unwrap_or(0);
             let mem_used_pct = ((total.saturating_sub(available)) * 100) / total;
-            mem_used_pct + (n.container_count * 10)
+            let load_score = mem_used_pct + (n.container_count * 10);
+            // Penalize nodes below disk threshold so they're picked last, not excluded
+            let disk_penalty = if n.disk_free.unwrap_or(0) < MIN_DISK_FREE { 1000 } else { 0 };
+            load_score + disk_penalty
         });
 
     match best {
-        Some(node) => Ok(node.id),
+        Some(node) => Ok(node.id.clone()),
         None => Err(anyhow!("no available nodes")),
     }
 }
