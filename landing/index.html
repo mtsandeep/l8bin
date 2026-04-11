@@ -86,7 +86,7 @@
   </nav>
 
   <!-- Hero -->
-  <header class="relative overflow-hidden pt-16 pb-20">
+  <header class="relative overflow-hidden pt-16 pb-10">
     <div class="absolute inset-0 dot-grid"></div>
     <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] bg-[radial-gradient(ellipse_at_top,rgba(124,58,237,0.14),transparent_65%)]"></div>
     <div class="max-w-6xl mx-auto px-6 relative z-10">
@@ -105,12 +105,12 @@
             class="text-6xl lg:text-8xl font-black text-white tracking-tighter leading-none mb-5"></h1>
           <p class="text-lg text-zinc-400 leading-relaxed mb-8">
             Your server, your rules — <span class="text-white font-semibold">no per-app fees</span>, no deleting projects to save RAM.<br/>
-            Deploy as many apps as your disk holds. They sleep to zero when idle, wake on the first request.<br/>
-            <span class="text-violet-400 font-semibold">Platform overhead: under 58MB.</span>
+            Deploy as many apps as your disk holds. They sleep to zero when idle, wake on the first request. <span class="text-white font-semibold">Perfect for demos, previews, and side projects.</span><br/>
+            <span class="text-violet-400 font-semibold">LiteBin overhead: under 58MB.</span>
           </p>
           <div class="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
             <a href="#start" class="px-7 py-3.5 bg-white text-night-950 font-bold rounded-xl hover:bg-violet-200 transition text-sm text-center">Get Started Free</a>
-            <a href="https://aggressive.l8b.in" target="_blank" class="px-7 py-3.5 glass rounded-xl text-sm font-semibold hover:bg-white/5 transition flex items-center justify-center gap-2">
+            <a href="https://react-demo.l8b.in" target="_blank" class="px-7 py-3.5 glass rounded-xl text-sm font-semibold hover:bg-white/5 transition flex items-center justify-center gap-2">
               <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>See Live Demo
             </a>
           </div>
@@ -142,12 +142,17 @@
           <p class="text-xs text-zinc-600 mt-3 italic">* Sleep-state RAM only.</p>
         </div>
       </div>
+      <div class="mt-16 text-center">
+        <span class="inline-block py-4 px-8 rounded-xl bg-violet-500/10 border border-violet-500/20">
+          <span class="text-lg text-zinc-300">You don't have to worry about your apps — just leave them running. <span class="text-violet-400 font-semibold">Litebin handles the rest.</span></span>
+        </span>
+      </div>
     </div>
   </header>
 
   <!-- Stack -->
   <section class="py-12 border-t border-white/5">
-    <div class="max-w-6xl mx-auto px-6">
+    <div class="max-w-6xl mx-auto px-6 fade-in">
       <p class="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-8">Built With</p>
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <div class="p-5 glass rounded-xl"><div class="text-orange-400 font-bold mb-1 text-sm">Rust</div><p class="text-xs text-zinc-500 font-mono leading-snug">Low-memory runtime.</p></div>
@@ -161,7 +166,7 @@
 
   <!-- Use Cases -->
   <section id="usecases" class="py-24 border-t border-white/5">
-    <div class="max-w-6xl mx-auto px-6">
+    <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="text-center mb-14">
         <h2 class="text-4xl font-black text-white tracking-tighter mb-3">A place for your <span class="grad-text">Side-Quests.</span></h2>
         <p class="text-zinc-500 font-mono text-sm">Stop deleting your work to save $5. Just bin it.</p>
@@ -194,7 +199,7 @@
 
   <!-- How It Works -->
   <section id="how" class="py-24 border-t border-white/5 bg-night-900/40">
-    <div class="max-w-6xl mx-auto px-6">
+    <div class="max-w-6xl mx-auto px-6 fade-in">
       <h2 class="text-3xl font-black text-white uppercase tracking-tight mb-2">The L8B Lifecycle</h2>
       <p class="text-zinc-500 font-mono text-xs uppercase tracking-widest mb-14">Zero-Waste Resource Management</p>
       <div class="grid md:grid-cols-3 gap-10 relative">
@@ -310,12 +315,12 @@
       </div>
       <!-- Demo links -->
       <div class="grid md:grid-cols-2 gap-5 fade-in">
-        <a href="https://aggressive.l8b.in" target="_blank" class="p-6 glass rounded-2xl hover:border-fuchsia-500/40 transition group flex items-start gap-4">
+        <a href="https://react-demo.l8b.in" target="_blank" class="p-6 glass rounded-2xl hover:border-fuchsia-500/40 transition group flex items-start gap-4">
           <div class="w-10 h-10 bg-fuchsia-500/10 rounded-xl flex items-center justify-center shrink-0"><span class="text-fuchsia-400">⚡</span></div>
           <div>
             <div class="flex items-center gap-2 mb-1"><h4 class="font-bold text-white">Aggressive Demo</h4><span class="text-xs font-mono text-fuchsia-400 bg-fuchsia-500/10 px-1.5 py-0.5 rounded">60s sleep</span></div>
             <p class="text-xs text-zinc-500 mb-2">Sleeps after 60 seconds. Come back after a minute and see the wake animation live.</p>
-            <span class="text-fuchsia-400 font-mono text-xs group-hover:underline">aggressive.l8b.in →</span>
+            <span class="text-fuchsia-400 font-mono text-xs group-hover:underline">react-demo.l8b.in →</span>
           </div>
         </a>
         <a href="https://portfolio.l8b.in" target="_blank" class="p-6 glass rounded-2xl hover:border-violet-500/40 transition group flex items-start gap-4">
@@ -336,9 +341,9 @@
       <div class="grid lg:grid-cols-2 gap-12 items-start">
         <div class="fade-in">
           <h2 class="text-3xl font-black text-white uppercase tracking-tight mb-3">Deploy in <span class="text-violet-400">one command.</span></h2>
-          <div class="flex gap-1 mb-6 bg-white/3 border border-white/8 rounded-lg p-1 inline-flex">
-            <button onclick="switchDeployTab('cli')" id="dtab-cli" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition bg-white/8 text-white">Via CLI</button>
-            <button onclick="switchDeployTab('gh')" id="dtab-gh" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition text-zinc-500 hover:text-zinc-300">GitHub Actions</button>
+          <div class="flex gap-1 mb-6 bg-night-800 rounded-lg p-1 inline-flex">
+            <button onclick="switchDeployTab('cli')" id="dtab-cli" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition bg-white/10 text-white shadow-sm">With CLI</button>
+            <button onclick="switchDeployTab('gh')" id="dtab-gh" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition text-zinc-500 hover:text-zinc-300 cursor-pointer">With GitHub Actions</button>
           </div>
           <div id="dcontent-cli">
             <p class="text-zinc-500 text-sm leading-relaxed mb-6">No YAML. No CI config. No Dockerfile needed. Point the CLI at any directory and ship. Railpack auto-detects Node, Python, Go, PHP, and more.</p>
@@ -351,7 +356,7 @@
           <div id="dcontent-gh" class="hidden">
             <p class="text-zinc-500 text-sm leading-relaxed mb-6">Integrate LiteBin into any CI pipeline with a single deploy step. Store your token as a secret — no server access, no SSH keys, no registry.</p>
             <ul class="space-y-3 text-sm text-zinc-500">
-              <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Add <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">LITEBIN_TOKEN</code> as a GitHub secret</span></li>
+              <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Add <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">L8B_TOKEN</code> and <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">L8B_SERVER</code> as GitHub secrets</span></li>
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>One <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">curl</code> step — trigger on push, merge, or any event</span></li>
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>No SSH access needed. No registry. Works with any workflow.</span></li>
             </ul>
@@ -388,7 +393,7 @@
 
   <!-- Multi-Node -->
   <section class="py-24 border-t border-white/5 bg-night-900/40">
-    <div class="max-w-6xl mx-auto px-6">
+    <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="grid lg:grid-cols-2 gap-16 items-center">
         <div>
           <h2 class="text-3xl font-black text-white mb-5 uppercase tracking-tight">One Manager.<br/><span class="text-violet-400">Unlimited Bins.</span></h2>
@@ -424,7 +429,7 @@
 
   <!-- Compare -->
   <section id="compare" class="py-24 border-t border-white/5 bg-night-900/40">
-    <div class="max-w-6xl mx-auto px-6">
+    <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="mb-10">
         <h2 class="text-2xl font-black text-white uppercase tracking-tight mb-1">How It Stacks Up.</h2>
         <p class="text-zinc-500 text-sm font-mono">An honest look. We know our lane.</p>
@@ -480,7 +485,7 @@
 
   <!-- VPS Providers + Not For Production -->
   <section class="py-20 border-t border-white/5">
-    <div class="max-w-6xl mx-auto px-6">
+    <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="grid lg:grid-cols-2 gap-12">
         <div>
           <h3 class="text-lg font-bold text-white mb-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>Need a VPS?</h3>
@@ -518,7 +523,7 @@
 
   <!-- Roadmap -->
   <section id="roadmap" class="py-24 border-t border-white/5 bg-night-900/40">
-    <div class="max-w-6xl mx-auto px-6">
+    <div class="max-w-6xl mx-auto px-6 fade-in">
       <h2 class="text-2xl font-black text-white mb-2 uppercase tracking-tight">Ideas</h2>
       <p class="text-zinc-500 mb-10 text-sm">Things I might build. No promises.</p>
       <div class="glass rounded-2xl overflow-hidden flex flex-col md:flex-row min-h-[280px]">
@@ -589,7 +594,7 @@
 
   <!-- CTA -->
   <section id="start" class="py-24 border-t border-white/5">
-    <div class="max-w-2xl mx-auto px-6 text-center">
+    <div class="max-w-2xl mx-auto px-6 text-center fade-in">
       <h2 class="text-4xl font-black text-white tracking-tighter mb-3 uppercase italic">Ship <span class="text-violet-500">Everything.</span></h2>
       <p class="text-zinc-500 mb-10">Stop deleting your work to save $5. Just bin it.</p>
       <div class="inline-block p-px bg-gradient-to-r from-violet-500 to-fuchsia-600 rounded-xl mb-4">
@@ -607,24 +612,27 @@
 
   <!-- Footer -->
   <footer class="py-12 px-6 border-t border-white/5 text-center">
-    <p class="text-xs font-mono text-zinc-600 mb-1">This page woke up on a 512 MB VPS — alongside all of these:</p>
-    <p class="text-xs text-zinc-700 mb-4">1 vCPU · 512 MB · 10 GB</p>
+    <p class="text-xs font-mono text-zinc-400 mb-1">This page woke up on a 512MB VPS — Litebin is currently managing 4 apps on this server.</p>
+    <p class="text-xs text-zinc-500 mb-4">1 vCPU · 512 MB · 10 GB</p>
     <div class="flex flex-wrap justify-center gap-2 mb-6">
-      <a href="https://l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
-        <span class="px-1.5 py-0.5 rounded bg-zinc-500/15 text-zinc-500 text-[10px]">Static</span>This page
+      <a href="https://l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-violet-500/40 hover:text-white hover:bg-violet-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 text-[10px]">Static</span>This page
       </a>
-      <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
-        <span class="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-600 text-[10px]">Next.js SSR</span>coming soon
+      <a href="https://portfolio.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-blue-500/40 hover:text-white hover:bg-blue-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 text-[10px]">React SPA</span>Portfolio
       </a>
-      <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
+      <a href="https://react-demo.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-amber-500/40 hover:text-white hover:bg-amber-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 text-[10px]">Express + React</span>Aggressive Sleep
+      </a>
+      <a href="https://nextjs-ssr-demo.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-cyan-500/40 hover:text-white hover:bg-cyan-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-600 text-[10px]">Next.js SSR</span>Ecom Demo
+      </a>
+      <a href="#" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-emerald-500/40 hover:text-white hover:bg-emerald-500/5 hover:scale-105 transition">
         <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 text-[10px]">Fastify + PG</span>coming soon
       </a>
-      <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
-        <span class="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 text-[10px]">React SPA</span>coming soon
-      </a>
     </div>
-    <p class="text-xs text-zinc-700 mb-1">Engineers, not salesmen. LiteBin is for portfolios, demos, and experiments.</p>
-    <p class="font-mono text-xs text-zinc-700">L8Bin // BUILT_WITH_RUST // SELF_HOSTED</p>
+    <p class="text-xs text-zinc-500 mb-2">Engineers, not salesmen. LiteBin is for portfolios, demos, and experiments.</p>
+    <p class="font-mono text-[10px] text-zinc-600">L8Bin // BUILT_WITH_RUST // SELF_HOSTED</p>
   </footer>
 
   <script>
@@ -646,12 +654,12 @@
       ['cli', 'gh'].forEach(t => {
         document.getElementById('dcontent-' + t).classList.add('hidden');
         const btn = document.getElementById('dtab-' + t);
-        btn.classList.remove('bg-white/8', 'text-white');
+        btn.classList.remove('bg-white/10', 'text-white', 'shadow-sm');
         btn.classList.add('text-zinc-500');
       });
       document.getElementById('dcontent-' + name).classList.remove('hidden');
       const active = document.getElementById('dtab-' + name);
-      active.classList.add('bg-white/8', 'text-white');
+      active.classList.add('bg-white/10', 'text-white', 'shadow-sm');
       active.classList.remove('text-zinc-500');
     }
 
