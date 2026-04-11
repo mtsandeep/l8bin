@@ -43,6 +43,5 @@ projects/
 # Load test binaries
 test-apps/load-tests/k6.exe
 
-#planning docs
-docs/planning/
+#others
 local-release/
