@@ -52,7 +52,7 @@ pub async fn create_node(
     State(state): State<AppState>,
     Json(req): Json<CreateNodeRequest>,
 ) -> impl IntoResponse {
-    let agent_port = req.agent_port.unwrap_or(8443);
+    let agent_port = req.agent_port.unwrap_or(5083);
 
     // Generate a new node ID and shared secret
     let node_id = uuid::Uuid::new_v4().to_string();

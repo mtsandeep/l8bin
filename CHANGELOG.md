@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix orchestrator crash on startup — explicitly install rustls `ring` crypto provider before TLS init
+
 ## [0.1.13] - 2026-04-11
 
 ### Fixed

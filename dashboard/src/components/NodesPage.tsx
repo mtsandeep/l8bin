@@ -72,12 +72,18 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
         setCreatedNodeId(nodeId);
       }
       // Try to connect via mTLS health check
-      await connectNode(nodeId);
-      onAdded();
-      onClose();
+      try {
+        await connectNode(nodeId);
+        onAdded();
+        onClose();
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Connection failed');
+        setStep('result');
+      }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Connection failed');
-      setStep('result');
+      // addNode failed — node was NOT created
+      setError(e instanceof Error ? e.message : 'Failed to add agent');
+      setStep('instructions');
     } finally {
       setConnecting(false);
     }
@@ -237,8 +243,8 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
             </div>
           )}
 
-          {/* Step 4: Result (connect failed) */}
-          {step === 'result' && (
+          {/* Step 4: Result (connect failed after node was created) */}
+          {step === 'result' && createdNodeId && (
             <>
               <div className="flex flex-col items-center py-4 gap-3">
                 <div className="flex items-center gap-2">
@@ -252,7 +258,7 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
                   <XCircle size={14} className="mt-0.5 shrink-0" />
                   {error}
                 </div>
-                <p className="text-xs text-slate-600">You can retry later from the agent card or close this dialog.</p>
+                <p className="text-xs text-slate-600">You can retry now or later from the agent card.</p>
               </div>
               <div className="flex gap-2">
                 <button
@@ -264,9 +270,9 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
                 <button
                   onClick={handleRetryConnect}
                   disabled={connecting}
-                  className="flex-1 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
+                  className="flex-1 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
-                  Connect
+                  {connecting ? 'Connecting…' : 'Connect'}
                 </button>
               </div>
             </>
