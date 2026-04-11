@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: "JetBrains Mono", monospace;
+  --color-night-950: #030308;
+  --color-night-900: #0a0912;
+  --color-night-800: #131222;
+}
+
+:root {
+  --color-primary: #7c3aed;
+  --color-primary-light: #8b5cf6;
+  --color-primary-dark: #6d28d9;
+  --color-primary-glow: rgba(124, 58, 237, 0.2);
+  --color-secondary: #a855f7;
+  --color-accent-1: #c084fc;
+  --color-accent-2: #10b981;
+  --color-accent-3: #f472b6;
+  --color-bg-darkest: #030308;
+  --color-bg-darker: #0a0912;
+  --color-bg-dark: #131222;
+}
+
+.step-active { border-left: 4px solid #7c3aed; background: rgba(124, 58, 237, 0.1); }
+.step-inactive { border-left: 4px solid transparent; }
+.step-complete { border-left: 4px solid #10b981; }
+
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glow-border {
+  box-shadow: 0 0 20px -5px var(--color-primary-glow);
+}
+
+.code-block {
+  font-family: "JetBrains Mono", monospace;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.copy-btn:hover { color: #8b5cf6; }
+
+.tab-active { border-bottom: 2px solid #7c3aed; color: #7c3aed; }
+.tab-inactive { border-bottom: 2px solid transparent; color: #71717a; }
+.tab-inactive:hover { color: #a1a1aa; }
+
+.deploy-option {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.2s;
+}
+
+.deploy-option:hover {
+  border-color: rgba(124, 58, 237, 0.5);
+  background: rgba(124, 58, 237, 0.05);
+}
+
+.deploy-option.active {
+  border-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.nav-link { position: relative; }
+.nav-link::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 0; height: 1px; background: #8b5cf6; transition: width .2s; }
+.nav-link:hover::after { width: 100%; }

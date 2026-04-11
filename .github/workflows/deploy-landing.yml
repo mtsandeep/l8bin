@@ -1,12 +1,6 @@
 name: Deploy Landing Page
 
 on:
-  push:
-    tags:
-      - 'v*'
-    branches: [main]
-    paths:
-      - 'landing/**'
   workflow_dispatch:
 
 concurrency:
