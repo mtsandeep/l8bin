@@ -326,7 +326,7 @@ export default function ProjectCard({
             <span className="text-[10px] uppercase tracking-wider">Disk</span>
           </div>
           <p className="text-sm font-medium text-slate-200">
-            {isRunning && stats && stats.disk_gb > 0 ? `${stats.disk_gb.toFixed(2)} GB` : "—"}
+            {stats && stats.disk_gb > 0 ? `${stats.disk_gb.toFixed(2)} GB` : "—"}
           </p>
         </div>
       </div>

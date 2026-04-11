@@ -40,6 +40,7 @@ pub struct AppState {
     pub router: Arc<RwLock<Arc<dyn RoutingProvider>>>,
     // Phase 6 additions:
     pub node_clients: Arc<DashMap<String, Arc<reqwest::Client>>>,
+    pub disk_cache: Arc<DashMap<String, i64>>,
     pub deploy_locks: Arc<DashMap<String, Arc<Semaphore>>>,
     pub wake_locks: Arc<DashMap<String, Arc<WakeGuard>>>,
     // Debounced route sync channel — send a signal to trigger a batched route sync
@@ -209,6 +210,7 @@ async fn main() -> anyhow::Result<()> {
         docker: Arc::new(docker),
         router: router.clone(),
         node_clients,
+        disk_cache: Arc::new(DashMap::new()),
         deploy_locks,
         wake_locks,
         route_sync_tx,

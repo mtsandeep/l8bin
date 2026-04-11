@@ -413,13 +413,16 @@ pub async fn batch_container_stats(
                 // Check running state
                 let is_running = docker.is_container_running(&id).await.unwrap_or(false);
                 if !is_running {
+                    let disk_gb = docker.disk_usage(&id).await
+                        .map(|d| d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0))
+                        .unwrap_or(0.0);
                     return ContainerStatsResponse {
                         container_id: id,
                         state: "stopped".to_string(),
                         cpu_percent: 0.0,
                         memory_usage: 0,
                         memory_limit: 0,
-                        disk_gb: 0.0,
+                        disk_gb,
                     };
                 }
 

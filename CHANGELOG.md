@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Show disk usage for stopped/sleeping projects with in-memory cache — agent only queried on cache miss (e.g. after restart)
+
 ### Fixed
 - Fix orchestrator crash on startup — explicitly install rustls `ring` crypto provider before TLS init
 

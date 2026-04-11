@@ -57,14 +57,43 @@ pub async fn all_project_stats(
 
     for project in &projects {
         if project.status != "running" {
-            results.push(StatsResponse {
-                project_id: project.id.clone(),
-                status: project.status.clone(),
-                cpu_percent: 0.0,
-                memory_usage: 0,
-                memory_limit: 0,
-                disk_gb: 0.0,
-            });
+            let container_id = match project.container_id.as_deref() {
+                Some(id) => id.to_string(),
+                None => {
+                    results.push(StatsResponse {
+                        project_id: project.id.clone(),
+                        status: project.status.clone(),
+                        cpu_percent: 0.0,
+                        memory_usage: 0,
+                        memory_limit: 0,
+                        disk_gb: 0.0,
+                    });
+                    continue;
+                }
+            };
+
+            // Use cached disk if available
+            if let Some(bytes) = state.disk_cache.get(&project.id) {
+                results.push(StatsResponse {
+                    project_id: project.id.clone(),
+                    status: project.status.clone(),
+                    cpu_percent: 0.0,
+                    memory_usage: 0,
+                    memory_limit: 0,
+                    disk_gb: *bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+                });
+            } else {
+                // Cache miss — include in agent batch to fetch disk
+                let node_id = project.node_id.as_deref().unwrap_or("local");
+                if node_id == "local" {
+                    local_containers.push((project.id.clone(), container_id));
+                } else {
+                    remote_by_node
+                        .entry(node_id.to_string())
+                        .or_default()
+                        .push((project.id.clone(), container_id));
+                }
+            }
             continue;
         }
 
@@ -94,11 +123,15 @@ pub async fn all_project_stats(
         }
     }
 
-    // Fetch local stats
+    // Fetch local stats (running containers)
     for (project_id, container_id) in &local_containers {
         let actually_running = state.docker.is_container_running(container_id).await.unwrap_or(false);
         if !actually_running {
             let now = chrono::Utc::now().timestamp();
+            // Container still exists on disk — query and cache before marking stopped
+            if let Ok(d) = state.docker.disk_usage(container_id).await {
+                state.disk_cache.insert(project_id.clone(), d.size_root_fs as i64);
+            }
             let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
                 .bind(now)
                 .bind(project_id)
@@ -106,13 +139,16 @@ pub async fn all_project_stats(
                 .await;
             caddy_dirty = true;
 
+            let disk_gb = state.disk_cache.get(project_id)
+                .map(|bytes| *bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+                .unwrap_or(0.0);
             results.push(StatsResponse {
                 project_id: project_id.clone(),
                 status: "stopped".to_string(),
                 cpu_percent: 0.0,
                 memory_usage: 0,
                 memory_limit: 0,
-                disk_gb: 0.0,
+                disk_gb,
             });
             continue;
         }
@@ -138,7 +174,10 @@ pub async fn all_project_stats(
         };
 
         let disk_gb = match disk_res {
-            Ok(d) => d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0),
+            Ok(d) => {
+                state.disk_cache.insert(project_id.clone(), d.size_root_fs as i64);
+                d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0)
+            }
             Err(_) => 0.0,
         };
 
@@ -244,6 +283,12 @@ pub async fn all_project_stats(
                         .cloned()
                         .unwrap_or_default();
                     let state_str = item["state"].as_str().unwrap_or("running");
+                    let disk_gb = item["disk_gb"].as_f64().unwrap_or(0.0);
+
+                    // Cache disk bytes from agent response
+                    if disk_gb > 0.0 {
+                        state.disk_cache.insert(project_id.clone(), (disk_gb * 1024.0 * 1024.0 * 1024.0) as i64);
+                    }
 
                     if state_str == "stopped" {
                         let now = chrono::Utc::now().timestamp();
@@ -260,7 +305,7 @@ pub async fn all_project_stats(
                             cpu_percent: 0.0,
                             memory_usage: 0,
                             memory_limit: 0,
-                            disk_gb: 0.0,
+                            disk_gb,
                         });
                     } else {
                         results.push(StatsResponse {
@@ -269,7 +314,7 @@ pub async fn all_project_stats(
                             cpu_percent: item["cpu_percent"].as_f64().unwrap_or(0.0),
                             memory_usage: item["memory_usage"].as_u64().unwrap_or(0),
                             memory_limit: item["memory_limit"].as_u64().unwrap_or(0),
-                            disk_gb: item["disk_gb"].as_f64().unwrap_or(0.0),
+                            disk_gb,
                         });
                     }
                 }
