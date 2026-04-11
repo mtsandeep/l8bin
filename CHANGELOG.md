@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-04-11
+
 ### Changed
 - Landing page migrated to Vite + Tailwind CSS v4 (replaces CDN, adds HMR dev server)
 - Reduced mTLS cert bundle size ~6x by replacing tar with PEM concatenation + gzip compression
