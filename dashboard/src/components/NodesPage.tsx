@@ -28,7 +28,7 @@ function formatMem(bytes: number | null) {
 
 // ── Add Agent Wizard ───────────────────────────────────────────────────────────
 
-type WizardStep = 'form' | 'instructions' | 'connecting';
+type WizardStep = 'form' | 'instructions' | 'connecting' | 'result';
 
 interface AddAgentWizardProps {
   onClose: () => void;
@@ -44,6 +44,7 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [createdNodeId, setCreatedNodeId] = useState<string | null>(null);
 
   const installCommand = `curl -fsSL https://l8b.in | bash -s agent`;
 
@@ -53,24 +54,47 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  async function handleConnect() {
+  async function handleAdd() {
     setConnecting(true);
     setError('');
     setStep('connecting');
     try {
-      const node = await addNode({
-        name,
-        host,
-        agent_port: parseInt(port) || 5083,
-        region: region || undefined,
-      });
-      // Actually try to connect via mTLS health check
-      await connectNode(node.id);
+      // Create the node
+      let nodeId = createdNodeId;
+      if (!nodeId) {
+        const node = await addNode({
+          name,
+          host,
+          agent_port: parseInt(port) || 5083,
+          region: region || undefined,
+        });
+        nodeId = node.id;
+        setCreatedNodeId(nodeId);
+      }
+      // Try to connect via mTLS health check
+      await connectNode(nodeId);
       onAdded();
       onClose();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Connection failed');
-      setStep('instructions');
+      setStep('result');
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function handleRetryConnect() {
+    if (!createdNodeId) return;
+    setConnecting(true);
+    setError('');
+    setStep('connecting');
+    try {
+      await connectNode(createdNodeId);
+      onAdded();
+      onClose();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Connection failed');
+      setStep('result');
     } finally {
       setConnecting(false);
     }
@@ -93,8 +117,8 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
           {(['form', 'instructions', 'connecting'] as WizardStep[]).map((s, i) => (
             <div key={s} className="flex items-center gap-1">
               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium
-                ${step === s ? 'bg-violet-600 text-white' :
-                  (step === 'instructions' && s === 'form') || step === 'connecting'
+                ${step === s || (step === 'result' && s === 'connecting') ? 'bg-violet-600 text-white' :
+                  (step === 'instructions' && s === 'form') || step === 'connecting' || step === 'result'
                     ? 'bg-violet-900/50 text-violet-400' : 'bg-slate-800 text-slate-500'}`}>
                 {i + 1}
               </div>
@@ -102,7 +126,7 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
             </div>
           ))}
           <span className="ml-2 text-xs text-slate-500">
-            {step === 'form' ? 'Server details' : step === 'instructions' ? 'Install agent' : 'Connecting…'}
+            {step === 'form' ? 'Server details' : step === 'instructions' ? 'Install agent' : step === 'connecting' ? 'Connecting…' : 'Verify'}
           </span>
         </div>
 
@@ -194,11 +218,11 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
                   Back
                 </button>
                 <button
-                  onClick={handleConnect}
+                  onClick={handleAdd}
                   disabled={connecting}
                   className="flex-1 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
                 >
-                  Connect
+                  Add agent
                 </button>
               </div>
             </>
@@ -208,9 +232,44 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
           {step === 'connecting' && (
             <div className="flex flex-col items-center py-6 gap-3">
               <Loader size={24} className="text-violet-400 animate-spin" />
-              <p className="text-sm text-slate-400">Connecting to agent at <span className="text-slate-200">{host}:{port}</span>…</p>
+              <p className="text-sm text-slate-400">Adding and connecting to <span className="text-slate-200">{host}:{port}</span>…</p>
               <p className="text-xs text-slate-600">Verifying mTLS health check</p>
             </div>
+          )}
+
+          {/* Step 4: Result (connect failed) */}
+          {step === 'result' && (
+            <>
+              <div className="flex flex-col items-center py-4 gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                    <CheckCircle size={16} className="text-emerald-400" />
+                  </div>
+                  <span className="text-sm font-medium text-slate-100">{name} added</span>
+                </div>
+                <p className="text-xs text-slate-500">The agent server was added. Connection verification failed:</p>
+                <div className="w-full flex items-start gap-2 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400">
+                  <XCircle size={14} className="mt-0.5 shrink-0" />
+                  {error}
+                </div>
+                <p className="text-xs text-slate-600">You can retry later from the agent card or close this dialog.</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { onAdded(); onClose(); }}
+                  className="flex-1 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={handleRetryConnect}
+                  disabled={connecting}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
+                >
+                  Connect
+                </button>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -336,6 +395,7 @@ export default function NodesPage({ onBack }: NodesPageProps) {
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState<string | null>(null);
   const [pruning, setPruning] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [deleteModal, setDeleteModal] = useState<{
@@ -379,6 +439,19 @@ export default function NodesPage({ onBack }: NodesPageProps) {
       setDeleteModal(prev => prev ? { ...prev, state: 'error', error: e instanceof Error ? e.message : 'Failed to remove agent' } : null);
     } finally {
       setRemoving(null);
+    }
+  }
+
+  async function handleConnect(id: string) {
+    setConnecting(id);
+    setError('');
+    try {
+      await connectNode(id);
+      await load();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to connect to agent');
+    } finally {
+      setConnecting(null);
     }
   }
 
@@ -471,6 +544,18 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">
                         {node.fail_count} fail{node.fail_count > 1 ? 's' : ''}
                       </span>
+                    )}
+                    {node.status === 'pending_setup' && (
+                      <button
+                        onClick={() => handleConnect(node.id)}
+                        disabled={connecting === node.id}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-500/15 text-violet-400 border border-violet-500/25 hover:bg-violet-500/25 disabled:opacity-40 transition-colors"
+                      >
+                        {connecting === node.id
+                          ? <Loader size={11} className="animate-spin" />
+                          : <RefreshCw size={11} />}
+                        {connecting === node.id ? 'Connecting…' : 'Connect'}
+                      </button>
                     )}
                     {node.id !== 'local' && (
                       <button

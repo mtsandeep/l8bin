@@ -41,6 +41,7 @@ dashmap = "6"
 
 # TLS cert parsing
 rustls-pemfile = "2"
+rustls = { version = "0.23", features = ["ring"] }
 
 # Misc
 anyhow = "1.0"

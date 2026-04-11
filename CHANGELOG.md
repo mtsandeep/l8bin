@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix mTLS connection to agents — skip hostname verification when connecting by IP (agent certs have no IP SAN)
+- Fix Add Agent wizard creating duplicate entries on connect retry, show result screen with retry button
+- Add Connect button on pending_setup agent cards for retrying without re-adding
+
 ## [0.1.12] - 2026-04-11
 
 ### Fixed
