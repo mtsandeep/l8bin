@@ -110,7 +110,7 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs text-slate-400 mb-1">Agent name</label>
+                  <label className="block text-xs text-slate-400 mb-1">Agent server name</label>
                   <input
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-violet-500"
                     placeholder="server-eu-1"

@@ -370,6 +370,7 @@ PORT=5080
 # Sleep / Janitor
 DEFAULT_AUTO_STOP_MINS=15
 JANITOR_INTERVAL_SECS=300
+FLUSH_INTERVAL_SECS=60
 
 # Routing
 ROUTING_MODE=${routing_mode}
@@ -525,7 +526,7 @@ COMPOSE_EOF
   echo "$release_url" > "${install_dir}/.version"
 }
 
-# -- Worker Node Setup ------------------------------------------------------
+# -- Agent Server Setup ------------------------------------------------------
 regenerate_certs() {
   local install_dir certs_dir
 
@@ -549,7 +550,7 @@ regenerate_certs() {
   if [ -f "${certs_dir}/ca.pem" ]; then
     echo ""
     echo -e "  ${YELLOW}Warning: Existing mTLS certificates found.${NC}"
-    echo -e "  ${YELLOW}All connected worker nodes will lose access until their certs are updated.${NC}"
+    echo -e "  ${YELLOW}All connected agents will lose access until their certs are updated.${NC}"
     echo ""
     if ! prompt_yes "Continue and regenerate certificates?"; then
       info "Cancelled."
@@ -605,16 +606,13 @@ regenerate_certs() {
   chmod 600 "${certs_dir}/server-key.pem" 2>/dev/null || true
 
   # Generate node cert (ECDSA P-256)
-  local node_name
-  prompt "Name for the worker node" node_name "worker-1"
-
   openssl ecparam -genkey -name prime256v1 -noout -out "${certs_tmp}/node-key.pem" 2>/dev/null \
     || die "Failed to generate node key"
   chmod 600 "${certs_tmp}/node-key.pem" 2>/dev/null || true
   openssl req -new \
     -key "${certs_tmp}/node-key.pem" \
     -out "${certs_tmp}/node.csr" \
-    -subj "/CN=${node_name}/O=LiteBin Node" 2>/dev/null \
+    -subj "/CN=agent/O=LiteBin Agent" 2>/dev/null \
     || die "Failed to generate node CSR"
   openssl x509 -req -days 3650 \
     -in "${certs_tmp}/node.csr" \
@@ -634,7 +632,7 @@ regenerate_certs() {
   if ! grep -q "MASTER_CA_CERT_PATH" "${install_dir}/.env" 2>/dev/null; then
     cat >> "${install_dir}/.env" <<EOF
 
-# Multi-node mTLS
+# Multi-server mTLS
 MASTER_CA_CERT_PATH=/certs/ca.pem
 MASTER_CLIENT_CERT_PATH=/certs/server.pem
 MASTER_CLIENT_KEY_PATH=/certs/server-key.pem
@@ -656,9 +654,9 @@ EOF
   fi
 
   echo ""
-  echo -e "  ${GREEN}${BOLD}Worker node certificates ready!${NC}"
+  echo -e "  ${GREEN}${BOLD}Agent certificates ready!${NC}"
   echo ""
-  echo -e "  Run this on your worker node:"
+  echo -e "  Run this on your agent server:"
   echo ""
   echo -e "    ${DIM}curl -sSL ${L8B_IN} | bash -s agent${NC}"
   echo ""
@@ -666,7 +664,7 @@ EOF
   echo ""
   echo -e "    ${CYAN}${cert_bundle}${NC}"
   echo ""
-  echo -e "  Then go to Dashboard -> Nodes -> Add Node to connect."
+  echo -e "  Then go to Dashboard -> Agents -> Add Agent to connect."
   echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
 }
 
@@ -675,7 +673,7 @@ install_agent() {
   local platform arch
 
   platform=$(detect_platform)
-  [ "$platform" != "linux" ] && die "Agent setup requires Linux (worker nodes run on Linux servers)"
+  [ "$platform" != "linux" ] && die "Agent setup requires Linux (agent servers run on Linux)"
   arch=$(detect_arch)
 
   # -- --update-certs mode --------------------------------------------
@@ -788,10 +786,6 @@ AGENT_DOCKERFILE
   echo -e "${BOLD}LiteBin Agent Setup${NC}"
   echo ""
 
-  prompt "Master dashboard URL (e.g. https://l8bin.example.com)" MASTER_URL ""
-  [ -z "$MASTER_URL" ] && die "Master URL is required"
-
-  prompt "Node name" NODE_NAME "worker-1"
   prompt "Agent port (host-side)" AGENT_PORT "5083"
 
   # Certs
@@ -844,13 +838,12 @@ AGENT_DOCKERFILE
   echo ""
   echo -e "${GREEN}${BOLD}  Agent is running!${NC}"
   echo ""
-  echo "  Node name:  ${NODE_NAME}"
   echo "  Agent port: ${AGENT_PORT}"
   echo ""
   echo "  Next steps:"
-  echo "    1. Open the master dashboard: ${MASTER_URL}"
-  echo "    2. Go to Nodes -> Add Node"
-  echo "    3. Enter name '${NODE_NAME}' and this server's public IP"
+  echo "    1. Open the master dashboard"
+  echo "    2. Go to Agents -> Add Agent"
+  echo "    3. Enter this server's public IP and port ${AGENT_PORT}"
   echo "    4. Click 'Connect' to register the agent"
   echo ""
   echo -e "  View logs: ${DIM}docker logs -f litebin-agent${NC}"
@@ -1106,7 +1099,7 @@ show_menu() {
     echo ""
     echo "Modes:"
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
-    echo "  agent     Set up a worker node (Linux only)"
+    echo "  agent     Set up an agent server (Linux only)"
     echo "  cli       Install the l8b CLI tool"
     echo "  update    Update LiteBin to the latest version"
     echo ""
@@ -1131,9 +1124,9 @@ show_menu() {
   echo "  What would you like to install?"
   echo ""
   echo "    1) Master Server (orchestrator + dashboard + Caddy)"
-  echo "    2) Agent Node (worker daemon)"
+  echo "    2) Agent (worker daemon)"
   echo "    3) CLI only (l8b deploy tool)"
-  echo "    4) Setup multi-node (generate/regenerate mTLS certs)"
+  echo "    4) Setup multi-server (generate/regenerate mTLS certs)"
   echo "    5) Update LiteBin"
   echo ""
   local choice
@@ -1165,10 +1158,10 @@ case "${1:-}" in
     echo ""
     echo "Modes:"
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
-    echo "  agent     Set up a worker node (Linux only)"
+    echo "  agent     Set up an agent server (Linux only)"
     echo "  cli       Install the l8b CLI tool"
     echo "  update    Update LiteBin to the latest version"
-    echo "  certs     Setup multi-node / regenerate mTLS certs (run on master)"
+    echo "  certs     Setup multi-server / regenerate mTLS certs (run on master)"
     ;;
   "")       show_menu ;;
   *)        die "Unknown mode: $1. Run with --help for usage." ;;

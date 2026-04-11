@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Landing page migrated to Vite + Tailwind CSS v4 (replaces CDN, adds HMR dev server)
 - Reduced mTLS cert bundle size ~6x by replacing tar with PEM concatenation + gzip compression
+- Renamed "Node" to "Agent" across install script and dashboard navigation
+- Removed unnecessary prompts from agent and cert setup (master URL, node name)
+- Fixed agent crash on startup due to missing rustls crypto provider (added `ring` feature)
+
+## [Unreleased]
 
 ## [0.1.7] - 2026-04-11
 
