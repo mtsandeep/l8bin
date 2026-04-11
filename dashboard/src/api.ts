@@ -309,6 +309,19 @@ export async function addNode(payload: AddNodePayload): Promise<Node> {
   return res.json();
 }
 
+export async function connectNode(nodeId: string): Promise<Node> {
+  const res = await fetch(`${API_BASE}/nodes/${nodeId}/connect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to connect to agent');
+  }
+  return res.json();
+}
+
 export async function deleteNode(nodeId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/nodes/${nodeId}`, {
     method: 'DELETE',

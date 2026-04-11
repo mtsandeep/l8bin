@@ -333,7 +333,7 @@ Write-Host "  Next steps:"
 Write-Host "    1. Open the dashboard and create an admin account"
 Write-Host "    2. Deploy apps using any of these methods:"
 Write-Host "       a) GitHub Actions:  add a workflow that uses l8b-action"
-Write-Host "       b) CLI:        curl -sSL $L8B_IN | bash -s cli  then  l8b ship"
+Write-Host "       b) CLI:        curl -fsSL $L8B_IN | bash -s cli  then  l8b ship"
 Write-Host "       c) Dashboard:  add from the web UI (only prebuilt images)"
 Write-Host ""
 Write-Host "  Manage LiteBin:  " -NoNewline; Write-Host "cd $InstallDir && docker compose logs -f" -ForegroundColor DarkGray

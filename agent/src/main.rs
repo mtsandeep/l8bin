@@ -233,7 +233,7 @@ async fn main() -> Result<()> {
 
     if !cert_path.exists() || !key_path.exists() || !ca_path.exists() {
         anyhow::bail!(
-            "mTLS certificates not found. Required files:\n  cert: {}\n  key: {}\n  ca: {}\nRun the agent installer: curl -sSL https://l8b.in | bash -s agent",
+            "mTLS certificates not found. Required files:\n  cert: {}\n  key: {}\n  ca: {}\nRun the agent installer: curl -fsSL https://l8b.in | bash -s agent",
             cfg.cert_path, cfg.key_path, cfg.ca_cert_path
         );
     }

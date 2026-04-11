@@ -4,7 +4,7 @@ import {
   Clock, Copy, ChevronRight, Loader
 } from 'lucide-react';
 import { useIntervalWhileVisible } from '../hooks';
-import { type Node, type NodeImageStats, fetchNodes, fetchNodeImageStats, pruneNodeImages, addNode, deleteNode, timeAgo, formatBytes } from '../api';
+import { type Node, type NodeImageStats, fetchNodes, fetchNodeImageStats, pruneNodeImages, addNode, connectNode, deleteNode, timeAgo, formatBytes } from '../api';
 
 function statusColor(status: string) {
   if (status === 'online') return 'text-emerald-400';
@@ -39,13 +39,13 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
   const [step, setStep] = useState<WizardStep>('form');
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
-  const [port, setPort] = useState('8443');
+  const [port, setPort] = useState('5083');
   const [region, setRegion] = useState('');
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const installCommand = `curl -sSL https://l8b.in | bash -s agent`;
+  const installCommand = `curl -fsSL https://l8b.in | bash -s agent`;
 
   function copyCommand() {
     navigator.clipboard.writeText(installCommand);
@@ -58,12 +58,14 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
     setError('');
     setStep('connecting');
     try {
-      await addNode({
+      const node = await addNode({
         name,
         host,
-        agent_port: parseInt(port) || 8443,
+        agent_port: parseInt(port) || 5083,
         region: region || undefined,
       });
+      // Actually try to connect via mTLS health check
+      await connectNode(node.id);
       onAdded();
       onClose();
     } catch (e: unknown) {
@@ -131,7 +133,7 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
                   <label className="block text-xs text-slate-400 mb-1">Agent port</label>
                   <input
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-violet-500"
-                    placeholder="8443"
+                    placeholder="5083"
                     value={port}
                     onChange={e => setPort(e.target.value)}
                   />
@@ -336,6 +338,12 @@ export default function NodesPage({ onBack }: NodesPageProps) {
   const [removing, setRemoving] = useState<string | null>(null);
   const [pruning, setPruning] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [deleteModal, setDeleteModal] = useState<{
+    nodeId: string;
+    nodeName: string;
+    state: 'confirming' | 'deleting' | 'error';
+    error: string;
+  } | null>(null);
   const [pruneModal, setPruneModal] = useState<{
     nodeId: string;
     nodeName: string;
@@ -362,11 +370,13 @@ export default function NodesPage({ onBack }: NodesPageProps) {
 
   async function handleRemove(id: string) {
     setRemoving(id);
+    setDeleteModal(prev => prev ? { ...prev, state: 'deleting' } : null);
     try {
       await deleteNode(id);
+      setDeleteModal(null);
       await load();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to remove agent');
+      setDeleteModal(prev => prev ? { ...prev, state: 'error', error: e instanceof Error ? e.message : 'Failed to remove agent' } : null);
     } finally {
       setRemoving(null);
     }
@@ -464,7 +474,7 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                     )}
                     {node.id !== 'local' && (
                       <button
-                        onClick={() => handleRemove(node.id)}
+                        onClick={() => setDeleteModal({ nodeId: node.id, nodeName: node.name, state: 'confirming', error: '' })}
                         disabled={removing === node.id}
                         className="p-1.5 rounded text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
                         title="Remove agent"
@@ -559,6 +569,72 @@ export default function NodesPage({ onBack }: NodesPageProps) {
           onClose={() => setShowAdd(false)}
           onAdded={load}
         />
+      )}
+
+      {deleteModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-700/60 rounded-xl w-full max-w-sm shadow-2xl">
+            <div className="px-6 py-5 space-y-4">
+              {deleteModal.state === 'confirming' && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+                      <Trash2 size={16} className="text-rose-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-100">Remove agent</h3>
+                      <p className="text-xs text-slate-500 mt-0.5">{deleteModal.nodeName}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    This will remove <span className="text-rose-400 font-medium">{deleteModal.nodeName}</span> from the dashboard. Any containers running on this agent will not be affected. This action cannot be undone.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setDeleteModal(null)}
+                      className="flex-1 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => handleRemove(deleteModal.nodeId)}
+                      className="flex-1 py-2 rounded-lg text-sm font-medium bg-rose-500/80 text-white hover:bg-rose-500 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {deleteModal.state === 'deleting' && (
+                <div className="flex flex-col items-center py-4 gap-3">
+                  <Loader size={24} className="text-rose-400 animate-spin" />
+                  <p className="text-sm text-slate-400">Removing <span className="text-slate-200">{deleteModal.nodeName}</span>…</p>
+                </div>
+              )}
+
+              {deleteModal.state === 'error' && (
+                <>
+                  <div className="flex flex-col items-center py-4 gap-3">
+                    <div className="w-10 h-10 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+                      <XCircle size={20} className="text-rose-400" />
+                    </div>
+                    <div className="text-center">
+                      <h3 className="text-sm font-semibold text-slate-100">Failed to remove agent</h3>
+                      <p className="text-xs text-rose-400 mt-1">{deleteModal.error}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setDeleteModal(null)}
+                    className="w-full py-2 rounded-lg text-sm font-medium bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
+                  >
+                    OK
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {pruneModal && (

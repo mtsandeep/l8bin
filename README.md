@@ -10,16 +10,16 @@ Self-hosted App Manager. Deploy apps from your dashboard, CLI, or GitHub Actions
 
 ```bash
 # Interactive — asks what to install
-curl -sSL https://l8b.in | bash
+curl -fsSL https://l8b.in | bash
 
 # Master server (orchestrator + dashboard + Caddy)
-curl -sSL https://l8b.in | bash -s master
+curl -fsSL https://l8b.in | bash -s master
 
 # Agent
-curl -sSL https://l8b.in | bash -s agent
+curl -fsSL https://l8b.in | bash -s agent
 
 # CLI only
-curl -sSL https://l8b.in | bash -s cli
+curl -fsSL https://l8b.in | bash -s cli
 ```
 
 ---
@@ -29,7 +29,7 @@ curl -sSL https://l8b.in | bash -s cli
 Run on a Linux VPS with Docker installed. Requires a domain with DNS pointed to the server.
 
 ```bash
-curl -sSL https://l8b.in | bash -s master
+curl -fsSL https://l8b.in | bash -s master
 ```
 
 The installer will prompt for:
@@ -52,7 +52,7 @@ To add agents, run the multi-node setup on the master server:
 
 ```bash
 # On the master — generates mTLS certs, prints a cert bundle
-curl -sSL https://l8b.in | bash -s certs
+curl -fsSL https://l8b.in | bash -s certs
 ```
 
 This generates ECDSA P-256 mTLS certificates, configures the master, and prints a compact cert bundle.
@@ -63,7 +63,7 @@ Re-run the same command. This **invalidates all existing agent connections** —
 
 ```bash
 # On each agent — prompts for new cert bundle
-curl -sSL https://l8b.in | bash -s agent --update-certs
+curl -fsSL https://l8b.in | bash -s agent --update-certs
 ```
 
 ---
@@ -75,7 +75,7 @@ Run on a separate Linux server. Requires Docker.
 You can also start this from the **dashboard** -> **Nodes** -> **Add Node**, which shows the install command to copy.
 
 ```bash
-curl -sSL https://l8b.in | bash -s agent
+curl -fsSL https://l8b.in | bash -s agent
 ```
 
 The installer will prompt for:
@@ -110,7 +110,7 @@ Dashboard deploys only support pre-built images from public registries. Private 
 Install the CLI:
 
 ```bash
-curl -sSL https://l8b.in | bash -s cli
+curl -fsSL https://l8b.in | bash -s cli
 ```
 
 Log in to your server:

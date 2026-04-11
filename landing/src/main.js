@@ -34,7 +34,7 @@ window.switchDeployTab = switchDeployTab;
 
 // Copy install command
 function copyInstall() {
-  navigator.clipboard.writeText('curl -sSL l8b.in | bash').then(() => {
+  navigator.clipboard.writeText('curl -fsSL l8b.in | bash').then(() => {
     const btn = document.getElementById('copy-btn');
     const orig = btn.innerHTML;
     btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';

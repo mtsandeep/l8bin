@@ -516,7 +516,7 @@ COMPOSE_EOF
   echo "    1. Open the dashboard and create an admin account"
   echo "    2. Deploy apps using any of these methods:"
   echo "       a) GitHub Actions:  add a workflow that uses l8b-action"
-  echo "       b) CLI:        curl -sSL ${L8B_IN} | bash -s cli  then  l8b ship"
+  echo "       b) CLI:        curl -fsSL ${L8B_IN} | bash -s cli  then  l8b ship"
   echo "       c) Dashboard:  add from the web UI(only prebuilt images)"
   echo ""
 
@@ -544,7 +544,12 @@ regenerate_certs() {
     die "LiteBin installation not found. Run the master setup first."
   fi
 
-  certs_dir="${install_dir}/certs"
+  # Use /etc/litebin/certs when running as root (consistent with update flow)
+  if [ "$(id -u)" -eq 0 ]; then
+    certs_dir="/etc/litebin/certs"
+  else
+    certs_dir="${install_dir}/certs"
+  fi
 
   # Check if certs already exist
   if [ -f "${certs_dir}/ca.pem" ]; then
@@ -658,7 +663,7 @@ EOF
   echo ""
   echo -e "  Run this on your agent server:"
   echo ""
-  echo -e "    ${DIM}curl -sSL ${L8B_IN} | bash -s agent${NC}"
+  echo -e "    ${DIM}curl -fsSL ${L8B_IN} | bash -s agent${NC}"
   echo ""
   echo -e "  When prompted, paste this cert bundle:"
   echo ""
@@ -685,7 +690,7 @@ install_agent() {
     elif [ -d "${HOME}/litebin/certs" ]; then
       certs_dir="${HOME}/litebin/certs"
     else
-      die "LiteBin agent not found. Run 'curl -sSL ${L8B_IN} | bash -s agent' first."
+      die "LiteBin agent not found. Run 'curl -fsSL ${L8B_IN} | bash -s agent' first."
     fi
 
     echo ""
@@ -791,7 +796,7 @@ AGENT_DOCKERFILE
   # Certs
   echo ""
   echo -e "  Paste the base64 cert bundle from the master setup."
-  echo -e "  ${DIM}(Run 'curl -sSL ${L8B_IN} | bash -s master' on the master to generate one.)${NC}"
+  echo -e "  ${DIM}(Run 'curl -fsSL ${L8B_IN} | bash -s master' on the master to generate one.)${NC}"
   echo ""
   local cert_bundle
   echo -ne "${CYAN}Cert bundle:${NC} "
@@ -863,7 +868,7 @@ update_master() {
   elif [ -d "${HOME}/litebin" ]; then
     install_dir="${HOME}/litebin"
   else
-    die "LiteBin not found. Run 'curl -sSL ${L8B_IN} | bash -s master' to install."
+    die "LiteBin not found. Run 'curl -fsSL ${L8B_IN} | bash -s master' to install."
   fi
 
   ensure_docker
@@ -1093,9 +1098,11 @@ COMPOSE_EOF
 show_menu() {
   # If no terminal at all (piped in CI/script), print usage and exit
   if ! [ -t 0 ] && ! [ -t 1 ]; then
-    echo -e "${BOLD}LiteBin Installer${NC}"
+    local latest
+    latest=$(get_latest_release 2>/dev/null) || true
+    echo -e "${BOLD}LiteBin Installer${NC}  ${latest:-}"
     echo ""
-    echo "Usage:  curl -sSL ${L8B_IN} | bash -s <mode>"
+    echo "Usage:  curl -fsSL ${L8B_IN} | bash -s <mode>"
     echo ""
     echo "Modes:"
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
@@ -1104,10 +1111,10 @@ show_menu() {
     echo "  update    Update LiteBin to the latest version"
     echo ""
     echo "Examples:"
-    echo "  curl -sSL ${L8B_IN} | bash -s master"
-    echo "  curl -sSL ${L8B_IN} | bash -s agent"
-    echo "  curl -sSL ${L8B_IN} | bash -s cli"
-    echo "  curl -sSL ${L8B_IN} | bash -s update"
+    echo "  curl -fsSL ${L8B_IN} | bash -s master"
+    echo "  curl -fsSL ${L8B_IN} | bash -s agent"
+    echo "  curl -fsSL ${L8B_IN} | bash -s cli"
+    echo "  curl -fsSL ${L8B_IN} | bash -s update"
     exit 1
   fi
 
@@ -1119,7 +1126,9 @@ show_menu() {
   echo -e "  ${PURPLE}███████╗╚█████╔╝██████╔╝██║██║ ╚████║${NC}"
   echo -e "  ${PURPLE}╚══════╝ ╚════╝ ╚═════╝ ╚═╝╚═╝  ╚═══╝${NC}"
   echo ""
-  echo -e "  ${BOLD}LiteBin Installer${NC}"
+  local latest
+  latest=$(get_latest_release 2>/dev/null) || true
+  echo -e "  ${BOLD}LiteBin Installer${NC}  ${DIM}${latest:-}${NC}"
   echo ""
   echo "  What would you like to install?"
   echo ""
@@ -1152,9 +1161,11 @@ case "${1:-}" in
   certs)   regenerate_certs ;;
   update)  update_master ;;
   -h|--help|"help")
-    echo -e "${BOLD}LiteBin Installer${NC}"
+    local latest
+    latest=$(get_latest_release 2>/dev/null) || true
+    echo -e "${BOLD}LiteBin Installer${NC}  ${latest:-}"
     echo ""
-    echo "Usage:  curl -sSL ${L8B_IN} | bash -s <mode>"
+    echo "Usage:  curl -fsSL ${L8B_IN} | bash -s <mode>"
     echo ""
     echo "Modes:"
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"

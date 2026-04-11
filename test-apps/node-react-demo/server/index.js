@@ -7,37 +7,45 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 const startTime = Date.now();
+let visitCount = 0;
 
 app.use(compression());
 app.use(express.json());
 
+// Track visitors
+app.use((req, _res, next) => {
+  if (!req.path.startsWith("/api") && !path.extname(req.path)) {
+    visitCount++;
+  }
+  next();
+});
+
 // --- API Routes ---
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", (req, res) => {
+  // Count initial page-load health check as a visit
+  if (req.query.visit !== undefined) {
+    visitCount++;
+  }
   res.json({
     status: "ok",
     uptime: Math.floor((Date.now() - startTime) / 1000),
-    timestamp: new Date().toISOString(),
+    visitCount,
   });
 });
 
 app.get("/api/info", (_req, res) => {
+  const mem = process.memoryUsage();
   res.json({
     app: "litebin-test-app",
     version: "1.0.0",
     node: process.version,
     env: process.env.NODE_ENV || "development",
     port: PORT,
+    memory: {
+      heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+    },
   });
-});
-
-app.get("/api/items", (_req, res) => {
-  res.json([
-    { id: 1, name: "Deploy a Node app", done: true },
-    { id: 2, name: "Auto-sleep idle containers", done: false },
-    { id: 3, name: "Wake on first request", done: false },
-    { id: 4, name: "Provision TLS automatically", done: false },
-  ]);
 });
 
 // --- Static Files (React build) ---
@@ -51,5 +59,5 @@ app.get("*", (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 litebin-test-app listening on port ${PORT}`);
+  console.log(`litebin-test-app listening on port ${PORT}`);
 });
