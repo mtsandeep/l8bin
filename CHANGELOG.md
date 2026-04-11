@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Agent TLS key loading — use SEC1 parser matching `openssl ecparam` key format
+
 ## [0.1.10] - 2026-04-11
 
 ### Fixed

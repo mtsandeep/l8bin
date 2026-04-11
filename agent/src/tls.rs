@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
-use rustls_pemfile::{certs, pkcs8_private_keys};
+use rustls_pemfile::{certs, ec_private_keys};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
@@ -42,13 +42,13 @@ pub fn build_server_tls_config(
             .context("failed to parse server cert")?
     };
 
-    // Load server private key
+    // Load server private key (SEC1/EC format from openssl ecparam)
     let server_key: PrivateKeyDer<'static> = {
         let f = File::open(key_path)
             .with_context(|| format!("failed to open server key: {key_path}"))?;
-        pkcs8_private_keys(&mut BufReader::new(f))
+        ec_private_keys(&mut BufReader::new(f))
             .next()
-            .context("no PKCS8 private key found")?
+            .context("no EC private key found")?
             .context("failed to parse private key")?
             .into()
     };
