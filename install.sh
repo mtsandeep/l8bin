@@ -155,6 +155,15 @@ base64_decode() {
   base64 -d 2>/dev/null || base64 --decode
 }
 
+unpack_cert_bundle() {
+  local dir="$1"
+  awk -v dir="$dir" '
+    /-----BEGIN CERTIFICATE-----/ { count++; if (count==1) file="ca.pem"; else file="agent.pem" }
+    /-----BEGIN.*PRIVATE KEY-----/ { file="agent-key.pem" }
+    file { print > dir"/"file }
+  '
+}
+
 configure_ufw() {
   if command -v ufw &>/dev/null; then
     info "Opening required ports..."
@@ -616,7 +625,7 @@ regenerate_certs() {
     || die "Failed to sign node certificate"
 
   local cert_bundle
-  cert_bundle=$(tar -cf - -C "${certs_tmp}" ca.pem node.pem node-key.pem | base64_encode)
+  cert_bundle=$(cat "${certs_tmp}/ca.pem" "${certs_tmp}/node.pem" "${certs_tmp}/node-key.pem" | gzip -9 | base64_encode)
 
   rm -rf "${certs_tmp}"
   info "Certificates generated."
@@ -690,16 +699,8 @@ install_agent() {
     [ -z "$cert_bundle" ] && die "Cert bundle is required"
 
     info "Updating certificates..."
-    echo "$cert_bundle" | base64_decode | tar -xf - -C "$certs_dir"
-
-    # Rename node certs to agent names
-    if [ -f "${certs_dir}/node.pem" ]; then
-      mv "${certs_dir}/node.pem" "${certs_dir}/agent.pem"
-    fi
-    if [ -f "${certs_dir}/node-key.pem" ]; then
-      mv "${certs_dir}/node-key.pem" "${certs_dir}/agent-key.pem"
-      chmod 600 "${certs_dir}/agent-key.pem"
-    fi
+    echo "$cert_bundle" | base64_decode | gunzip | unpack_cert_bundle "$certs_dir"
+    chmod 600 "${certs_dir}/agent-key.pem"
 
     # Verify
     [ -f "${certs_dir}/ca.pem" ] || die "ca.pem not found in cert bundle"
@@ -804,15 +805,8 @@ AGENT_DOCKERFILE
   [ -z "$cert_bundle" ] && die "Cert bundle is required"
 
   info "Decoding certificates..."
-  echo "$cert_bundle" | base64_decode | tar -xf - -C "$certs_dir"
-  # Rename node certs to expected names
-  if [ -f "${certs_dir}/node.pem" ]; then
-    mv "${certs_dir}/node.pem" "${certs_dir}/agent.pem"
-  fi
-  if [ -f "${certs_dir}/node-key.pem" ]; then
-    mv "${certs_dir}/node-key.pem" "${certs_dir}/agent-key.pem"
-    chmod 600 "${certs_dir}/agent-key.pem"
-  fi
+  echo "$cert_bundle" | base64_decode | gunzip | unpack_cert_bundle "$certs_dir"
+  chmod 600 "${certs_dir}/agent-key.pem"
 
   # Verify certs exist
   [ -f "${certs_dir}/ca.pem" ] || die "ca.pem not found in cert bundle"
