@@ -102,6 +102,11 @@ pub(crate) fn save_project_meta_to_file(meta: &HashMap<String, bool>) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install crypto provider before any TLS operations
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     // Load .env if present
     let _ = dotenvy::dotenv();
 

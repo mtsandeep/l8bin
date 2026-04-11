@@ -4,7 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Agent crash on startup — explicitly install rustls `ring` crypto provider before TLS init
+
 ## [0.1.9] - 2026-04-11
+
+### Changed
+- Landing page migrated to Vite + Tailwind CSS v4 (replaces CDN, adds HMR dev server)
+- Reduced mTLS cert bundle size ~6x by replacing tar with PEM concatenation + gzip compression
+- Renamed "Node" to "Agent" across install script and dashboard navigation
+- Removed unnecessary prompts from agent and cert setup (master URL, node name)
+- Fixed agent crash on startup due to missing rustls crypto provider (added `ring` feature)
 
 ## [0.1.8] - 2026-04-11
 
@@ -14,10 +24,6 @@ All notable changes to this project will be documented in this file.
 - Renamed "Node" to "Agent" across install script and dashboard navigation
 - Removed unnecessary prompts from agent and cert setup (master URL, node name)
 - Fixed agent crash on startup due to missing rustls crypto provider (added `ring` feature)
-
-## [Unreleased]
-
-## [0.1.9] - 2026-04-11
 
 ## [0.1.7] - 2026-04-11
 
