@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-04-11
+
 ### Added
 - Show disk usage for stopped/sleeping projects with in-memory cache — agent only queried on cache miss (e.g. after restart)
 
