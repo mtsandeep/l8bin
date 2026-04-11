@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-04-11
+
 ## [0.1.8] - 2026-04-11
 
 ### Changed
@@ -14,6 +16,8 @@ All notable changes to this project will be documented in this file.
 - Fixed agent crash on startup due to missing rustls crypto provider (added `ring` feature)
 
 ## [Unreleased]
+
+## [0.1.9] - 2026-04-11
 
 ## [0.1.7] - 2026-04-11
 
