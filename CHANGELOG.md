@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-04-11
+
 ### Fixed
 - Fix agent mTLS connection — add `subjectAltName` to agent certificate (rustls/webpki requires SAN, no CN fallback)
 
