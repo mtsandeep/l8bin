@@ -622,11 +622,13 @@ regenerate_certs() {
     -out "${certs_tmp}/node.csr" \
     -subj "/CN=agent/O=LiteBin Agent" 2>/dev/null \
     || die "Failed to generate node CSR"
+  printf "subjectAltName=DNS:agent" > "${certs_tmp}/node-san.ext"
   openssl x509 -req -days 3650 \
     -in "${certs_tmp}/node.csr" \
     -CA "${certs_tmp}/ca.pem" \
     -CAkey "${certs_tmp}/ca-key.pem" \
     -CAcreateserial \
+    -extfile "${certs_tmp}/node-san.ext" \
     -out "${certs_tmp}/node.pem" 2>/dev/null \
     || die "Failed to sign node certificate"
 
