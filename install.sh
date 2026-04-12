@@ -221,6 +221,11 @@ run_agent_container() {
 
 run_agent_caddy() {
   local certs_dir="${1:-}"
+  local install_dir="${2:-}"
+  local caddyfile_mount=""
+  if [ -n "$install_dir" ] && [ -f "${install_dir}/agent/Caddyfile" ]; then
+    caddyfile_mount="-v ${install_dir}/agent/Caddyfile:/etc/caddy/Caddyfile:ro"
+  fi
   docker stop litebin-agent-caddy 2>/dev/null || true
   docker rm litebin-agent-caddy 2>/dev/null || true
   docker run -d \
@@ -234,6 +239,7 @@ run_agent_caddy() {
     -v litebin-agent-caddy-config:/config \
     -v litebin-agent-caddy-root:/root/.local/share/caddy \
     $([ -n "$certs_dir" ] && echo "-v \"${certs_dir}\":/certs:ro") \
+    $caddyfile_mount \
     caddy:2.11.2-alpine
 }
 
@@ -875,6 +881,17 @@ install_agent() {
   mkdir -p "${install_dir}/agent"
   mkdir -p "$certs_dir"
 
+  # Create agent Caddyfile (admin on 0.0.0.0 so agent can reach it from another container)
+  cat > "${install_dir}/agent/Caddyfile" <<'AGENT_CADDYFILE'
+{
+    admin 0.0.0.0:2019
+}
+
+:80 {
+    respond 502
+}
+AGENT_CADDYFILE
+
   # Download agent binary
   download_and_verify \
     "https://github.com/${REPO}/releases/download/${release_url}/litebin-agent-${arch}-linux" \
@@ -952,7 +969,7 @@ EOF
 
   # Start Caddy sidecar for agent local proxying
   info "Starting agent Caddy sidecar..."
-  run_agent_caddy "$certs_dir"
+  run_agent_caddy "$certs_dir" "$install_dir"
 
   info "Starting agent..."
   run_agent_container "$install_dir" "$certs_dir" "$AGENT_PORT"
@@ -1260,17 +1277,17 @@ update_agent() {
   info "Rebuilding agent image..."
   (cd "${install_dir}/agent" && docker build -t litebin-agent .)
 
+  local certs_dir
+  certs_dir=$(find_certs_dir "$install_dir")
+
+  # Restart Caddy sidecar FIRST so the agent can push config to it on startup
+  info "Restarting agent Caddy sidecar..."
+  run_agent_caddy "$certs_dir" "$install_dir"
+
   info "Restarting agent..."
   docker stop litebin-agent 2>/dev/null || true
   docker rm litebin-agent 2>/dev/null || true
-
-  local certs_dir
-  certs_dir=$(find_certs_dir "$install_dir")
   run_agent_container "$install_dir" "$certs_dir" "$agent_port"
-
-  # Also restart agent Caddy sidecar (picks up image updates)
-  info "Restarting agent Caddy sidecar..."
-  run_agent_caddy "$certs_dir"
 
   # Save installed version
   echo "$latest_release" > "${install_dir}/.version"

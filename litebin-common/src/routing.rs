@@ -87,6 +87,13 @@ impl MasterProxyRouter {
                         "root_ca_pem_files": [&self.ca_cert_path]
                     }
                 });
+                // Preserve original Host header — Caddy 2.11+ auto-rewrites Host
+                // to the upstream address when TLS is enabled on the transport.
+                handle["headers"] = json!({
+                    "request": {
+                        "set": { "Host": ["{http.request.host}"] }
+                    }
+                });
             }
             routes.push(json!({
                 "match": [{ "host": [&p.subdomain_host] }],
@@ -150,6 +157,13 @@ impl MasterProxyRouter {
                             "tls": {
                                 "server_name": "agent",
                                 "root_ca_pem_files": [&self.ca_cert_path]
+                            }
+                        });
+                        // Preserve original Host header — Caddy 2.11+ auto-rewrites Host
+                        // to the upstream address when TLS is enabled on the transport.
+                        cd_handle["headers"] = json!({
+                            "request": {
+                                "set": { "Host": ["{http.request.host}"] }
                             }
                         });
                     }
