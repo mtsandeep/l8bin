@@ -338,29 +338,8 @@ impl CloudflareDnsRouter {
         });
 
         let ask_endpoint = if orchestrator_url.is_empty() {
-            // Fallback: skip on-demand TLS if no orchestrator URL configured
-            let logging = litebin_common::heartbeat::caddy_logging_config();
-            return json!({
-                "admin": { "listen": "0.0.0.0:2019" },
-                "logging": logging["logging"],
-                "apps": {
-                    "http": {
-                        "servers": {
-                            "srv0": {
-                                "listen": [":80", ":443"],
-                                "routes": routes,
-                                "errors": error_routes,
-                                "logs": {}
-                            }
-                        }
-                    },
-                    "tls": {
-                        "automation": {
-                            "policies": [{ "on_demand": true }]
-                        }
-                    }
-                }
-            });
+            // Fallback: use agent's own permission endpoint (Docker network)
+            "http://litebin-agent:8444/internal/caddy-ask".to_string()
         } else {
             format!("http://{}/caddy/ask", orchestrator_url)
         };

@@ -414,9 +414,6 @@ fn build_config_from_scratch(
                         "certificate": cert_pem,
                         "key": key_pem
                     }]
-                },
-                "automation": {
-                    "policies": [{ "on_demand": true }]
                 }
             }
         }
@@ -619,6 +616,52 @@ fn offline_page() -> Response<Body> {
         .header("Content-Type", "text/html")
         .body(Body::from(html))
         .unwrap()
+}
+
+/// GET /internal/caddy-ask?domain=foo.example.com
+/// Permission endpoint for Caddy on-demand TLS.
+/// Returns 200 if:
+///   - domain is a subdomain of the agent's configured domain (e.g. project-id.l8b.in)
+///   - domain has a route in the current Caddy config (covers custom domains pushed by orchestrator)
+pub async fn caddy_ask(
+    State(state): State<AgentState>,
+    axum::extract::Query(params): axum::extract::Query<CaddyAskParams>,
+) -> StatusCode {
+    let Some(requested) = params.domain else {
+        return StatusCode::FORBIDDEN;
+    };
+
+    // Check 1: subdomain of the configured domain
+    if let Some(domain) = get_domain(&state) {
+        let suffix = format!(".{}", domain);
+        if requested.ends_with(&suffix) || requested == domain {
+            return StatusCode::OK;
+        }
+    }
+
+    // Check 2: domain has a route in the current Caddy config (custom domains)
+    if let Some(config) = state.last_caddy_config.read().unwrap().as_ref() {
+        if let Some(routes) = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array() {
+            for route in routes {
+                if let Some(hosts) = route["match"][0]["host"].as_array() {
+                    for host in hosts {
+                        if let Some(h) = host.as_str() {
+                            if h == requested {
+                                return StatusCode::OK;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    StatusCode::FORBIDDEN
+}
+
+#[derive(serde::Deserialize)]
+struct CaddyAskParams {
+    domain: Option<String>,
 }
 
 fn not_found_page() -> Response<Body> {

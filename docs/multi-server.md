@@ -47,7 +47,7 @@ User → Cloudflare (per-project A record) → Agent IP → Agent Caddy → Cont
 ```
 
 - DNS: Per-project A records managed via Cloudflare API (automatic)
-- Agent Caddy handles TLS (auto-TLS via Caddy)
+- Agent Caddy handles TLS via on-demand cert provisioning (Caddy auto-provisions certs via Let's Encrypt on first request, with permission check via `/internal/caddy-ask`)
 - Master bandwidth: zero for app traffic
 - Works even if master goes down (agent serves from persisted config)
 
@@ -65,7 +65,7 @@ This is essentially what Cloudflare DNS mode automates — the manual version re
 
 Limitations of manual DNS without Cloudflare:
 - No automatic DNS record management
-- On-demand TLS requires the `/caddy/ask` endpoint on the orchestrator (master must be reachable)
+- On-demand TLS requires a permission endpoint — the orchestrator pushes the agent's own `/internal/caddy-ask` endpoint by default (works without master), or the orchestrator's `/caddy/ask` endpoint if configured (requires master reachable from agent)
 - Custom domains need manual DNS setup per domain
 
 ## Agent Independence
@@ -78,7 +78,7 @@ After initial registration and config push from the orchestrator, an agent can o
 | Route traffic to running containers | Yes |
 | Serve after agent restart | Yes (persisted config) |
 | Serve after Docker/host restart | Yes |
-| Issue new TLS certificates | No (needs orchestrator `/caddy/ask`) |
+| Issue new TLS certificates | Yes (certs are cached in Caddy's data volume; new/renewal uses agent's own `/internal/caddy-ask` permission endpoint) |
 | Deploy new apps | No (needs orchestrator API) |
 | Manage custom domains | No (needs dashboard) |
 
@@ -103,7 +103,9 @@ Agent Caddy ←------------------------→ Agent API
 
 - **Port 8443 (mTLS)**: Orchestrator ↔ Agent API only. Requires client certificate signed by the Root CA. Never handles user traffic.
 - **Port 80/443 (HTTPS)**: User-facing traffic. In master_proxy mode, master Caddy proxies to agent Caddy here.
-- **Port 8444 (HTTP, internal only)**: Agent Caddy ↔ Agent wake handler. Plain HTTP, no TLS — only reachable from the Docker network, not exposed on the host. Used in cloudflare_dns mode when the agent Caddy needs to wake a sleeping container without going through the mTLS API.
+- **Port 8444 (HTTP, internal only)**: Agent Caddy ↔ Agent wake handler and on-demand TLS permission endpoint. Plain HTTP, no TLS — only reachable from the Docker network, not exposed on the host. Serves two purposes:
+  1. Wake trigger for sleeping containers (cloudflare_dns mode)
+  2. On-demand TLS permission check via `/internal/caddy-ask` — returns 200 for subdomains of the configured domain and known custom domain routes, 403 otherwise
 
 ## Request Flow (Master Proxy Mode)
 
@@ -184,6 +186,28 @@ How certs are used:
 | Master → Agent TLS | `/certs/ca.pem` (in master Caddy container) | Referenced in Caddy transport config via `root_ca_pem_files` |
 
 The agent Caddy does **not** need certs mounted as files — the agent reads them from its own `/certs/` volume and embeds the PEM content directly in the Caddy JSON config. This avoids issues with cert file paths inside different containers.
+
+### On-Demand TLS (Cloudflare DNS / Manual DNS modes)
+
+In modes where users hit the agent Caddy directly, the agent cert alone isn't enough — the agent needs valid TLS certs for each project subdomain (e.g. `myapp.l8b.in`). Caddy provisions these automatically via on-demand TLS:
+
+```
+User → Agent Caddy (SNI=myapp.l8b.in)
+     → No matching cert in load_pem (agent cert has SAN=agent, not *.l8b.in)
+     → On-demand TLS triggers
+     → Caddy calls permission endpoint: GET http://litebin-agent:8444/internal/caddy-ask?domain=myapp.l8b.in
+     → Permission check: is myapp.l8b.in a subdomain of the configured domain? → Yes → 200 OK
+     → Caddy provisions cert via ACME (Let's Encrypt, HTTP-01 challenge on port 80)
+     → Cert cached, served for future requests
+```
+
+| Domain type | Permission check | Allowed? |
+|---|---|---|
+| `{project_id}.{domain}` | Subdomain of configured domain | Yes |
+| Custom domain (e.g. `app.mycompany.com`) | Has a route in current Caddy config (pushed by orchestrator) | Yes |
+| Arbitrary domain | Neither check passes | No |
+
+In master_proxy mode, on-demand TLS is never triggered — all connections arrive with `SNI=agent` which matches the static cert.
 
 ## Container Startup Order (Agent)
 

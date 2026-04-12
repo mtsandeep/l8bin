@@ -229,6 +229,7 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             let wake_addr = SocketAddr::from(([0, 0, 0, 0], 8444));
             let wake_app = Router::new()
+                .route("/internal/caddy-ask", get(routes::waker::caddy_ask))
                 .fallback(routes::waker::wake)
                 .with_state(wake_state);
             info!("Starting internal wake server on {}", wake_addr);
