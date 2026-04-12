@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-04-12
+
 ### Added
 - TLS-encrypted traffic between master and remote agent Caddys using existing mTLS PKI (agent.pem + ca.pem)
 - Agent Caddy loads TLS cert on startup (base config with catch-all 502)
