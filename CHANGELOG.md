@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-04-12
+
 ### Changed
 - Fix Caddy TLS transport config — use `root_ca_pem_files` instead of `trust_pool` (reverse proxy transport doesn't support `trust_pool`)
 - Extract `run_agent_caddy()` function to deduplicate agent Caddy container creation in install and update flows
