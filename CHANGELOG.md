@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix agent Caddy TLS cert loading — use inline PEM (`load_pem`) instead of file paths (`load_files`), eliminating the need for certs to exist inside the Caddy container's filesystem
+- Remove certs volume mount from agent Caddy container (no longer needed — certs are embedded inline in the Caddy JSON config)
+- Fix `regenerate_certs` failing silently — agent cert copy was attempted before cert generation, causing abort under `set -euo pipefail`
+- Fix agent Caddy failing to start on fresh install — missing `ensure_agent_network` call before creating the Caddy container
+- Fix `install_agent` not writing `.version` file — first update always showed "unknown" version
+- Fix title glitch stacking animation
+
 ## [0.1.20] - 2026-04-12
 
 ### Fixed

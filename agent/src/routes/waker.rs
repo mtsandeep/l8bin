@@ -215,8 +215,8 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
         None => build_config_from_scratch(
             &containers,
             &domain,
-            &state.config.cert_path,
-            &state.config.key_path,
+            &state.config.cert_pem,
+            &state.config.key_pem,
         ),
     };
 
@@ -349,11 +349,12 @@ fn merge_routes_with_persisted(
 
 /// Build a Caddy config from scratch (no persisted config available).
 /// Used on first wake before orchestrator has pushed any config, or on agent startup.
+/// Uses inline PEM content (load_pem) so the certs don't need to exist inside the Caddy container.
 fn build_config_from_scratch(
     containers: &[(String, u16, u16)],
     domain: &str,
-    cert_path: &str,
-    key_path: &str,
+    cert_pem: &str,
+    key_pem: &str,
 ) -> serde_json::Value {
     let mut routes: Vec<serde_json::Value> = Vec::new();
 
@@ -409,9 +410,9 @@ fn build_config_from_scratch(
             },
             "tls": {
                 "certificates": {
-                    "load_files": [{
-                        "certificate": cert_path,
-                        "key": key_path
+                    "load_pem": [{
+                        "certificate": cert_pem,
+                        "key": key_pem
                     }]
                 },
                 "automation": {
@@ -425,7 +426,8 @@ fn build_config_from_scratch(
 /// Build a minimal base Caddy config with just TLS cert and a catch-all 502.
 /// Pushed on startup before any containers exist, so the agent Caddy has TLS ready
 /// for incoming connections from the master Caddy.
-pub fn build_base_caddy_config(cert_path: &str, key_path: &str) -> serde_json::Value {
+/// Uses inline PEM content (load_pem) so the certs don't need to exist inside the Caddy container.
+pub fn build_base_caddy_config(cert_pem: &str, key_pem: &str) -> serde_json::Value {
     let logging = litebin_common::heartbeat::caddy_logging_config();
 
     json!({
@@ -449,9 +451,9 @@ pub fn build_base_caddy_config(cert_path: &str, key_path: &str) -> serde_json::V
             },
             "tls": {
                 "certificates": {
-                    "load_files": [{
-                        "certificate": cert_path,
-                        "key": key_path
+                    "load_pem": [{
+                        "certificate": cert_pem,
+                        "key": key_pem
                     }]
                 }
             }

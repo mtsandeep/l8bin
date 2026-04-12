@@ -220,12 +220,14 @@ run_agent_container() {
 }
 
 run_agent_caddy() {
-  local certs_dir="${1:-}"
-  local install_dir="${2:-}"
-  local caddyfile_mount=""
-  if [ -n "$install_dir" ] && [ -f "${install_dir}/agent/Caddyfile" ]; then
-    caddyfile_mount="-v ${install_dir}/agent/Caddyfile:/etc/caddy/Caddyfile:ro"
-  fi
+  local install_dir="${1:-}"
+  ensure_agent_network
+  local -a mounts=(
+    -v litebin-agent-caddy-data:/data
+    -v litebin-agent-caddy-config:/config
+    -v litebin-agent-caddy-root:/root/.local/share/caddy
+  )
+  [ -n "$install_dir" ] && [ -f "${install_dir}/agent/Caddyfile" ] && mounts+=(-v "${install_dir}/agent/Caddyfile:/etc/caddy/Caddyfile:ro")
   docker stop litebin-agent-caddy 2>/dev/null || true
   docker rm litebin-agent-caddy 2>/dev/null || true
   docker run -d \
@@ -235,11 +237,7 @@ run_agent_caddy() {
     -p 80:80 \
     -p 443:443 \
     -p 443:443/udp \
-    -v litebin-agent-caddy-data:/data \
-    -v litebin-agent-caddy-config:/config \
-    -v litebin-agent-caddy-root:/root/.local/share/caddy \
-    $([ -n "$certs_dir" ] && echo "-v \"${certs_dir}\":/certs:ro") \
-    $caddyfile_mount \
+    "${mounts[@]}" \
     caddy:2.11.2-alpine
 }
 
@@ -734,12 +732,7 @@ regenerate_certs() {
   cp "${certs_tmp}/server-key.pem" "${certs_dir}/server-key.pem"
   chmod 600 "${certs_dir}/server-key.pem" 2>/dev/null || true
 
-  # Copy agent certs (so show_cert_bundle can re-read them later)
-  cp "${certs_tmp}/node.pem" "${certs_dir}/agent.pem"
-  cp "${certs_tmp}/node-key.pem" "${certs_dir}/agent-key.pem"
-  chmod 600 "${certs_dir}/agent-key.pem" 2>/dev/null || true
-
-  # Generate node cert (ECDSA P-256)
+  # Generate node/agent cert (ECDSA P-256)
   openssl ecparam -genkey -name prime256v1 -noout -out "${certs_tmp}/node-key.pem" 2>/dev/null \
     || die "Failed to generate node key"
   chmod 600 "${certs_tmp}/node-key.pem" 2>/dev/null || true
@@ -757,6 +750,11 @@ regenerate_certs() {
     -extfile "${certs_tmp}/node-san.ext" \
     -out "${certs_tmp}/node.pem" 2>/dev/null \
     || die "Failed to sign node certificate"
+
+  # Copy agent certs (so show_cert_bundle can re-read them later)
+  cp "${certs_tmp}/node.pem" "${certs_dir}/agent.pem"
+  cp "${certs_tmp}/node-key.pem" "${certs_dir}/agent-key.pem"
+  chmod 600 "${certs_dir}/agent-key.pem" 2>/dev/null || true
 
   local cert_bundle
   cert_bundle=$(cat "${certs_tmp}/ca.pem" "${certs_tmp}/node.pem" "${certs_tmp}/node-key.pem" | gzip -9 | base64_encode)
@@ -969,7 +967,7 @@ EOF
 
   # Start Caddy sidecar for agent local proxying
   info "Starting agent Caddy sidecar..."
-  run_agent_caddy "$certs_dir" "$install_dir"
+  run_agent_caddy "$install_dir"
 
   info "Starting agent..."
   run_agent_container "$install_dir" "$certs_dir" "$AGENT_PORT"
@@ -980,6 +978,9 @@ EOF
   fi
 
   # -- Done -------------------------------------------------------------
+  # Save installed version
+  echo "$release_url" > "${install_dir}/.version"
+
   echo ""
   echo -e "${GREEN}${BOLD}  Agent is running!${NC}"
   echo ""
@@ -1282,7 +1283,7 @@ update_agent() {
 
   # Restart Caddy sidecar FIRST so the agent can push config to it on startup
   info "Restarting agent Caddy sidecar..."
-  run_agent_caddy "$certs_dir" "$install_dir"
+  run_agent_caddy "$install_dir"
 
   info "Restarting agent..."
   docker stop litebin-agent 2>/dev/null || true
