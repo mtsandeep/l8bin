@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-04-12
+
 ###Fixed
 - Fix agent never routing to newly deployed containers — `run_container` and `recreate_container` now call `rebuild_local_caddy` after starting (was only done in `start_container`)
 
