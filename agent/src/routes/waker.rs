@@ -660,8 +660,8 @@ pub async fn caddy_ask(
 }
 
 #[derive(serde::Deserialize)]
-struct CaddyAskParams {
-    domain: Option<String>,
+pub struct CaddyAskParams {
+    pub domain: Option<String>,
 }
 
 fn not_found_page() -> Response<Body> {
