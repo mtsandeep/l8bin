@@ -196,6 +196,25 @@ async fn main() -> Result<()> {
                     tracing::warn!(error = %e, "failed to load persisted caddy config on startup");
                 }
             }
+        } else {
+            // No persisted config — push base config with TLS cert + catch-all 502
+            // so agent Caddy has TLS ready for incoming master connections
+            let base_config = routes::waker::build_base_caddy_config(
+                &cfg.cert_path,
+                &cfg.key_path,
+            );
+            let url = format!("{}/load", caddy.admin_url());
+            match caddy.post_json(&url, &base_config).await {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("loaded base caddy config with TLS cert on startup");
+                }
+                Ok(resp) => {
+                    tracing::warn!(status = %resp.status(), "failed to load base caddy config on startup");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to load base caddy config on startup");
+                }
+            }
         }
     }
 

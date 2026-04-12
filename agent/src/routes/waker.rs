@@ -196,7 +196,7 @@ fn extract_subdomain<'a>(host: &'a str, domain: &str) -> Option<&'a str> {
 /// Rebuild the local Caddy config with all currently running litebin containers.
 /// Uses the last orchestrator-pushed config as a base (preserving sleeping custom domain
 /// routes, TLS config, etc.) and adds/updates routes for running containers from Docker.
-async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
+pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
     let caddy = match state.caddy.as_ref() {
         Some(c) => c,
         None => return Ok(()),
@@ -209,11 +209,15 @@ async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
 
     // List all running litebin containers with their ports
     let containers = state.docker.list_running_litebin_containers().await?;
-    let agent_port = state.config.agent_port;
 
     let config = match state.last_caddy_config.read().unwrap().clone() {
-        Some(base) => merge_routes_with_persisted(&base, &containers, &domain, agent_port),
-        None => build_config_from_scratch(&containers, &domain, agent_port),
+        Some(base) => merge_routes_with_persisted(&base, &containers, &domain),
+        None => build_config_from_scratch(
+            &containers,
+            &domain,
+            &state.config.cert_path,
+            &state.config.key_path,
+        ),
     };
 
     let url = format!("{}/load", caddy.admin_url());
@@ -241,9 +245,8 @@ async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
 /// Preserves sleeping custom domain routes, TLS config, and other orchestrator-managed routes.
 fn merge_routes_with_persisted(
     base: &serde_json::Value,
-    containers: &[(String, u16)],
+    containers: &[(String, u16, u16)],
     domain: &str,
-    agent_port: u16,
 ) -> serde_json::Value {
     let existing_routes = base["apps"]["http"]["servers"]["srv0"]["routes"]
         .as_array()
@@ -265,16 +268,19 @@ fn merge_routes_with_persisted(
         }
     }
 
-    // Add/update running container routes (always from Docker — correct ports)
-    for (project_id, port) in containers {
+    // Add/update running container routes using Docker network container names.
+    // Uses litebin-{project_id}:{internal_port} instead of localhost:{mapped_port}
+    // because in production the agent Caddy is a separate container on the Docker network.
+    for (project_id, internal_port, _mapped_port) in containers {
         let subdomain_host = format!("{}.{}", project_id, domain);
+        let upstream = format!("litebin-{}:{}", project_id, internal_port);
         route_map.insert(
             subdomain_host.clone(),
             json!({
                 "match": [{ "host": [subdomain_host] }],
                 "handle": [{
                     "handler": "reverse_proxy",
-                    "upstreams": [{ "dial": format!("localhost:{}", port) }]
+                    "upstreams": [{ "dial": upstream }]
                 }]
             }),
         );
@@ -296,27 +302,30 @@ fn merge_routes_with_persisted(
             }
         }
         for host in hosts_to_upgrade {
+            let upstream = format!("litebin-{}:{}", project_id, internal_port);
             route_map.insert(
                 host.clone(),
                 json!({
                     "match": [{ "host": [host] }],
                     "handle": [{
                         "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": format!("localhost:{}", port) }]
+                        "upstreams": [{ "dial": upstream }]
                     }]
                 }),
             );
         }
     }
 
-    // Build routes array: specific routes + catch-all
+    // Build routes array: specific routes + catch-all 502
     let mut routes: Vec<serde_json::Value> = route_map.into_values().collect();
 
+    // Catch-all returns 502 so master Caddy's handle_response triggers the waker
     routes.push(json!({
         "match": [{ "host": [format!("*.{}", domain)] }],
         "handle": [{
-            "handler": "reverse_proxy",
-            "upstreams": [{ "dial": format!("localhost:{}", agent_port) }]
+            "handler": "static_response",
+            "status_code": 502,
+            "body": "No route found"
         }]
     }));
 
@@ -324,8 +333,9 @@ fn merge_routes_with_persisted(
         "routes": [{
             "match": [{ "host": [format!("*.{}", domain)] }],
             "handle": [{
-                "handler": "reverse_proxy",
-                "upstreams": [{ "dial": format!("localhost:{}", agent_port) }]
+                "handler": "static_response",
+                "status_code": 502,
+                "body": "No route found"
             }]
         }]
     });
@@ -338,30 +348,35 @@ fn merge_routes_with_persisted(
 }
 
 /// Build a Caddy config from scratch (no persisted config available).
-/// Used on first wake before orchestrator has pushed any config.
+/// Used on first wake before orchestrator has pushed any config, or on agent startup.
 fn build_config_from_scratch(
-    containers: &[(String, u16)],
+    containers: &[(String, u16, u16)],
     domain: &str,
-    agent_port: u16,
+    cert_path: &str,
+    key_path: &str,
 ) -> serde_json::Value {
     let mut routes: Vec<serde_json::Value> = Vec::new();
 
-    for (project_id, port) in containers {
+    // Running container routes using Docker network names
+    for (project_id, internal_port, _mapped_port) in containers {
         let host = format!("{}.{}", project_id, domain);
+        let upstream = format!("litebin-{}:{}", project_id, internal_port);
         routes.push(json!({
             "match": [{ "host": [host] }],
             "handle": [{
                 "handler": "reverse_proxy",
-                "upstreams": [{ "dial": format!("localhost:{}", port) }]
+                "upstreams": [{ "dial": upstream }]
             }]
         }));
     }
 
+    // Catch-all returns 502 so master Caddy's handle_response triggers the waker
     routes.push(json!({
         "match": [{ "host": [format!("*.{}", domain)] }],
         "handle": [{
-            "handler": "reverse_proxy",
-            "upstreams": [{ "dial": format!("localhost:{}", agent_port) }]
+            "handler": "static_response",
+            "status_code": 502,
+            "body": "No route found"
         }]
     }));
 
@@ -369,15 +384,18 @@ fn build_config_from_scratch(
         "routes": [{
             "match": [{ "host": [format!("*.{}", domain)] }],
             "handle": [{
-                "handler": "reverse_proxy",
-                "upstreams": [{ "dial": format!("localhost:{}", agent_port) }]
+                "handler": "static_response",
+                "status_code": 502,
+                "body": "No route found"
             }]
         }]
     });
 
+    let logging = litebin_common::heartbeat::caddy_logging_config();
+
     json!({
         "admin": { "listen": "0.0.0.0:2019" },
-        "logging": litebin_common::heartbeat::caddy_logging_config()["logging"],
+        "logging": logging["logging"],
         "apps": {
             "http": {
                 "servers": {
@@ -390,8 +408,51 @@ fn build_config_from_scratch(
                 }
             },
             "tls": {
+                "certificates": {
+                    "load_files": [{
+                        "certificate": cert_path,
+                        "key": key_path
+                    }]
+                },
                 "automation": {
                     "policies": [{ "on_demand": true }]
+                }
+            }
+        }
+    })
+}
+
+/// Build a minimal base Caddy config with just TLS cert and a catch-all 502.
+/// Pushed on startup before any containers exist, so the agent Caddy has TLS ready
+/// for incoming connections from the master Caddy.
+pub fn build_base_caddy_config(cert_path: &str, key_path: &str) -> serde_json::Value {
+    let logging = litebin_common::heartbeat::caddy_logging_config();
+
+    json!({
+        "admin": { "listen": "0.0.0.0:2019" },
+        "logging": logging["logging"],
+        "apps": {
+            "http": {
+                "servers": {
+                    "srv0": {
+                        "listen": [":80", ":443"],
+                        "routes": [{
+                            "handle": [{
+                                "handler": "static_response",
+                                "status_code": 502,
+                                "body": "No route found"
+                            }]
+                        }],
+                        "logs": {}
+                    }
+                }
+            },
+            "tls": {
+                "certificates": {
+                    "load_files": [{
+                        "certificate": cert_path,
+                        "key": key_path
+                    }]
                 }
             }
         }

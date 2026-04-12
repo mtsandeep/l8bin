@@ -41,11 +41,13 @@ Browser -> Caddy (reverse proxy, auto-TLS) -> Orchestrator (Rust)
 
 ### Mode A: Master Proxy (default)
 
-All traffic flows through the master. Caddy proxies unknown subdomains to the orchestrator's wake handler.
+All traffic flows through the master. Caddy proxies unknown subdomains to the orchestrator's wake handler. Remote agent traffic is encrypted with TLS (CA-verified) over the agent Caddy sidecar.
 
 ```
-Browser -> Cloudflare (wildcard) -> Master Caddy -> Orchestrator (wake handler)
+Browser -> Cloudflare (wildcard) -> Master Caddy --TLS--> Agent Caddy -> Container
 ```
+
+**Note:** Master sees 2x bandwidth (proxies both directions). For high-traffic workloads, consider Cloudflare DNS mode.
 
 ### Mode B: Cloudflare DNS
 
@@ -56,6 +58,8 @@ Browser -> Cloudflare (per-project A record) -> Agent IP -> Agent Caddy -> Agent
 ```
 
 Hot-swappable from the dashboard. All agents must be reachable for Mode B.
+
+See [multi-server.md](multi-server.md) for the full multi-server guide including bandwidth comparisons and manual DNS setup.
 
 ## Sleep & Wake
 

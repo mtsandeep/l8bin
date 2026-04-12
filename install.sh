@@ -229,6 +229,13 @@ generate_compose() {
   [ -n "$certs_dir" ] && orch_volumes="${orch_volumes}
       - ${certs_dir}:/certs:ro"
 
+  local caddy_volumes="      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - caddy-root:/root/.local/share/caddy"
+  [ -n "$certs_dir" ] && caddy_volumes="${caddy_volumes}
+      - ${certs_dir}:/certs:ro"
+
   cat > "$dest" <<COMPOSE_EOF
 services:
   orchestrator:
@@ -264,10 +271,7 @@ ${orch_volumes}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-      - caddy-root:/root/.local/share/caddy
+${caddy_volumes}
     networks:
       - litebin-network
 
@@ -940,6 +944,7 @@ EOF
     -v litebin-agent-caddy-data:/data \
     -v litebin-agent-caddy-config:/config \
     -v litebin-agent-caddy-root:/root/.local/share/caddy \
+    -v "${certs_dir}":/certs:ro \
     caddy:2-alpine
 
   info "Starting agent..."

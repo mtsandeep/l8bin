@@ -8,7 +8,7 @@ use crate::caddy::CaddyClient;
 #[derive(Debug, Clone)]
 pub struct ProjectRoute {
     pub project_id: String,
-    /// Resolved upstream: "host.docker.internal:50123" (local) or "10.0.1.5:50200" (remote)
+    /// Resolved upstream: "litebin-{id}:{port}" (local) or "10.0.1.5:443" (remote via TLS)
     pub upstream: String,
     /// The subdomain host: "{project_id}.{domain}"
     pub subdomain_host: String,
@@ -21,6 +21,8 @@ pub struct ProjectRoute {
     /// If set, Caddy rewrites the Host header to this value before proxying.
     /// Used for sleeping custom domain routes so the waker receives the subdomain form.
     pub host_rewrite: Option<String>,
+    /// Whether the upstream connection requires TLS (true for remote agent Caddy).
+    pub upstream_tls: bool,
 }
 
 #[async_trait]
@@ -41,14 +43,18 @@ pub trait RoutingProvider: Send + Sync {
 /// Handles TLS termination, On-Demand TLS, custom domains, and www redirects.
 pub struct MasterProxyRouter {
     caddy: CaddyClient,
+    /// Path to CA cert inside the Caddy container (e.g. "/certs/ca.pem").
+    /// Used to verify TLS connections to remote agent Caddys.
+    ca_cert_path: String,
 }
 
 impl MasterProxyRouter {
-    pub fn new(caddy: CaddyClient) -> Self {
-        Self { caddy }
+    pub fn new(caddy: CaddyClient, ca_cert_path: String) -> Self {
+        Self { caddy, ca_cert_path }
     }
 
     fn build_config(
+        &self,
         projects: &[ProjectRoute],
         domain: &str,
         orchestrator_upstream: &str,
@@ -60,21 +66,36 @@ impl MasterProxyRouter {
 
         for p in projects {
             // 1. Subdomain route: {project_id}.{domain} → upstream
-            routes.push(json!({
-                "match": [{ "host": [p.subdomain_host] }],
-                "handle": [{
-                    "handler": "reverse_proxy",
-                    "upstreams": [{ "dial": p.upstream }],
-                    "handle_response": [{
-                        "match": { "status_code": [502, 503, 504] },
-                        "routes": [{
-                            "handle": [{
-                                "handler": "reverse_proxy",
-                                "upstreams": [{ "dial": orchestrator_upstream }]
-                            }]
+            let mut handle = json!({
+                "handler": "reverse_proxy",
+                "upstreams": [{ "dial": &p.upstream }],
+                "handle_response": [{
+                    "match": { "status_code": [502, 503, 504] },
+                    "routes": [{
+                        "handle": [{
+                            "handler": "reverse_proxy",
+                            "upstreams": [{ "dial": orchestrator_upstream }]
                         }]
                     }]
                 }]
+            });
+            if p.upstream_tls && !self.ca_cert_path.is_empty() {
+                handle["transport"] = json!({
+                    "protocol": "http",
+                    "tls": {
+                        "server_name": "agent",
+                        "trust_pool": {
+                            "providers": [{
+                                "provider": "file",
+                                "path": &self.ca_cert_path
+                            }]
+                        }
+                    }
+                });
+            }
+            routes.push(json!({
+                "match": [{ "host": [&p.subdomain_host] }],
+                "handle": [handle]
             }));
 
             // 2. Custom domain route + www redirect
@@ -115,21 +136,36 @@ impl MasterProxyRouter {
                     }));
                 } else {
                     // Running custom domain: proxy to container with 502 fallback
-                    routes.push(json!({
-                        "match": [{ "host": [cd] }],
-                        "handle": [{
-                            "handler": "reverse_proxy",
-                            "upstreams": [{ "dial": p.upstream }],
-                            "handle_response": [{
-                                "match": { "status_code": [502, 503, 504] },
-                                "routes": [{
-                                    "handle": [{
-                                        "handler": "reverse_proxy",
-                                        "upstreams": [{ "dial": orchestrator_upstream }]
-                                    }]
+                    let mut cd_handle = json!({
+                        "handler": "reverse_proxy",
+                        "upstreams": [{ "dial": &p.upstream }],
+                        "handle_response": [{
+                            "match": { "status_code": [502, 503, 504] },
+                            "routes": [{
+                                "handle": [{
+                                    "handler": "reverse_proxy",
+                                    "upstreams": [{ "dial": orchestrator_upstream }]
                                 }]
                             }]
                         }]
+                    });
+                    if p.upstream_tls && !self.ca_cert_path.is_empty() {
+                        cd_handle["transport"] = json!({
+                            "protocol": "http",
+                            "tls": {
+                                "server_name": "agent",
+                                "trust_pool": {
+                                    "providers": [{
+                                        "provider": "file",
+                                        "path": &self.ca_cert_path
+                                    }]
+                                }
+                            }
+                        });
+                    }
+                    routes.push(json!({
+                        "match": [{ "host": [cd] }],
+                        "handle": [cd_handle]
                     }));
 
                     // www redirect: if custom_domain is "app.example.com",
@@ -272,7 +308,7 @@ impl RoutingProvider for MasterProxyRouter {
         dashboard_subdomain: &str,
         poke_subdomain: &str,
     ) -> anyhow::Result<()> {
-        let config = Self::build_config(projects, domain, orchestrator_upstream, dashboard_subdomain, poke_subdomain);
+        let config = self.build_config(projects, domain, orchestrator_upstream, dashboard_subdomain, poke_subdomain);
 
         tracing::info!(
             route_count = projects.len(),

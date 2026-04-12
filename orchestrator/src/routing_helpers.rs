@@ -18,7 +18,7 @@ pub async fn resolve_routes(
     let mut routes = Vec::with_capacity(projects.len());
 
     for project in projects {
-        let Some(mapped_port) = project.mapped_port else {
+        let Some(_mapped_port) = project.mapped_port else {
             continue;
         };
         if project.status != "running" {
@@ -40,7 +40,7 @@ pub async fn resolve_routes(
                 .await?;
 
                 match row {
-                    Some((host, public_ip)) => (format!("{}:{}", host, mapped_port), public_ip),
+                    Some((host, public_ip)) => (format!("{}:443", host), public_ip),
                     None => {
                         tracing::warn!(
                             project_id = %project.id,
@@ -65,6 +65,8 @@ pub async fn resolve_routes(
             node_id: project.node_id.clone(),
             node_public_ip,
             host_rewrite: None,
+            upstream_tls: project.node_id.as_deref() != Some("local")
+                && project.node_id.is_some(),
         });
     }
 
@@ -108,6 +110,7 @@ async fn resolve_sleeping_custom_domain_routes(
             node_id: project.node_id.clone(),
             node_public_ip,
             host_rewrite: Some(format!("{}.{}", project.id, domain)),
+            upstream_tls: false, // sleeping routes proxy to local orchestrator
         });
     }
 

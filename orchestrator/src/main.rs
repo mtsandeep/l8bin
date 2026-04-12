@@ -357,6 +357,6 @@ pub(crate) fn build_routing_provider(
                 config,
             ))
         }
-        _ => Arc::new(MasterProxyRouter::new(caddy_client)),
+        _ => Arc::new(MasterProxyRouter::new(caddy_client, config.ca_cert_path.clone())),
     }
 }

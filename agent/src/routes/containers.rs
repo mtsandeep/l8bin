@@ -223,6 +223,9 @@ pub async fn start_container(
             .into_response();
     }
 
+    // Rebuild agent Caddy config so the new container gets a route
+    let _ = super::waker::rebuild_local_caddy(&state).await;
+
     // Inspect to return the mapped port
     match state.docker.inspect_mapped_port(&req.container_id).await {
         Ok(mapped_port) => (

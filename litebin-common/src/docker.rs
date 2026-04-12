@@ -377,9 +377,11 @@ impl DockerManager {
         Ok(containers.len() as u32)
     }
 
-    /// List all running litebin containers. Returns (project_id, mapped_port) for each.
+    /// List all running litebin containers. Returns (project_id, internal_port, mapped_port) for each.
     /// Containers are identified by name prefix "litebin-".
-    pub async fn list_running_litebin_containers(&self) -> anyhow::Result<Vec<(String, u16)>> {
+    /// internal_port is the container's listening port (for Docker network access).
+    /// mapped_port is the host-bound port (for host-level access).
+    pub async fn list_running_litebin_containers(&self) -> anyhow::Result<Vec<(String, u16, u16)>> {
         let options = ListContainersOptions {
             all: false,
             ..Default::default()
@@ -395,12 +397,17 @@ impl DockerManager {
             for name in names {
                 let trimmed = name.trim_start_matches('/');
                 if let Some(project_id) = trimmed.strip_prefix("litebin-") {
-                    // Extract mapped port from list response (no per-container inspect needed)
-                    let port = c.ports.as_ref().and_then(|ports| {
-                        ports.iter().find_map(|p| p.public_port)
+                    // Extract both internal and mapped ports from list response
+                    let ports = c.ports.as_ref().and_then(|ports| {
+                        ports.iter().find_map(|p| {
+                            match (p.private_port, p.public_port) {
+                                (internal, Some(public)) => Some((internal, public)),
+                                _ => None,
+                            }
+                        })
                     });
-                    if let Some(port) = port {
-                        result.push((project_id.to_string(), port));
+                    if let Some((internal_port, mapped_port)) = ports {
+                        result.push((project_id.to_string(), internal_port, mapped_port));
                     }
                     break;
                 }

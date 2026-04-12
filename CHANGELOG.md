@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- TLS-encrypted traffic between master and remote agent Caddys using existing mTLS PKI (agent.pem + ca.pem)
+- Agent Caddy loads TLS cert on startup (base config with catch-all 502)
+- Caddy config rebuild after API container start (`POST /containers/start`)
+
+### Fixed
+- Fix agent Caddy upstream resolution — use Docker network container names (`litebin-{id}:{port}`) instead of `localhost:{mapped_port}` (broken when Caddy runs as a separate container)
+- Fix `master_proxy` mode for remote agents — traffic now routes through agent Caddy sidecar over TLS instead of direct container port access (which was unreachable and unencrypted)
+- Fix agent Caddy catch-all routing to static 502 instead of proxying to mTLS API port
+
 ## [0.1.16] - 2026-04-12
 
 ### Added

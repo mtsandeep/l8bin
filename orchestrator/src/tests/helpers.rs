@@ -37,7 +37,7 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
     let config = Arc::new(test_config());
     let docker = Arc::new(DockerManager::new_for_tests());
     let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(
-        Arc::new(MasterProxyRouter::new(litebin_common::caddy::CaddyClient::new("http://localhost:2019")))
+        Arc::new(MasterProxyRouter::new(litebin_common::caddy::CaddyClient::new("http://localhost:2019"), String::new()))
     ));
 
     let state = AppState {
@@ -46,6 +46,7 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
         docker,
         router,
         node_clients: Arc::new(DashMap::new()),
+        disk_cache: Arc::new(DashMap::new()),
         deploy_locks: Arc::new(DashMap::new()),
         wake_locks: Arc::new(DashMap::new()),
         route_sync_tx: tokio::sync::mpsc::unbounded_channel().0,
@@ -83,7 +84,7 @@ pub async fn test_server() -> TestServer {
     // Use the test constructor that doesn't connect to the Docker socket
     let docker = Arc::new(DockerManager::new_for_tests());
     let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(
-        Arc::new(MasterProxyRouter::new(litebin_common::caddy::CaddyClient::new("http://localhost:2019")))
+        Arc::new(MasterProxyRouter::new(litebin_common::caddy::CaddyClient::new("http://localhost:2019"), String::new()))
     ));
 
     let state = AppState {
@@ -92,6 +93,7 @@ pub async fn test_server() -> TestServer {
         docker,
         router,
         node_clients: Arc::new(DashMap::new()),
+        disk_cache: Arc::new(DashMap::new()),
         deploy_locks: Arc::new(DashMap::new()),
         wake_locks: Arc::new(DashMap::new()),
         route_sync_tx: tokio::sync::mpsc::unbounded_channel().0,
@@ -205,6 +207,7 @@ fn test_config() -> Config {
         port: 5080,
         default_auto_stop_mins: 15,
         janitor_interval_secs: 300,
+        flush_interval_secs: 60,
         ca_cert_path: String::new(),
         client_cert_path: String::new(),
         client_key_path: String::new(),
