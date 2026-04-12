@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-04-12
+
 ### Added
 - Agent update flow (`bash -s update`) — auto-detects master vs agent, shows version diff, downloads and restarts
 - Cert bundle retrieval — `bash -s certs` interactive menu to generate, regenerate, or show existing bundle without re-running master setup
