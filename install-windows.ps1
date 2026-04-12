@@ -279,7 +279,7 @@ services:
       - litebin-network
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.2-alpine
     container_name: litebin-caddy
     restart: unless-stopped
     env_file:

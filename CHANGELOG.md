@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Pin Caddy image to `caddy:2.11.2-alpine` across all install scripts and compose files (master + agent)
+
 ## [0.1.17] - 2026-04-12
 
 ### Added

@@ -30,7 +30,7 @@ services:
       - master
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.2-alpine
     container_name: litebin-caddy
     restart: unless-stopped
     env_file:
@@ -81,7 +81,7 @@ services:
   # Shares the agent's network namespace so Caddy can proxy to containers.
   # Usage: docker compose --profile agent up
   agent-caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.2-alpine
     container_name: litebin-agent-caddy
     restart: unless-stopped
     network_mode: "service:agent"

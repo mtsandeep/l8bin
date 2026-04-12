@@ -259,7 +259,7 @@ ${orch_volumes}
       - litebin-network
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.2-alpine
     container_name: litebin-caddy
     restart: unless-stopped
     env_file:
@@ -945,7 +945,7 @@ EOF
     -v litebin-agent-caddy-config:/config \
     -v litebin-agent-caddy-root:/root/.local/share/caddy \
     -v "${certs_dir}":/certs:ro \
-    caddy:2-alpine
+    caddy:2.11.2-alpine
 
   info "Starting agent..."
   run_agent_container "$install_dir" "$certs_dir" "$AGENT_PORT"
