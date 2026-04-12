@@ -105,6 +105,102 @@ Agent Caddy ←------------------------→ Agent API
 - **Port 80/443 (HTTPS)**: User-facing traffic. In master_proxy mode, master Caddy proxies to agent Caddy here.
 - **Port 8444 (HTTP, internal only)**: Agent Caddy ↔ Agent wake handler. Plain HTTP, no TLS — only reachable from the Docker network, not exposed on the host. Used in cloudflare_dns mode when the agent Caddy needs to wake a sleeping container without going through the mTLS API.
 
+## Request Flow (Master Proxy Mode)
+
+Understanding the full request lifecycle is important for debugging. Here's what happens from deploy to serving traffic.
+
+### Deploy Flow
+
+```
+Dashboard → Orchestrator API → mTLS (8443) → Agent API → Docker
+                                                     ↓
+                                              Container starts
+                                                     ↓
+                                              Agent rebuilds local Caddy
+                                              (adds route: host → container)
+                                                     ↓
+                                              Orchestrator syncs master Caddy
+                                              (adds route: host → agent_ip:443)
+```
+
+1. User deploys via dashboard/CLI → orchestrator sends `POST /containers/run` to agent over mTLS (port 8443)
+2. Agent pulls image, creates and starts the container on `litebin-network`
+3. Agent calls `rebuild_local_caddy()` — lists all running containers, builds Caddy JSON with routes + inline TLS cert (via `load_pem`), pushes to agent Caddy's admin API
+4. Orchestrator syncs routes to master Caddy — adds route for `{project_id}.{domain}` → `{agent_ip}:443` with TLS transport (CA-verified)
+
+### Normal Request (App Running)
+
+```
+User → DNS ({id}.{domain} → master IP)
+     → Master Caddy (TLS termination)
+     → matches route for {id}.{domain}
+     → proxies to agent_ip:443 (TLS, server_name=agent, CA-verified)
+     → Agent Caddy matches host header
+     → proxies to litebin-{id}:{port} (Docker network)
+     → Container responds
+```
+
+Key details:
+- Master Caddy configures TLS transport with `root_ca_pem_files: ["/certs/ca.pem"]` and `server_name: "agent"` to match the agent cert's SAN (`DNS:agent`)
+- Master Caddy preserves the original `Host` header (`{http.request.host}`) so the agent Caddy can match the correct project
+- Agent Caddy routes to containers using Docker DNS names (`litebin-{project_id}:{internal_port}`), not `localhost` — this works because both the Caddy sidecar and project containers share `litebin-network`
+
+### Sleeping App Wake Flow
+
+```
+User → Master Caddy → agent_ip:443 → Agent Caddy (no matching route)
+                                        → returns 502
+     ← Master Caddy catches 502 via handle_response
+     → falls back to orchestrator waker
+     → Orchestrator sends mTLS request to agent (start container)
+     → Agent starts container, rebuilds local Caddy
+     → Agent reports wake to orchestrator
+     → Orchestrator syncs master Caddy routes
+     → User refreshes → normal request flow
+```
+
+Key details:
+- Agent Caddy's catch-all route returns a **static 502** (not a proxy) — this triggers master Caddy's `handle_response` for 502/503/504 status codes, which falls back to the orchestrator waker
+- The waker shows a "Starting {project}..." page with a 1-second auto-refresh
+- Once the container is running and routes are rebuilt, the next refresh reaches the app
+
+## Certificate Architecture
+
+```
+Root CA (ca.pem) — generated once on master, trusted by all parties
+├── Server cert (server.pem + server-key.pem) — master's mTLS client cert
+├── Agent cert (agent.pem + agent-key.pem) — used two ways:
+│   ├── Agent API mTLS server (loaded from /certs/ volume mount)
+│   └── Agent Caddy TLS server (embedded inline via load_pem in Caddy JSON)
+└── All certs are ECDSA P-256, 10-year validity, SAN=DNS:agent
+```
+
+How certs are used:
+
+| Component | Cert Files | How Loaded |
+|---|---|---|
+| Agent API (Axum, port 8443) | `/certs/agent.pem` + `/certs/agent-key.pem` + `/certs/ca.pem` | File read at startup from volume mount |
+| Agent Caddy (port 443) | Same agent.pem + agent-key.pem | Embedded inline in Caddy JSON via `load_pem` (pushed via admin API) |
+| Master → Agent TLS | `/certs/ca.pem` (in master Caddy container) | Referenced in Caddy transport config via `root_ca_pem_files` |
+
+The agent Caddy does **not** need certs mounted as files — the agent reads them from its own `/certs/` volume and embeds the PEM content directly in the Caddy JSON config. This avoids issues with cert file paths inside different containers.
+
+## Container Startup Order (Agent)
+
+The startup order matters for the agent to successfully push its config:
+
+1. **Agent Caddy sidecar** starts first (via `run_agent_caddy`)
+   - Loads initial Caddyfile: admin on `0.0.0.0:2019`, catch-all 502 on `:80`
+   - No TLS yet — TLS is added when the agent pushes the full config
+
+2. **Agent app** starts second (via `run_agent_container`)
+   - Reads cert PEM files from `/certs/` volume
+   - Connects to agent Caddy admin API at `litebin-agent-caddy:2019`
+   - Pushes base config with TLS cert (`load_pem`) + catch-all 502 on `:80` and `:443`
+   - If persisted config exists (from previous run), pushes that instead
+
+Both containers must be on `litebin-network` for DNS resolution (`litebin-agent-caddy:2019`) to work. The install script calls `ensure_agent_network` before creating either container.
+
 ## Bandwidth Comparison
 
 | Mode | Master bandwidth | Agent bandwidth | DNS requirement |

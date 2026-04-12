@@ -141,6 +141,8 @@ pub async fn run_container(
         .await
     {
         Ok((container_id, mapped_port)) => {
+            // Rebuild agent Caddy config so the new container gets a route
+            let _ = super::waker::rebuild_local_caddy(&state).await;
             (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
         }
         Err(e) => (
@@ -195,6 +197,8 @@ pub async fn recreate_container(
         .await
     {
         Ok((container_id, mapped_port)) => {
+            // Rebuild agent Caddy config so the new container gets a route
+            let _ = super::waker::rebuild_local_caddy(&state).await;
             (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
         }
         Err(e) => (
