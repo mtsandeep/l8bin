@@ -177,6 +177,113 @@ configure_ufw() {
   fi
 }
 
+# -- Path helpers -----------------------------------------------------------
+find_install_dir() {
+  local not_found_msg="${1:-LiteBin installation not found. Run the setup first.}"
+  if [ "$(id -u)" -eq 0 ] && [ -d "/opt/litebin" ]; then
+    echo "/opt/litebin"
+  elif [ -d "${HOME}/litebin" ]; then
+    echo "${HOME}/litebin"
+  else
+    die "$not_found_msg"
+  fi
+}
+
+find_certs_dir() {
+  local install_dir="$1"
+  if [ "$(id -u)" -eq 0 ]; then
+    echo "/etc/litebin/certs"
+  else
+    echo "${install_dir}/certs"
+  fi
+}
+
+ensure_agent_network() {
+  if ! docker network ls --format '{{.Name}}' | grep -q "^litebin-network$"; then
+    docker network create litebin-network >/dev/null
+  fi
+}
+
+run_agent_container() {
+  local install_dir="$1" certs_dir="$2" agent_port="$3"
+  ensure_agent_network
+  docker run -d \
+    --name litebin-agent \
+    --restart unless-stopped \
+    --network litebin-network \
+    --env-file "${install_dir}/agent/.env" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "${certs_dir}":/certs:ro \
+    -v litebin-agent-data:/etc/litebin/data \
+    -p "${agent_port}:8443" \
+    litebin-agent
+}
+
+generate_compose() {
+  local dest="$1"
+  local certs_dir="${2:-}"
+
+  local orch_volumes="      - /var/run/docker.sock:/var/run/docker.sock
+      - orchestrator-data:/app/data
+      - ./projects:/app/projects"
+  [ -n "$certs_dir" ] && orch_volumes="${orch_volumes}
+      - ${certs_dir}:/certs:ro"
+
+  cat > "$dest" <<COMPOSE_EOF
+services:
+  orchestrator:
+    build: ./orchestrator
+    container_name: litebin-orchestrator
+    restart: unless-stopped
+    volumes:
+${orch_volumes}
+    env_file:
+      - .env
+    depends_on:
+      - caddy
+    networks:
+      - litebin-network
+
+  dashboard:
+    build: ./dashboard
+    container_name: litebin-dashboard
+    restart: unless-stopped
+    networks:
+      - litebin-network
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: litebin-caddy
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - caddy-root:/root/.local/share/caddy
+    networks:
+      - litebin-network
+
+networks:
+  litebin-network:
+    name: litebin-network
+    driver: bridge
+
+volumes:
+  orchestrator-data:
+  caddy-data:
+  caddy-config:
+  caddy-root:
+COMPOSE_EOF
+}
+
 # -- CLI Install -------------------------------------------------------------
 install_cli() {
   local platform arch binary install_name
@@ -434,61 +541,7 @@ EOF
 CADDYFILE
 
   # -- Generate docker-compose.yml --------------------------------------
-  cat > "${install_dir}/docker-compose.yml" <<COMPOSE_EOF
-services:
-  orchestrator:
-    build: ./orchestrator
-    container_name: litebin-orchestrator
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - orchestrator-data:/app/data
-      - ./projects:/app/projects
-    env_file:
-      - .env
-    depends_on:
-      - caddy
-    networks:
-      - litebin-network
-
-  dashboard:
-    build: ./dashboard
-    container_name: litebin-dashboard
-    restart: unless-stopped
-    networks:
-      - litebin-network
-
-  caddy:
-    image: caddy:2-alpine
-    container_name: litebin-caddy
-    restart: unless-stopped
-    env_file:
-      - .env
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-      - caddy-root:/root/.local/share/caddy
-    networks:
-      - litebin-network
-
-networks:
-  litebin-network:
-    name: litebin-network
-    driver: bridge
-
-volumes:
-  orchestrator-data:
-  caddy-data:
-  caddy-config:
-  caddy-root:
-COMPOSE_EOF
+  generate_compose "${install_dir}/docker-compose.yml"
 
   # -- Configure firewall (Linux only) ----------------------------------
   if is_linux && [ "$(id -u)" -eq 0 ]; then
@@ -530,6 +583,59 @@ COMPOSE_EOF
 }
 
 # -- Agent Server Setup ------------------------------------------------------
+show_cert_bundle() {
+  local install_dir certs_dir
+  install_dir=$(find_install_dir "LiteBin installation not found. Run the master setup first.")
+  certs_dir=$(find_certs_dir "$install_dir")
+
+  [ -f "${certs_dir}/ca.pem" ] || die "No certificates found. Generate certs first."
+  [ -f "${certs_dir}/agent.pem" ] || die "Agent certificate not found. Generate certs first."
+  [ -f "${certs_dir}/agent-key.pem" ] || die "Agent key not found. Generate certs first."
+
+  local cert_bundle
+  cert_bundle=$(cat "${certs_dir}/ca.pem" "${certs_dir}/agent.pem" "${certs_dir}/agent-key.pem" | gzip -9 | base64_encode)
+
+  echo ""
+  echo -e "  ${GREEN}${BOLD}Agent cert bundle:${NC}"
+  echo ""
+  echo -e "    ${CYAN}${cert_bundle}${NC}"
+  echo ""
+  echo -e "  Run this on your agent server:"
+  echo ""
+  echo -e "    ${DIM}curl -fsSL ${L8B_IN} | bash -s agent --update-certs${NC}"
+  echo ""
+}
+
+manage_certs() {
+  local install_dir certs_dir
+  install_dir=$(find_install_dir "LiteBin installation not found. Run the master setup first.")
+  certs_dir=$(find_certs_dir "$install_dir")
+
+  echo ""
+  echo -e "  ${BOLD}Multi-server Certificate Management${NC}"
+  echo ""
+
+  if [ -f "${certs_dir}/ca.pem" ]; then
+    echo "    1) Regenerate certificates (invalidates all existing agents)"
+    echo "    2) Show agent cert bundle (for connecting new/existing agents)"
+    echo ""
+    local choice
+    echo -ne "  ${CYAN}Choose [1-2]:${NC} "
+    _tty_read choice
+    case "$choice" in
+      2) show_cert_bundle ;;
+      *) regenerate_certs ;;
+    esac
+  else
+    echo "    1) Generate certificates (first time setup)"
+    echo ""
+    local choice
+    echo -ne "  ${CYAN}Choose [1]:${NC} "
+    _tty_read choice
+    regenerate_certs
+  fi
+}
+
 regenerate_certs() {
   local install_dir certs_dir
 
@@ -538,21 +644,8 @@ regenerate_certs() {
   platform=$(detect_platform)
   [ "$platform" != "linux" ] && die "Worker setup requires running on the master server (Linux)."
 
-  # Find existing install directory
-  if [ "$(id -u)" -eq 0 ] && [ -d "/opt/litebin" ]; then
-    install_dir="/opt/litebin"
-  elif [ -d "${HOME}/litebin" ]; then
-    install_dir="${HOME}/litebin"
-  else
-    die "LiteBin installation not found. Run the master setup first."
-  fi
-
-  # Use /etc/litebin/certs when running as root (consistent with update flow)
-  if [ "$(id -u)" -eq 0 ]; then
-    certs_dir="/etc/litebin/certs"
-  else
-    certs_dir="${install_dir}/certs"
-  fi
+  install_dir=$(find_install_dir "LiteBin installation not found. Run the master setup first.")
+  certs_dir=$(find_certs_dir "$install_dir")
 
   # Check if certs already exist
   if [ -f "${certs_dir}/ca.pem" ]; then
@@ -612,6 +705,11 @@ regenerate_certs() {
   cp "${certs_tmp}/server.pem" "${certs_dir}/server.pem"
   cp "${certs_tmp}/server-key.pem" "${certs_dir}/server-key.pem"
   chmod 600 "${certs_dir}/server-key.pem" 2>/dev/null || true
+
+  # Copy agent certs (so show_cert_bundle can re-read them later)
+  cp "${certs_tmp}/node.pem" "${certs_dir}/agent.pem"
+  cp "${certs_tmp}/node-key.pem" "${certs_dir}/agent-key.pem"
+  chmod 600 "${certs_dir}/agent-key.pem" 2>/dev/null || true
 
   # Generate node cert (ECDSA P-256)
   openssl ecparam -genkey -name prime256v1 -noout -out "${certs_tmp}/node-key.pem" 2>/dev/null \
@@ -688,15 +786,9 @@ install_agent() {
 
   # -- --update-certs mode --------------------------------------------
   if [ "${1:-}" = "--update-certs" ]; then
-    # Find certs dir
-    local certs_dir
-    if [ "$(id -u)" -eq 0 ] && [ -d "/etc/litebin/certs" ]; then
-      certs_dir="/etc/litebin/certs"
-    elif [ -d "${HOME}/litebin/certs" ]; then
-      certs_dir="${HOME}/litebin/certs"
-    else
-      die "LiteBin agent not found. Run 'curl -fsSL ${L8B_IN} | bash -s agent' first."
-    fi
+    local install_dir certs_dir
+    install_dir=$(find_install_dir "LiteBin agent not found. Run 'curl -fsSL ${L8B_IN} | bash -s agent' first.")
+    certs_dir=$(find_certs_dir "$install_dir")
 
     echo ""
     echo -e "  ${BOLD}Update agent certificates${NC}"
@@ -717,30 +809,17 @@ install_agent() {
 
     # Restart agent container
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "litebin-agent"; then
+      local agent_port="5083"
+      local prev_port
+      prev_port=$(docker port litebin-agent 2>/dev/null | head -1 | cut -d: -f2 || true)
+      [ -n "$prev_port" ] && agent_port="$prev_port"
+
       info "Restarting agent with new certificates..."
       docker stop litebin-agent 2>/dev/null || true
       docker rm litebin-agent 2>/dev/null || true
 
-      local install_dir
-      if [ "$(id -u)" -eq 0 ] && [ -d "/opt/litebin" ]; then
-        install_dir="/opt/litebin"
-      else
-        install_dir="${HOME}/litebin"
-      fi
-
       (cd "$install_dir/agent" && docker build -t litebin-agent . >/dev/null 2>&1)
-      docker run -d \
-        --name litebin-agent \
-        --restart unless-stopped \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -v "$certs_dir":/certs:ro \
-        -v litebin-agent-data:/etc/litebin/data \
-        -p 5083:8443 \
-        -e AGENT_PORT=8443 \
-        -e AGENT_CERT_PATH=/certs/agent.pem \
-        -e AGENT_KEY_PATH=/certs/agent-key.pem \
-        -e AGENT_CA_CERT_PATH=/certs/ca.pem \
-        litebin-agent >/dev/null
+      run_agent_container "$install_dir" "$certs_dir" "$agent_port" >/dev/null
     else
       warn "No running agent container found. Run 'install.sh agent' to start one."
     fi
@@ -800,8 +879,8 @@ AGENT_DOCKERFILE
 
   # Certs
   echo ""
-  echo -e "  Paste the base64 cert bundle from the master setup."
-  echo -e "  ${DIM}(Run 'curl -fsSL ${L8B_IN} | bash -s master' on the master to generate one.)${NC}"
+  echo -e "  Paste the base64 cert bundle from the master setup or"
+  echo -e "  ${DIM}(Run 'curl -fsSL ${L8B_IN} | bash -s certs --show-bundle' on the master to get one.)${NC}"
   echo ""
   local cert_bundle
   echo -ne "${CYAN}Cert bundle:${NC} "
@@ -817,27 +896,54 @@ AGENT_DOCKERFILE
   [ -f "${certs_dir}/agent.pem" ] || die "agent.pem not found in cert bundle"
   [ -f "${certs_dir}/agent-key.pem" ] || die "agent-key.pem not found in cert bundle"
 
+  # -- Generate .env ---------------------------------------------------
+  cat > "${install_dir}/agent/.env" <<EOF
+# LiteBin Agent Configuration
+# Generated by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Server
+AGENT_PORT=8443
+
+# Certs (container paths)
+AGENT_CERT_PATH=/certs/agent.pem
+AGENT_KEY_PATH=/certs/agent-key.pem
+AGENT_CA_CERT_PATH=/certs/ca.pem
+
+# Docker
+DOCKER_NETWORK=litebin-network
+
+# Caddy sidecar
+AGENT_CADDY_ADMIN_URL=http://litebin-agent-caddy:2019
+AGENT_CADDY_CONTAINER_NAME=litebin-agent-caddy
+EOF
+  chmod 600 "${install_dir}/agent/.env" 2>/dev/null || true
+
   # -- Build and start --------------------------------------------------
   info "Building agent image..."
   (cd "${install_dir}/agent" && docker build -t litebin-agent .)
 
-  # Stop existing container if present
+  # Stop existing containers if present
+  docker stop litebin-agent-caddy 2>/dev/null || true
+  docker rm litebin-agent-caddy 2>/dev/null || true
   docker stop litebin-agent 2>/dev/null || true
   docker rm litebin-agent 2>/dev/null || true
 
-  info "Starting agent..."
+  # Start Caddy sidecar for agent local proxying
+  info "Starting agent Caddy sidecar..."
   docker run -d \
-    --name litebin-agent \
+    --name litebin-agent-caddy \
     --restart unless-stopped \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v "${certs_dir}":/certs:ro \
-    -v litebin-agent-data:/etc/litebin/data \
-    -p "${AGENT_PORT}:8443" \
-    -e AGENT_PORT=8443 \
-    -e AGENT_CERT_PATH=/certs/agent.pem \
-    -e AGENT_KEY_PATH=/certs/agent-key.pem \
-    -e AGENT_CA_CERT_PATH=/certs/ca.pem \
-    litebin-agent
+    --network litebin-network \
+    -p 80:80 \
+    -p 443:443 \
+    -p 443:443/udp \
+    -v litebin-agent-caddy-data:/data \
+    -v litebin-agent-caddy-config:/config \
+    -v litebin-agent-caddy-root:/root/.local/share/caddy \
+    caddy:2-alpine
+
+  info "Starting agent..."
+  run_agent_container "$install_dir" "$certs_dir" "$AGENT_PORT"
 
   # -- Firewall ---------------------------------------------------------
   if [ "$(id -u)" -eq 0 ]; then
@@ -868,13 +974,7 @@ update_master() {
 
   # Find install directory
   local install_dir
-  if [ "$(id -u)" -eq 0 ] && [ -d "/opt/litebin" ]; then
-    install_dir="/opt/litebin"
-  elif [ -d "${HOME}/litebin" ]; then
-    install_dir="${HOME}/litebin"
-  else
-    die "LiteBin not found. Run 'curl -fsSL ${L8B_IN} | bash -s master' to install."
-  fi
+  install_dir=$(find_install_dir "LiteBin not found. Run 'curl -fsSL ${L8B_IN} | bash -s master' to install.")
 
   ensure_docker
   ensure_docker_compose
@@ -933,7 +1033,12 @@ update_master() {
 
   # Confirm
   echo ""
-  if ! prompt_yes "Update from ${current_version} to ${target_release}?"; then
+  if [ "$current_version" = "$target_release" ]; then
+    if ! prompt_yes "Reinstall ${current_version}?"; then
+      info "Cancelled."
+      exit 0
+    fi
+  elif ! prompt_yes "Update from ${current_version} to ${target_release}?"; then
     info "Cancelled."
     exit 0
   fi
@@ -944,73 +1049,11 @@ update_master() {
   local tmp_compose
   tmp_compose=$(mktemp)
 
-  local orch_volumes="      - /var/run/docker.sock:/var/run/docker.sock
-      - orchestrator-data:/app/data
-      - ./projects:/app/projects"
+  local certs_dir=""
   if grep -q "MASTER_CA_CERT_PATH" "${install_dir}/.env" 2>/dev/null; then
-    local certs_dir
-    if [ "$(id -u)" -eq 0 ] && [ -d "/etc/litebin/certs" ]; then
-      certs_dir="/etc/litebin/certs"
-    else
-      certs_dir="${install_dir}/certs"
-    fi
-    orch_volumes="${orch_volumes}
-      - ${certs_dir}:/certs:ro"
+    certs_dir=$(find_certs_dir "$install_dir")
   fi
-
-  cat > "$tmp_compose" <<COMPOSE_EOF
-services:
-  orchestrator:
-    build: ./orchestrator
-    container_name: litebin-orchestrator
-    restart: unless-stopped
-    volumes:
-${orch_volumes}
-    env_file:
-      - .env
-    depends_on:
-      - caddy
-    networks:
-      - litebin-network
-
-  dashboard:
-    build: ./dashboard
-    container_name: litebin-dashboard
-    restart: unless-stopped
-    networks:
-      - litebin-network
-
-  caddy:
-    image: caddy:2-alpine
-    container_name: litebin-caddy
-    restart: unless-stopped
-    env_file:
-      - .env
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-      - caddy-root:/root/.local/share/caddy
-    networks:
-      - litebin-network
-
-networks:
-  litebin-network:
-    name: litebin-network
-    driver: bridge
-
-volumes:
-  orchestrator-data:
-  caddy-data:
-  caddy-config:
-  caddy-root:
-COMPOSE_EOF
+  generate_compose "$tmp_compose" "$certs_dir"
 
   if ! diff -q "$tmp_compose" "${install_dir}/docker-compose.yml" >/dev/null 2>&1; then
     compose_changed=true
@@ -1099,6 +1142,129 @@ COMPOSE_EOF
   fi
 }
 
+# -- Auto-detect Update ------------------------------------------------------
+update_litebin() {
+  local is_master=false is_agent=false
+  local master_dir="" agent_dir=""
+
+  # Detect master
+  if [ "$(id -u)" -eq 0 ] && [ -f "/opt/litebin/docker-compose.yml" ]; then
+    master_dir="/opt/litebin"
+  elif [ -f "${HOME}/litebin/docker-compose.yml" ]; then
+    master_dir="${HOME}/litebin"
+  fi
+  [ -n "$master_dir" ] && is_master=true
+
+  # Detect agent
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^litebin-agent$"; then
+    is_agent=true
+  fi
+
+  # Nothing found
+  if [ "$is_master" = false ] && [ "$is_agent" = false ]; then
+    die "No LiteBin installation found. Run 'curl -fsSL ${L8B_IN} | bash -s master' or 'bash -s agent' first."
+  fi
+
+  # Both found
+  if [ "$is_master" = true ] && [ "$is_agent" = true ]; then
+    echo ""
+    echo -e "  ${YELLOW}Both master and agent detected on this server.${NC}"
+    echo ""
+    echo "    1) Update master"
+    echo "    2) Update agent"
+    echo ""
+    local choice
+    echo -ne "  ${CYAN}Choose [1-2]:${NC} "
+    _tty_read choice
+    case "$choice" in
+      2) update_agent ;;
+      *) update_master ;;
+    esac
+    return
+  fi
+
+  # Only one found
+  if [ "$is_master" = true ]; then
+    update_master
+  else
+    update_agent
+  fi
+}
+
+# -- Agent Update -------------------------------------------------------------
+update_agent() {
+  local arch
+  arch=$(detect_arch)
+
+  local install_dir
+  install_dir=$(find_install_dir)
+  [ -d "${install_dir}/agent" ] || die "Agent installation not found at ${install_dir}/agent"
+
+  # Get current version
+  local current_version="unknown"
+  if [ -f "${install_dir}/.version" ]; then
+    current_version=$(cat "${install_dir}/.version")
+  fi
+
+  # Get latest release
+  local latest_release
+  latest_release=$(get_latest_release)
+
+  echo ""
+  echo -e "${BOLD}LiteBin Agent Update${NC}"
+  echo ""
+  echo -e "  Current version:  ${CYAN}${current_version}${NC}"
+  echo -e "  Latest version:   ${CYAN}${latest_release}${NC}"
+  echo ""
+
+  if [ "$current_version" = "$latest_release" ]; then
+    if ! prompt_yes "Already up to date. Reinstall?"; then
+      info "Cancelled."
+      exit 0
+    fi
+  else
+    if ! prompt_yes "Update agent from ${current_version} to ${latest_release}?"; then
+      info "Cancelled."
+      exit 0
+    fi
+  fi
+
+  ensure_docker
+
+  # Detect port from previous container, fallback to 5083
+  local agent_port="5083"
+  local prev_port
+  prev_port=$(docker port litebin-agent 2>/dev/null | head -1 | cut -d: -f2 || true)
+  [ -n "$prev_port" ] && agent_port="$prev_port"
+
+  # Download new agent binary
+  download_and_verify \
+    "https://github.com/${REPO}/releases/download/${latest_release}/litebin-agent-${arch}-linux" \
+    "${install_dir}/agent/litebin-agent" \
+    "agent ${latest_release} (${arch})"
+  chmod +x "${install_dir}/agent/litebin-agent"
+
+  # Rebuild and restart
+  info "Rebuilding agent image..."
+  (cd "${install_dir}/agent" && docker build -t litebin-agent .)
+
+  info "Restarting agent..."
+  docker stop litebin-agent 2>/dev/null || true
+  docker rm litebin-agent 2>/dev/null || true
+
+  local certs_dir
+  certs_dir=$(find_certs_dir "$install_dir")
+  run_agent_container "$install_dir" "$certs_dir" "$agent_port"
+
+  # Save installed version
+  echo "$latest_release" > "${install_dir}/.version"
+
+  echo ""
+  echo -e "${GREEN}${BOLD}  Agent ${latest_release} is running!${NC}"
+  echo ""
+  echo -e "  View logs: ${DIM}docker logs -f litebin-agent${NC}"
+}
+
 # -- Interactive Menu --------------------------------------------------------
 show_menu() {
   # If no terminal at all (piped in CI/script), print usage and exit
@@ -1113,7 +1279,7 @@ show_menu() {
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
     echo "  agent     Set up an agent server (Linux only)"
     echo "  cli       Install the l8b CLI tool"
-    echo "  update    Update LiteBin to the latest version"
+    echo "  update    Update LiteBin (auto-detects master or agent)"
     echo ""
     echo "Examples:"
     echo "  curl -fsSL ${L8B_IN} | bash -s master"
@@ -1140,7 +1306,7 @@ show_menu() {
   echo "    1) Master Server (orchestrator + dashboard + Caddy)"
   echo "    2) Agent (worker daemon)"
   echo "    3) CLI only (l8b deploy tool)"
-  echo "    4) Setup multi-server (generate/regenerate mTLS certs)"
+  echo "    4) Multi-server certs (generate / regenerate / show bundle)"
   echo "    5) Update LiteBin"
   echo ""
   local choice
@@ -1152,19 +1318,29 @@ show_menu() {
     1) install_master ;;
     2) install_agent ;;
     3) install_cli ;;
-    4) regenerate_certs ;;
-    5) update_master ;;
+    4) manage_certs ;;
+    5) update_litebin ;;
     *) die "Invalid choice. Enter 1, 2, 3, 4, or 5." ;;
+  esac
+}
+
+# -- Certs CLI helper --------------------------------------------------------
+certs_cmd() {
+  case "${1:-}" in
+    --show-bundle) show_cert_bundle ;;
+    --regenerate)  regenerate_certs ;;
+    "")            manage_certs ;;
+    *)             die "Unknown certs option: $1. Use --show-bundle or --regenerate." ;;
   esac
 }
 
 # -- Main --------------------------------------------------------------------
 case "${1:-}" in
   master)  install_master ;;
-  agent)   install_agent ;;
+  agent)   install_agent "${2:-}" ;;
   cli)     install_cli ;;
-  certs)   regenerate_certs ;;
-  update)  update_master ;;
+  certs)   certs_cmd "${2:-}" ;;
+  update)  update_litebin ;;
   -h|--help|"help")
     local latest
     latest=$(get_latest_release 2>/dev/null) || true
@@ -1176,8 +1352,8 @@ case "${1:-}" in
     echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
     echo "  agent     Set up an agent server (Linux only)"
     echo "  cli       Install the l8b CLI tool"
-    echo "  update    Update LiteBin to the latest version"
-    echo "  certs     Setup multi-server / regenerate mTLS certs (run on master)"
+    echo "  update    Update LiteBin (auto-detects master or agent)"
+    echo "  certs     Manage mTLS certs (interactive, or use --show-bundle / --regenerate)"
     ;;
   "")       show_menu ;;
   *)        die "Unknown mode: $1. Run with --help for usage." ;;

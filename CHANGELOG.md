@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Agent update flow (`bash -s update`) — auto-detects master vs agent, shows version diff, downloads and restarts
+- Cert bundle retrieval — `bash -s certs` interactive menu to generate, regenerate, or show existing bundle without re-running master setup
+- Docker network and Caddy sidecar creation in agent install, update, and cert update flows
+- Agent port detection from previous container on update/cert-update (preserves custom ports)
+
+### Fixed
+- Fix `show_cert_bundle` failing when agent cert files not saved to master certs directory
+- Fix master detection in update using `-d` (directory test) instead of `-f` (file test) for `docker-compose.yml`
+- Fix agent cert update port detection running after container removal (always fell back to 5083)
+
 ## [0.1.15] - 2026-04-11
 
 ### Fixed
