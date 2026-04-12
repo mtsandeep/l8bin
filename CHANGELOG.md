@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-04-12
+
 ### Fixed
 - Fix agent Caddy admin API unreachable from agent container — bind to `0.0.0.0:2019` via Caddyfile (was `localhost:2019` by default, only reachable inside the Caddy container itself)
 - Preserve original Host header when proxying to remote agents over TLS — Caddy 2.11+ auto-rewrites Host to upstream address, breaking agent route matching
