@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-04-12
+
 ### Fixed
 - Fix agent Caddy TLS cert loading — use inline PEM (`load_pem`) instead of file paths (`load_files`), eliminating the need for certs to exist inside the Caddy container's filesystem
 - Remove certs volume mount from agent Caddy container (no longer needed — certs are embedded inline in the Caddy JSON config)
