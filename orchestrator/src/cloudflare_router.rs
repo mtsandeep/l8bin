@@ -238,7 +238,6 @@ impl CloudflareDnsRouter {
     fn build_agent_caddy_config(
         agent_projects: &[&ProjectRoute],
         domain: &str,
-        agent_port: u16,
         orchestrator_url: &str,
     ) -> Value {
         let mut routes: Vec<Value> = Vec::new();
@@ -258,8 +257,8 @@ impl CloudflareDnsRouter {
 
             if let Some(cd) = &p.custom_domain {
                 if let Some(ref rewrite) = p.host_rewrite {
-                    // Sleeping custom domain: proxy to agent waker with Host rewrite
-                    let agent_wake = format!("localhost:{}", agent_port);
+                    // Sleeping custom domain: proxy to agent internal wake server with Host rewrite
+                    let agent_wake = "litebin-agent:8444".to_string();
                     let (www_host, _canonical) = if cd.starts_with("www.") {
                         (cd[4..].to_string(), cd.clone())
                     } else {
@@ -319,12 +318,12 @@ impl CloudflareDnsRouter {
             }
         }
 
-        // Catch-all for sleeping apps on this agent → agent wake handler
+        // Catch-all for sleeping apps on this agent → agent internal wake server
         routes.push(json!({
             "match": [{ "host": [format!("*.{}", domain)] }],
             "handle": [{
                 "handler": "reverse_proxy",
-                "upstreams": [{ "dial": format!("localhost:{}", agent_port) }]
+                "upstreams": [{ "dial": "litebin-agent:8444" }]
             }]
         }));
 
@@ -333,7 +332,7 @@ impl CloudflareDnsRouter {
                 "match": [{ "host": [format!("*.{}", domain)] }],
                 "handle": [{
                     "handler": "reverse_proxy",
-                    "upstreams": [{ "dial": format!("localhost:{}", agent_port) }]
+                    "upstreams": [{ "dial": "litebin-agent:8444" }]
                 }]
             }]
         });
@@ -623,20 +622,9 @@ impl RoutingProvider for CloudflareDnsRouter {
                 continue;
             }
 
-            // Look up agent_port and orchestrator_url for this agent
-            let node_info: Option<(i64,)> = sqlx::query_as(
-                "SELECT agent_port FROM nodes WHERE id = ?",
-            )
-            .bind(node_id)
-            .fetch_optional(&self.db)
-            .await?;
-
-            let agent_port = node_info.map(|(p,)| p as u16).unwrap_or(8443);
-
             let agent_config = Self::build_agent_caddy_config(
                 agent_projects,
                 domain,
-                agent_port,
                 &self.config.public_ip, // orchestrator reachable for /caddy/ask
             );
 

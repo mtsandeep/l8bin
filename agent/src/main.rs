@@ -221,6 +221,30 @@ async fn main() -> Result<()> {
     // Spawn activity reporter (reports active hosts to orchestrator via UDP → HTTP)
     tokio::spawn(activity::run_activity_reporter(state.clone()));
 
+    // Spawn internal wake server (HTTP, no TLS, Docker network only).
+    // Used by agent Caddy to trigger wake for sleeping containers in cloudflare_dns mode.
+    // Port 8444 is not exposed on the host — only reachable from the Docker network.
+    {
+        let wake_state = state.clone();
+        tokio::spawn(async move {
+            let wake_addr = SocketAddr::from(([0, 0, 0, 0], 8444));
+            let wake_app = Router::new()
+                .fallback(routes::waker::wake)
+                .with_state(wake_state);
+            info!("Starting internal wake server on {}", wake_addr);
+            match tokio::net::TcpListener::bind(wake_addr).await {
+                Ok(listener) => {
+                    if let Err(e) = axum::serve(listener, wake_app).await {
+                        tracing::error!(error = %e, "internal wake server failed");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to bind internal wake server on port 8444");
+                }
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/health", get(routes::health::health))
         .route("/internal/register", post(routes::register::register))

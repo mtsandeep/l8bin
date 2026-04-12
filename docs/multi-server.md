@@ -94,10 +94,16 @@ Orchestrator ←------------------------→ Agent API
 Master Caddy ←--------------------→ Agent Caddy
    (app traffic proxy,         (routes to containers
     TLS with CA verification)    via Docker network)
+
+                    HTTP (port 8444, internal)
+Agent Caddy ←------------------------→ Agent API
+   (wake trigger for               (starts container,
+    sleeping containers)            returns loading page)
 ```
 
-- **Port 8443 (mTLS)**: Orchestrator ↔ Agent API only. Never handles user traffic.
+- **Port 8443 (mTLS)**: Orchestrator ↔ Agent API only. Requires client certificate signed by the Root CA. Never handles user traffic.
 - **Port 80/443 (HTTPS)**: User-facing traffic. In master_proxy mode, master Caddy proxies to agent Caddy here.
+- **Port 8444 (HTTP, internal only)**: Agent Caddy ↔ Agent wake handler. Plain HTTP, no TLS — only reachable from the Docker network, not exposed on the host. Used in cloudflare_dns mode when the agent Caddy needs to wake a sleeping container without going through the mTLS API.
 
 ## Bandwidth Comparison
 

@@ -8,11 +8,13 @@ All notable changes to this project will be documented in this file.
 - TLS-encrypted traffic between master and remote agent Caddys using existing mTLS PKI (agent.pem + ca.pem)
 - Agent Caddy loads TLS cert on startup (base config with catch-all 502)
 - Caddy config rebuild after API container start (`POST /containers/start`)
+- Internal wake server on agent (port 8444, plain HTTP, Docker network only) for `cloudflare_dns` mode wake flow
 
 ### Fixed
 - Fix agent Caddy upstream resolution — use Docker network container names (`litebin-{id}:{port}`) instead of `localhost:{mapped_port}` (broken when Caddy runs as a separate container)
 - Fix `master_proxy` mode for remote agents — traffic now routes through agent Caddy sidecar over TLS instead of direct container port access (which was unreachable and unencrypted)
 - Fix agent Caddy catch-all routing to static 502 instead of proxying to mTLS API port
+- Fix `cloudflare_dns` mode agent Caddy catch-all — now uses internal wake server at `litebin-agent:8444`
 
 ## [0.1.16] - 2026-04-12
 
