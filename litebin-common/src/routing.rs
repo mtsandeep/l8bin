@@ -84,12 +84,7 @@ impl MasterProxyRouter {
                     "protocol": "http",
                     "tls": {
                         "server_name": "agent",
-                        "trust_pool": {
-                            "providers": [{
-                                "provider": "file",
-                                "path": &self.ca_cert_path
-                            }]
-                        }
+                        "root_ca_pem_files": [&self.ca_cert_path]
                     }
                 });
             }
@@ -154,12 +149,7 @@ impl MasterProxyRouter {
                             "protocol": "http",
                             "tls": {
                                 "server_name": "agent",
-                                "trust_pool": {
-                                    "providers": [{
-                                        "provider": "file",
-                                        "path": &self.ca_cert_path
-                                    }]
-                                }
+                                "root_ca_pem_files": [&self.ca_cert_path]
                             }
                         });
                     }

@@ -219,6 +219,24 @@ run_agent_container() {
     litebin-agent
 }
 
+run_agent_caddy() {
+  local certs_dir="${1:-}"
+  docker stop litebin-agent-caddy 2>/dev/null || true
+  docker rm litebin-agent-caddy 2>/dev/null || true
+  docker run -d \
+    --name litebin-agent-caddy \
+    --restart unless-stopped \
+    --network litebin-network \
+    -p 80:80 \
+    -p 443:443 \
+    -p 443:443/udp \
+    -v litebin-agent-caddy-data:/data \
+    -v litebin-agent-caddy-config:/config \
+    -v litebin-agent-caddy-root:/root/.local/share/caddy \
+    $([ -n "$certs_dir" ] && echo "-v \"${certs_dir}\":/certs:ro") \
+    caddy:2.11.2-alpine
+}
+
 generate_compose() {
   local dest="$1"
   local certs_dir="${2:-}"
@@ -934,18 +952,7 @@ EOF
 
   # Start Caddy sidecar for agent local proxying
   info "Starting agent Caddy sidecar..."
-  docker run -d \
-    --name litebin-agent-caddy \
-    --restart unless-stopped \
-    --network litebin-network \
-    -p 80:80 \
-    -p 443:443 \
-    -p 443:443/udp \
-    -v litebin-agent-caddy-data:/data \
-    -v litebin-agent-caddy-config:/config \
-    -v litebin-agent-caddy-root:/root/.local/share/caddy \
-    -v "${certs_dir}":/certs:ro \
-    caddy:2.11.2-alpine
+  run_agent_caddy "$certs_dir"
 
   info "Starting agent..."
   run_agent_container "$install_dir" "$certs_dir" "$AGENT_PORT"
@@ -1260,6 +1267,10 @@ update_agent() {
   local certs_dir
   certs_dir=$(find_certs_dir "$install_dir")
   run_agent_container "$install_dir" "$certs_dir" "$agent_port"
+
+  # Also restart agent Caddy sidecar (picks up image updates)
+  info "Restarting agent Caddy sidecar..."
+  run_agent_caddy "$certs_dir"
 
   # Save installed version
   echo "$latest_release" > "${install_dir}/.version"
