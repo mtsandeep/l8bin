@@ -903,6 +903,8 @@ FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY litebin-agent /usr/local/bin/litebin-agent
 RUN chmod +x /usr/local/bin/litebin-agent
+WORKDIR /etc/litebin
+RUN mkdir -p /etc/litebin/data
 EXPOSE 8443
 CMD ["/usr/local/bin/litebin-agent"]
 AGENT_DOCKERFILE

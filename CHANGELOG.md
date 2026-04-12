@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+###Fixed
+- Fix agent data not persisting across container recreations — Dockerfile was missing `WORKDIR /etc/litebin`, so registration/caddy config were written to `/data/` instead of the persistent volume at `/etc/litebin/data/`
+
 ## [0.1.22] - 2026-04-12
 
 ###Fixed
