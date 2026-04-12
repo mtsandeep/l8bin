@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <title>Dynamic Vector Logo Generator</title>
+    <style>
+        body {
+            background-color: #111;
+            color: white;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .controls {
+            background: #222;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            border: 1px solid #333;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .logo-container {
+            background-color: #000;
+            padding: 40px;
+            border-radius: 4px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            cursor: pointer;
+            overflow: visible;
+        }
+
+        #logoSvg {
+            overflow: visible;
+            display: block;
+        }
+
+        #groupL, #group8, #groupB, #textIn {
+            transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .sq-l     { fill: #843DFF; }
+        .sq-eight { fill: #FF8C42; }
+        .sq-text  { fill: #FFF5E6; }
+        .sq-extra { opacity: 0; transition: opacity 0.3s ease; }
+
+        #textIn {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 900;
+            font-weight: 900;
+            font-size: 0px;
+            fill: #FFF5E6;
+            opacity: 0;
+            transition: opacity 0.3s ease, transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+            dominant-baseline: auto;
+        }
+        #logoSvg.separated #textIn { opacity: 1; }
+
+        #logoSvg.separated .sq-extra { opacity: 1; }
+        .sq-collapse-only { opacity: 1; transition: opacity 0.2s ease; }
+        #logoSvg.separated .sq-collapse-only { opacity: 0; }
+
+        label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #aaa; }
+        input[type="range"] { cursor: pointer; }
+        input[type="color"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 28px;
+            height: 28px;
+            border: 2px solid #444;
+            border-radius: 4px;
+            cursor: pointer;
+            background: none;
+            padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>Square Size: <span id="sizeVal">20</span></label>
+            <input type="range" id="sizeInput" min="5" max="50" value="20">
+        </div>
+        <div class="control-group">
+            <label>Gap: <span id="gapVal">5</span></label>
+            <input type="range" id="gapInput" min="0" max="50" value="5">
+        </div>
+        <div class="control-group" style="justify-content: center;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: #fff; text-transform: none; letter-spacing: 0; font-size: 13px;">
+                <input type="checkbox" id="roundToggle" checked>
+                Rounded
+            </label>
+        </div>
+        <div class="control-group" style="align-items: center;">
+            <label style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #aaa;">Colors</label>
+            <div style="display: flex; gap: 10px;">
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <span style="font-size: 11px; color: #888;">L</span>
+                    <input type="color" id="colorL" value="#843DFF">
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <span style="font-size: 11px; color: #888;">8</span>
+                    <input type="color" id="color8" value="#FF8C42">
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <span style="font-size: 11px; color: #888;">B</span>
+                    <input type="color" id="colorB" value="#FFF5E6">
+                </div>
+                <button id="resetColors" style="background: #333; border: 1px solid #555; color: #aaa; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="logo-container" id="container">
+        <svg id="logoSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+
+    <!-- Static expanded preview -->
+    <div style="margin-top: 30px; background: #222; padding: 20px; border-radius: 8px; border: 1px solid #333;">
+        <label style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #666; display: block; margin-bottom: 15px; text-align: center;">Expanded Preview</label>
+        <svg xmlns="http://www.w3.org/2000/svg" width="415" height="170" viewBox="0 0 415 170" style="display: block; margin: 0 auto; overflow: visible;">
+            <!-- L -->
+            <rect x="0" y="0" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="0" y="25" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="0" y="50" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="0" y="75" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="0" y="100" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="0" y="125" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="0" y="150" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="25" y="150" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="50" y="150" width="20" height="20" rx="2" fill="#843DFF"/>
+            <rect x="75" y="150" width="20" height="20" rx="2" fill="#843DFF"/>
+
+            <!-- 8 -->
+            <rect x="115" y="0" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="140" y="0" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="165" y="0" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="190" y="0" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="115" y="25" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="190" y="25" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="115" y="50" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="190" y="50" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="115" y="75" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="140" y="75" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="165" y="75" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="190" y="75" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="115" y="100" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="190" y="100" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="115" y="125" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="190" y="125" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="115" y="150" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="140" y="150" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="165" y="150" width="20" height="20" rx="2" fill="#00D4FF"/>
+            <rect x="190" y="150" width="20" height="20" rx="2" fill="#00D4FF"/>
+
+            <!-- B -->
+            <rect x="230" y="0" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="255" y="0" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="280" y="0" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <path d="M305,0 H316 Q325,0 325,9 V20 H305 Z" fill="#FFFFFF"/>
+            <rect x="230" y="25" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="305" y="25" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="230" y="50" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="305" y="50" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="230" y="75" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="255" y="75" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="280" y="75" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="230" y="100" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="305" y="100" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="230" y="125" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="305" y="125" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="230" y="150" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="255" y="150" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <rect x="280" y="150" width="20" height="20" rx="2" fill="#FFFFFF"/>
+            <path d="M305,150 H325 V161 Q325,170 316,170 H305 Z" fill="#FFFFFF"/>
+
+            <!-- IN -->
+            <text x="345" y="170" font-family="JetBrains Mono, monospace" font-weight="900" font-size="119" fill="#FFFFFF" dominant-baseline="auto">IN</text>
+        </svg>
+    </div>
+
+    <script>
+        const svg = document.getElementById('logoSvg');
+        const container = document.getElementById('container');
+        const sizeInput = document.getElementById('sizeInput');
+        const gapInput = document.getElementById('gapInput');
+        const roundToggle = document.getElementById('roundToggle');
+        const colorL = document.getElementById('colorL');
+        const color8 = document.getElementById('color8');
+        const colorB = document.getElementById('colorB');
+        const resetBtn = document.getElementById('resetColors');
+
+        const DEFAULTS = { L: '#843DFF', '8': '#FF8C42', B: '#FFF5E6' };
+        const STORAGE_KEY = 'litebin-logo-colors';
+
+        function loadColors() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+                if (saved) {
+                    colorL.value = saved.L || DEFAULTS.L;
+                    color8.value = saved['8'] || DEFAULTS['8'];
+                    colorB.value = saved.B || DEFAULTS.B;
+                }
+            } catch (e) {}
+        }
+
+        function saveColors() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                L: colorL.value, '8': color8.value, B: colorB.value
+            }));
+        }
+
+        loadColors();
+        const sizeVal = document.getElementById('sizeVal');
+        const gapVal = document.getElementById('gapVal');
+
+        const gridMap = [
+            // ── L (4x7): vertical bar + base ──
+            { x: 0, y: 0, group: 'L' },
+            { x: 0, y: 1, group: 'L' },
+            { x: 0, y: 2, group: 'L' },
+            { x: 0, y: 3, group: 'L' },
+            { x: 0, y: 4, group: 'L' },
+            { x: 0, y: 5, group: 'L' },
+            { x: 0, y: 6, group: 'L' },
+            { x: 1, y: 6, group: 'L' },
+            { x: 2, y: 6, group: 'L' },
+            { x: 3, y: 6, group: 'L', extra: true },
+
+            // ── 8 (4x7): increasing-width lines visible when collapsed ──
+            // 8 8 . .  row 0 (2 cells)
+            { x: 0, y: 0, group: '8' },
+            { x: 1, y: 0, group: '8' },
+            { x: 2, y: 0, group: '8', extra: true },
+            { x: 3, y: 0, group: '8', extra: true },
+            // 8 . . 8  row 1
+            { x: 0, y: 1, group: '8', extra: true },
+            { x: 3, y: 1, group: '8', extra: true },
+            // 8 . . 8  row 2
+            { x: 0, y: 2, group: '8', extra: true },
+            { x: 3, y: 2, group: '8', extra: true },
+            // 8 8 8 .  row 3 (3 cells)
+            { x: 0, y: 3, group: '8' },
+            { x: 1, y: 3, group: '8' },
+            { x: 2, y: 3, group: '8' },
+            { x: 3, y: 3, group: '8', extra: true },
+            // 8 . . 8  row 4
+            { x: 0, y: 4, group: '8', extra: true },
+            { x: 3, y: 4, group: '8', extra: true },
+            // 8 . . 8  row 5
+            { x: 0, y: 5, group: '8', extra: true },
+            { x: 3, y: 5, group: '8', extra: true },
+            // 8 8 8 8  row 6 (4 cells)
+            { x: 0, y: 6, group: '8' },
+            { x: 1, y: 6, group: '8' },
+            { x: 2, y: 6, group: '8' },
+            { x: 3, y: 6, group: '8', round: 'br' },
+            { x: 3, y: 6, group: '8', extra: true },
+
+            // ── B (4x7): left bumps + right vertical ──
+            // B B B .  row 0
+            { x: 0, y: 0, group: 'B', extra: true },
+            { x: 1, y: 0, group: 'B', extra: true },
+            { x: 2, y: 0, group: 'B' },
+            { x: 3, y: 0, group: 'B', round: 'tr' },
+            // B . . B  row 1
+            { x: 0, y: 1, group: 'B', extra: true },
+            { x: 3, y: 1, group: 'B' },
+            // B . . B  row 2
+            { x: 0, y: 2, group: 'B', extra: true },
+            { x: 3, y: 2, group: 'B' },
+            // B B B .  row 3
+            { x: 0, y: 3, group: 'B', extra: true },
+            { x: 1, y: 3, group: 'B', extra: true },
+            { x: 2, y: 3, group: 'B', extra: true },
+            { x: 3, y: 3, group: 'B', collapseOnly: true },
+            // B . . B  row 4
+            { x: 0, y: 4, group: 'B', extra: true },
+            { x: 3, y: 4, group: 'B' },
+            // B . . B  row 5
+            { x: 0, y: 5, group: 'B', extra: true },
+            { x: 3, y: 5, group: 'B' },
+            // B B B .  row 6
+            { x: 0, y: 6, group: 'B', extra: true },
+            { x: 1, y: 6, group: 'B', extra: true },
+            { x: 2, y: 6, group: 'B', extra: true },
+            { x: 3, y: 6, group: 'B', round: 'br', extra: true },
+
+        ];
+
+        let groups = {};
+        let textIn;
+        let isSeparated = false;
+
+        function drawLogo() {
+            const size = parseInt(sizeInput.value);
+            const gap = parseInt(gapInput.value);
+
+            sizeVal.innerText = size;
+            gapVal.innerText = gap;
+
+            const step = size + gap;
+            const totalWidth = (size * 4) + (gap * 3);
+            const totalHeight = (size * 7) + (gap * 6);
+
+            svg.setAttribute('width', totalWidth);
+            svg.setAttribute('height', totalHeight);
+            svg.setAttribute('viewBox', `0 0 ${totalWidth} ${totalHeight}`);
+
+            svg.innerHTML = '';
+
+            // Create all groups
+            const groupIds = ['groupL', 'group8', 'groupB'];
+            groups = {};
+            groupIds.forEach(id => {
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                g.id = id;
+                groups[id] = g;
+            });
+
+            const classMap = { L: 'sq-l', '8': 'sq-eight', B: 'sq-text' };
+            const groupMap = { L: 'groupL', '8': 'group8', B: 'groupB' };
+
+            gridMap.forEach(rect => {
+                const px = rect.x * step;
+                const py = rect.y * step;
+                const cls = classMap[rect.group] + (rect.extra ? ' sq-extra' : '') + (rect.collapseOnly ? ' sq-collapse-only' : '');
+
+                if (rect.round) {
+                    const r = size * 0.45;
+                    let d;
+                    if (rect.round === 'tr') {
+                        d = `M${px},${py} H${px + size - r} Q${px + size},${py} ${px + size},${py + r} V${py + size} H${px} Z`;
+                    } else {
+                        d = `M${px},${py} H${px + size} V${py + size - r} Q${px + size},${py + size} ${px + size - r},${py + size} H${px} Z`;
+                    }
+                    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                    p.setAttribute('d', d);
+                    p.setAttribute('class', cls);
+                    groups[groupMap[rect.group]].appendChild(p);
+                } else {
+                    const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    r.setAttribute('x', px);
+                    r.setAttribute('y', py);
+                    r.setAttribute('width', size);
+                    r.setAttribute('height', size);
+                    r.setAttribute('rx', roundToggle.checked ? Math.max(1, size * 0.12) : 0);
+                    r.setAttribute('class', cls);
+                    groups[groupMap[rect.group]].appendChild(r);
+                }
+            });
+
+            groupIds.forEach(id => svg.appendChild(groups[id]));
+
+            // "in" as plain text
+            textIn = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            textIn.id = 'textIn';
+            textIn.setAttribute('x', totalWidth + size);
+            textIn.setAttribute('y', totalHeight);
+            textIn.style.fontSize = `${totalHeight * 0.7}px`;
+            textIn.textContent = 'IN';
+            svg.appendChild(textIn);
+
+            // "*" above first cell
+            const asterisk = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            asterisk.setAttribute('x', size / 2);
+            asterisk.setAttribute('y', -step * 0.5);
+            asterisk.setAttribute('text-anchor', 'middle');
+            asterisk.setAttribute('dominant-baseline', 'central');
+            asterisk.setAttribute('class', 'sq-eight');
+            asterisk.style.fontSize = `${size * 1.4}px`;
+            asterisk.style.fontFamily = "'JetBrains Mono', monospace";
+            asterisk.style.fontWeight = '900';
+            asterisk.textContent = '*';
+            svg.appendChild(asterisk);
+
+            // Size container to fit expanded layout: L | 8 | B in
+            const slideDist = getSlideDistance();
+            const textWidth = totalHeight * 0.45; // approximate "in" width
+            const leftPad = slideDist + 40;
+            const rightPad = slideDist + textWidth + 40;
+            const topPad = step + 40; // room for asterisk
+            container.style.paddingTop = `${topPad}px`;
+            container.style.paddingLeft = `${leftPad}px`;
+            container.style.paddingRight = `${rightPad}px`;
+        }
+
+        function getSlideDistance() {
+            const size = parseInt(sizeInput.value);
+            const gap = parseInt(gapInput.value);
+            return (size * 4) + (gap * 3) + size;
+        }
+
+        function separate() {
+            const d = getSlideDistance();
+            groups.groupL.style.transform = `translateX(-${d}px)`;
+            groups.groupB.style.transform = `translateX(${d}px)`;
+            textIn.style.transform = `translateX(${d}px)`;
+            svg.classList.add('separated');
+            isSeparated = true;
+        }
+
+        function collapse() {
+            groups.groupL.style.transform = 'translateX(0)';
+            groups.groupB.style.transform = 'translateX(0)';
+            textIn.style.transform = 'translateX(0)';
+            svg.classList.remove('separated');
+            isSeparated = false;
+        }
+
+        container.addEventListener('mouseenter', separate);
+        container.addEventListener('mouseleave', collapse);
+
+        function applyColors() {
+            document.querySelectorAll('.sq-l').forEach(el => el.style.setProperty('fill', colorL.value));
+            document.querySelectorAll('.sq-eight').forEach(el => el.style.setProperty('fill', color8.value));
+            document.querySelectorAll('.sq-text').forEach(el => el.style.setProperty('fill', colorB.value));
+            if (textIn) textIn.style.setProperty('fill', colorB.value);
+        }
+
+        function redraw() {
+            drawLogo();
+            applyColors();
+            if (isSeparated) separate();
+        }
+
+        sizeInput.addEventListener('input', redraw);
+        gapInput.addEventListener('input', redraw);
+        roundToggle.addEventListener('change', redraw);
+        colorL.addEventListener('input', () => { applyColors(); saveColors(); });
+        color8.addEventListener('input', () => { applyColors(); saveColors(); });
+        colorB.addEventListener('input', () => { applyColors(); saveColors(); });
+
+        resetBtn.addEventListener('click', () => {
+            localStorage.removeItem(STORAGE_KEY);
+            colorL.value = DEFAULTS.L;
+            color8.value = DEFAULTS['8'];
+            colorB.value = DEFAULTS.B;
+            // Clear inline fill styles so CSS defaults take over, then apply defaults
+            document.querySelectorAll('.sq-l, .sq-eight, .sq-text').forEach(el => el.style.removeProperty('fill'));
+            if (textIn) textIn.style.removeProperty('fill');
+            applyColors();
+        });
+
+        drawLogo();
+    </script>
+</body>
+</html>

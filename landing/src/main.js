@@ -208,19 +208,41 @@ if (glitchEl) {
 
   setText(variants[0]);
 
-  setInterval(() => {
-    idx = (idx + 1) % variants.length;
-    glitchTo(variants[idx]);
-  }, 3000);
+  let cycleTimer = null;
+  let flickerTimer = null;
 
-  setInterval(() => {
-    const chars = glitchEl.querySelectorAll('.char');
-    if (chars.length && Math.random() < 0.3) {
-      const c = chars[Math.floor(Math.random() * chars.length)];
-      c.classList.add('glitching');
-      setTimeout(() => c.classList.remove('glitching'), 100);
+  function startGlitch() {
+    stopGlitch();
+    cycleTimer = setInterval(() => {
+      idx = (idx + 1) % variants.length;
+      glitchTo(variants[idx]);
+    }, 3000);
+    flickerTimer = setInterval(() => {
+      const chars = glitchEl.querySelectorAll('.char');
+      if (chars.length && Math.random() < 0.3) {
+        const c = chars[Math.floor(Math.random() * chars.length)];
+        c.classList.add('glitching');
+        setTimeout(() => c.classList.remove('glitching'), 100);
+      }
+    }, 200);
+  }
+
+  function stopGlitch() {
+    clearInterval(cycleTimer);
+    clearInterval(flickerTimer);
+    cycleTimer = null;
+    flickerTimer = null;
+  }
+
+  startGlitch();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopGlitch();
+    } else {
+      startGlitch();
     }
-  }, 200);
+  });
 }
 
 // Mobile menu toggle
