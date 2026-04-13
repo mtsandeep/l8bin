@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix Cloudflare DNS records never being created — response structs (`CfListResult`, `CfSingleResult`) had incorrect nesting that didn't match the Cloudflare API format, causing all API responses to fail parsing
+- Fix agent `public_ip` being overwritten by auto-detection — dashboard-set value now takes priority, agent-reported IP only fills in when empty
+- Fix deploy modal not scrollable when content overflows viewport
+
+### Changed
+- Improve Cloudflare API error messages — include HTTP status code and response body in all error logs for easier debugging
+- Add DNS setup instructions to install script output (mode-specific: wildcard for master_proxy, two records for cloudflare_dns)
+- Auto-detect server public IP during install for DNS instructions
+- Update documentation in README and multi-server docs
+- Change settings tab buttons (Routing Mode, Token Scope) to cyan to distinguish from action buttons
+
 ## [0.1.23] - 2026-04-12
 
 ### Fixed

@@ -448,6 +448,14 @@ DASH_DOCKERFILE
   prompt "Domain name (e.g. example.com)" DOMAIN "$domain_default"
   [ -z "$DOMAIN" ] && die "Domain is required"
 
+  # Auto-detect public IP for DNS instructions
+  PUBLIC_IP=$(curl -sf --connect-timeout 3 --max-time 5 https://api.ipify.org 2>/dev/null \
+    || curl -sf --connect-timeout 3 --max-time 5 https://checkip.amazonaws.com 2>/dev/null \
+    || curl -sf --connect-timeout 3 --max-time 5 https://ipv4.icanhazip.com 2>/dev/null \
+    || echo "")
+  PUBLIC_IP=$(echo "$PUBLIC_IP" | tr -d '[:space:]')
+  [ -z "$PUBLIC_IP" ] && warn "Could not detect public IP automatically — update it via Dashboard > Settings after setup"
+
   local dash_default="l8bin"
 
   prompt "Dashboard subdomain" DASHBOARD_SUBDOMAIN "$dash_default"
@@ -594,6 +602,28 @@ CADDYFILE
   echo -e "  Dashboard:  ${CYAN}${dashboard_url}${NC}"
   echo -e "  API:        ${CYAN}${dashboard_url}${NC} (proxied via Caddy)"
   echo ""
+
+  if [ "$DOMAIN" != "localhost" ]; then
+    local ip_display="${PUBLIC_IP:-<your server IP>}"
+    echo "  DNS setup required:"
+    if [ "$routing_mode" = "cloudflare_dns" ]; then
+      echo "    You chose ${BOLD}cloudflare_dns${NC} mode. Create these DNS records (DNS-only, grey cloud):"
+      echo ""
+      echo -e "      ${YELLOW}A${NC}  ${DASHBOARD_SUBDOMAIN}.${DOMAIN}  →  ${ip_display}"
+      echo -e "      ${YELLOW}A${NC}  ${POKE_SUBDOMAIN}.${DOMAIN}      →  ${ip_display}"
+      echo ""
+      echo "    All app subdomains are managed automatically via the Cloudflare API."
+      echo "    Do NOT use a wildcard (*) record — it is not needed and will cause conflicts."
+    else
+      echo "    You chose ${BOLD}master_proxy${NC} mode. Create this DNS record (DNS-only, grey cloud):"
+      echo ""
+      echo -e "      ${YELLOW}*${NC}  .${DOMAIN}  →  ${ip_display}"
+      echo ""
+      echo "    This wildcard record routes all subdomains (*.${DOMAIN}) to this server."
+    fi
+    echo ""
+  fi
+
   echo "  Next steps:"
   echo "    1. Open the dashboard and create an admin account"
   echo "    2. Deploy apps using any of these methods:"

@@ -32,17 +32,6 @@ struct CfError {
     message: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct CfListResult {
-    result: Vec<DnsRecord>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CfSingleResult {
-    #[allow(dead_code)]
-    result: DnsRecord,
-}
-
 impl CloudflareClient {
     pub fn new(api_token: &str, zone_id: &str) -> Self {
         Self {
@@ -80,10 +69,19 @@ impl CloudflareClient {
             .await
             .context("cloudflare list_records request failed")?;
 
-        let body: CfResponse<CfListResult> = resp
-            .json()
+        let status = resp.status();
+        let raw = resp
+            .text()
             .await
-            .context("cloudflare list_records response parse failed")?;
+            .context("cloudflare list_records: failed to read response body")?;
+
+        let body: CfResponse<Vec<DnsRecord>> =
+            serde_json::from_str(&raw).with_context(|| {
+                format!(
+                    "cloudflare list_records response parse failed (status {}): {}",
+                    status, raw
+                )
+            })?;
 
         if !body.success {
             let errors = body
@@ -96,7 +94,7 @@ impl CloudflareClient {
             anyhow::bail!("cloudflare list_records failed: {}", errors);
         }
 
-        Ok(body.result.map(|r| r.result).unwrap_or_default())
+        Ok(body.result.unwrap_or_default())
     }
 
     /// List all DNS records in the zone matching a name suffix (e.g. ".l8b.in").
@@ -122,10 +120,19 @@ impl CloudflareClient {
             .await
             .context("cloudflare list_records_by_suffix request failed")?;
 
-        let body: CfResponse<CfListResult> = resp
-            .json()
+        let status = resp.status();
+        let raw = resp
+            .text()
             .await
-            .context("cloudflare list_records_by_suffix response parse failed")?;
+            .context("cloudflare list_records_by_suffix: failed to read response body")?;
+
+        let body: CfResponse<Vec<DnsRecord>> =
+            serde_json::from_str(&raw).with_context(|| {
+                format!(
+                    "cloudflare list_records_by_suffix response parse failed (status {}): {}",
+                    status, raw
+                )
+            })?;
 
         if !body.success {
             let errors = body
@@ -140,7 +147,6 @@ impl CloudflareClient {
 
         let records = body
             .result
-            .map(|r| r.result)
             .unwrap_or_default()
             .into_iter()
             .filter(|r| r.name.ends_with(suffix))
@@ -182,10 +188,19 @@ impl CloudflareClient {
                 .await
                 .context("cloudflare upsert PUT failed")?;
 
-            let cf_resp: CfResponse<CfSingleResult> = resp
-                .json()
+            let status = resp.status();
+            let raw = resp
+                .text()
                 .await
-                .context("cloudflare upsert PUT response parse failed")?;
+                .context("cloudflare upsert PUT: failed to read response body")?;
+
+            let cf_resp: CfResponse<DnsRecord> =
+                serde_json::from_str(&raw).with_context(|| {
+                    format!(
+                        "cloudflare upsert PUT response parse failed (status {}): {}",
+                        status, raw
+                    )
+                })?;
 
             if !cf_resp.success {
                 let errors = cf_resp
@@ -219,10 +234,19 @@ impl CloudflareClient {
                 .await
                 .context("cloudflare upsert POST failed")?;
 
-            let cf_resp: CfResponse<CfSingleResult> = resp
-                .json()
+            let status = resp.status();
+            let raw = resp
+                .text()
                 .await
-                .context("cloudflare upsert POST response parse failed")?;
+                .context("cloudflare upsert POST: failed to read response body")?;
+
+            let cf_resp: CfResponse<DnsRecord> =
+                serde_json::from_str(&raw).with_context(|| {
+                    format!(
+                        "cloudflare upsert POST response parse failed (status {}): {}",
+                        status, raw
+                    )
+                })?;
 
             if !cf_resp.success {
                 let errors = cf_resp

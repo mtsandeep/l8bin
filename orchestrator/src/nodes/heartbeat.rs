@@ -115,6 +115,11 @@ async fn handle_success(
     health: &HealthReport,
 ) {
     let now = chrono::Utc::now().timestamp();
+    // Only update public_ip from agent if not already set (e.g. manually via dashboard)
+    let public_ip = match (&node.public_ip, &health.public_ip) {
+        (Some(ip), _) if !ip.is_empty() => Some(ip.clone()),
+        (_, agent_ip) => agent_ip.clone(),
+    };
     let _ = sqlx::query(
         "UPDATE nodes SET last_seen_at = ?, fail_count = 0, status = 'online',
          total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?,
@@ -127,7 +132,7 @@ async fn handle_success(
     .bind(health.disk_free as i64)
     .bind(health.disk_total as i64)
     .bind(health.container_count as i64)
-    .bind(&health.public_ip)
+    .bind(&public_ip)
     .bind(now)
     .bind(&node.id)
     .execute(&state.db)
@@ -250,6 +255,11 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
 
     // Update node status to online
     let now = chrono::Utc::now().timestamp();
+    // Only update public_ip from agent if not already set (e.g. manually via dashboard)
+    let public_ip = match (&node.public_ip, &health.public_ip) {
+        (Some(ip), _) if !ip.is_empty() => Some(ip.clone()),
+        (_, agent_ip) => agent_ip.clone(),
+    };
     let _ = sqlx::query(
         "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, public_ip = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
     )
@@ -259,7 +269,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
     .bind(health.disk_free as i64)
     .bind(health.disk_total as i64)
     .bind(health.container_count as i64)
-    .bind(&health.public_ip)
+    .bind(&public_ip)
     .bind(now)
     .bind(now)
     .bind(&node.id)

@@ -88,9 +88,9 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-md mx-4 shadow-2xl">
+      <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-md mx-4 shadow-2xl max-h-[85vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/50">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/50 shrink-0">
           <h2 className="text-sm font-semibold text-slate-100">Deploy New App</h2>
           <button
             onClick={onClose}
@@ -102,7 +102,7 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
 
         {/* Step 1 */}
         {step === 1 && (
-          <form onSubmit={handleNext} className="p-5 space-y-4">
+          <form onSubmit={handleNext} className="p-5 space-y-4 overflow-y-auto">
             {/* Step indicator */}
             <div className="flex items-center gap-1">
               {([1, 2] as const).map((s, i) => (
@@ -205,7 +205,7 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
 
         {/* Step 2 */}
         {step === 2 && (
-          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
             {/* Step indicator */}
             <div className="flex items-center gap-1">
               {([1, 2] as const).map((s, i) => (

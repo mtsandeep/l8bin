@@ -227,7 +227,7 @@ function GeneralTab() {
             onClick={() => setRoutingMode('master_proxy')}
             className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
               routingMode === 'master_proxy'
-                ? 'bg-violet-600 text-white'
+                ? 'bg-cyan-600 text-white'
                 : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
             }`}
           >
@@ -238,7 +238,7 @@ function GeneralTab() {
             onClick={() => setRoutingMode('cloudflare_dns')}
             className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
               routingMode === 'cloudflare_dns'
-                ? 'bg-violet-600 text-white'
+                ? 'bg-cyan-600 text-white'
                 : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
             }`}
           >
@@ -497,7 +497,7 @@ function TokensTab() {
             onClick={() => setTokenScope('global')}
             className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
               tokenScope === 'global'
-                ? 'bg-violet-600 text-white'
+                ? 'bg-cyan-600 text-white'
                 : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
             }`}
           >
@@ -507,7 +507,7 @@ function TokensTab() {
             onClick={() => setTokenScope('project')}
             className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
               tokenScope === 'project'
-                ? 'bg-violet-600 text-white'
+                ? 'bg-cyan-600 text-white'
                 : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
             }`}
           >

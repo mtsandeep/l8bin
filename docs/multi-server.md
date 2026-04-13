@@ -235,6 +235,29 @@ Both containers must be on `litebin-network` for DNS resolution (`litebin-agent-
 
 "1x" means the agent handles one copy of the request/response. "2x" means the master proxies both directions, seeing every byte twice.
 
+## Public IP Resolution
+
+Both master and agent auto-detect their public IP at startup by querying external services (ipify, AWS checkip, icanhazip). This IP is used for DNS records in `cloudflare_dns` mode and for agent reachability.
+
+### Master
+
+| Priority | Source | When |
+|---|---|---|
+| 1 | `PUBLIC_IP` env var | Set manually (e.g. behind NAT) |
+| 2 | Auto-detection | Startup, if env var is empty |
+
+The detected value is stored in the `nodes` table as the "local" node. Update via Dashboard > Settings or set `PUBLIC_IP` in `.env` and restart.
+
+### Agent
+
+| Priority | Source | When |
+|---|---|---|
+| 1 | Dashboard value (DB) | Set manually via Nodes page — **never overwritten** |
+| 2 | `AGENT_PUBLIC_IP` env var | Set in agent's `.env` (e.g. behind NAT) |
+| 3 | Auto-detection | Agent startup, if env var is empty |
+
+The agent reports its IP in every `/health` response. The orchestrator only writes it to the DB if the current value is empty — a dashboard-set value always takes priority. If the agent is behind NAT, set its IP via the dashboard or `AGENT_PUBLIC_IP` in the agent's `.env`.
+
 ## Setup Checklist
 
 ### Master Proxy Mode
@@ -242,13 +265,17 @@ Both containers must be on `litebin-network` for DNS resolution (`litebin-agent-
 2. Add agents via dashboard or `bash -s agent`
 3. Set `ROUTING_MODE=master_proxy` (default)
 4. Ensure wildcard DNS `*.{domain}` → master IP
+5. Ensure `PUBLIC_IP` is set correctly (auto-detected at startup, or set manually if behind NAT)
 
 ### Cloudflare DNS Mode
 1. Set up master server
 2. Add agents via dashboard or `bash -s agent`
 3. Set `ROUTING_MODE=cloudflare_dns`
 4. Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` in master `.env`
-5. Ensure all agents are reachable from the internet on port 80/443
+5. Ensure `PUBLIC_IP` is set correctly (auto-detected at startup, or set manually in `.env` if behind NAT)
+6. Create DNS-only A records for `{DASHBOARD_SUBDOMAIN}.{domain}` and `{POKE_SUBDOMAIN}.{domain}` pointing to master IP
+7. Do NOT create a wildcard (`*`) record — app subdomains are managed automatically via the Cloudflare API
+8. Ensure all agents are reachable from the internet on port 80/443
 
 ### Manual DNS Mode
 1. Set up master server

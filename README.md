@@ -44,7 +44,20 @@ The installer will prompt for:
 After setup:
 
 1. Open `https://l8bin.example.com` and create an admin account
-2. Deploy apps using any method below
+2. Configure DNS for your domain (see below)
+3. Deploy apps using any method below
+
+### DNS Setup
+
+Create **DNS-only** (grey cloud, not proxied) A records in your DNS provider. The records depend on your routing mode:
+
+| Routing Mode | Records to Create | Managed By |
+|---|---|---|
+| `master_proxy` (default) | `*.{domain}` → master IP | Manual (one wildcard) |
+| `cloudflare_dns` | `{DASHBOARD_SUBDOMAIN}.{domain}` → master IP<br>`{POKE_SUBDOMAIN}.{domain}` → master IP | Manual (2 records) |
+| | All app subdomains (e.g. `{project}.{domain}`) | **Automatic** via Cloudflare API |
+
+> **cloudflare_dns mode:** Do NOT create a wildcard (`*`) record. It is not needed and will conflict with the per-project records created automatically. Also requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` in your `.env` or Dashboard Settings.
 
 ### Multi-node (optional)
 
