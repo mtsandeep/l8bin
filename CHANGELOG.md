@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.24] - 2026-04-13
+
 ### Fixed
 - Fix Cloudflare DNS records never being created — response structs (`CfListResult`, `CfSingleResult`) had incorrect nesting that didn't match the Cloudflare API format, causing all API responses to fail parsing
 - Fix Cloudflare credentials not used on first settings save — credentials were saved to DB after the router hot-swap, so the hot-swap always read empty values
