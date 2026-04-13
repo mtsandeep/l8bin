@@ -8,6 +8,8 @@
 - [Docker Logs](#docker-logs)
 - [Networking & Firewalls](#networking--firewalls)
 
+For a comprehensive view of how LiteBin handles failures at every layer, see [Failure Model](failure-model.md). For why these architectural choices were made, see [Design Decisions](decisions.md).
+
 ---
 
 ## mTLS Certificates

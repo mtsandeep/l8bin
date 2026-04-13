@@ -226,3 +226,12 @@ T+18min  New visitor hits myapp.l8b.in
 | Activity tracker misses a flush (restart) | Lost hosts in that 60s window; next flush catches up. Worst case: project gets stopped 1-2 min earlier than ideal |
 | Agent can't reach orchestrator for heartbeat | Fire-and-forget; logged as debug. Janitor may stop project slightly earlier than it should on that node |
 | Multiple agents reporting same host | HashSet deduplication within each node; DB UPDATE handles overlapping host lists via IN clause |
+
+---
+
+## Further Reading
+
+- [Architecture](architecture.md) — full system overview, component responsibilities
+- [Waker](waker.md) — wake-on-request flow (the other half of scale-to-zero)
+- [Design Decisions](decisions.md) — why scale-to-zero, why SQLite, why this approach to idle detection
+- [Failure Model](failure-model.md) — how janitor vs wake races and agent unreachable scenarios are handled

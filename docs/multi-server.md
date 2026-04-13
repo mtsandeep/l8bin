@@ -284,68 +284,13 @@ The agent reports its IP in every `/health` response. The orchestrator only writ
 4. For direct-to-agent: create A records manually for each project subdomain
 5. Ensure agent ports 80/443 are open on the firewall
 
-## Future: Built-in DNS Server
+---
 
-Both non-proxy modes (Cloudflare DNS and manual DNS) avoid the 2x bandwidth cost of master proxy, but each has a dependency — either on Cloudflare or on manual DNS management. A built-in DNS server on the master would eliminate both:
+## Further Reading
 
-```
-User → Recursive DNS → Master DNS (authoritative for {domain})
-                         → Returns agent IP for {project_id}.{domain}
-                         → Returns master IP for dashboard/admin subdomains
-
-User → Agent Caddy → Container (direct, no master in data path)
-```
-
-### Why
-
-- **No Cloudflare dependency** — the master owns the zone and answers DNS queries directly
-- **No bandwidth cost** — users connect directly to agent IPs, master only handles small DNS queries
-- **Automatic record management** — same as Cloudflare DNS mode, but using the master's own DNS instead of an external API
-- **Full self-hosting** — no external service required beyond the VPS fleet
-
-### Requirements
-
-1. **Authoritative DNS server** running on the master (e.g. embedded Hickory DNS, or a lightweight container like CoreDNS)
-2. **NS records** at the domain registrar pointing `{domain}` NS to the master's IP
-3. **Zone management** — orchestrator creates/updates A records when projects are deployed, stopped, or moved between agents
-4. **Wildcard SOA/NS** — master DNS is authoritative for `{domain}`, returns the correct agent IP per subdomain
-
-### How It Would Work
-
-| Event | DNS Action |
-|---|---|
-| Project deployed to agent | Create A record `{project_id}.{domain}` → agent public IP |
-| Project stopped/sleeping | Remove A record (or point to master IP for wake page) |
-| Project moved to another agent | Update A record to new agent IP |
-| Agent goes offline | Remove all A records for that agent's projects |
-| Dashboard/admin subdomain | A record points to master IP (unchanged) |
-
-### Zone File Example
-
-```
-{domain}            IN  SOA  ns1.{domain} admin.{domain} 2026041201 3600 600 604800 300
-{domain}            IN  NS   ns1.{domain}
-ns1.{domain}        IN  A    {master_ip}
-dashboard.{domain}  IN  A    {master_ip}
-poke.{domain}       IN  A    {master_ip}
-myapp.{domain}      IN  A    {agent_1_ip}
-otherapp.{domain}   IN  A    {agent_2_ip}
-```
-
-### Migration from Cloudflare DNS Mode
-
-Most of the infrastructure already exists:
-
-| Piece | Status |
-|---|---|
-| Per-project A record management | Already implemented (Cloudflare API client) |
-| Route sync triggers (deploy, stop, move) | Already implemented |
-| Agent IP tracking in database | Already implemented (`nodes.public_ip`) |
-| Zone management logic | Needs DNS provider abstraction (swap Cloudflare → internal) |
-
-The main new work is:
-- Run an authoritative DNS server alongside the orchestrator (container or embedded)
-- Abstract the DNS provider behind a trait so `cloudflare_dns` and `internal_dns` are swappable
-- Update install script to set up NS records and open port 53
-
-This would make LiteBin fully self-hosted with zero external dependencies for DNS, while keeping the direct-to-agent traffic flow that avoids the bandwidth cost of master proxy mode.
+- [Architecture](architecture.md) — full system overview, component responsibilities, database schema
+- [Design Decisions](decisions.md) — why these routing modes exist and the tradeoffs
+- [Failure Model](failure-model.md) — how failures are handled in each routing mode
+- [Waker](waker.md) — detailed wake-on-request flow diagrams for both modes
+- [Security](security.md) — threat model and mTLS architecture
+- [Troubleshooting FAQ](faq.md) — common issues with mTLS certs, agent connectivity, firewalls

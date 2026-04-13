@@ -388,3 +388,14 @@ The merge logic:
 When the orchestrator pushes a new config (via `/caddy/sync`), it replaces the persisted file entirely. This corrects any drift (e.g., removed custom domains, changed upstreams).
 
 **Agent independence**: After one orchestrator push, the agent can operate fully independently. Subdomain and custom domain wake/routing work without master. TLS certs for already-issued domains continue to work. The only thing that requires master is adding NEW custom domains (done through the dashboard).
+
+---
+
+## Further Reading
+
+- [Architecture](architecture.md) — full system overview, component responsibilities
+- [Multi-Server Setup](multi-server.md) — adding agents, routing modes, certificate architecture
+- [Design Decisions](decisions.md) — why mTLS, why two routing modes, why scale-to-zero
+- [Failure Model](failure-model.md) — how wake failures, master down, and port drift are handled
+- [Janitor](janitor.md) — idle container auto-stop flow (the other half of scale-to-zero)
+- [Security](security.md) — threat model and mTLS architecture

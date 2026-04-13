@@ -135,3 +135,12 @@ Agent → orchestrator wake reports use two security layers:
 | CPU | 0.5 cores | Yes | `cpu_limit` in deploy request |
 | Processes | 4096 | No | `pids_limit` |
 | Auto-stop | 15 min idle | Yes | `auto_stop_timeout_mins` per project |
+
+---
+
+## Further Reading
+
+- [Architecture](architecture.md) — full system overview, network topology, database schema
+- [Design Decisions](decisions.md) — why mTLS over other auth approaches, why Docker hardening choices
+- [Failure Model](failure-model.md) — how security-related failures (cert mismatch, agent unreachable) are handled
+- [Multi-Server Setup](multi-server.md) — certificate architecture, mTLS setup, on-demand TLS

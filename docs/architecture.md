@@ -248,6 +248,8 @@ See [security.md](security.md) for the full security architecture and threat mod
 ## Further Reading
 
 - [Multi-Server Setup](multi-server.md) — adding agents, routing modes, certificate architecture, bandwidth comparison
+- [Design Decisions](decisions.md) — why Rust, Caddy, SQLite, Docker (not K8s), scale-to-zero, mTLS
+- [Failure Model](failure-model.md) — how every component handles failures, degradation, and recovery
 - [Troubleshooting FAQ](faq.md) — common issues with mTLS certs, agent connectivity, Docker logs, firewalls
 - [Janitor](janitor.md) — idle container auto-stop flow
 - [Waker](waker.md) — wake-on-request flow diagrams
