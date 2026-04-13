@@ -65,7 +65,7 @@ async fn sweep(
     let routes = crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await?;
 
     router
-        .sync_routes(&routes, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain)
+        .sync_routes(&routes, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, false)
         .await?;
 
     // 3. Now safe to stop containers — routes already removed

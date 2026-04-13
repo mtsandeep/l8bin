@@ -110,6 +110,7 @@ export interface GlobalSettings {
   cloudflare_api_token: string;
   cloudflare_zone_id: string;
   dashboard_subdomain: string;
+  poke_subdomain: string;
 }
 
 export async function fetchGlobalSettings(): Promise<GlobalSettings> {
@@ -140,6 +141,18 @@ export async function cleanupDnsRecords(): Promise<{ deleted_count: number }> {
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || 'Failed to cleanup DNS records');
+  }
+  return res.json();
+}
+
+export async function syncDnsRecords(): Promise<{ created: number; deleted: number; unchanged: number; errors: number }> {
+  const res = await fetch(`${API_BASE}/settings/sync-dns`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || 'Failed to sync DNS records');
   }
   return res.json();
 }

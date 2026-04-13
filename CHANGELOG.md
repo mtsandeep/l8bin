@@ -6,15 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Fix Cloudflare DNS records never being created — response structs (`CfListResult`, `CfSingleResult`) had incorrect nesting that didn't match the Cloudflare API format, causing all API responses to fail parsing
+- Fix Cloudflare credentials not used on first settings save — credentials were saved to DB after the router hot-swap, so the hot-swap always read empty values
+- Fix local node `public_ip` always `None` in route resolution — now reads from the `nodes` table instead of hardcoding `None`
 - Fix agent `public_ip` being overwritten by auto-detection — dashboard-set value now takes priority, agent-reported IP only fills in when empty
 - Fix deploy modal not scrollable when content overflows viewport
 
 ### Changed
 - Improve Cloudflare API error messages — include HTTP status code and response body in all error logs for easier debugging
+- Skip Cloudflare DNS API calls during periodic janitor checks — DNS sync only runs on actual changes (deploy, stop, delete, settings)
 - Add DNS setup instructions to install script output (mode-specific: wildcard for master_proxy, two records for cloudflare_dns)
 - Auto-detect server public IP during install for DNS instructions
-- Update documentation in README and multi-server docs
 - Change settings tab buttons (Routing Mode, Token Scope) to cyan to distinguish from action buttons
+- Update documentation in README, multi-server docs, and janitor docs
 
 ## [0.1.23] - 2026-04-12
 

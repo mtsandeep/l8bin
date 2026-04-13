@@ -236,7 +236,7 @@ async fn set_project_running(state: &AppState, project: &Project) {
         .router
         .read()
         .await
-        .sync_routes(&routes, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain)
+        .sync_routes(&routes, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, true)
         .await;
 
     info!(project_id = %project.id, "reconciliation: project restored to running");

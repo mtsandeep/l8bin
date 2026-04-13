@@ -53,7 +53,13 @@ pub async fn resolve_routes(
             }
             _ => {
                 // Local node — route directly via Docker network by container name
-                (format!("litebin-{}:{}", project.id, internal_port), None)
+                let local_ip: Option<String> = sqlx::query_scalar(
+                    "SELECT public_ip FROM nodes WHERE id = 'local'",
+                )
+                .fetch_optional(db)
+                .await?
+                .flatten();
+                (format!("litebin-{}:{}", project.id, internal_port), local_ip)
             }
         };
 
@@ -177,6 +183,7 @@ pub async fn run_route_sync(
                 &orchestrator_upstream,
                 &config.dashboard_subdomain,
                 &config.poke_subdomain,
+                true,
             )
             .await
         {

@@ -80,6 +80,14 @@ pub async fn update_settings(
         }
         upsert_setting(&state.db, "routing_mode", &routing_mode).await?;
 
+        // Save Cloudflare credentials before hot-swap so the router reads the latest values
+        if let Some(cloudflare_api_token) = payload.cloudflare_api_token {
+            upsert_setting(&state.db, "cloudflare_api_token", &cloudflare_api_token).await?;
+        }
+        if let Some(cloudflare_zone_id) = payload.cloudflare_zone_id {
+            upsert_setting(&state.db, "cloudflare_zone_id", &cloudflare_zone_id).await?;
+        }
+
         // Hot-swap the router
         let cf_token = get_setting(&state.db, "cloudflare_api_token").await?.unwrap_or_default();
         let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await?.unwrap_or_default();
@@ -114,15 +122,10 @@ pub async fn update_settings(
             &orchestrator_upstream,
             &state.config.dashboard_subdomain,
             &state.config.poke_subdomain,
+            true,
         ).await {
             tracing::warn!(error = %e, "post-swap sync_routes failed");
         }
-    }
-    if let Some(cloudflare_api_token) = payload.cloudflare_api_token {
-        upsert_setting(&state.db, "cloudflare_api_token", &cloudflare_api_token).await?;
-    }
-    if let Some(cloudflare_zone_id) = payload.cloudflare_zone_id {
-        upsert_setting(&state.db, "cloudflare_zone_id", &cloudflare_zone_id).await?;
     }
     if let Some(dashboard_subdomain) = payload.dashboard_subdomain {
         let dashboard_subdomain = dashboard_subdomain.trim().to_string();
@@ -232,4 +235,57 @@ pub async fn cleanup_dns(
 
     tracing::info!(deleted = deleted_count, total = records.len(), "DNS cleanup complete");
     Ok(Json(CleanupDnsResponse { deleted_count }))
+}
+
+#[derive(Serialize)]
+pub struct SyncDnsResponse {
+    pub created: usize,
+    pub deleted: usize,
+    pub unchanged: usize,
+    pub errors: usize,
+}
+
+pub async fn sync_dns(
+    State(state): State<AppState>,
+) -> Result<Json<SyncDnsResponse>, (StatusCode, String)> {
+    let cf_token = get_setting(&state.db, "cloudflare_api_token")
+        .await?
+        .unwrap_or_default();
+    let cf_zone = get_setting(&state.db, "cloudflare_zone_id")
+        .await?
+        .unwrap_or_default();
+
+    if cf_token.is_empty() || cf_zone.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cloudflare API token and Zone ID must be configured".into(),
+        ));
+    }
+
+    let domain = state.config.domain.clone();
+    let dashboard_subdomain = state.config.dashboard_subdomain.clone();
+    let poke_subdomain = state.config.poke_subdomain.clone();
+    let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
+
+    let routes = crate::routing_helpers::resolve_all_routes(
+        &state.db, &domain, &orchestrator_upstream,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let result = state.router.read().await.sync_dns_only(
+        &routes,
+        &domain,
+        &dashboard_subdomain,
+        &poke_subdomain,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(SyncDnsResponse {
+        created: result.created,
+        deleted: result.deleted,
+        unchanged: result.unchanged,
+        errors: result.errors,
+    }))
 }

@@ -423,13 +423,14 @@ impl CloudflareDnsRouter {
     }
 
     /// Sync Cloudflare DNS records: upsert for running projects, delete stale ones.
+    /// Returns counts of created, deleted, and errored records.
     async fn sync_dns(
         &self,
         projects: &[ProjectRoute],
         domain: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<litebin_common::routing::DnsSyncResult> {
         // Compute desired DNS records
         let mut desired: HashMap<String, String> = HashMap::new(); // name → ip
 
@@ -527,35 +528,66 @@ impl CloudflareDnsRouter {
             .list_records_by_suffix(&domain_suffix, "A")
             .await?;
 
+        let mut result = litebin_common::routing::DnsSyncResult::default();
+
+        // Build set of existing record names for fast lookup
+        let existing_names: HashSet<&str> = existing.iter().map(|r| r.name.as_str()).collect();
+
         // Delete records that exist but shouldn't
         let desired_names: HashSet<&str> = desired.keys().map(|s| s.as_str()).collect();
         for record in &existing {
             if !desired_names.contains(record.name.as_str()) {
                 if let Err(e) = self.cloudflare.delete_record(&record.id).await {
                     tracing::warn!(record = %record.name, error = %e, "failed to delete stale DNS record");
+                    result.errors += 1;
+                } else {
+                    result.deleted += 1;
                 }
             }
         }
 
         // Upsert desired records
         for (name, ip) in &desired {
-            if let Err(e) = self.cloudflare.upsert_record(name, "A", ip, 1, false).await {
-                tracing::warn!(name, ip, error = %e, "failed to upsert DNS record");
+            if existing_names.contains(name.as_str()) {
+                result.unchanged += 1;
+                continue;
+            }
+            match self.cloudflare.upsert_record(name, "A", ip, 1, false).await {
+                Ok(true) => result.created += 1,
+                Ok(false) => result.unchanged += 1,
+                Err(e) => {
+                    tracing::warn!(name, ip, error = %e, "failed to upsert DNS record");
+                    result.errors += 1;
+                }
             }
         }
 
         tracing::info!(
+            created = result.created,
+            unchanged = result.unchanged,
+            deleted = result.deleted,
+            errors = result.errors,
             desired = desired.len(),
             existing = existing.len(),
             "DNS sync complete"
         );
 
-        Ok(())
+        Ok(result)
     }
 }
 
 #[async_trait]
 impl RoutingProvider for CloudflareDnsRouter {
+    async fn sync_dns_only(
+        &self,
+        projects: &[ProjectRoute],
+        domain: &str,
+        dashboard_subdomain: &str,
+        poke_subdomain: &str,
+    ) -> anyhow::Result<litebin_common::routing::DnsSyncResult> {
+        self.sync_dns(projects, domain, dashboard_subdomain, poke_subdomain).await
+    }
+
     async fn sync_routes(
         &self,
         projects: &[ProjectRoute],
@@ -563,6 +595,7 @@ impl RoutingProvider for CloudflareDnsRouter {
         orchestrator_upstream: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
+        sync_dns: bool,
     ) -> anyhow::Result<()> {
         tracing::info!(
             route_count = projects.len(),
@@ -621,9 +654,12 @@ impl RoutingProvider for CloudflareDnsRouter {
             .await;
         }
 
-        // 3. Cloudflare DNS sync
-        if let Err(e) = self.sync_dns(projects, domain, dashboard_subdomain, poke_subdomain).await {
-            tracing::warn!(error = %e, "DNS sync failed");
+        // 3. Cloudflare DNS sync (skip for periodic checks where nothing changed)
+        if sync_dns {
+            match self.sync_dns(projects, domain, dashboard_subdomain, poke_subdomain).await {
+                Ok(r) => tracing::info!(created = r.created, deleted = r.deleted, errors = r.errors, "DNS sync done"),
+                Err(e) => tracing::warn!(error = %e, "DNS sync failed"),
+            }
         }
 
         Ok(())

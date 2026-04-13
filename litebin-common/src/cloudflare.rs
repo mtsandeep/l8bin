@@ -157,6 +157,7 @@ impl CloudflareClient {
 
     /// Create or update a DNS record. If a record with the same name and type exists,
     /// it is updated (PUT). Otherwise, a new record is created (POST).
+    /// Returns true if a new record was created, false if it already existed or was updated.
     pub async fn upsert_record(
         &self,
         name: &str,
@@ -164,7 +165,7 @@ impl CloudflareClient {
         content: &str,
         ttl: i64,
         proxied: bool,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let existing = self.list_records(name, record_type).await?;
 
         if let Some(record) = existing.first() {
@@ -214,6 +215,7 @@ impl CloudflareClient {
             }
 
             tracing::info!(name, record_type, content, "updated DNS record");
+            Ok(false)
         } else {
             // Create new record
             let body = serde_json::json!({
@@ -256,13 +258,16 @@ impl CloudflareClient {
                     .map(|e| e.message.clone())
                     .collect::<Vec<_>>()
                     .join(", ");
+                if errors.contains("An identical record already exists") {
+                    tracing::info!(name, record_type, content, "DNS record already exists");
+                    return Ok(false);
+                }
                 anyhow::bail!("cloudflare upsert POST failed: {}", errors);
             }
 
             tracing::info!(name, record_type, content, "created DNS record");
+            Ok(true)
         }
-
-        Ok(())
     }
 
     /// Delete a DNS record by its Cloudflare record ID.

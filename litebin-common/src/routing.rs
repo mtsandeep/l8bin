@@ -25,6 +25,14 @@ pub struct ProjectRoute {
     pub upstream_tls: bool,
 }
 
+#[derive(Debug, Default)]
+pub struct DnsSyncResult {
+    pub created: usize,
+    pub deleted: usize,
+    pub unchanged: usize,
+    pub errors: usize,
+}
+
 #[async_trait]
 pub trait RoutingProvider: Send + Sync {
     async fn sync_routes(
@@ -34,7 +42,20 @@ pub trait RoutingProvider: Send + Sync {
         orchestrator_upstream: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
+        sync_dns: bool,
     ) -> anyhow::Result<()>;
+
+    /// Sync only DNS records (no Caddy config changes). Returns counts.
+    /// Default implementation is a no-op for routers that don't manage DNS.
+    async fn sync_dns_only(
+        &self,
+        _projects: &[ProjectRoute],
+        _domain: &str,
+        _dashboard_subdomain: &str,
+        _poke_subdomain: &str,
+    ) -> anyhow::Result<DnsSyncResult> {
+        Ok(DnsSyncResult::default())
+    }
 }
 
 // ── Master Proxy Router (Mode A) ──────────────────────────────────────────────
@@ -311,6 +332,7 @@ impl RoutingProvider for MasterProxyRouter {
         orchestrator_upstream: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
+        _sync_dns: bool,
     ) -> anyhow::Result<()> {
         let config = self.build_config(projects, domain, orchestrator_upstream, dashboard_subdomain, poke_subdomain);
 

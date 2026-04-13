@@ -170,12 +170,14 @@ Janitor runs every 5 minutes
   │   │   ├─ docker rm {container_id}
   │   │   ├─ UPDATE projects SET status = 'stopped', container_id = NULL
   │   │   └─ Send route_sync signal → Caddy removes per-project route
+  │   │       (DNS sync is skipped — no Cloudflare API calls during periodic checks)
   │   │
   │   └─ Mode B (remote node):
   │       ├─ POST /containers/stop {container_id} → agent (mTLS)
   │       ├─ UPDATE projects SET status = 'stopped', container_id = NULL
   │       └─ Send route_sync signal → Caddy removes per-project route
   │           + push updated config to agent
+  │           (DNS sync is skipped — no Cloudflare API calls during periodic checks)
   │
   └─ Log: "janitor: container stopped (idle)" per project
 ```

@@ -608,7 +608,7 @@ pub async fn sync_caddy(state: &AppState) {
         .router
         .read()
         .await
-        .sync_routes(&routes, &state.config.domain, &upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain)
+        .sync_routes(&routes, &state.config.domain, &upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, true)
         .await
     {
         tracing::error!(error = %e, "failed to sync routes");

@@ -222,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
         let routes = routing_helpers::resolve_all_routes(&db, &config.domain, &orchestrator_upstream).await.unwrap_or_default();
         let r = router.read().await.clone();
         match r
-            .sync_routes(&routes, &config.domain, &orchestrator_upstream, &config.dashboard_subdomain, &config.poke_subdomain)
+            .sync_routes(&routes, &config.domain, &orchestrator_upstream, &config.dashboard_subdomain, &config.poke_subdomain, true)
             .await
         {
             Ok(_) => break,
@@ -293,6 +293,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/settings", get(routes::global_settings::get_settings))
         .route("/settings", patch(routes::global_settings::update_settings))
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
+        .route("/settings/sync-dns", post(routes::global_settings::sync_dns))
         .route("/system/stats", get(routes::health::system_stats))
         .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
 

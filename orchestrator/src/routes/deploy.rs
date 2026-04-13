@@ -426,7 +426,7 @@ pub async fn deploy(
         .router
         .read()
         .await
-        .sync_routes(&route_entries, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain)
+        .sync_routes(&route_entries, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, true)
         .await
     {
         tracing::error!(error = %e, "failed to sync routes — rolling back container");

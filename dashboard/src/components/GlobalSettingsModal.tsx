@@ -3,7 +3,7 @@ import { X, Settings, Key, Trash2, Copy, Check, AlertTriangle } from 'lucide-rea
 import {
   fetchGlobalSettings, updateGlobalSettings, fetchProjects,
   createDeployToken, revokeDeployToken, createProject,
-  cleanupDnsRecords,
+  cleanupDnsRecords, syncDnsRecords,
   timeAgo, type GlobalSettings, type Project, type DeployTokenInfo,
 } from '../api';
 import { useToast } from './ToastContext';
@@ -78,8 +78,20 @@ function GeneralTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [cleaning, setCleaning] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState<number | null>(null);
+  const hasUnsavedChanges = settings && (
+    cfToken !== (settings.cloudflare_api_token || '') ||
+    cfZoneId !== (settings.cloudflare_zone_id || '') ||
+    routingMode !== (settings.routing_mode || 'master_proxy') ||
+    domain !== settings.domain ||
+    dnsTarget !== settings.dns_target ||
+    memMb !== settings.default_memory_limit_mb ||
+    cpu !== settings.default_cpu_limit ||
+    dashboardSubdomain !== (settings.dashboard_subdomain || 'l8bin')
+  );
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ created: number; deleted: number; unchanged: number; errors: number } | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -277,37 +289,125 @@ function GeneralTab() {
             />
             <p className="text-[10px] text-slate-600 mt-1">Found in your Cloudflare dashboard under the domain overview.</p>
           </div>
-          <div className="pt-2">
+          {cfToken && cfZoneId && (
+          <div className="pt-2 space-y-2">
+            {/* Sync DNS Records */}
             <button
               onClick={async () => {
-                if (!confirm(`Delete all A records matching *.${domain}? This cannot be undone.`)) return;
-                setCleaning(true);
-                setCleanupResult(null);
+                if (hasUnsavedChanges) {
+                  showToast('Save your changes before syncing DNS');
+                  return;
+                }
+                setSyncing(true);
+                setSyncResult(null);
                 try {
-                  const result = await cleanupDnsRecords();
-                  setCleanupResult(result.deleted_count);
+                  const result = await syncDnsRecords();
+                  setSyncResult(result);
+                  if (result.errors === 0) {
+                    const parts = [];
+                    if (result.created > 0) parts.push(`${result.created} added`);
+                    if (result.unchanged > 0) parts.push(`${result.unchanged} already exist`);
+                    if (result.deleted > 0) parts.push(`${result.deleted} removed`);
+                    showToast(parts.length > 0 ? `DNS synced: ${parts.join(', ')}` : 'DNS already up to date');
+                  } else {
+                    showToast(`DNS sync: ${result.created} added, ${result.errors} failed`);
+                  }
                 } catch (e) {
-                  const msg = e instanceof Error ? e.message : 'Cleanup failed';
+                  const msg = e instanceof Error ? e.message : 'Sync failed';
                   setError(msg);
                   showToast(msg);
                 } finally {
-                  setCleaning(false);
+                  setSyncing(false);
                 }
               }}
-              disabled={cleaning}
-              className="w-full py-2 rounded-md text-xs font-medium bg-red-600/80 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
+              disabled={syncing}
+              className="w-full py-2 rounded-md text-xs font-medium bg-cyan-600/80 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {cleaning ? 'Cleaning...' : 'Cleanup DNS Records'}
+              {syncing ? 'Syncing...' : 'Sync DNS Records'}
             </button>
-            {cleanupResult !== null && (
-              <p className="text-[10px] text-green-400 mt-1">
-                Deleted {cleanupResult} DNS record(s).
+            {syncResult !== null && (
+              <p className={`text-[10px] ${syncResult.errors > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                {syncResult.created > 0 && `${syncResult.created} added`}
+                {syncResult.created > 0 && syncResult.unchanged > 0 && ', '}
+                {syncResult.unchanged > 0 && `${syncResult.unchanged} already exist`}
+                {syncResult.deleted > 0 && `${syncResult.created > 0 || syncResult.unchanged > 0 ? ', ' : ''}${syncResult.deleted} removed`}
+                {syncResult.errors > 0 && `, ${syncResult.errors} failed`}
+                {(syncResult.created === 0 && syncResult.unchanged === 0 && syncResult.deleted === 0 && syncResult.errors === 0) && 'No records to sync'}
               </p>
             )}
-            <p className="text-[10px] text-slate-600 mt-1">
-              Removes all A records matching <span className="text-slate-400 font-mono">*.{domain}</span> from Cloudflare. Does not affect routing mode.
+            <p className="text-[10px] text-slate-600">
+              Recreates DNS records for all projects, dashboard, and poke domains in Cloudflare.
+            </p>
+
+            {/* Remove Cloudflare & Cleanup */}
+            <button
+              onClick={() => setShowRemoveConfirm(true)}
+              disabled={removing}
+              className="w-full py-2 rounded-md text-xs font-medium bg-red-600/80 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              Remove Cloudflare &amp; Cleanup DNS
+            </button>
+            <p className="text-[10px] text-slate-600">
+              Deletes all A records matching <span className="text-slate-400 font-mono">*.{domain}</span> and clears credentials.
             </p>
           </div>
+          )}
+
+          {/* Remove confirmation modal */}
+          {showRemoveConfirm && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle size={16} className="text-red-400" />
+                  <h3 className="text-sm font-semibold text-slate-100">Remove Cloudflare &amp; Cleanup DNS</h3>
+                </div>
+                <p className="text-xs text-slate-300 mb-1">This will:</p>
+                <ul className="text-xs text-slate-400 list-disc list-inside mb-4 space-y-1">
+                  <li>Delete all A records matching <span className="font-mono text-slate-300">*.{domain}</span> from Cloudflare</li>
+                  <li>Clear your Cloudflare API token and Zone ID</li>
+                  <li>Switch routing mode to Local (master proxy)</li>
+                </ul>
+                <p className="text-xs text-red-400 mb-4">This cannot be undone.</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowRemoveConfirm(false)}
+                    disabled={removing}
+                    className="flex-1 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setRemoving(true);
+                      try {
+                        const result = await cleanupDnsRecords();
+                        setCfToken('');
+                        setCfZoneId('');
+                        setRoutingMode('master_proxy');
+                        await updateGlobalSettings({
+                          cloudflare_api_token: '',
+                          cloudflare_zone_id: '',
+                          routing_mode: 'master_proxy',
+                        });
+                        setShowRemoveConfirm(false);
+                        showToast(`Removed Cloudflare: ${result.deleted_count} DNS record(s) deleted`);
+                      } catch (e) {
+                        const msg = e instanceof Error ? e.message : 'Failed to remove Cloudflare';
+                        setError(msg);
+                        showToast(msg);
+                      } finally {
+                        setRemoving(false);
+                      }
+                    }}
+                    disabled={removing}
+                    className="flex-1 py-2 rounded-md text-xs font-medium bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {removing ? 'Removing...' : 'Confirm Remove'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
