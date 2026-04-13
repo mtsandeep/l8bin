@@ -237,6 +237,8 @@ Caddy generates a self-signed TLS certificate for `*.localhost`. Your browser wi
 - **Caddy** — reverse proxy with automatic TLS, dynamic routing via admin API
 - **Agent** — runs on worker nodes, manages containers remotely via mTLS
 
+See [Architecture](docs/architecture.md) for detailed component breakdown, routing modes, and links to all technical docs. See [Troubleshooting FAQ](docs/faq.md) for common issues.
+
 ---
 
 ## Configuration

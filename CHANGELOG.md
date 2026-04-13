@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix agent Caddy self-referencing loop in cloudflare_dns mode — orchestrator pushed `{agent_ip}:443` as the upstream in the agent's Caddy config, causing it to proxy to itself instead of the app container (`litebin-{id}:{port}`). Added `container_upstream` field to `ProjectRoute` so the agent Caddy uses the correct Docker network address.
+
+### Added
+- Troubleshooting FAQ ([docs/faq.md](docs/faq.md)) — common issues with mTLS certs, agent connectivity, Docker logs, and firewalls
+
+### Changed
+- Added "Further Reading" links to architecture docs and centralized doc navigation from README
+
 ## [0.1.24] - 2026-04-13
 
 ### Fixed

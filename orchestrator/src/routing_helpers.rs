@@ -63,6 +63,10 @@ pub async fn resolve_routes(
             }
         };
 
+        // Container-level upstream for agent Caddy in cloudflare_dns mode
+        let container_upstream =
+            Some(format!("litebin-{}:{}", project.id, internal_port));
+
         routes.push(ProjectRoute {
             project_id: project.id.clone(),
             subdomain_host: format!("{}.{}", project.id, domain),
@@ -73,6 +77,7 @@ pub async fn resolve_routes(
             host_rewrite: None,
             upstream_tls: project.node_id.as_deref() != Some("local")
                 && project.node_id.is_some(),
+            container_upstream,
         });
     }
 
@@ -117,6 +122,7 @@ async fn resolve_sleeping_custom_domain_routes(
             node_public_ip,
             host_rewrite: Some(format!("{}.{}", project.id, domain)),
             upstream_tls: false, // sleeping routes proxy to local orchestrator
+            container_upstream: None, // sleeping projects have no running container
         });
     }
 

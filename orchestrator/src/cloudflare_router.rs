@@ -246,11 +246,12 @@ impl CloudflareDnsRouter {
             // Only create subdomain route for running projects.
             // Sleeping projects rely on the catch-all *.{domain} → agent wake handler.
             if p.host_rewrite.is_none() {
+                let dial = p.container_upstream.as_deref().unwrap_or(&p.upstream);
                 routes.push(json!({
                     "match": [{ "host": [p.subdomain_host] }],
                     "handle": [{
                         "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": p.upstream }]
+                        "upstreams": [{ "dial": dial }]
                     }]
                 }));
             }
@@ -293,11 +294,12 @@ impl CloudflareDnsRouter {
                     }));
                 } else {
                     // Running custom domain: proxy to container
+                    let dial = p.container_upstream.as_deref().unwrap_or(&p.upstream);
                     routes.push(json!({
                         "match": [{ "host": [cd] }],
                         "handle": [{
                             "handler": "reverse_proxy",
-                            "upstreams": [{ "dial": p.upstream }]
+                            "upstreams": [{ "dial": dial }]
                         }]
                     }));
 

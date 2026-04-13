@@ -244,3 +244,11 @@ Root CA (self-signed, 4096-bit RSA)
 Additional tables: `users`, `deploy_tokens`, `settings`.
 
 See [security.md](security.md) for the full security architecture and threat model.
+
+## Further Reading
+
+- [Multi-Server Setup](multi-server.md) — adding agents, routing modes, certificate architecture, bandwidth comparison
+- [Troubleshooting FAQ](faq.md) — common issues with mTLS certs, agent connectivity, Docker logs, firewalls
+- [Janitor](janitor.md) — idle container auto-stop flow
+- [Waker](waker.md) — wake-on-request flow diagrams
+- [Security](security.md) — threat model and hardening details

@@ -23,6 +23,9 @@ pub struct ProjectRoute {
     pub host_rewrite: Option<String>,
     /// Whether the upstream connection requires TLS (true for remote agent Caddy).
     pub upstream_tls: bool,
+    /// Docker-network upstream for direct container access: "litebin-{id}:{port}".
+    /// Used by agent Caddy in cloudflare_dns mode to proxy to local containers.
+    pub container_upstream: Option<String>,
 }
 
 #[derive(Debug, Default)]
