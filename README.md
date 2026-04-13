@@ -1,10 +1,39 @@
 # LiteBin | L8Bin
 
-> **Not a production platform.** LiteBin is built for engineers who want their side projects, demos, and portfolio apps actually running — not just in a local Docker container. Ship a build straight from your laptop, let it sleep to zero when nobody's looking, and wake it in seconds when someone is. One cheap VPS, as many apps as your disk holds, zero per-app fees.
+> **Built for side projects, not SLAs.** Your demos, previews, and portfolio apps — actually running, on your own domain, on a VPS you already pay for.
 >
 > → [l8bin.com](https://l8bin.com) for the full picture.
 
 Self-hosted App Manager. Deploy apps from your dashboard, CLI, or GitHub Actions.
+
+## Why LiteBin
+
+Cloud hosting platforms are great until you check the bill for side projects you built months ago. Self-hosted PaaS platforms are built for production workloads — customer-facing apps that need uptime guarantees, multi-tenant isolation, and rollback safety. Your weekend demo doesn't need that overhead.
+
+LiteBin runs on **one cheap VPS** ($5-10/mo) and sleeps apps when nobody's looking. No per-app fees, no credit card on file, no vendor lock-in. Deploy from your laptop or GitHub Actions — your Docker image runs as-is, behind your own domain, with automatic HTTPS.
+
+It's built for engineers who want their side projects, demos, and portfolio apps **actually running** — not just committed to a repo or sitting in a local Docker container.
+
+## Design Decisions
+
+| Choice | Why |
+|---|---|
+| **Rust** (orchestrator, agent, CLI) | Single binary, low memory, fast cold starts, reliable long-running services |
+| **Caddy** (reverse proxy) | Dynamic config via admin API, automatic HTTPS, JSON config pushed programmatically |
+| **SQLite** (WAL mode) | Zero ops, single-file, fast enough for this scale — no Postgres to manage |
+| **Docker** (runtime) | Standard container format, works with any registry, familiar tooling |
+| **No Kubernetes** | LiteBin manages 1-50 apps on 1-5 servers. K8s adds complexity with no benefit at this scale |
+| **Scale-to-zero by default** | Side projects sit idle 99% of the time. Sleeping containers saves resources without losing the ability to serve traffic on demand |
+
+## Routing Modes
+
+LiteBin has two routing modes, switchable from the dashboard at any time:
+
+**Master Proxy** (default) — All traffic flows through the master server. Simple setup: one wildcard DNS record. Trade-off: master sees 2x bandwidth (proxies both directions).
+
+**Cloudflare DNS** — DNS points directly to agent nodes. Each agent handles its own traffic independently. Trade-off: requires a Cloudflare account. The key advantage: **agents continue serving traffic even if the master is down.**
+
+See [Architecture](docs/architecture.md) for the full breakdown.
 
 ## Quick Start
 
@@ -232,10 +261,10 @@ Caddy generates a self-signed TLS certificate for `*.localhost`. Your browser wi
                      └───────────────┘
 ```
 
-- **Orchestrator** — manages app containers, handles deploy API, syncs routes to Caddy
-- **Dashboard** — React UI for managing projects, nodes, and settings
-- **Caddy** — reverse proxy with automatic TLS, dynamic routing via admin API
-- **Agent** — runs on worker nodes, manages containers remotely via mTLS
+- **Orchestrator** — API server, container lifecycle, route management, auth, heartbeat, janitor (Rust, axum)
+- **Dashboard** — React UI for deploying apps, managing nodes, and configuring settings
+- **Caddy** — reverse proxy with automatic TLS termination and dynamic routing via admin API
+- **Agent** — runs on remote servers, manages containers locally, handles wake requests autonomously via mTLS
 
 See [Architecture](docs/architecture.md) for detailed component breakdown, routing modes, and links to all technical docs. See [Troubleshooting FAQ](docs/faq.md) for common issues.
 
