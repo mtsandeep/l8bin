@@ -11,10 +11,10 @@
     <!-- Nav -->
     <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
       <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-        <a href="/" class="font-black text-white tracking-tighter font-mono text-lg">L8BIN<span class="text-violet-500">.</span></a>
+        <a href="/" class="flex items-center gap-1"><img src="/logo.png" alt="" class="h-[30px]" /><span class="font-black text-white tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
         <div class="flex items-center gap-3">
           <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
-          <a href="/" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Back to Home</a>
+          <a href="/" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Back to Home</a>
         </div>
       </div>
     </nav>
@@ -389,27 +389,30 @@ jobs:
       </div>
     </div>
 
-    <!-- Footer -->
-    <footer class="py-12 px-6 border-t border-white/5 text-center">
-      <p class="text-xs font-mono text-zinc-600 mb-1">This page woke up on a 512 MB VPS — alongside all of these:</p>
-      <p class="text-xs text-zinc-700 mb-4">1 vCPU · 512 MB · 10 GB</p>
-      <div class="flex flex-wrap justify-center gap-2 mb-6">
-        <a href="https://l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
-          <span class="px-1.5 py-0.5 rounded bg-zinc-500/15 text-zinc-500 text-[10px]">Static</span>This page
-        </a>
-        <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
-          <span class="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-600 text-[10px]">Next.js SSR</span>coming soon
-        </a>
-        <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
-          <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 text-[10px]">Fastify + PG</span>coming soon
-        </a>
-        <a href="#" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-xs font-mono text-zinc-400 hover:text-white transition">
-          <span class="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 text-[10px]">React SPA</span>coming soon
-        </a>
-      </div>
-      <p class="text-xs text-zinc-700 mb-1">Engineers, not salesmen. LiteBin is for portfolios, demos, and experiments.</p>
-      <p class="font-mono text-xs text-zinc-700">L8Bin // BUILT_WITH_RUST // SELF_HOSTED</p>
-    </footer>
+  <!-- Footer -->
+  <footer class="py-12 px-6 border-t border-white/5 text-center">
+    <p class="text-xs font-mono text-zinc-400 mb-1">This page woke up on a 512MB VPS — Litebin is currently managing 4 apps on this server.</p>
+    <p class="text-xs text-zinc-500 mb-4">1 vCPU · 512 MB · 10 GB · <a href="/live/" class="text-violet-400 hover:underline">View Live Stats →</a></p>
+    <div class="flex flex-wrap justify-center gap-2 mb-6">
+      <a href="https://l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-violet-500/40 hover:text-white hover:bg-violet-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 text-[10px]">Static</span>This page
+      </a>
+      <a href="https://portfolio.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-blue-500/40 hover:text-white hover:bg-blue-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 text-[10px]">React SPA</span>Portfolio
+      </a>
+      <a href="https://react-demo.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-amber-500/40 hover:text-white hover:bg-amber-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 text-[10px]">Express + React</span>Aggressive Sleep
+      </a>
+      <a href="https://nextjs-ssr-demo.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-cyan-500/40 hover:text-white hover:bg-cyan-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-600 text-[10px]">Next.js SSR</span>Ecom Demo
+      </a>
+      <a href="#" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-emerald-500/40 hover:text-white hover:bg-emerald-500/5 hover:scale-105 transition">
+        <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 text-[10px]">Fastify + PG</span>coming soon
+      </a>
+    </div>
+    <p class="text-xs text-zinc-500 mb-2">Engineers, not salesmen. LiteBin is for portfolios, demos, and experiments.</p>
+    <p class="font-mono text-[10px] text-zinc-600">L8Bin // BUILT_WITH_RUST // SELF_HOSTED</p>
+  </footer>
 
   </body>
 </html>

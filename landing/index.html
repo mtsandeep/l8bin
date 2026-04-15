@@ -27,7 +27,7 @@
         <a href="#how" class="nav-link hover:text-white transition">How it works</a>
         <a href="#howto" class="nav-link hover:text-white transition">How to Use</a>
         <a href="#compare" class="nav-link hover:text-white transition">Compare</a>
-        <a href="quickstart.html" class="nav-link hover:text-white transition">Docs</a>
+        <a href="quickstart" class="nav-link hover:text-white transition">Docs</a>
       </div>
       <div class="flex items-center gap-3">
         <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
@@ -46,7 +46,7 @@
         <a href="#how" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">How it works</a>
         <a href="#howto" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">How to Use</a>
         <a href="#compare" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Compare</a>
-        <a href="quickstart.html" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Docs</a>
+        <a href="quickstart" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Docs</a>
         <a href="#start" class="mt-4 sm:hidden text-xs font-mono px-3 py-2.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Get Started</a>
       </div>
     </div>
@@ -68,7 +68,7 @@
             <span class="inline-flex items-center px-3 py-1 rounded-full border border-emerald-500/25 bg-emerald-500/8 text-emerald-400 text-xs font-mono">#selfHosted</span>
             <span class="inline-flex items-center px-3 py-1 rounded-full border border-cyan-500/25 bg-cyan-500/8 text-cyan-400 text-xs font-mono">Open Source</span>
           </div>
-          <h1 id="glitch-title" data-variants="LITEBIN|L8BIN|L8B.IN|L8BIN"
+          <h1 id="glitch-title" data-variants="LITEBIN|L8BIN|L8B.IN|L8=50+8|L8BIN"
             class="text-6xl lg:text-8xl font-black text-white tracking-tighter leading-none mb-5"></h1>
           <p class="text-lg text-zinc-400 leading-relaxed mb-8">
             Your server, your rules — <span class="text-white font-semibold">no per-app fees</span>, no deleting projects to save RAM.<br/>
@@ -81,12 +81,18 @@
               <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>See Live Demo
             </a>
           </div>
+          <div class="mt-4 flex justify-center lg:justify-start">
+            <a href="/live/" class="text-xs font-mono text-zinc-500 hover:text-violet-400 transition flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-violet-500/50"></span>
+              Watch LiteBin manage this tiny 512MB VPS in real-time →
+            </a>
+          </div>
         </div>
         <!-- Right: memory card -->
-        <div class="glass rounded-2xl p-7 glow">
+        <div id="memory-card" class="glass rounded-2xl p-7 glow">
           <div class="flex justify-between items-center mb-5">
-            <p class="text-xs font-mono text-zinc-500 uppercase tracking-widest">Idle Memory Footprint</p>
-            <span class="text-xs font-mono text-emerald-400 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>MEASURED</span>
+            <p id="memory-card-label" class="text-xs font-mono text-zinc-500 uppercase tracking-widest">Idle Memory Footprint</p>
+            <span class="text-xs font-mono text-emerald-400 flex items-center gap-1.5"><span id="live-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span><span id="live-status">MEASURED</span></span>
           </div>
           <div class="space-y-4">
             <div>
@@ -102,11 +108,12 @@
               <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-amber-500 rounded-full bar-fill" style="width:0%" data-w="36%" data-count-id="mv-2" data-count-val="20.8"></div></div>
             </div>
             <div class="pt-4 border-t border-white/10 flex justify-between items-center">
-              <span class="text-sm font-mono text-zinc-400">Total Resting Stack</span>
-              <span class="text-2xl font-black text-violet-400"><span id="mv-total">43.4</span> <span class="text-base text-zinc-500 font-normal"> &lt; 58 MB</span></span>
+              <span id="stack-total-label" class="text-sm font-mono text-zinc-400">Total Resting Stack</span>
+              <span class="text-2xl font-black text-violet-400"><span id="mv-total">43.4</span> <span id="mv-comparison" class="text-base text-zinc-500 font-normal"> &lt; 58 MB</span></span>
             </div>
           </div>
-          <p class="text-xs text-zinc-600 mt-3 italic">* Sleep-state RAM only.</p>
+          <p id="under-load-note" class="text-[10px] text-zinc-500 uppercase font-mono mb-1" style="display: none;">litebin under load</p>
+          <p id="sleep-state-note" class="text-xs text-zinc-600 mt-3 italic">* Sleep-state RAM only.</p>
         </div>
       </div>
       <div class="mt-16 text-center">
@@ -573,14 +580,14 @@
         </div>
       </div>
       <p class="text-xs text-zinc-600 font-mono mb-3">Linux · macOS · Windows — x64 / arm64</p>
-      <p class="text-sm text-zinc-500">New to LiteBin? <a href="quickstart.html" class="text-violet-400 hover:underline">View Quick Start →</a></p>
+      <p class="text-sm text-zinc-500">New to LiteBin? <a href="quickstart" class="text-violet-400 hover:underline">View Quick Start →</a></p>
     </div>
   </section>
 
   <!-- Footer -->
   <footer class="py-12 px-6 border-t border-white/5 text-center">
     <p class="text-xs font-mono text-zinc-400 mb-1">This page woke up on a 512MB VPS — Litebin is currently managing 4 apps on this server.</p>
-    <p class="text-xs text-zinc-500 mb-4">1 vCPU · 512 MB · 10 GB</p>
+    <p class="text-xs text-zinc-500 mb-4">1 vCPU · 512 MB · 10 GB · <a href="/live/" class="text-violet-400 hover:underline">View Live Stats →</a></p>
     <div class="flex flex-wrap justify-center gap-2 mb-6">
       <a href="https://l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-violet-500/40 hover:text-white hover:bg-violet-500/5 hover:scale-105 transition">
         <span class="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 text-[10px]">Static</span>This page

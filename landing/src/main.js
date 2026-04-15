@@ -245,6 +245,159 @@ if (glitchEl) {
   });
 }
 
+// Telemetry Stream for Memory Card
+(function() {
+  const card = document.getElementById('memory-card');
+  if (!card) return;
+
+  const statusText = document.getElementById('live-status');
+  const statusDot = document.getElementById('live-dot');
+  const compLabel = document.getElementById('mv-comparison');
+  const cardLabel = document.getElementById('memory-card-label');
+  const stackLabel = document.getElementById('stack-total-label');
+  const sleepNote = document.getElementById('sleep-state-note');
+  let evtSource = null;
+  let outViewTimer = null;
+  let inViewTimer = null;
+  let isStreaming = false;
+  let retryCount = 0;
+  const MAX_RETRIES = 3;
+
+  const STATIC_VALS = { 'mv-0': 9.4, 'mv-1': 13.2, 'mv-2': 20.8, 'mv-total': 43.4 };
+  const STATIC_WIDTHS = { 'mv-0': '16%', 'mv-1': '23%', 'mv-2': '36%' };
+
+  function updateUI(data) {
+    if (!data || !data.containers) return;
+    retryCount = 0; // Reset on success
+    
+    // Filter for orchestrator, dashboard, caddy
+    const targets = {
+      'orchestrator': { id: 'mv-0', color: 'cyan' },
+      'dashboard': { id: 'mv-1', color: 'fuchsia' },
+      'caddy': { id: 'mv-2', color: 'amber' }
+    };
+
+    let totalMem = 0;
+    const found = {};
+
+    data.containers.forEach(c => {
+      for (const [key, meta] of Object.entries(targets)) {
+        if (c.name.toLowerCase().includes(key)) {
+          const mb = (c.memory || 0) / 1024 / 1024;
+          found[meta.id] = mb;
+          totalMem += mb;
+        }
+      }
+    });
+
+    // Update individual bars and counts
+    Object.values(targets).forEach(t => {
+      const val = found[t.id] || 0;
+      const el = document.getElementById(t.id);
+      if (el) el.textContent = val.toFixed(1);
+      
+      const bar = document.querySelector(`.bar-fill[data-count-id="${t.id}"]`);
+      if (bar) {
+        // Simple scaling: 50MB = 100% for individual bars for visual impact
+        const w = Math.min((val / 50) * 100, 100);
+        bar.style.width = w + '%';
+      }
+    });
+
+    // Update total
+    const totalEl = document.getElementById('mv-total');
+    if (totalEl) totalEl.textContent = totalMem.toFixed(1);
+
+    // RAM threshold logic
+    const isOver = totalMem > 50;
+    if (compLabel) compLabel.style.display = isOver ? 'none' : 'inline';
+    
+    const loadNote = document.getElementById('under-load-note');
+    if (loadNote) loadNote.style.display = isOver ? 'block' : 'none';
+
+    if (statusText) statusText.textContent = 'LIVE';
+    if (statusDot) statusDot.classList.add('bg-emerald-500', 'animate-pulse');
+    if (cardLabel) cardLabel.textContent = 'Active Memory Footprint';
+    if (stackLabel) stackLabel.textContent = 'Total Active Stack';
+    if (sleepNote) sleepNote.style.display = 'none';
+  }
+
+  function fallback() {
+    Object.entries(STATIC_VALS).forEach(([id, val]) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val.toFixed(1);
+    });
+    document.querySelectorAll('.bar-fill[data-count-id]').forEach(bar => {
+      const id = bar.dataset.countId;
+      if (STATIC_WIDTHS[id]) bar.style.width = STATIC_WIDTHS[id];
+    });
+    if (compLabel) compLabel.style.display = 'inline';
+    const loadNote = document.getElementById('under-load-note');
+    if (loadNote) loadNote.style.display = 'none';
+    if (statusText) statusText.textContent = 'MEASURED';
+    if (statusDot) statusDot.classList.remove('animate-pulse');
+    if (cardLabel) cardLabel.textContent = 'Idle Memory Footprint';
+    if (stackLabel) stackLabel.textContent = 'Total Resting Stack';
+    if (sleepNote) sleepNote.style.display = '';
+  }
+
+  function startStream() {
+    if (isStreaming) return;
+    isStreaming = true;
+    
+    evtSource = new EventSource('http://localhost:5008/stream');
+    evtSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        updateUI(data);
+      } catch (err) { console.error("Telemetry parse error", err); }
+    };
+    evtSource.onerror = () => {
+      stopStream();
+      retryCount++;
+      
+      if (retryCount >= MAX_RETRIES) {
+        fallback();
+        console.warn(`Telemetry failed after ${MAX_RETRIES} retries. Falling back to static data.`);
+      } else {
+        // Retry after 5s if still in view and under retry limit
+        setTimeout(() => { if (inView) startStream(); }, 5000);
+      }
+    };
+  }
+
+  function stopStream(paused = false) {
+    if (evtSource) {
+      evtSource.close();
+      evtSource = null;
+    }
+    isStreaming = false;
+    if (paused && statusText) statusText.textContent = 'PAUSED';
+  }
+
+  let inView = false;
+  const obs = new IntersectionObserver(entries => {
+    const entry = entries[0];
+    if (entry.isIntersecting) {
+      inView = true;
+      clearTimeout(outViewTimer);
+      // Wait for 1s of steady focus
+      inViewTimer = setTimeout(() => {
+        if (inView) startStream();
+      }, 1000);
+    } else {
+      inView = false;
+      clearTimeout(inViewTimer);
+      // Wait for 10s of absence
+      outViewTimer = setTimeout(() => {
+        if (!inView) stopStream(true);
+      }, 10000);
+    }
+  }, { threshold: 0.1 });
+
+  obs.observe(card);
+})();
+
 // Mobile menu toggle
 (function() {
   const btn = document.getElementById('mobile-menu-btn');
@@ -254,23 +407,25 @@ if (glitchEl) {
   const b3 = document.getElementById('mhb-3');
   let open = false;
 
-  btn.addEventListener('click', () => {
-    open = !open;
-    menu.classList.toggle('hidden', !open);
-    b1.style.transform = open ? 'translateY(6px) rotate(45deg)' : '';
-    b2.style.opacity   = open ? '0' : '1';
-    b3.style.transform = open ? 'translateY(-6px) rotate(-45deg)' : '';
-  });
+  if (btn && menu) {
+    btn.addEventListener('click', () => {
+      open = !open;
+      menu.classList.toggle('hidden', !open);
+      b1.style.transform = open ? 'translateY(6px) rotate(45deg)' : '';
+      b2.style.opacity   = open ? '0' : '1';
+      b3.style.transform = open ? 'translateY(-6px) rotate(-45deg)' : '';
+    });
 
-  function closeMenu() {
-    open = false;
-    menu.classList.add('hidden');
-    b1.style.transform = b3.style.transform = '';
-    b2.style.opacity = '1';
+    function closeMenu() {
+      open = false;
+      menu.classList.add('hidden');
+      b1.style.transform = b3.style.transform = '';
+      b2.style.opacity = '1';
+    }
+
+    menu.querySelectorAll('a').forEach(a => a.addEventListener('click', closeMenu));
+    document.addEventListener('click', (e) => {
+      if (open && !btn.closest('nav').contains(e.target)) closeMenu();
+    });
   }
-
-  menu.querySelectorAll('a').forEach(a => a.addEventListener('click', closeMenu));
-  document.addEventListener('click', (e) => {
-    if (open && !btn.closest('nav').contains(e.target)) closeMenu();
-  });
 })();
