@@ -16,6 +16,10 @@ const ramValPerc = document.getElementById('ram-val-perc');
 const ramVal = document.getElementById('ram-val');
 const ramRingVal = document.getElementById('ram-ring-val');
 const ramSteps = document.getElementById('ram-steps');
+const swapValPerc = document.getElementById('swap-val-perc');
+const swapVal = document.getElementById('swap-val');
+const swapSteps = document.getElementById('swap-steps');
+const swapBox = document.getElementById('swap-box');
 
 const diskRingVal = document.getElementById('disk-ring-val');
 const diskVal = document.getElementById('disk-val');
@@ -174,6 +178,18 @@ function updateDashboard(data) {
         if (ramValPerc) ramValPerc.textContent = `${Math.round(ramPerc)}%`;
         if (ramVal) ramVal.textContent = `${formatBytes(ramUsed)} / ${formatBytes(ramTotal, 0)}`;
         renderSteps(ramSteps, ramPerc, 30);
+
+        // Swap (only show if total > 64MB)
+        const swapTotal = data.system.swap?.total || 0;
+        if (swapTotal > 64 * 1024 * 1024) {
+            if (swapBox) swapBox.classList.remove('hidden');
+            if (swapBox) swapBox.classList.add('flex');
+            const swapUsed = data.system.swap?.used || 0;
+            const swapPerc = (swapUsed / swapTotal) * 100;
+            if (swapValPerc) swapValPerc.textContent = `${Math.round(swapPerc)}%`;
+            if (swapVal) swapVal.textContent = `${formatBytes(swapUsed)} / ${formatBytes(swapTotal, 0)}`;
+            renderSteps(swapSteps, swapPerc, 20);
+        }
 
         // Disk
         const diskUsed = data.system.disk?.used || 0;
