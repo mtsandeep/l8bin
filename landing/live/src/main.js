@@ -43,6 +43,14 @@ const monitorVer = document.getElementById('monitor-ver');
 const monitorMem = document.getElementById('monitor-mem');
 const monitorUptime = document.getElementById('monitor-uptime');
 
+const dockerProcsSection = document.getElementById('docker-procs-section');
+const dockerProcsToggle = document.getElementById('docker-procs-toggle');
+const dockerProcsChevron = document.getElementById('docker-procs-chevron');
+const dockerProcsDetail = document.getElementById('docker-procs-detail');
+const dockerProcsCount = document.getElementById('docker-procs-count');
+const dockerProcsRam = document.getElementById('docker-procs-ram');
+const dockerProcsList = document.getElementById('docker-procs-list');
+
 let lastData = null;
 let activeStatusFilter = null;
 
@@ -53,6 +61,20 @@ window.setFilter = function (status) {
 };
 
 // ═══════ UTILITIES ═══════
+window.toggleDockerProcs = function() {
+    if (!dockerProcsDetail) return;
+    const isHidden = dockerProcsDetail.classList.contains('hidden');
+    if (isHidden) {
+        dockerProcsDetail.classList.remove('hidden');
+        if (dockerProcsChevron) dockerProcsChevron.style.transform = 'rotate(90deg)';
+        if (dockerProcsToggle) dockerProcsToggle.classList.add('rounded-b-none');
+    } else {
+        dockerProcsDetail.classList.add('hidden');
+        if (dockerProcsChevron) dockerProcsChevron.style.transform = 'rotate(0deg)';
+        if (dockerProcsToggle) dockerProcsToggle.classList.remove('rounded-b-none');
+    }
+};
+
 function setConnectionStatus(status) {
     if (!connectionLabel || !statusDot || !statusWrapper) return;
     
@@ -133,9 +155,15 @@ function updateDashboard(data) {
 
     // ── Host Info ──
     if (data.host) {
-        if (hostOs) hostOs.textContent = data.host.platform || data.host.os;
+        if (hostOs) {
+            const osVal = data.host.platform || data.host.os;
+            hostOs.textContent = osVal;
+            hostOs.title = osVal;
+        }
         if (hostCpu && data.host.cpuModel) {
-            hostCpu.textContent = data.host.cpuModel.replace(/\(R\)|\(TM\)|\s+/g, ' ').trim();
+            const cpuVal = data.host.cpuModel.replace(/\(R\)|\(TM\)|\s+/g, ' ').trim();
+            hostCpu.textContent = cpuVal;
+            hostCpu.title = cpuVal;
         }
         if (hostUptime) hostUptime.textContent = formatUptime(data.host.uptime);
     }
@@ -205,11 +233,52 @@ function updateDashboard(data) {
         renderContainers(data.containers);
     }
 
+    // ── Docker Daemon Processes ──
+    if (data.docker_procs) {
+        renderDockerProcesses(data.docker_procs);
+    } else {
+        if (dockerProcsSection) dockerProcsSection.classList.add('hidden');
+    }
+
     // ── Monitor Self-Stats ──
     if (data.monitor) {
         if (monitorVer) monitorVer.textContent = data.monitor.version || 'vdev';
         if (monitorMem) monitorMem.textContent = `${data.monitor.memory_mb.toFixed(1)} MB`;
         if (monitorUptime) monitorUptime.textContent = formatUptime(data.monitor.uptime);
+    }
+}
+
+function renderDockerProcesses(dp) {
+    if (!dp || !dp.processes || dp.processes.length === 0) {
+        if (dockerProcsSection) dockerProcsSection.classList.add('hidden');
+        return;
+    }
+    if (dockerProcsSection) dockerProcsSection.classList.remove('hidden');
+
+    if (dockerProcsCount) {
+        dockerProcsCount.textContent = `${dp.processes.length} process${dp.processes.length !== 1 ? 'es' : ''}`;
+    }
+    if (dockerProcsRam) {
+        dockerProcsRam.textContent = formatBytes(dp.total_ram);
+    }
+
+    // Only render list when expanded
+    if (dockerProcsList && !dockerProcsDetail.classList.contains('hidden')) {
+        dockerProcsList.innerHTML = (dp.groups || []).map(g => {
+            const swapStr = g.swap > 0 ? formatBytes(g.swap) : '--';
+            const badge = g.count > 1 ? `<span class="inline-flex items-center justify-center ml-2 px-1.5 py-0.5 bg-sky-500/15 border border-sky-500/30 text-sky-400 text-[0.55rem] font-mono font-bold leading-none">x${g.count}</span>` : '';
+            return `<div class="container-row">
+                <div class="col-span-7 flex items-center overflow-hidden gap-1">
+                    <span class="c-name">${g.name}</span>${badge}
+                </div>
+                <div class="col-span-3 text-right">
+                    <span class="c-metric-val">${formatBytes(g.ram)}</span>
+                </div>
+                <div class="col-span-2 text-right">
+                    <span class="c-metric-val text-slate-500">${swapStr}</span>
+                </div>
+            </div>`;
+        }).join('');
     }
 }
 
