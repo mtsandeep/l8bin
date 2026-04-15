@@ -345,7 +345,7 @@ if (glitchEl) {
     if (isStreaming) return;
     isStreaming = true;
     
-    evtSource = new EventSource('http://localhost:5008/stream');
+    evtSource = new EventSource('/stats/stream');
     evtSource.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -396,6 +396,23 @@ if (glitchEl) {
   }, { threshold: 0.1 });
 
   obs.observe(card);
+
+  let tabHiddenTimer = null;
+  let tabVisibleTimer = null;
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearTimeout(tabVisibleTimer);
+      tabHiddenTimer = setTimeout(() => {
+        stopStream(true);
+      }, 10000);
+    } else {
+      clearTimeout(tabHiddenTimer);
+      tabVisibleTimer = setTimeout(() => {
+        if (inView) startStream();
+      }, 2000);
+    }
+  });
 })();
 
 // Mobile menu toggle

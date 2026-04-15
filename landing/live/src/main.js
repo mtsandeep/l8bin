@@ -57,6 +57,11 @@ function setConnectionStatus(status) {
         connectionLabel.className = 'connection-label text-[0.65rem] font-bold uppercase tracking-widest transition-colors text-emerald-400';
         statusDot.className = 'w-2.5 h-2.5 rounded-full transition-colors animate-pulse bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.5)]';
         statusWrapper.className = 'flex pl-3 pr-4 py-2 rounded-none items-center gap-3 shrink-0 transition-colors bg-emerald-500/10 border border-emerald-500/20 shadow-[0_0_15px_rgba(52,211,153,0.05)] border-t-emerald-500/40';
+    } else if (status === 'paused') {
+        connectionLabel.textContent = 'Paused';
+        connectionLabel.className = 'connection-label text-[0.65rem] font-bold uppercase tracking-widest transition-colors text-zinc-500';
+        statusDot.className = 'w-2.5 h-2.5 rounded-full transition-colors bg-zinc-500';
+        statusWrapper.className = 'flex pl-3 pr-4 py-2 rounded-none items-center gap-3 shrink-0 transition-colors bg-zinc-500/10 border border-zinc-500/20 shadow-[0_0_15px_rgba(113,113,122,0.05)] border-t-zinc-500/40';
     } else if (status === 'offline') {
         connectionLabel.textContent = 'Offline';
         connectionLabel.className = 'connection-label text-[0.65rem] font-bold uppercase tracking-widest transition-colors text-rose-500';
@@ -275,12 +280,17 @@ function renderContainers(containers) {
 }
 
 // ═══════ SSE CONNECTION ═══════
-function connectStream() {
-    setConnectionStatus('connecting');
-    // Using relative URL due to Caddy reverse proxy
-    const evtSource = new EventSource("/stream");
+let currentEvtSource = null;
+let tabHiddenTimer = null;
+let tabVisibleTimer = null;
 
-    evtSource.onmessage = (event) => {
+function connectStream() {
+    if (currentEvtSource) return;
+    setConnectionStatus('connecting');
+    // Using relative URL due to nginx reverse proxy
+    currentEvtSource = new EventSource("/stats/stream");
+
+    currentEvtSource.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
             lastData = data;
@@ -290,14 +300,35 @@ function connectStream() {
         }
     };
 
-    evtSource.onerror = () => {
-        evtSource.close();
+    currentEvtSource.onerror = () => {
+        currentEvtSource.close();
+        currentEvtSource = null;
         setConnectionStatus('offline');
-        setTimeout(connectStream, 2000);
+        if (!document.hidden) {
+            setTimeout(connectStream, 2000);
+        }
     };
+}
+
+function disconnectStream() {
+    if (currentEvtSource) {
+        currentEvtSource.close();
+        currentEvtSource = null;
+    }
+    setConnectionStatus('paused');
 }
 
 // ═══════ INIT ═══════
 window.addEventListener('DOMContentLoaded', () => {
     connectStream();
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            clearTimeout(tabVisibleTimer);
+            tabHiddenTimer = setTimeout(disconnectStream, 10000);
+        } else {
+            clearTimeout(tabHiddenTimer);
+            tabVisibleTimer = setTimeout(connectStream, 2000);
+        }
+    });
 });
