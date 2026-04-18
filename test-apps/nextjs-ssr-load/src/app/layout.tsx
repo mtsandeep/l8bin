@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { TimingScript } from "./timing-script";
 
 export const metadata: Metadata = {
-  title: "SSR Load Test Store",
-  description: "Next.js SSR load testing application",
+  title: "Storefront — SSR Load Test",
+  description: "Next.js SSR load testing application with realistic product data",
 };
 
 export default function RootLayout({
@@ -13,7 +14,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <TimingScript />
+        {children}
+      </body>
     </html>
   );
 }

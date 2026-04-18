@@ -29,7 +29,7 @@ Cargo.lock
 *.db
 *.db-journal
 *.db-wal
-data/
+/data/
 
 # Logs
 *.log
