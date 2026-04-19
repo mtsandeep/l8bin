@@ -6,6 +6,7 @@
     <title>Quick Start - LiteBin</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet" />
     <script type="module" src="/src/quickstart.js"></script>
+    <link rel="stylesheet" href="/src/quickstart.css" />
   </head>
   <body class="bg-night-950 text-zinc-300 antialiased min-h-screen">
     <!-- Nav -->
@@ -23,9 +24,26 @@
       <!-- Header -->
       <div class="mb-12">
         <h1 class="text-4xl font-black text-white mb-4 tracking-tight">Quick Start Guide</h1>
-        <p class="text-zinc-400 max-w-2xl">
+        <p class="text-zinc-400 max-w-2xl mb-8">
           Get your LiteBin running and deploy your first app in under 5 minutes.
         </p>
+
+        <div class="glass p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-6 glow-border">
+          <div>
+            <p class="text-xs font-mono uppercase tracking-widest text-violet-400 mb-1">Pick your platform</p>
+            <h2 class="text-lg font-bold text-white">Choose your Operating System:</h2>
+          </div>
+          <div class="flex gap-2 p-1 bg-white/5 border border-white/10 rounded-xl">
+            <button onclick="switchOS('unix')" id="os-tab-unix" class="os-tab border-none px-6 py-2.5">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 0 0-9 9 9 9 0 0 0 9 9 9 9 0 0 0 9-9 9 9 0 0 0-9-9Z"></path><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"></path></svg>
+              Linux / macOS
+            </button>
+            <button onclick="switchOS('win')" id="os-tab-win" class="os-tab border-none px-6 py-2.5">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 12h18"></path><path d="M12 3v18"></path></svg>
+              Windows
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Main Tabs -->
@@ -75,13 +93,27 @@
             <!-- Step 1: Install -->
             <div id="setup-step-1" class="step-detail">
               <h2 class="text-2xl font-bold text-white mb-4">Install Master</h2>
-              <p class="text-zinc-400 mb-6">SSH into your Linux VPS (with Docker installed) and run:</p>
-              <div class="code-block mb-4 relative group">
-                <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                <code class="text-sm text-zinc-300">curl -fsSL https://l8b.in | bash</code>
+              
+              <div data-os="unix">
+                <p class="text-zinc-400 mb-6">SSH into your Linux VPS (with Docker installed) and run:</p>
+                <div class="code-block mb-4 relative group">
+                  <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <code class="text-sm text-zinc-300">curl -fsSL https://l8b.in | bash</code>
+                </div>
               </div>
+
+              <div data-os="win" class="hidden">
+                <p class="text-zinc-400 mb-6">Open PowerShell as Administrator and run:</p>
+                <div class="code-block mb-4 relative group">
+                  <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <code class="text-sm text-zinc-300">iex (irm https://l8b.in/windows.ps1)</code>
+                </div>
+              </div>
+
               <div class="glass rounded-xl p-6 mb-6">
                 <p class="text-sm text-zinc-400 mb-4">The installer will prompt for:</p>
                 <ul class="space-y-2 text-sm text-zinc-300">
@@ -115,29 +147,51 @@
             <!-- Step 3: Configure Agent -->
             <div id="setup-step-3" class="step-detail hidden">
               <h2 class="text-2xl font-bold text-white mb-4">Add Worker Nodes (Optional)</h2>
-              <p class="text-zinc-400 mb-6">First, generate mTLS certificates on the master server (skip if already configured):</p>
-              <div class="code-block mb-4 relative group">
-                <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                <code class="text-sm text-zinc-300">curl -fsSL https://l8b.in | bash -s certs</code>
+              
+              <div data-os="unix">
+                <p class="text-zinc-400 mb-6 font-medium">To scale to multiple servers, you can add worker nodes running the LiteBin Agent.</p>
+                <p class="text-zinc-400 mb-4">1. Generate mTLS certificates on the master server:</p>
+                <div class="code-block mb-4 relative group">
+                  <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <code class="text-sm text-zinc-300">curl -fsSL https://l8b.in | bash -s certs</code>
+                </div>
+                <p class="text-zinc-400 mb-4">2. On each Linux worker server, run the installer in agent mode:</p>
+                <div class="code-block mb-4 relative group">
+                  <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <code class="text-sm text-zinc-300">curl -fsSL https://l8b.in | bash -s agent</code>
+                </div>
+                <div class="glass rounded-xl p-6 mb-6">
+                  <p class="text-sm text-zinc-400 mb-4">The installer will prompt for:</p>
+                  <ul class="space-y-2 text-sm text-zinc-300">
+                    <li class="flex gap-3"><span class="text-violet-400">→</span><span>Master dashboard URL</span></li>
+                    <li class="flex gap-3"><span class="text-violet-400">→</span><span>Node name (e.g. <code class="text-violet-300 bg-white/5 px-1 rounded">worker-1</code>)</span></li>
+                    <li class="flex gap-3"><span class="text-violet-400">→</span><span>Agent port (default: 5083)</span></li>
+                    <li class="flex gap-3"><span class="text-violet-400">→</span><span>mTLS cert bundle from the <code class="text-violet-300 bg-white/5 px-1 rounded">certs</code> command above</span></li>
+                  </ul>
+                </div>
               </div>
-              <p class="text-zinc-400 mb-4">Save the cert bundle it prints. Then on each worker server run:</p>
-              <div class="code-block mb-4 relative group">
-                <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                <code class="text-sm text-zinc-300">curl -fsSL https://l8b.in | bash -s agent</code>
+
+              <div data-os="win" class="hidden">
+                <div class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-6 mb-6">
+                  <div class="flex gap-4">
+                    <div class="w-10 h-10 bg-amber-500/20 rounded-lg flex items-center justify-center shrink-0">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-amber-400"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+                    </div>
+                    <div>
+                      <h3 class="text-amber-400 font-bold mb-1">Linux Only (Agent)</h3>
+                      <p class="text-sm text-amber-300/80 leading-relaxed">
+                        The LiteBin Agent (worker daemon) currently requires a Linux environment. You can still use your Windows Master to manage Linux workers, but Windows-native worker support is <strong>Coming Soon</strong>.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p class="text-zinc-400 text-sm">If you have a Linux VPS ready, you can switch the OS toggle at the top of this guide to see the agent setup instructions.</p>
               </div>
-              <div class="glass rounded-xl p-6 mb-6">
-                <p class="text-sm text-zinc-400 mb-4">The installer will prompt for:</p>
-                <ul class="space-y-2 text-sm text-zinc-300">
-                  <li class="flex gap-3"><span class="text-violet-400">→</span><span>Master dashboard URL</span></li>
-                  <li class="flex gap-3"><span class="text-violet-400">→</span><span>Node name (e.g. <code class="text-violet-300 bg-white/5 px-1 rounded">worker-1</code>)</span></li>
-                  <li class="flex gap-3"><span class="text-violet-400">→</span><span>Agent port (default: 5083)</span></li>
-                  <li class="flex gap-3"><span class="text-violet-400">→</span><span>mTLS cert bundle from the <code class="text-violet-300 bg-white/5 px-1 rounded">certs</code> command above</span></li>
-                </ul>
-              </div>
+
               <div class="bg-violet-500/10 border border-violet-500/20 rounded-xl p-4 mb-6">
                 <p class="text-sm text-violet-300"><strong>Tip:</strong> You can also add nodes from the dashboard — Nodes → Add Node.</p>
               </div>
@@ -201,53 +255,105 @@
 
             <div class="mb-6">
               <p class="text-sm text-zinc-400 mb-3">Install CLI locally:</p>
-              <div class="code-block mb-4 relative group">
-                <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                <code class="text-sm text-zinc-300">curl -fsSL https://l8b.in | bash -s cli</code>
+
+              <!-- Linux / macOS -->
+              <div data-os="unix">
+                <div class="mb-4">
+                  <p class="text-sm font-bold text-zinc-400 mb-2">Option A: Prebuilt binary (easiest)</p>
+                  <div class="code-block mb-3 relative group">
+                    <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <code class="text-sm text-zinc-300">curl -fsSL https://l8b.in | bash -s cli</code>
+                  </div>
+                </div>
+
+                <div>
+                  <p class="text-sm font-bold text-zinc-400 mb-2">Option B: Build from source (requires Cargo)</p>
+                  <div class="code-block relative group">
+                    <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <pre class="text-sm text-zinc-300"><code>git clone https://github.com/mtsandeep/l8bin.git
+cd l8bin
+./setup/build.sh
+bash install.sh cli</code></pre>
+                  </div>
+                </div>
               </div>
 
-              <!-- Add to PATH -->
-              <div class="mb-6">
-                <p class="text-sm text-zinc-400 mb-3">Make <code class="text-violet-300 bg-white/5 px-1 rounded">l8b</code> available in your terminal:</p>
-                <div class="flex gap-1 mb-3 bg-white/3 border border-white/8 rounded-lg p-1 inline-flex">
-                  <button onclick="switchPathTab('unix')" id="ptab-unix" class="ptab px-3 py-1.5 rounded text-xs font-mono font-semibold transition bg-white/8 text-white">Linux / macOS</button>
-                  <button onclick="switchPathTab('win')" id="ptab-win" class="ptab px-3 py-1.5 rounded text-xs font-mono font-semibold transition text-zinc-500 hover:text-zinc-300">Windows</button>
-                </div>
-
-                <div id="pcontent-unix">
-                  <p class="text-xs text-zinc-500 mb-2">Installed to <code class="text-zinc-400 bg-white/5 px-1 rounded">~/.local/bin</code>. Add to your shell profile so it persists:</p>
-                  <div class="code-block mb-2 relative group">
+              <!-- Windows -->
+              <div data-os="win" class="hidden">
+                <div class="mb-4">
+                  <p class="text-sm font-bold text-zinc-400 mb-2">Option A: Prebuilt binary (easiest)</p>
+                  <div class="code-block mb-3 relative group">
                     <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
-                    <pre class="text-sm text-zinc-300"><code># bash
+                    <code class="text-sm text-zinc-300">iex (irm https://l8b.in/windows.ps1) -Cli</code>
+                  </div>
+                </div>
+
+                <div>
+                  <p class="text-sm font-bold text-zinc-400 mb-2">Option B: Build from source (requires Cargo)</p>
+                  <div class="code-block relative group">
+                    <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <pre class="text-sm text-zinc-300"><code>git clone https://github.com/mtsandeep/l8bin.git
+cd l8bin
+.\setup\build.ps1
+powershell -File .\install-windows.ps1 cli</code></pre>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Verify / PATH -->
+              <div class="mt-8 mb-8 border-t border-white/5 pt-8">
+                <h4 class="text-white font-bold mb-2">Verify Installation (PATH)</h4>
+                <p class="text-sm text-zinc-500 mb-4">The installer automatically configures your PATH. Open a <strong>new terminal</strong> and run <code class="text-violet-300">l8b --version</code> to verify.</p>
+
+                <!-- Troubleshooting -->
+                <details class="group">
+                  <summary class="text-xs font-mono uppercase tracking-widest text-zinc-500 cursor-pointer hover:text-zinc-300 list-none flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="group-open:rotate-90 transition-transform"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    If 'l8b' command not found (Troubleshooting)
+                  </summary>
+                  
+                  <div class="mt-4 space-y-4">
+                    <div data-os="unix">
+                      <p class="text-xs text-zinc-500">Add <code class="text-zinc-400 bg-white/5 px-1 rounded">~/.local/bin</code> to your shell profile manually:</p>
+                      <div class="code-block relative group">
+                        <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <pre class="text-sm text-zinc-300"><code># bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 
-# zsh (default on macOS)
+# zsh (macOS default)
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc</code></pre>
-                  </div>
-                  <p class="text-xs text-zinc-500">Verify: <code class="text-zinc-400 bg-white/5 px-1 rounded">which l8b</code> should print the path.</p>
-                </div>
+                      </div>
+                    </div>
 
-                <div id="pcontent-win" class="hidden">
-                  <p class="text-xs text-zinc-500 mb-2">Installed to <code class="text-zinc-400 bg-white/5 px-1 rounded">%USERPROFILE%\.local\bin</code>. Run in PowerShell or Command Prompt to add it permanently:</p>
-                  <div class="code-block mb-3 relative group">
-                    <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                    </button>
-                    <code class="text-sm text-zinc-300">setx PATH "%PATH%;%USERPROFILE%\.local\bin"</code>
+                    <div data-os="win" class="hidden">
+                      <p class="text-xs text-zinc-500 mb-2">Refresh your current PowerShell session (no restart):</p>
+                      <div class="code-block mb-4 relative group">
+                        <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <code class="text-sm text-zinc-300">$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")</code>
+                      </div>
+
+                      <p class="text-xs text-zinc-500">Alternatively, manually add to your User PATH:</p>
+                      <div class="code-block relative group">
+                        <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <code class="text-sm text-zinc-300">[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + "$env:USERPROFILE\.local\bin", 'User')</code>
+                      </div>
+                    </div>
                   </div>
-                  <p class="text-xs text-zinc-500 mb-2">Or in PowerShell (permanent, user scope):</p>
-                  <div class="code-block mb-3 relative group">
-                    <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                    </button>
-                    <code class="text-sm text-zinc-300">[Environment]::SetEnvironmentVariable('Path', $env:Path + ';' + "$env:USERPROFILE\.local\bin", 'User')</code>
-                  </div>
-                  <p class="text-xs text-zinc-500">Restart your terminal, then verify: <code class="text-zinc-400 bg-white/5 px-1 rounded">l8b --help</code></p>
-                </div>
+                </details>
               </div>
 
               <p class="text-sm text-zinc-400 mb-3">Login to your master:</p>
@@ -257,6 +363,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc</code
                 </button>
                 <code class="text-sm text-zinc-300">l8b login --server https://l8bin.example.com</code>
               </div>
+              <p class="text-[10px] text-zinc-500 mb-6 italic" data-os="win">Note: If running LiteBin locally, use <code class="text-zinc-400">http://localhost:5080</code> as the server. Cloud-hosted instances work normally over HTTPS.</p>
 
               <p class="text-sm text-zinc-400 mb-3">Interactive deploy (auto-detects Dockerfile or uses Railpack):</p>
               <div class="code-block mb-4 relative group">

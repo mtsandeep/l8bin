@@ -69,6 +69,10 @@ enum Commands {
         /// Disable auto-stop
         #[arg(long)]
         no_auto_stop: bool,
+
+        /// Pass a local file (e.g. .env) as a Docker build secret (id=l8b_env)
+        #[arg(long)]
+        secret: Vec<std::path::PathBuf>,
     },
     /// Interactive deploy — guided flow for new or existing projects
     Ship {
@@ -79,6 +83,10 @@ enum Commands {
         /// App port (default: 3000)
         #[arg(long)]
         port: Option<u16>,
+
+        /// Pass a local file (e.g. .env) as a Docker build secret (id=l8b_env)
+        #[arg(long)]
+        secret: Vec<std::path::PathBuf>,
     },
     /// Log in to a LiteBin server
     Login {
@@ -88,6 +96,12 @@ enum Commands {
     },
     /// Log out (clear stored session)
     Logout,
+    /// Clean up leftover build artifacts (.env backups, temp dockerignore files)
+    Cleanup {
+        /// Project directory (default: current directory)
+        #[arg(default_value = ".")]
+        path: String,
+    },
     /// Manage CLI configuration
     Config {
         #[command(subcommand)]
@@ -138,6 +152,7 @@ async fn main() -> Result<()> {
             memory,
             cpu,
             no_auto_stop,
+            secret,
         } => {
             if !project
                 .chars()
@@ -152,7 +167,7 @@ async fn main() -> Result<()> {
             let server = auth::resolve_server(&cfg)?;
 
             let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
-            let image = build::build_project(&path, dockerfile.as_deref(), &image_tag, ci_mode.enabled).await?;
+            let image = build::build_project(&path, dockerfile.as_deref(), &image_tag, secret, ci_mode.enabled).await?;
 
             ci_mode.println("Uploading image...");
             let image_id = upload::upload_tar(
@@ -185,7 +200,7 @@ async fn main() -> Result<()> {
             // Clean up
             let _ = std::fs::remove_file(&image.path);
         }
-        Commands::Ship { path, port } => {
+        Commands::Ship { path, port, secret } => {
             if ci_mode.enabled {
                 bail!("'ship' is an interactive command and cannot be used in CI mode. Use 'deploy' instead.");
             }
@@ -200,7 +215,7 @@ async fn main() -> Result<()> {
             let cfg = config::CliConfig::load(cli.server.as_deref(), None)?;
             let client = auth::authenticated_client(&cfg)?;
             let server = auth::resolve_server(&cfg)?;
-            ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port).await?;
+            ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port, secret).await?;
         }
         Commands::Login { server } => {
             auth::login(&server).await?;
@@ -208,6 +223,10 @@ async fn main() -> Result<()> {
         Commands::Logout => {
             auth::clear_session()?;
             println!("Logged out.");
+        }
+        Commands::Cleanup { path } => {
+            let dir = std::path::Path::new(&path);
+            build::cleanup_build_artifacts(dir)?;
         }
         Commands::Config { action } => match action {
             ConfigAction::Set { server, token } => {

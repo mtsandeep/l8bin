@@ -241,7 +241,8 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
             let _ = state.docker.remove_container(old_cid).await;
         }
 
-        let (new_container_id, new_mapped_port) = match state.docker.run_container(&project_clone, Vec::new(), None).await {
+        let extra_env = crate::routes::manage::read_local_project_env(&subdomain);
+        let (new_container_id, new_mapped_port) = match state.docker.run_container(&project_clone, extra_env, None).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, project = %subdomain, "waker: failed to create container");
@@ -331,7 +332,8 @@ async fn restart_crashed_container(
         p
     };
 
-    let (new_container_id, new_mapped_port) = match state.docker.run_container(&project_clone, Vec::new(), None).await {
+    let extra_env = crate::routes::manage::read_local_project_env(&subdomain);
+    let (new_container_id, new_mapped_port) = match state.docker.run_container(&project_clone, extra_env, None).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, project = %subdomain, "waker: failed to recreate container");

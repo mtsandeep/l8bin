@@ -62,8 +62,30 @@ pub struct ErrorResponse {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Ensure the project-specific directory exists and has a placeholder .env if missing.
+fn ensure_project_dir_and_env(project_id: &str) {
+    let project_dir = projects_dir().join(project_id);
+    if let Err(e) = std::fs::create_dir_all(&project_dir) {
+        tracing::error!(project = project_id, error = %e, "failed to create project directory");
+        return;
+    }
+
+    let env_path = project_dir.join(".env");
+    if !env_path.exists() {
+        let placeholder = "# Place your runtime environment variables here\n# These variables are injected directly into your container at startup.\n";
+        if let Err(e) = std::fs::write(&env_path, placeholder) {
+            tracing::error!(project = project_id, error = %e, "failed to create placeholder .env");
+        } else {
+            tracing::info!(project = project_id, path = %env_path.display(), "created placeholder .env");
+        }
+    }
+}
+
 /// Read env vars from `projects/<project_id>/.env` if it exists.
 fn read_project_env(project_id: &str) -> Vec<String> {
+    // First, ensure the directory and placeholder exist
+    ensure_project_dir_and_env(project_id);
+    
     let env_path = projects_dir().join(project_id).join(".env");
     tracing::info!(project = project_id, path = %env_path.display(), exists = env_path.exists(), "checking for .env file");
 
@@ -165,6 +187,9 @@ pub async fn recreate_container(
     tracing::info!(project = %req.project_id, image = %req.image, "recreate request received");
 
     let _ = state.docker.remove_by_name(&req.project_id).await;
+
+    // Ensure the directory and placeholder exist
+    ensure_project_dir_and_env(&req.project_id);
 
     let extra_env = read_project_env(&req.project_id);
 

@@ -68,3 +68,7 @@
 .nav-link { position: relative; }
 .nav-link::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 0; height: 1px; background: #8b5cf6; transition: width .2s; }
 .nav-link:hover::after { width: 100%; }
+
+.os-tab {
+  @apply transition-all duration-200 border px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2;
+}

@@ -1,0 +1,5 @@
+# Force LF line endings for SQL migration files to prevent checksum mismatches between Windows and Docker
+orchestrator/src/db/migrations/*.sql text eol=lf
+agent/src/db/migrations/*.sql text eol=lf
+common/src/db/migrations/*.sql text eol=lf
+**/*.sql text eol=lf

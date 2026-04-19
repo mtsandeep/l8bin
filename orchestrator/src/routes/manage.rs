@@ -529,8 +529,31 @@ pub async fn recreate_project(
     }))
 }
 
+
+/// Ensure the project-specific directory exists and has a placeholder .env if missing.
+pub fn ensure_project_dir_and_env(project_id: &str) {
+    let project_dir = std::path::PathBuf::from("projects").join(project_id);
+    if let Err(e) = std::fs::create_dir_all(&project_dir) {
+        tracing::error!(project = project_id, error = %e, "failed to create project directory");
+        return;
+    }
+
+    let env_path = project_dir.join(".env");
+    if !env_path.exists() {
+        let placeholder = "# Place your runtime environment variables here\n# These variables are injected directly into your container at startup.\n";
+        if let Err(e) = std::fs::write(&env_path, placeholder) {
+            tracing::error!(project = project_id, error = %e, "failed to create placeholder .env");
+        } else {
+            tracing::info!(project = project_id, path = %env_path.display(), "created placeholder .env");
+        }
+    }
+}
+
 /// Read env vars from the local project .env file.
-fn read_local_project_env(project_id: &str) -> Vec<String> {
+pub fn read_local_project_env(project_id: &str) -> Vec<String> {
+    // Ensure the directory and placeholder exist
+    ensure_project_dir_and_env(project_id);
+
     let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
     if !env_path.exists() {
         return Vec::new();

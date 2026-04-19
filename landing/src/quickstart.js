@@ -1,4 +1,32 @@
-import './quickstart.css'
+// Global OS state
+let currentOS = 'unix';
+
+function switchOS(os) {
+  currentOS = os;
+  
+  // Toggle visibility of OS-specific blocks
+  document.querySelectorAll('[data-os]').forEach(el => {
+    if (el.dataset.os === os) {
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  });
+
+  // Update OS toggle buttons
+  document.querySelectorAll('.os-tab').forEach(el => {
+    el.classList.remove('bg-white/10', 'text-white', 'border-white/20');
+    el.classList.add('text-zinc-500', 'border-transparent');
+  });
+  
+  const activeBtn = document.getElementById('os-tab-' + os);
+  if (activeBtn) {
+    activeBtn.classList.remove('text-zinc-500', 'border-transparent');
+    activeBtn.classList.add('bg-white/10', 'text-white', 'border-white/20');
+  }
+}
+
+window.switchOS = switchOS;
 
 // Main tab switching
 function switchMainTab(tabName) {
@@ -68,24 +96,15 @@ function showDeployOption(option) {
   selected.querySelector('.w-12').classList.add('bg-violet-500/20');
   selected.querySelector('svg').classList.remove('text-zinc-400');
   selected.querySelector('svg').classList.add('text-violet-400');
+
+  // Trigger OS sync
+  switchOS(currentOS);
 }
 
 window.showDeployOption = showDeployOption;
 
-// Path tab switching
-function switchPathTab(os) {
-  document.querySelectorAll('[id^="pcontent-"]').forEach(el => el.classList.add('hidden'));
-  document.getElementById('pcontent-' + os).classList.remove('hidden');
-
-  document.querySelectorAll('.ptab').forEach(el => {
-    el.classList.remove('bg-white/8', 'text-white');
-    el.classList.add('text-zinc-500');
-  });
-  const active = document.getElementById('ptab-' + os);
-  active.classList.remove('text-zinc-500');
-  active.classList.add('bg-white/8', 'text-white');
-}
-
+// No-op for backward compatibility if needed, or remove if safe
+function switchPathTab(os) {}
 window.switchPathTab = switchPathTab;
 
 // Copy code functionality
@@ -105,3 +124,8 @@ function copyCode(btn) {
 }
 
 window.copyCode = copyCode;
+
+// Initial state
+document.addEventListener('DOMContentLoaded', () => {
+    switchOS('unix');
+});

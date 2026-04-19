@@ -188,6 +188,7 @@ pub async fn deploy(
     // 5. Branch: local vs remote node
     let (container_id, mapped_port) = if node_id == "local" {
         // --- Local path ---
+        crate::routes::manage::ensure_project_dir_and_env(&payload.project_id);
 
         // Remove any existing container for this project
         if let Err(e) = state.docker.remove_by_name(&payload.project_id).await {
@@ -216,7 +217,8 @@ pub async fn deploy(
         }
 
         // Start the container
-        match state.docker.run_container(&project, Vec::new(), None).await {
+        let extra_env = crate::routes::manage::read_local_project_env(&payload.project_id);
+        match state.docker.run_container(&project, extra_env, None).await {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!(error = %e, "failed to start container");
