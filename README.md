@@ -288,27 +288,17 @@ See [`.env.example`](.env.example) for the full list.
 
 ## Development
 
-Requires Rust, Node.js 24, pnpm, and Docker.
+Requires Rust, Docker, and optionally Node.js + pnpm (for the dashboard).
 
 ```bash
-# Build all Rust binaries
+# Build all
 cargo build --release
 
-# Build CLI only
-cargo build --release -p l8b
+# Check compilation (fast, no binary)
+cargo check
 
-# Build orchestrator only
-cargo build --release -p litebin-orchestrator
-
-# Build agent only
-cargo build --release -p litebin-agent
-
-# Build dashboard
-cd dashboard && pnpm install && pnpm build
-
-# Start dev stack (orchestrator + dashboard + caddy)
-docker compose --profile master up -d
-
-# Run orchestrator tests
-cargo test -p litebin-orchestrator
+# Start full stack
+docker compose --profile master up -d --build
 ```
+
+See [Development Guide](docs/development.md) for build scripts, local testing, Windows development, cross-compilation, and more.
