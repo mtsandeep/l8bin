@@ -320,6 +320,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/internal/wake-report", post(routes::wake_report::wake_report))
         .route("/internal/heartbeat", post(routes::heartbeat::heartbeat))
         .fallback(routes::waker::wake)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            routes::waker::waker_intercept,
+        ))
         .layer(auth::auth_layer(state.clone()))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

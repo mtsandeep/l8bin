@@ -587,6 +587,7 @@ fn loading_page(project_id: &str) -> Response<Body> {
         r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="1">
     <title>Starting {}</title>
     <style>
@@ -617,6 +618,7 @@ fn error_page(_project_id: &str) -> Response<Body> {
     let html = r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="30">
     <title>Offline</title>
     <style>
@@ -645,6 +647,7 @@ fn offline_page() -> Response<Body> {
     let html = r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Offline</title>
     <style>
         body { font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
@@ -718,6 +721,7 @@ fn not_found_page() -> Response<Body> {
     let html = r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Not Found</title>
     <style>
         body { font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }

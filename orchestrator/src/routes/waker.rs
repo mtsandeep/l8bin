@@ -15,6 +15,7 @@ fn loading_page_html(subdomain: &str) -> Html<String> {
         r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="1">
     <title>Starting {}</title>
     <style>
@@ -40,6 +41,7 @@ fn error_page_html() -> Html<String> {
         r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="30">
     <title>Offline</title>
     <style>
@@ -64,6 +66,7 @@ fn not_found_page_html() -> Html<String> {
         r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Not Found</title>
     <style>
         body { font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
@@ -398,17 +401,8 @@ async fn restart_crashed_container(
     Ok(())
 }
 
-/// Catch-all handler. Caddy proxies here when no project-specific route matches.
-/// Uses single-flight dedup — the first request spawns the wake in the background;
-/// all concurrent requests get the loading page immediately.
-pub async fn wake(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+/// Core waker logic — shared by the fallback handler and the subdomain intercept middleware.
+pub async fn wake_for_host(state: AppState, host: &str) -> Response {
 
     let domain_suffix = format!(".{}", state.config.domain);
 
@@ -513,6 +507,7 @@ pub async fn wake(
                 r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Offline</title>
     <style>
         body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
@@ -603,4 +598,48 @@ pub async fn wake(
             loading_page_html(&project_id).into_response()
         }
     }
+}
+
+/// Catch-all fallback handler. Caddy proxies here when no project-specific route matches.
+pub async fn wake(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    wake_for_host(state, host).await
+}
+
+/// Middleware that intercepts requests for app subdomains BEFORE axum's route matcher.
+/// Without this, a GET to `/auth/login` on an app subdomain would match the orchestrator's
+/// POST-only `/auth/login` route and return 405 — the fallback never runs when a path
+/// matches but the method doesn't.
+pub async fn waker_intercept(
+    State(state): State<AppState>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Response {
+    let host = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let config = &state.config;
+    let dashboard_host = format!("{}.{}", config.dashboard_subdomain, config.domain);
+    let poke_host = format!("{}.{}", config.poke_subdomain, config.domain);
+    let host_without_port = host.split(':').next().unwrap_or(host);
+
+    // Let dashboard, poke, and bare domain requests pass through to the router
+    if host_without_port == config.domain
+        || host_without_port == dashboard_host
+        || host_without_port == poke_host
+    {
+        return next.run(req).await;
+    }
+
+    // Everything else is an app request (subdomain or custom domain) — handle via waker
+    wake_for_host(state, host).await
 }
