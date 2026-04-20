@@ -90,7 +90,7 @@ fn ensure_project_dir_and_env(project_id: &str) {
 }
 
 /// Read env vars from `projects/<project_id>/.env` if it exists.
-fn read_project_env(project_id: &str) -> Vec<String> {
+pub fn read_project_env(project_id: &str) -> Vec<String> {
     // First, ensure the directory and placeholder exist
     ensure_project_dir_and_env(project_id);
 
@@ -145,7 +145,7 @@ fn snapshot_content_hash(path: &std::path::Path) -> u64 {
 
 /// Check if the project .env has changed since the last container creation.
 /// Compares .env hash against .env.l8bin snapshot hash (header stripped).
-fn env_has_changed(project_id: &str) -> bool {
+pub fn env_has_changed(project_id: &str) -> bool {
     let env_path = projects_dir().join(project_id).join(".env");
     let snapshot_path = projects_dir().join(project_id).join(".env.l8bin");
 
@@ -160,7 +160,7 @@ fn env_has_changed(project_id: &str) -> bool {
 
 /// Write .env.l8bin snapshot — a copy of the current .env with a header.
 /// Called after successfully creating a container with injected env vars.
-fn write_env_snapshot(project_id: &str) {
+pub fn write_env_snapshot(project_id: &str) {
     let env_path = projects_dir().join(project_id).join(".env");
     let snapshot_path = projects_dir().join(project_id).join(".env.l8bin");
 
@@ -179,6 +179,47 @@ fn write_env_snapshot(project_id: &str) {
     } else {
         tracing::info!(project = project_id, "wrote .env.l8bin snapshot");
     }
+}
+
+// ── Project Metadata ─────────────────────────────────────────────────────────
+
+/// Metadata needed to recreate a container without asking the orchestrator.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProjectMetadata {
+    pub image: String,
+    pub internal_port: i64,
+    pub cmd: Option<String>,
+    pub memory_limit_mb: Option<i64>,
+    pub cpu_limit: Option<f64>,
+}
+
+/// Path to the metadata file for a project.
+pub fn metadata_path(project_id: &str) -> std::path::PathBuf {
+    projects_dir().join(project_id).join("metadata.json")
+}
+
+/// Write project metadata to disk after successful container creation.
+pub fn write_project_metadata(project_id: &str, image: &str, internal_port: i64, cmd: Option<&str>, memory_limit_mb: Option<i64>, cpu_limit: Option<f64>) {
+    let meta = ProjectMetadata {
+        image: image.to_string(),
+        internal_port,
+        cmd: cmd.map(|s| s.to_string()),
+        memory_limit_mb,
+        cpu_limit,
+    };
+    let path = metadata_path(project_id);
+    if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&meta).unwrap_or_default()) {
+        tracing::warn!(project = project_id, error = %e, "failed to write metadata.json");
+    } else {
+        tracing::info!(project = project_id, "wrote metadata.json");
+    }
+}
+
+/// Read project metadata from disk. Returns None if file doesn't exist or is invalid.
+pub fn read_project_metadata(project_id: &str) -> Option<ProjectMetadata> {
+    let path = metadata_path(project_id);
+    let content = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -238,6 +279,7 @@ pub async fn run_container(
             // Rebuild agent Caddy config so the new container gets a route
             let _ = super::waker::rebuild_local_caddy(&state).await;
             write_env_snapshot(&req.project_id);
+            write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit);
             (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
         }
         Err(e) => (
@@ -298,6 +340,7 @@ pub async fn recreate_container(
             // Rebuild agent Caddy config so the new container gets a route
             let _ = super::waker::rebuild_local_caddy(&state).await;
             write_env_snapshot(&req.project_id);
+            write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit);
             (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
         }
         Err(e) => (
@@ -366,6 +409,7 @@ pub async fn start_container(
                 Ok((_container_id, mapped_port)) => {
                     let _ = super::waker::rebuild_local_caddy(&state).await;
                     write_env_snapshot(project_id);
+                    write_project_metadata(project_id, &image, internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit);
                     (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
                 }
                 Err(e) => (

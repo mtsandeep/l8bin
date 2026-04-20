@@ -81,16 +81,21 @@ The first request returns the loading page **instantly**. The Docker wake happen
 ```
 start_stopped_container(state, project)
   │
-  ├─ Remove old container (stale port binding)
-  ├─ state.docker.run_container(project_clone, env)
-  │   └─ Docker creates container with host_port="0" → auto-assigns new random port
-  ├─ Get back (new_container_id, new_mapped_port)
-  ├─ UPDATE projects SET status='running', container_id=?, mapped_port=?
+  ├─ Compare .env hash vs .env.l8bin snapshot hash
+  │   ├─ SAME → docker start (fast path, instant)
+  │   │        └─ UPDATE projects SET status='running'
+  │   └─ DIFFERENT → recreate path:
+  │       ├─ Remove old container
+  │       ├─ state.docker.run_container(project_clone, env)
+  │       │   └─ Docker creates container with host_port="0" → auto-assigns new random port
+  │       ├─ write .env.l8bin snapshot
+  │       └─ UPDATE projects SET status='running', container_id=?, mapped_port=?
+  │
   └─ route_sync_tx.send(()) → debounced route sync task rebuilds full Caddy config with per-project route:
       {host: "myapp.l8b.in"} → reverse_proxy → host.docker.internal:32771
 ```
 
-Next browser refresh → Caddy matches `myapp.l8b.in` → proxies directly to container. Done.
+See [Environment Secrets](env-secrets.md) for details on the `.env` / `.env.l8bin` snapshot system.
 
 ### Background Wake — Remote Project (Mode A)
 
@@ -100,8 +105,10 @@ start_stopped_container(state, project)
   ├─ Look up agent node from DB (host, port)
   ├─ Build agent URL: http://10.0.1.5:5081
   │
-  ├─ Try #1: POST /containers/start {container_id}
-  │   └─ Agent: docker start {container_id} → inspect port → return {mapped_port}
+  ├─ POST /containers/start {container_id, project_id, image, internal_port, ...}
+  │   └─ Agent checks .env hash vs .env.l8bin snapshot:
+  │       ├─ SAME → docker start → inspect port → return {mapped_port}
+  │       └─ DIFFERENT → remove old, recreate with new env, return {mapped_port}
   │   ├─ SUCCESS → UPDATE projects, return Ok
   │   └─ FAIL (container pruned, agent restarted)
   │
@@ -184,9 +191,17 @@ The agent waker does **not** check `auto_start_enabled` — it always tries to w
 ```
 wake() background task
   │
-  ├─ docker.start_existing_container(container_id)
-  │   └─ Preserves original port binding (docker start, not create)
-  ├─ docker.inspect_mapped_port(container_id) → get mapped_port
+  ├─ Compare .env hash vs .env.l8bin snapshot hash
+  │   ├─ SAME → fast path:
+  │   │   ├─ docker.start_existing_container(container_id)
+  │   │   └─ docker.inspect_mapped_port(container_id) → get mapped_port
+  │   │
+  │   └─ DIFFERENT → recreate path (reads metadata.json for container config):
+  │       ├─ Read projects/<id>/metadata.json → {image, internal_port, cmd, ...}
+  │       ├─ docker remove old container
+  │       ├─ docker create + start with new env (host_port=0)
+  │       ├─ write .env.l8bin snapshot
+  │       └─ docker.inspect_mapped_port → get mapped_port
   │
   ├─ rebuild_local_caddy()
   │   ├─ Read persisted Caddy config (last orchestrator push) from data/caddy-config.json
@@ -210,6 +225,16 @@ wake() background task
       ├─ Master: verify HMAC, UPDATE projects SET status='running', container_id=?, mapped_port=?
       └─ Master: send route_sync signal (debounced batch sync via background task)
 ```
+
+**Agent project directory** (on the agent machine):
+```text
+projects/<id>/
+├── .env            <-- runtime secrets (user edits this)
+├── .env.l8bin      <-- env snapshot for change detection (auto-generated)
+└── metadata.json   <-- container config for recreate without master (auto-generated)
+```
+
+The agent can wake and recreate containers fully autonomously using only these local files. See [Environment Secrets](env-secrets.md) for details on the env snapshot system.
 
 **Key design:** The agent rebuilds Caddy **locally** starting from the last orchestrator-pushed config as a base. Sleeping custom domain routes and TLS config are preserved from the orchestrator push. Running container routes are added/updated from Docker API discovery. Sleeping custom domain routes for just-woken containers are automatically upgraded to direct proxy routes (no Host rewrite, correct port). No master or DB needed for the wake path. This means:
 
@@ -294,8 +319,8 @@ The switch from sleeping → running route happens automatically when `sync_rout
 
 | Endpoint | What it does |
 |---|---|
-| `POST /containers/start` | `docker start` existing container, inspect port, return `{mapped_port}` |
-| `POST /containers/recreate` | Remove old, create fresh (no pull), auto-assign port, return `{container_id, mapped_port}` |
+| `POST /containers/start` | Smart start: compares `.env` vs `.env.l8bin` hash. Same → `docker start` (fast). Different → recreate with new env (reads `metadata.json`). Returns `{mapped_port}`. |
+| `POST /containers/recreate` | Remove old, create fresh (no pull), reads `.env`, writes `.env.l8bin` snapshot + `metadata.json`, auto-assign port, return `{container_id, mapped_port}` |
 | `POST /containers/run` | Pull image + create + start, auto-assign port, return `{container_id, mapped_port}` |
 | `POST /caddy/sync` | Accept Caddy JSON config, persist to `data/caddy-config.json`, push to local Caddy Admin API |
 | `POST /internal/register` | Receive config from orchestrator (mTLS auth): `{node_id, secret, domain, wake_report_url}`. Persists to `data/agent-state.json`. |
@@ -354,7 +379,7 @@ When master comes back up:
 | Case | Mode A (Master) | Mode B (Agent) |
 |---|---|---|
 | Docker daemon restarts, port drifts | Waker inspects actual port, updates DB, resyncs Caddy | Container uses `docker start` (preserves port); if stale, rebuild catches it |
-| Container pruned on agent | Remote start fails → falls back to recreate with stored image | Container not found → 404 (user needs to redeploy) |
+| Container pruned on agent | Remote start fails → falls back to recreate with stored image | Recreate from `metadata.json` + `.env` (no master needed) |
 | Wake fails entirely | Error page with 30s retry; lock auto-clears after 60s | Same |
 | Concurrent requests during wake | Single-flight dedup — all get instant loading page | Same |
 | Background wake hangs | 60s timeout, then treated as failure | Same |
@@ -363,6 +388,8 @@ When master comes back up:
 | Www variant of sleeping custom domain | Same Host rewrite as canonical domain (no redirect while sleeping) | Same |
 | Agent restarts | N/A | Loads persisted Caddy config from `data/caddy-config.json` immediately |
 | Custom domain changed while agent down | N/A | Route updated on next heartbeat; DNS already points to agent |
+| .env changed while container stopped | Detected on wake: hash mismatch → recreate with new env | Same — agent checks `.env` vs `.env.l8bin` locally |
+| metadata.json missing on agent | N/A | Falls back to `docker start` (env changes not picked up until next deploy) |
 
 ---
 

@@ -110,7 +110,57 @@ pub async fn wake(
                 );
 
                 let result = async {
-                    // Start the container
+                    // Check if .env has changed — if so, recreate to pick up new vars
+                    let env_changed = super::containers::env_has_changed(&subdomain_clone);
+
+                    if env_changed {
+                        // Read metadata to recreate without asking orchestrator
+                        let meta = super::containers::read_project_metadata(&subdomain_clone);
+                        match meta {
+                            Some(meta) => {
+                                tracing::info!(project_id = %subdomain_clone, "agent wake: env changed, recreating container");
+                                let _ = state_clone.docker.remove_by_name(&subdomain_clone).await;
+
+                                let extra_env = super::containers::read_project_env(&subdomain_clone);
+                                let project = litebin_common::types::Project {
+                                    id: subdomain_clone.clone(),
+                                    user_id: String::new(),
+                                    name: None,
+                                    description: None,
+                                    image: Some(meta.image.clone()),
+                                    internal_port: Some(meta.internal_port),
+                                    mapped_port: None,
+                                    container_id: None,
+                                    node_id: None,
+                                    status: "running".to_string(),
+                                    cmd: meta.cmd.clone(),
+                                    memory_limit_mb: meta.memory_limit_mb,
+                                    cpu_limit: meta.cpu_limit,
+                                    custom_domain: None,
+                                    auto_stop_enabled: false,
+                                    auto_stop_timeout_mins: 0,
+                                    auto_start_enabled: false,
+                                    last_active_at: None,
+                                    created_at: 0,
+                                    updated_at: 0,
+                                };
+
+                                let (new_container_id, port) = state_clone.docker.run_container(&project, extra_env, None).await?;
+                                super::containers::write_env_snapshot(&subdomain_clone);
+
+                                rebuild_local_caddy(&state_clone).await?;
+                                report_wake_to_master(&state_clone, &subdomain_clone, &new_container_id, port).await;
+                                tracing::info!(project_id = %subdomain_clone, port = %port, "agent wake: container recreated with new env");
+                                return anyhow::Ok(());
+                            }
+                            None => {
+                                tracing::warn!(project_id = %subdomain_clone, "agent wake: env changed but no metadata.json, falling back to docker start");
+                                // Fall through to docker start below
+                            }
+                        }
+                    }
+
+                    // Fast path: env unchanged, just start the existing container
                     state_clone
                         .docker
                         .start_existing_container(&container_id_clone)
