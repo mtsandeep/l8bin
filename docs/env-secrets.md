@@ -40,15 +40,53 @@ Upon the first deployment of any project (or any subsequent redeploy), LiteBin's
 litebin/
 └── projects/
     └── <project_id>/
-        └── .env  <-- Placeholder created automatically
+        ├── .env          <-- Created automatically (starts as a comment placeholder)
+        └── .env.l8bin    <-- Created after first container start (env snapshot)
 ```
 
-### 2. Manual Management & Injection
-You can manually edit the `.env` file inside the project directory on your server.
-- **Auto-Injection**: Every time the container starts (on deploy, recreate, or resume), LiteBin reads this file and injects its contents directly into the container's environment.
-- **Refresh Required**: Because Docker environment variables are set at container creation, you must **Reploy** or **Recreate** the project via the CLI/Dashboard after manually updating the server-side `.env`.
+The initial `.env` contains only a comment instructing you to add your runtime variables. You can edit it at any time — LiteBin picks up changes on the next container start.
 
-### 3. Usage via CLI
+### 2. Where Runtime Secrets Live
+
+Runtime secrets are stored on the machine that actually runs the container — **not** on the orchestrator.
+
+| Setup | Container runs on | `.env` location | How to edit |
+| :--- | :--- | :--- | :--- |
+| **Single-node (master only)** | Orchestrator machine | `litebin/projects/<id>/.env` on the master | SSH into master, or edit locally |
+| **Multi-node (with agents)** | Agent machine | `litebin/projects/<id>/.env` on the agent | SSH into the agent node |
+
+> **Important:** The orchestrator never directly accesses an agent's filesystem. All env management on agent nodes happens through the agent's own API. If your project is running on an agent node, you must edit the `.env` file on that agent machine.
+
+### 3. Manual Management & Injection
+You can manually edit the `.env` file inside the project directory on the machine running your container.
+- **Auto-Injection**: Every time the container starts (on deploy, recreate, or resume), the Master or Agent reads this file and injects its contents directly into the container's environment.
+- **Auto-Detection of Changes**: LiteBin automatically detects when your `.env` has changed since the last container start. If the file has been modified, the container is recreated with the new values on the next wake-up — no manual recreate needed.
+
+### 3. The `.env.l8bin` Snapshot File
+
+Whenever LiteBin injects environment variables into a container, it saves a snapshot of the `.env` file as `.env.l8bin` in the same directory:
+
+```text
+litebin/
+└── projects/
+    └── <project_id>/
+        ├── .env          <-- Your runtime secrets (edit this)
+        └── .env.l8bin    <-- Auto-generated snapshot (do not edit)
+```
+
+**How it works:**
+- On container start, LiteBin compares the hash of `.env` with `.env.l8bin`.
+- **Same** → Fast path: the existing container is started as-is (instant).
+- **Different** → Recreate: a new container is created with the updated env vars.
+- After a successful create/recreate, `.env.l8bin` is updated to match the current `.env`.
+
+**What this means for you:**
+- Edit `.env` anytime — changes take effect automatically on the next container wake-up.
+- You can visually compare `.env` and `.env.l8bin` to see if your changes are live.
+- If the files match, your changes are already running. If they differ, they'll be picked up on next start.
+- **Do not edit `.env.l8bin`** — it is auto-generated and will be overwritten.
+
+### 4. Usage via CLI
 After a successful `ship`, the CLI will display the absolute path to this runtime secret file for easy local management.
 
 ---
@@ -71,4 +109,4 @@ l8b deploy --port 80 --secret .env --secret .env.production
 ### Best Practices
 - **Keep secrets local**: Always keep your active `.env` files in your `.gitignore`.
 - **Manage sensitive keys at runtime**: Use the server-side `projects/<id>/.env` for sensitive backend credentials (like `SESSION_SECRET` or `DATABASE_URL`) to keep them out of your image builds entirely.
-- **Recreate on change**: Always remember to run `l8b ship` (Redeploy) if you manually update a server-side secret.
+- **Recreate on change**: If your container is currently running, you can trigger a recreate from the Dashboard to apply env changes immediately. Otherwise, changes are picked up automatically on the next container wake-up.

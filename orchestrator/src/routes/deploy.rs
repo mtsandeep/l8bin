@@ -219,7 +219,10 @@ pub async fn deploy(
         // Start the container
         let extra_env = crate::routes::manage::read_local_project_env(&payload.project_id);
         match state.docker.run_container(&project, extra_env, None).await {
-            Ok(result) => result,
+            Ok(result) => {
+                crate::routes::manage::write_local_env_snapshot(&payload.project_id);
+                result
+            },
             Err(e) => {
                 tracing::error!(error = %e, "failed to start container");
                 let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")

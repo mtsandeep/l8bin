@@ -456,15 +456,14 @@ async fn build_and_deploy(
     let is_local = server.contains("localhost") || server.contains("127.0.0.1");
     let home_prefix = if is_local {
         dirs::home_dir()
-            .map(|h| format!("{}\\litebin", h.display()))
+            .map(|h| format!("{}{sep}litebin", h.display(), sep = std::path::MAIN_SEPARATOR))
             .unwrap_or_else(|| "~/litebin".to_string())
-    } else if cfg!(windows) {
-        "%USERPROFILE%\\litebin".to_string()
     } else {
         "~/litebin".to_string()
     };
-    let home_env = format!("{}/projects/{}/.env", home_prefix, project_id);
-    let rel_env = format!("./litebin/projects/{}/.env", project_id);
+    let sep = std::path::MAIN_SEPARATOR;
+    let home_env = format!("{}{sep}projects{sep}{project_id}{sep}.env", home_prefix);
+    let rel_env = format!(".{sep}litebin{sep}projects{sep}{project_id}{sep}.env");
     println!("  {} Runtime secrets: {}  or  {}",
         "🔒".dimmed(), home_env.yellow(), rel_env.yellow());
     println!("     {}", "(default install path; if custom -InstallDir was used, prepend that path instead)".dimmed());

@@ -155,9 +155,6 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
 
     if is_remote {
         let node_id = project.node_id.as_deref().unwrap().to_string();
-        let Some(ref container_id) = project.container_id else {
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "no container to restart").into_response());
-        };
 
         let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
             Ok(c) => c,
@@ -182,10 +179,20 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
 
         let base_url = agent_base_url(&state.config, &node);
 
-        // Try start first (fast path — container still exists on agent)
+        // Use the smart start endpoint — agent will compare .env hashes and
+        // recreate only if env has changed since last injection.
+        let container_id = project.container_id.as_deref().unwrap_or("");
         let resp = match client
             .post(&format!("{}/containers/start", base_url))
-            .json(&json!({ "container_id": container_id }))
+            .json(&json!({
+                "container_id": container_id,
+                "project_id": subdomain,
+                "image": project.image,
+                "internal_port": project.internal_port,
+                "cmd": project.cmd,
+                "memory_limit_mb": project.memory_limit_mb,
+                "cpu_limit": project.cpu_limit,
+            }))
             .send()
             .await
         {
@@ -197,9 +204,8 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
         };
 
         if resp.status().is_success() {
-            let mapped_port = resp.json::<serde_json::Value>().await.ok()
-                .and_then(|v| v["mapped_port"].as_u64())
-                .map(|p| p as u16);
+            let result: serde_json::Value = resp.json().await.unwrap_or_default();
+            let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
             let now = chrono::Utc::now().timestamp();
             if let Some(port) = mapped_port {
@@ -230,6 +236,34 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
         tracing::warn!(project = %subdomain, body = %body, "waker: agent start failed, trying recreate");
         return remote_recreate(state, project, &client, &base_url).await;
     } else {
+        // Local: check if env changed to decide start vs recreate
+        let env_changed = crate::routes::manage::local_env_has_changed(&subdomain);
+
+        if !env_changed {
+            // Fast path: env unchanged, try docker start on existing container
+            if let Some(ref container_id) = project.container_id {
+                match state.docker.start_existing_container(container_id).await {
+                    Ok(()) => {
+                        let now = chrono::Utc::now().timestamp();
+                        let _ = sqlx::query(
+                            "UPDATE projects SET status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?",
+                        )
+                        .bind(now)
+                        .bind(now)
+                        .bind(&subdomain)
+                        .execute(&state.db)
+                        .await;
+                        tracing::info!(project = %subdomain, "waker: started existing container (env unchanged)");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        tracing::warn!(project = %subdomain, error = %e, "waker: docker start failed, falling back to recreate");
+                    }
+                }
+            }
+        }
+
+        // Recreate: env changed or docker start failed
         let project_clone = {
             let mut p = project.clone();
             p.container_id = None;
@@ -253,6 +287,8 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
                     .into_response());
             }
         };
+
+        crate::routes::manage::write_local_env_snapshot(&subdomain);
 
         let now = chrono::Utc::now().timestamp();
         let _ = sqlx::query(
@@ -344,6 +380,8 @@ async fn restart_crashed_container(
                 .into_response());
         }
     };
+
+    crate::routes::manage::write_local_env_snapshot(&subdomain);
 
     let now = chrono::Utc::now().timestamp();
     let _ = sqlx::query(
