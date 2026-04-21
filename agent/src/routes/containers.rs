@@ -270,15 +270,14 @@ pub async fn run_container(
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
         last_active_at: None,
+        service_count: None,
+        service_summary: None,
         created_at: 0,
         updated_at: 0,
     };
 
-    match state
-        .docker
-        .run_container(&project, extra_env, None)
-        .await
-    {
+    let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
+    match state.docker.run_service_container(&config).await {
         Ok((container_id, mapped_port)) => {
             // Rebuild agent Caddy config so the new container gets a route
             let _ = super::waker::rebuild_local_caddy(&state).await;
@@ -332,15 +331,14 @@ pub async fn recreate_container(
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
         last_active_at: None,
+        service_count: None,
+        service_summary: None,
         created_at: 0,
         updated_at: 0,
     };
 
-    match state
-        .docker
-        .run_container(&project, extra_env, None)
-        .await
-    {
+    let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
+    match state.docker.run_service_container(&config).await {
         Ok((container_id, mapped_port)) => {
             // Rebuild agent Caddy config so the new container gets a route
             let _ = super::waker::rebuild_local_caddy(&state).await;
@@ -407,11 +405,14 @@ pub async fn start_container(
                 auto_stop_timeout_mins: 0,
                 auto_start_enabled: false,
                 last_active_at: None,
+                service_count: None,
+                service_summary: None,
                 created_at: 0,
                 updated_at: 0,
             };
 
-            return match state.docker.run_container(&project, extra_env, None).await {
+            let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
+            return match state.docker.run_service_container(&config).await {
                 Ok((_container_id, mapped_port)) => {
                     let _ = super::waker::rebuild_local_caddy(&state).await;
                     write_env_snapshot(project_id);

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use bollard::models::{
-    ContainerCreateBody, HostConfig, HostConfigLogConfig, PortBinding, RestartPolicy,
-    RestartPolicyNameEnum,
+    ContainerCreateBody, EndpointSettings, HostConfig, HostConfigLogConfig, NetworkingConfig,
+    PortBinding, RestartPolicy, RestartPolicyNameEnum,
 };
 use bollard::query_parameters::{
     CreateContainerOptions, CreateImageOptions, ListContainersOptions, ListImagesOptions,
@@ -14,7 +14,9 @@ use bollard::Docker;
 use futures_util::StreamExt;
 use serde::{Serialize, Deserialize};
 
-use crate::types::{Project, VolumeMount};
+use crate::types::{
+    container_name, project_network_name, RunServiceConfig,
+};
 
 #[derive(Clone)]
 pub struct DockerManager {
@@ -110,130 +112,6 @@ impl DockerManager {
         Ok(dir)
     }
 
-    /// Run a container for a project, returning (container_id, mapped_port).
-    /// If `mapped_port` is None, Docker auto-assigns the host port and this function
-    /// inspects the container to retrieve it. If `mapped_port` is Some, that port is
-    /// used directly (no inspect needed).
-    pub async fn run_container(
-        &self,
-        project: &Project,
-        extra_env: Vec<String>,
-        mapped_port: Option<u16>,
-    ) -> anyhow::Result<(String, u16)> {
-        let container_name = format!("litebin-{}", project.id);
-
-        let image = project.image.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("project '{}' has no image", project.id))?;
-        let internal_port = project.internal_port
-            .ok_or_else(|| anyhow::anyhow!("project '{}' has no port configured", project.id))?;
-
-        let port_str = format!("{}/tcp", internal_port);
-        let mut port_bindings = HashMap::new();
-        port_bindings.insert(
-            port_str.clone(),
-            Some(vec![PortBinding {
-                host_ip: Some("127.0.0.1".to_string()),
-                host_port: Some(mapped_port.map_or("0".to_string(), |p| p.to_string())),
-            }]),
-        );
-
-        // Per-project overrides fall back to DockerManager defaults
-        let memory = project.memory_limit_mb
-            .map(|mb| mb * 1024 * 1024)
-            .unwrap_or(self.memory_limit);
-        let nano_cpus = project.cpu_limit
-            .unwrap_or(self.cpu_limit);
-        let nano_cpus = (nano_cpus * 1_000_000_000.0) as i64;
-
-        // Build bind mounts from project volumes
-        let binds: Vec<String> = if let Some(ref vols_json) = project.volumes {
-            serde_json::from_str::<Vec<VolumeMount>>(vols_json)
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|v| {
-                    let name = v.name.as_deref().unwrap_or(&project.id);
-                    let host_path = Self::ensure_data_dir(&project.id, name).ok()?;
-                    Some(format!("{}:{}", host_path.display(), v.path))
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let host_config = HostConfig {
-            port_bindings: Some(port_bindings),
-            binds: if binds.is_empty() { None } else { Some(binds) },
-            memory: Some(memory),
-            nano_cpus: Some(nano_cpus),
-            network_mode: Some(self.network.clone()),
-            restart_policy: Some(RestartPolicy {
-                name: Some(RestartPolicyNameEnum::NO),
-                ..Default::default()
-            }),
-            cap_drop: Some(vec!["ALL".to_string()]),
-            cap_add: Some(vec![
-                "CHOWN".to_string(),
-                "DAC_OVERRIDE".to_string(),
-                "SETGID".to_string(),
-                "SETUID".to_string(),
-                "NET_BIND_SERVICE".to_string(),
-                "KILL".to_string(),
-            ]),
-            security_opt: Some(vec!["no-new-privileges".to_string()]),
-            pids_limit: Some(4096),
-            log_config: Some(HostConfigLogConfig {
-                config: Some({
-                    let mut log_opts = HashMap::new();
-                    log_opts.insert("max-size".to_string(), "10m".to_string());
-                    log_opts.insert("max-file".to_string(), "3".to_string());
-                    log_opts
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let config = ContainerCreateBody {
-            image: Some(image.clone()),
-            exposed_ports: Some(vec![port_str]),
-            host_config: Some(host_config),
-            env: Some({
-                let mut env = extra_env;
-                env.push(format!("PORT={}", internal_port));
-                env
-            }),
-            cmd: project.cmd.as_deref().and_then(|c| shlex::split(c)),
-            ..Default::default()
-        };
-
-        let options = CreateContainerOptions {
-            name: Some(container_name),
-            platform: String::new(),
-        };
-
-        let response = self.docker.create_container(Some(options), config).await?;
-        let container_id = response.id;
-
-        self.docker
-            .start_container(&container_id, None::<StartContainerOptions>)
-            .await?;
-
-        // Get the mapped port
-        let port = match mapped_port {
-            Some(p) => p,
-            None => self.inspect_mapped_port(&container_id).await?,
-        };
-
-        tracing::info!(
-            container_id = %container_id,
-            project = %project.id,
-            mapped_port = %port,
-            "container started"
-        );
-
-        Ok((container_id, port))
-    }
-
     /// Inspect a container and return the mapped host port.
     pub async fn inspect_mapped_port(&self, container_id: &str) -> anyhow::Result<u16> {
         let info = self.docker.inspect_container(container_id, None).await?;
@@ -311,6 +189,331 @@ impl DockerManager {
         Ok(())
     }
 
+    /// Remove container by service name using the centralized naming convention.
+    pub async fn remove_by_service_name(
+        &self,
+        project_id: &str,
+        service_name: &str,
+        instance_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let name = container_name(project_id, service_name, instance_id);
+        self.remove_by_exact_name(&name).await
+    }
+
+    /// Remove a container by its exact Docker name (idempotent — no error if not found).
+    async fn remove_by_exact_name(&self, name: &str) -> anyhow::Result<()> {
+        let mut filters = HashMap::new();
+        filters.insert("name".to_string(), vec![name.to_string()]);
+        let options = ListContainersOptions {
+            all: true,
+            filters: Some(filters),
+            ..Default::default()
+        };
+
+        let containers = self.docker.list_containers(Some(options)).await?;
+        for container in containers {
+            if let Some(id) = container.id {
+                self.remove_container(&id).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Ensure a per-project Docker bridge network exists (idempotent).
+    /// Uses the centralized naming convention from `project_network_name()`.
+    pub async fn ensure_project_network(
+        &self,
+        project_id: &str,
+        instance_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        use bollard::models::NetworkCreateRequest;
+
+        let network_name = project_network_name(project_id, instance_id);
+
+        let networks = self.docker.list_networks(None).await?;
+        let exists = networks.iter().any(|n| {
+            n.name
+                .as_deref()
+                .map(|name| name == network_name)
+                .unwrap_or(false)
+        });
+
+        if !exists {
+            self.docker
+                .create_network(NetworkCreateRequest {
+                    name: network_name.clone(),
+                    driver: Some("bridge".to_string()),
+                    ..Default::default()
+                })
+                .await?;
+            tracing::info!(network = %network_name, "created per-project docker network");
+        }
+
+        Ok(())
+    }
+
+    /// Remove a per-project Docker network (idempotent).
+    pub async fn remove_project_network(
+        &self,
+        project_id: &str,
+        instance_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let network_name = project_network_name(project_id, instance_id);
+        match self.docker.remove_network(&network_name).await {
+            Ok(_) => {
+                tracing::info!(network = %network_name, "removed per-project docker network");
+                Ok(())
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("404") || err_str.contains("not found") {
+                    tracing::debug!(network = %network_name, "network already gone");
+                    Ok(())
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
+    }
+
+    /// Connect a running container to a Docker network (idempotent).
+    pub async fn connect_container_to_network(
+        &self,
+        container_name: &str,
+        network_name: &str,
+    ) -> anyhow::Result<()> {
+        use bollard::models::{NetworkConnectRequest, EndpointSettings};
+
+        let config = NetworkConnectRequest {
+            container: container_name.to_string(),
+            endpoint_config: Some(EndpointSettings::default()),
+        };
+
+        match self.docker.connect_network(network_name, config).await {
+            Ok(_) => {
+                tracing::info!(
+                    container = %container_name,
+                    network = %network_name,
+                    "connected container to network"
+                );
+                Ok(())
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                // Already connected is fine
+                if err_str.contains("already connected") || err_str.contains("already exists in network") {
+                    tracing::debug!(
+                        container = %container_name,
+                        network = %network_name,
+                        "container already on network"
+                    );
+                    Ok(())
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
+    }
+
+    /// Read the compose.yml for a project. Returns None if the file doesn't exist.
+    pub fn read_compose(project_id: &str) -> Option<String> {
+        let path = std::path::PathBuf::from("projects")
+            .join(project_id)
+            .join("compose.yml");
+        std::fs::read_to_string(&path).ok()
+    }
+
+    /// Run a service container using the unified `RunServiceConfig`.
+    /// Returns (container_id, mapped_port). mapped_port is only meaningful for public services.
+    pub async fn run_service_container(
+        &self,
+        config: &RunServiceConfig,
+    ) -> anyhow::Result<(String, u16)> {
+        let name = container_name(
+            &config.project_id,
+            &config.service_name,
+            config.instance_id.as_deref(),
+        );
+
+        let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+        let mut exposed_ports: Vec<String> = Vec::new();
+
+        // Only bind a host port for public services that have a port defined
+        if config.is_public {
+            if let Some(port) = config.port {
+                let port_str = format!("{}/tcp", port);
+                port_bindings.insert(
+                    port_str.clone(),
+                    Some(vec![PortBinding {
+                        host_ip: Some("127.0.0.1".to_string()),
+                        host_port: Some("0".to_string()),
+                    }]),
+                );
+                exposed_ports.push(port_str);
+            }
+        }
+
+        // Per-service resource limits
+        let memory = config
+            .memory_limit_mb
+            .map(|mb| mb * 1024 * 1024)
+            .unwrap_or(self.memory_limit);
+        let nano_cpus = match config.cpu_limit {
+            Some(cpus) => (cpus * 1_000_000_000.0) as i64,
+            None => (self.cpu_limit * 1_000_000_000.0) as i64,
+        };
+
+        // Build LiteBin security overrides (shared by both paths)
+        let lb_host_overrides = |host: &mut HostConfig| {
+            if !port_bindings.is_empty() {
+                host.port_bindings = Some(port_bindings.clone());
+            }
+            host.memory = Some(memory);
+            host.nano_cpus = Some(nano_cpus);
+            host.restart_policy = Some(RestartPolicy {
+                name: Some(RestartPolicyNameEnum::NO),
+                ..Default::default()
+            });
+            host.cap_drop = Some(vec!["ALL".to_string()]);
+            host.cap_add = Some(vec![
+                "CHOWN".to_string(),
+                "DAC_OVERRIDE".to_string(),
+                "SETGID".to_string(),
+                "SETUID".to_string(),
+                "NET_BIND_SERVICE".to_string(),
+                "KILL".to_string(),
+            ]);
+            host.security_opt = Some(vec!["no-new-privileges".to_string()]);
+            host.pids_limit = Some(4096);
+            host.log_config = Some(HostConfigLogConfig {
+                config: Some({
+                    let mut log_opts = HashMap::new();
+                    log_opts.insert("max-size".to_string(), "10m".to_string());
+                    log_opts.insert("max-file".to_string(), "3".to_string());
+                    log_opts
+                }),
+                ..Default::default()
+            });
+        };
+
+        let create_body = if let (Some(mut body), Some(mut host)) = (
+            config.bollard_create_body.clone(),
+            config.bollard_host_config.clone(),
+        ) {
+            // Compose path: use bollard config as base, apply LiteBin overrides
+            lb_host_overrides(&mut host);
+
+            // Apply LiteBin binds (volume mounts)
+            if let Some(ref binds) = config.binds {
+                let mut existing = host.binds.unwrap_or_default();
+                existing.extend(binds.iter().cloned());
+                host.binds = Some(existing);
+            }
+
+            // Apply LiteBin env overrides
+            if !config.env.is_empty() {
+                let mut existing = body.env.unwrap_or_default();
+                existing.extend(config.env.iter().cloned());
+                body.env = Some(existing);
+            }
+
+            // Set exposed ports from our port binding (for public services)
+            if !exposed_ports.is_empty() {
+                body.exposed_ports = Some(exposed_ports);
+            }
+
+            body.host_config = Some(host);
+
+            // Connect to per-project network so services can resolve each other by name
+            let net_name = project_network_name(&config.project_id, config.instance_id.as_deref());
+            body.networking_config = Some(NetworkingConfig {
+                endpoints_config: Some({
+                    let mut map = HashMap::new();
+                    map.insert(net_name, EndpointSettings {
+                        aliases: Some(vec![config.service_name.clone()]),
+                        ..Default::default()
+                    });
+                    map
+                }),
+            });
+
+            // Set hostname to service name for DNS resolution within the network
+            body.hostname = Some(config.service_name.clone());
+
+            body
+        } else {
+            // Single-service path: build from RunServiceConfig fields
+            let mut host_config = HostConfig {
+                binds: config.binds.clone(),
+                network_mode: Some(self.network.clone()),
+                ..Default::default()
+            };
+            lb_host_overrides(&mut host_config);
+
+            let mut env = config.env.clone();
+            if let Some(port) = config.port {
+                env.push(format!("PORT={}", port));
+            }
+
+            ContainerCreateBody {
+                image: Some(config.image.clone()),
+                exposed_ports: if exposed_ports.is_empty() {
+                    None
+                } else {
+                    Some(exposed_ports)
+                },
+                host_config: Some(host_config),
+                env: if env.is_empty() { None } else { Some(env) },
+                cmd: config
+                    .cmd
+                    .as_deref()
+                    .and_then(|c| shlex::split(c)),
+                ..Default::default()
+            }
+        };
+
+        let options = CreateContainerOptions {
+            name: Some(name.clone()),
+            platform: String::new(),
+        };
+
+        // Remove any existing container with the same name (handles orphaned containers
+        // from failed previous deploys that aren't tracked in the DB)
+        if let Ok(Some(existing_id)) = self.find_container_by_name(&name).await {
+            let _ = self.stop_container(&existing_id).await;
+            let _ = self.remove_container(&existing_id).await;
+        }
+
+        let response = self
+            .docker
+            .create_container(Some(options), create_body)
+            .await?;
+        let container_id = response.id;
+
+        self.docker
+            .start_container(&container_id, None::<StartContainerOptions>)
+            .await?;
+
+        // Get the mapped port for public services
+        let mapped_port = if config.is_public && config.port.is_some() {
+            self.inspect_mapped_port(&container_id).await?
+        } else {
+            0
+        };
+
+        tracing::info!(
+            container_id = %container_id,
+            project = %config.project_id,
+            service = %config.service_name,
+            instance = ?config.instance_id,
+            mapped_port = %mapped_port,
+            "service container started"
+        );
+
+        Ok((container_id, mapped_port))
+    }
+
     pub async fn ping(&self) -> anyhow::Result<()> {
         self.docker.ping().await?;
         Ok(())
@@ -365,6 +568,68 @@ impl DockerManager {
         Ok(info)
     }
 
+    /// Wait for a container to become healthy (polls inspect every 500ms, timeout 60s).
+    /// Returns Ok if healthy, or the last error if it becomes unhealthy or times out.
+    /// When `expect_healthcheck` is true, keeps polling even if health is None (first
+    /// check hasn't run yet). When false, returns immediately if no healthcheck exists.
+    pub async fn wait_for_healthy(&self, container_id: &str, expect_healthcheck: bool) -> anyhow::Result<()> {
+        use bollard::models::HealthStatusEnum;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            let info = self.docker.inspect_container(container_id, None).await?;
+            let health = info.state.as_ref().and_then(|s| s.health.as_ref());
+            match health {
+                None => {
+                    if !expect_healthcheck {
+                        return Ok(()); // No healthcheck defined
+                    }
+                    // Healthcheck exists but first check hasn't run yet — keep polling
+                }
+                Some(h) => match &h.status {
+                    Some(HealthStatusEnum::HEALTHY) => return Ok(()),
+                    Some(HealthStatusEnum::UNHEALTHY) => {
+                        let log_msg = h.log.as_ref()
+                            .and_then(|logs| logs.last())
+                            .and_then(|l| l.output.as_deref())
+                            .unwrap_or("");
+                        anyhow::bail!("container unhealthy: {}", log_msg);
+                    }
+                    _ => {} // EMPTY, NONE, STARTING — keep polling
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("healthcheck timeout after 60s");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Wait for a container to have a valid IP address on its network (not "invalid" or empty).
+    /// Docker sometimes assigns "invalid" IP briefly after container creation.
+    /// Polls every 200ms, timeout 10s.
+    pub async fn wait_for_network_ready(&self, container_id: &str) -> anyhow::Result<()> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let info = self.docker.inspect_container(container_id, None).await?;
+            let has_valid_ip = info.network_settings.as_ref()
+                .and_then(|ns| ns.networks.as_ref())
+                .map(|nets| nets.values().any(|net| {
+                    let ip = net.ip_address.as_deref().unwrap_or("");
+                    !ip.is_empty() && ip != "invalid"
+                }))
+                .unwrap_or(false);
+
+            if has_valid_ip {
+                return Ok(());
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("network readiness timeout after 10s");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
     /// Find a container by its name (e.g. "litebin-myapp") and return its ID.
     /// Returns None if no container with that name exists (in any state).
     pub async fn find_container_by_name(&self, name: &str) -> anyhow::Result<Option<String>> {
@@ -403,11 +668,20 @@ impl DockerManager {
         Ok(containers.len() as u32)
     }
 
-    /// List all running litebin containers. Returns (project_id, internal_port, mapped_port) for each.
-    /// Containers are identified by name prefix "litebin-".
-    /// internal_port is the container's listening port (for Docker network access).
-    /// mapped_port is the host-bound port (for host-level access).
-    pub async fn list_running_litebin_containers(&self) -> anyhow::Result<Vec<(String, u16, u16)>> {
+    /// List container IDs whose name starts with the given prefix (includes stopped containers).
+    pub async fn list_containers_by_prefix(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
+        let options = ListContainersOptions {
+            all: true,
+            filters: Some(HashMap::from([("name".to_string(), vec![prefix.to_string()])])),
+            ..Default::default()
+        };
+        let containers = self.docker.list_containers(Some(options)).await?;
+        Ok(containers.into_iter().filter_map(|c| c.id).collect())
+    }
+
+    /// List all running litebin containers. Returns parsed container info using the
+    /// centralized naming convention (`litebin-{project_id}`, `litebin-{project_id}-{service}`, etc.).
+    pub async fn list_running_litebin_containers(&self) -> anyhow::Result<Vec<RunningContainer>> {
         let options = ListContainersOptions {
             all: false,
             ..Default::default()
@@ -422,8 +696,10 @@ impl DockerManager {
             };
             for name in names {
                 let trimmed = name.trim_start_matches('/');
-                if let Some(project_id) = trimmed.strip_prefix("litebin-") {
-                    // Extract both internal and mapped ports from list response
+                if let Some((project_id, service_name, instance_id)) =
+                    crate::types::parse_container_name(trimmed)
+                {
+                    // Extract ports from list response
                     let ports = c.ports.as_ref().and_then(|ports| {
                         ports.iter().find_map(|p| {
                             match (p.private_port, p.public_port) {
@@ -433,7 +709,14 @@ impl DockerManager {
                         })
                     });
                     if let Some((internal_port, mapped_port)) = ports {
-                        result.push((project_id.to_string(), internal_port, mapped_port));
+                        result.push(RunningContainer {
+                            project_id,
+                            service_name,
+                            instance_id,
+                            container_name: trimmed.to_string(),
+                            internal_port,
+                            mapped_port,
+                        });
                     }
                     break;
                 }
@@ -527,7 +810,7 @@ impl DockerManager {
 
     /// Load a Docker image from a tar stream (output of `docker save`).
     /// Returns the image ID on success.
-    pub async fn load_image<S, E>(&self, tar_stream: S) -> anyhow::Result<String>
+    pub async fn load_image<S, E>(&self, tar_stream: S) -> anyhow::Result<()>
     where
         S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, E>> + Send + Unpin + 'static,
         E: Into<Box<dyn std::error::Error + Send + Sync>> + std::fmt::Display + 'static,
@@ -541,33 +824,14 @@ impl DockerManager {
             None,
         );
 
-        let mut image_id = String::new();
         while let Some(result) = import_stream.next().await {
-            match result {
-                Ok(info) => {
-                    if let Some(id) = &info.id {
-                        image_id = id.clone();
-                    }
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("docker image import failed: {e}"));
-                }
+            if let Err(e) = result {
+                return Err(anyhow::anyhow!("docker image import failed: {e}"));
             }
         }
 
-        if image_id.is_empty() {
-            anyhow::bail!("image load completed but no image ID was returned");
-        }
-
-        tracing::info!(image_id = %image_id, "image loaded successfully");
-        Ok(image_id)
-    }
-
-    /// Get the image ID for a given tag by inspecting it.
-    pub async fn image_id_by_tag(&self, tag: &str) -> anyhow::Result<String> {
-        let info = self.docker.inspect_image(tag).await?;
-        info.id
-            .ok_or_else(|| anyhow::anyhow!("image {} has no id", tag))
+        tracing::info!("image loaded successfully");
+        Ok(())
     }
 
     /// Compute image statistics: dangling count/size, in-use count/size, total.
@@ -663,6 +927,17 @@ impl DockerManager {
         tracing::info!(reclaimed_bytes = reclaimed, "pruned dangling images");
         Ok(reclaimed)
     }
+}
+
+/// Info about a running litebin container, returned by `list_running_litebin_containers`.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunningContainer {
+    pub project_id: String,
+    pub service_name: String,
+    pub instance_id: Option<String>,
+    pub container_name: String,
+    pub internal_port: u16,
+    pub mapped_port: u16,
 }
 
 #[derive(Debug, Serialize)]

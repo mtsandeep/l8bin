@@ -4,6 +4,7 @@ members = [
     "orchestrator",
     "agent",
     "cli",
+    "compose-bollard",
 ]
 resolver = "2"
 

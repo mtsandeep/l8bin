@@ -175,6 +175,7 @@ async fn main() -> Result<()> {
                 &server,
                 &project,
                 std::path::Path::new(&image.path),
+                &image.image_id,
                 node.as_deref(),
                 ci_mode.enabled,
             )

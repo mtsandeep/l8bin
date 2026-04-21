@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use bollard::models::{ContainerCreateBody, HostConfig};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -45,6 +49,8 @@ pub struct Project {
     pub cpu_limit: Option<f64>,
     pub custom_domain: Option<String>,
     pub volumes: Option<String>,
+    pub service_count: Option<i64>,
+    pub service_summary: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -116,4 +122,189 @@ pub struct ContainerStatus {
     pub cpu_percent: f64,
     pub memory_usage: u64,
     pub memory_limit: u64,
+}
+
+// ── Multi-Service Types ─────────────────────────────────────────────────────
+
+/// A service within a project (one row per service in `project_services`).
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProjectService {
+    pub project_id: String,
+    pub service_name: String,
+    pub image: String,
+    pub port: Option<i64>,
+    pub cmd: Option<String>,
+    pub is_public: bool,
+    pub depends_on: Option<String>, // JSON: ["db", "redis"]
+    pub container_id: Option<String>,
+    pub mapped_port: Option<i64>,
+    pub memory_limit_mb: Option<i64>,
+    pub cpu_limit: Option<f64>,
+    pub status: String,
+    pub instance_id: Option<String>,
+}
+
+/// A volume definition for a service (one row per mount in `project_volumes`).
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProjectVolume {
+    pub project_id: String,
+    pub service_name: String,
+    pub volume_name: Option<String>,
+    pub container_path: String,
+}
+
+/// Network configuration for a container (which networks + DNS aliases).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<Vec<String>>,
+}
+
+/// Unified config for creating any service container.
+/// Used by `run_service_container` — replaces direct `Project` usage.
+#[derive(Debug, Clone)]
+pub struct RunServiceConfig {
+    pub project_id: String,
+    pub service_name: String,
+    /// None = primary instance (default). Some("staging") = scoped instance.
+    pub instance_id: Option<String>,
+    pub image: String,
+    /// Internal port to expose. None = internal-only service (no port binding).
+    pub port: Option<u16>,
+    pub cmd: Option<String>,
+    pub entrypoint: Option<Vec<String>>,
+    pub working_dir: Option<String>,
+    pub user: Option<String>,
+    pub env: Vec<String>,
+    pub memory_limit_mb: Option<i64>,
+    pub cpu_limit: Option<f64>,
+    pub shm_size: Option<u64>,
+    pub tmpfs: Option<HashMap<String, String>>,
+    pub read_only: Option<bool>,
+    pub extra_hosts: Option<Vec<String>>,
+    pub networks: Option<Vec<NetworkConfig>>,
+    pub binds: Option<Vec<String>>,
+    pub is_public: bool,
+    /// Pre-built bollard config from compose-bollard (compose path).
+    /// When provided, these are used as the base and LiteBin overrides are applied on top.
+    pub bollard_create_body: Option<ContainerCreateBody>,
+    pub bollard_host_config: Option<HostConfig>,
+}
+
+impl RunServiceConfig {
+    /// Build a `RunServiceConfig` from a `Project` (single-service "web" path).
+    /// Converts Project fields into the unified service config format.
+    pub fn from_project(project: &Project, extra_env: Vec<String>) -> Self {
+        // Build bind mounts from project volumes
+        let binds: Option<Vec<String>> = if let Some(ref vols_json) = project.volumes {
+            let mounts: Vec<VolumeMount> = serde_json::from_str(vols_json).unwrap_or_default();
+            let built: Vec<String> = mounts
+                .into_iter()
+                .filter_map(|v| {
+                    let name = v.name.as_deref().unwrap_or(&project.id);
+                    let host_path = crate::docker::DockerManager::ensure_data_dir(&project.id, name).ok()?;
+                    Some(format!("{}:{}", host_path.display(), v.path))
+                })
+                .collect();
+            if built.is_empty() { None } else { Some(built) }
+        } else {
+            None
+        };
+
+        Self {
+            project_id: project.id.clone(),
+            service_name: "web".to_string(),
+            instance_id: None,
+            image: project.image.clone().unwrap_or_default(),
+            port: project.internal_port.map(|p| p as u16),
+            cmd: project.cmd.clone(),
+            entrypoint: None,
+            working_dir: None,
+            user: None,
+            env: extra_env,
+            memory_limit_mb: project.memory_limit_mb,
+            cpu_limit: project.cpu_limit,
+            shm_size: None,
+            tmpfs: None,
+            read_only: None,
+            extra_hosts: None,
+            networks: None,
+            binds,
+            is_public: true,
+            bollard_create_body: None,
+            bollard_host_config: None,
+        }
+    }
+}
+
+// ── Centralized Naming Functions ────────────────────────────────────────────
+// All container names, network names, and data dirs go through these functions.
+// Future naming changes are localized here.
+
+/// Build the Docker container name for a service.
+/// - Single-service (service_name="web", instance_id=None): `litebin-{project_id}`
+/// - Multi-service (instance_id=None): `litebin-{project_id}-{service_name}`
+/// - With instance: `litebin-{project_id}-{service_name}-{instance_id}`
+pub fn container_name(project_id: &str, service_name: &str, instance_id: Option<&str>) -> String {
+    match instance_id {
+        Some(id) => format!("litebin-{}.{}.{}", project_id, service_name, id),
+        None => {
+            if service_name == "web" {
+                format!("litebin-{}", project_id)
+            } else {
+                format!("litebin-{}.{}", project_id, service_name)
+            }
+        }
+    }
+}
+
+/// Build the per-project Docker network name.
+/// - Primary: `litebin-{project_id}`
+/// - With instance: `litebin-{project_id}-{instance_id}`
+pub fn project_network_name(project_id: &str, instance_id: Option<&str>) -> String {
+    match instance_id {
+        Some(id) => format!("litebin-{}-{}", project_id, id),
+        None => format!("litebin-{}", project_id),
+    }
+}
+
+/// Build the project data directory path.
+/// - Primary: `projects/{project_id}/data/`
+/// - With instance: `projects/{project_id}-{instance_id}/data/`
+pub fn project_data_dir(project_id: &str, instance_id: Option<&str>) -> PathBuf {
+    match instance_id {
+        Some(id) => PathBuf::from("projects").join(format!("{}-{}", project_id, id)).join("data"),
+        None => PathBuf::from("projects").join(project_id).join("data"),
+    }
+}
+
+/// Parse a Docker container name back into (project_id, service_name, instance_id).
+/// Handles: `litebin-{project_id}`, `litebin-{project_id}.{service}`, `litebin-{project_id}.{service}.{instance}`
+pub fn parse_container_name(name: &str) -> Option<(String, String, Option<String>)> {
+    let stripped = name.trim_start_matches('/');
+    let rest = stripped.strip_prefix("litebin-")?;
+
+    // Try 3-segment: project.service.instance (dot-delimited)
+    if let Some((first, rest2)) = rest.split_once('.') {
+        if let Some((second, third)) = rest2.split_once('.') {
+            if !first.is_empty() && !second.is_empty() && !third.is_empty() {
+                return Some((first.to_string(), second.to_string(), Some(third.to_string())));
+            }
+        }
+    }
+
+    // Try 2-segment: project.service
+    if let Some((first, second)) = rest.split_once('.') {
+        if !first.is_empty() && !second.is_empty() {
+            return Some((first.to_string(), second.to_string(), None));
+        }
+    }
+
+    // Single segment: just project_id (single-service with service "web")
+    if !rest.is_empty() {
+        return Some((rest.to_string(), "web".to_string(), None));
+    }
+
+    None
 }

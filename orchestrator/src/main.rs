@@ -306,6 +306,7 @@ async fn main() -> anyhow::Result<()> {
     let deploy_routes = Router::new()
         .route("/deploy", post(routes::deploy::deploy_create))
         .route("/deploy", put(routes::deploy::deploy_update))
+        .route("/deploy/compose", post(routes::deploy::deploy_compose))
         .route("/images/upload", post(routes::images::upload_image));
 
     // Routes - Deploy token management (session auth)

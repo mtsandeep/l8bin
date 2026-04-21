@@ -106,6 +106,7 @@ async fn waker_does_not_return_503_when_auto_start_enabled_and_stopped() {
     let resp = server
         .get("/")
         .add_header(axum::http::header::HOST, "auto-proj.localhost")
+        .add_header(axum::http::header::ACCEPT, "text/html")
         .await;
 
     // Must NOT be 503 (auto-start disabled). Returns 200 loading page (background wake).
@@ -131,6 +132,7 @@ async fn waker_returns_200_for_running_project_with_auto_start_disabled() {
     let resp = server
         .get("/")
         .add_header(axum::http::header::HOST, "run-proj.localhost")
+        .add_header(axum::http::header::ACCEPT, "text/html")
         .await;
 
     resp.assert_status(StatusCode::OK);

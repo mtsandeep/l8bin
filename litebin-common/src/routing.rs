@@ -103,10 +103,14 @@ impl MasterProxyRouter {
         let mut routes: Vec<Value> = Vec::new();
 
         for p in projects {
+            // Use container_upstream (direct Docker network) when available,
+            // otherwise fall back to host upstream.
+            let dial = p.container_upstream.as_deref().unwrap_or(&p.upstream);
+
             // 1. Subdomain route: {project_id}.{domain} → upstream
             let mut handle = json!({
                 "handler": "reverse_proxy",
-                "upstreams": [{ "dial": &p.upstream }],
+                "upstreams": [{ "dial": dial }],
                 "handle_response": [{
                     "match": { "status_code": [502, 503, 504] },
                     "routes": [{
@@ -178,7 +182,7 @@ impl MasterProxyRouter {
                     // Running custom domain: proxy to container with 502 fallback
                     let mut cd_handle = json!({
                         "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": &p.upstream }],
+                        "upstreams": [{ "dial": dial }],
                         "handle_response": [{
                             "match": { "status_code": [502, 503, 504] },
                             "routes": [{

@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 # Shared common crate
 litebin-common = { path = "../litebin-common" }
+compose-bollard = { path = "../compose-bollard" }
 
 # Web framework
 axum = { version = "0.8", features = ["macros"] }

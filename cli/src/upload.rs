@@ -9,23 +9,13 @@ pub async fn upload_tar(
     server: &str,
     project_id: &str,
     tar_path: &Path,
-    node_id: Option<&str>,
-    ci_mode: bool,
-) -> Result<String> {
-    upload_tar_inner(client, server, project_id, tar_path, node_id, ci_mode).await
-}
-
-async fn upload_tar_inner(
-    client: &reqwest::Client,
-    server: &str,
-    project_id: &str,
-    tar_path: &Path,
+    image_id: &str,
     node_id: Option<&str>,
     ci_mode: bool,
 ) -> Result<String> {
     let file_len = std::fs::metadata(tar_path)?.len();
 
-    let mut url = format!("{}/images/upload?project_id={}", server.trim_end_matches('/'), project_id);
+    let mut url = format!("{}/images/upload?project_id={}&image_id={}", server.trim_end_matches('/'), project_id, image_id);
     if let Some(node) = node_id {
         url.push_str(&format!("&node_id={}", node));
     }

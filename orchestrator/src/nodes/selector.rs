@@ -122,6 +122,9 @@ mod tests {
             memory_limit_mb: None,
             cpu_limit: None,
             custom_domain: None,
+            volumes: None,
+            service_count: None,
+            service_summary: None,
             created_at: 0,
             updated_at: 0,
         }

@@ -5,10 +5,15 @@ use futures_util::FutureExt;
 use serde_json::json;
 use std::sync::Arc;
 
+use litebin_common::docker::DockerManager;
 use litebin_common::types::Node;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::AppState;
+
+fn footer_html() -> String {
+    format!(r#"<footer style="position:fixed;bottom:16px;left:0;right:0;text-align:center;color:#94a3b8;font-size:1rem;">Powered by <a href="https://l8bin.com" style="color:#7c3aed;text-decoration:none;">l8bin</a></footer>"#)
+}
 
 /// Check if the client wants JSON (not HTML). Used to return 503+JSON for API clients.
 fn wants_json(headers: &HeaderMap) -> bool {
@@ -48,15 +53,17 @@ fn loading_page_html(subdomain: &str) -> Html<String> {
     <div class="loader">
         <div class="spinner"></div>
         <p>Starting <strong>{}</strong>...</p>
+        {}
     </div>
 </body>
 </html>"#,
-        subdomain, subdomain
+        subdomain, subdomain,
+        footer_html()
     ))
 }
 
 fn error_page_html() -> Html<String> {
-    Html(String::from(
+    Html(format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
@@ -74,33 +81,37 @@ fn error_page_html() -> Html<String> {
     <div class="msg">
         <h2>Failed to start the website</h2>
         <p>Retrying in 30 seconds...</p>
+        {}
     </div>
 </body>
 </html>"#,
+        footer_html()
     ))
 }
 
 fn not_found_page_html() -> Html<String> {
-    Html(String::from(
+    Html(format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Not Found</title>
     <style>
-        body { font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
-        .msg { text-align: center; }
-        h2 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
-        p { color: #64748b; margin: 0; font-size: 0.875rem; }
+        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
+        .msg {{ text-align: center; }}
+        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
+        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
     </style>
 </head>
 <body>
     <div class="msg">
         <h2>Project not found</h2>
         <p>This project does not exist or has been removed.</p>
+        {}
     </div>
 </body>
 </html>"#,
+        footer_html()
     ))
 }
 
@@ -169,6 +180,164 @@ async fn remote_recreate(
         .await;
     }
 
+    Ok(())
+}
+
+/// Start all services of a multi-service project from the stored compose.yml.
+/// Reads compose.yml, starts services in dependency order, waits for healthchecks.
+async fn start_multi_service(state: &AppState, project: &crate::db::models::Project) -> Result<(), Response> {
+    let project_id = &project.id;
+
+    // Read compose.yml from disk
+    let compose_yaml = DockerManager::read_compose(project_id)
+        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "compose.yml not found").into_response())?;
+
+    let compose: compose_bollard::ComposeFile = match compose_bollard::ComposeParser::parse(&compose_yaml) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to parse compose.yml");
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yml: {e}")).into_response());
+        }
+    };
+
+    // Determine start order (topological sort)
+    let start_order = match compose.topological_sort() {
+        Ok(order) => order,
+        Err(e) => {
+            tracing::error!(error = %e, "dependency cycle detected");
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("dependency cycle: {e}")).into_response());
+        }
+    };
+
+    // Find the public service
+    let public_service = match compose.detect_public_service() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "public service detection failed");
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("public service error: {e}")).into_response());
+        }
+    };
+
+    // Ensure per-project network
+    if let Err(e) = state.docker.ensure_project_network(project_id, None).await {
+        tracing::error!(error = %e, "failed to create project network");
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("network error: {e}")).into_response());
+    }
+
+    // Connect Caddy to the project network so it can reach containers directly
+    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
+        .unwrap_or_else(|_| "litebin-caddy".into());
+    let project_network = litebin_common::types::project_network_name(project_id, None);
+    if let Err(e) = state.docker.connect_container_to_network(&caddy_container, &project_network).await {
+        tracing::warn!(error = %e, container = %caddy_container, network = %project_network, "failed to connect caddy to project network");
+    }
+
+    // Pull any missing images
+    for svc_name in &start_order {
+        if let Some(Some(image)) = compose.services.get(svc_name).map(|s| s.image.clone()) {
+            if !image.starts_with("sha256:") {
+                if let Err(e) = state.docker.pull_image(&image).await {
+                    tracing::warn!(service = %svc_name, image = %image, error = %e, "pull failed, continuing");
+                }
+            }
+        }
+    }
+
+    // Start services in dependency order
+    let extra_env = crate::routes::manage::read_local_project_env(project_id);
+    let mut public_container_id = String::new();
+    let mut public_mapped_port: u16 = 0;
+
+    for svc_name in &start_order {
+        let svc = &compose.services[svc_name];
+        let is_public = public_service.as_deref() == Some(svc_name.as_str());
+
+        let bollard_config = svc.to_bollard_config(&compose_bollard::BollardMappingOptions::default());
+
+        let run_config = litebin_common::types::RunServiceConfig {
+            project_id: project_id.clone(),
+            service_name: svc_name.clone(),
+            instance_id: None,
+            image: svc.image.clone().unwrap_or_default(),
+            port: svc.exposed_ports().first().map(|(p, _)| *p),
+            cmd: svc.cmd_list().map(|v| v.join(" ")),
+            entrypoint: svc.entrypoint_list(),
+            working_dir: svc.working_dir.clone(),
+            user: svc.user.clone(),
+            env: extra_env.clone(),
+            memory_limit_mb: svc.memory_bytes().map(|b| (b / (1024 * 1024)) as i64),
+            cpu_limit: svc.nano_cpus().map(|n| n as f64 / 1_000_000_000.0),
+            shm_size: svc.shm_size.as_ref().and_then(|s| crate::routes::deploy::parse_compose_size(s)),
+            tmpfs: None,
+            read_only: svc.read_only,
+            extra_hosts: svc.extra_hosts.clone(),
+            networks: None,
+            binds: None,
+            is_public,
+            bollard_create_body: Some(bollard_config.create_body),
+            bollard_host_config: Some(bollard_config.host_config),
+        };
+
+        match state.docker.run_service_container(&run_config).await {
+            Ok((container_id, mapped_port)) => {
+                tracing::info!(service = %svc_name, container_id = %container_id, port = %mapped_port, "waker: multi-service container started");
+
+                // Wait for Docker network to assign a valid IP
+                if let Err(e) = state.docker.wait_for_network_ready(&container_id).await {
+                    tracing::warn!(service = %svc_name, error = %e, "network readiness timeout, continuing");
+                }
+
+                // Wait for healthcheck if defined
+                if svc.healthcheck.is_some() {
+                    tracing::info!(service = %svc_name, "waker: waiting for healthcheck");
+                    if let Err(e) = state.docker.wait_for_healthy(&container_id, true).await {
+                        tracing::warn!(service = %svc_name, error = %e, "healthcheck failed, continuing");
+                    } else {
+                        tracing::info!(service = %svc_name, "healthcheck passed");
+                    }
+                }
+
+                // Update project_services row
+                let _ = sqlx::query(
+                    "UPDATE project_services SET container_id = ?, mapped_port = ?, status = 'running' WHERE project_id = ? AND service_name = ?"
+                )
+                .bind(&container_id)
+                .bind(mapped_port as i64)
+                .bind(project_id)
+                .bind(svc_name)
+                .execute(&state.db)
+                .await;
+
+                if is_public {
+                    public_container_id = container_id;
+                    public_mapped_port = mapped_port;
+                }
+            }
+            Err(e) => {
+                tracing::error!(service = %svc_name, error = %e, "waker: failed to start service");
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to start service '{}': {e}", svc_name),
+                ).into_response());
+            }
+        }
+    }
+
+    // Update project status and denormalized fields
+    crate::routes::manage::write_local_env_snapshot(project_id);
+    let now = chrono::Utc::now().timestamp();
+    let _ = sqlx::query(
+        "UPDATE projects SET status = 'running', container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(if public_container_id.is_empty() { None } else { Some(public_container_id.clone()) })
+    .bind(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) })
+    .bind(now)
+    .bind(now)
+    .bind(project_id)
+    .execute(&state.db)
+    .await;
+
+    tracing::info!(project = %project_id, "waker: all multi-service containers started");
     Ok(())
 }
 
@@ -259,7 +428,15 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
         tracing::warn!(project = %subdomain, body = %body, "waker: agent start failed, trying recreate");
         return remote_recreate(state, project, &client, &base_url).await;
     } else {
-        // Local: check if env changed to decide start vs recreate
+        // Local path
+        let is_multi = project.service_count.unwrap_or(1) > 1;
+
+        if is_multi {
+            // Multi-service: start all services from compose.yml
+            return start_multi_service(state, project).await;
+        }
+
+        // Single-service: check if env changed to decide start vs recreate
         let env_changed = crate::routes::manage::local_env_has_changed(&subdomain);
 
         if !env_changed {
@@ -299,7 +476,8 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
         }
 
         let extra_env = crate::routes::manage::read_local_project_env(&subdomain);
-        let (new_container_id, new_mapped_port) = match state.docker.run_container(&project_clone, extra_env, None).await {
+        let config = litebin_common::types::RunServiceConfig::from_project(&project_clone, extra_env);
+        let (new_container_id, new_mapped_port) = match state.docker.run_service_container(&config).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, project = %subdomain, "waker: failed to create container");
@@ -366,6 +544,14 @@ async fn restart_crashed_container(
     }
 
     // Local path
+    let is_multi = project.service_count.unwrap_or(1) > 1;
+
+    if is_multi {
+        // Multi-service: start all services from compose.yml
+        // run_service_container handles idempotent cleanup internally
+        return start_multi_service(state, project).await;
+    }
+
     let Some(ref container_id) = project.container_id else {
         return Err((StatusCode::INTERNAL_SERVER_ERROR, "no container to restart").into_response());
     };
@@ -392,7 +578,8 @@ async fn restart_crashed_container(
     };
 
     let extra_env = crate::routes::manage::read_local_project_env(&subdomain);
-    let (new_container_id, new_mapped_port) = match state.docker.run_container(&project_clone, extra_env, None).await {
+    let config = litebin_common::types::RunServiceConfig::from_project(&project_clone, extra_env);
+    let (new_container_id, new_mapped_port) = match state.docker.run_service_container(&config).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, project = %subdomain, "waker: failed to recreate container");
@@ -531,7 +718,9 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
     let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 
     // Fast path: already running with a port — just resync Caddy and return loading page
-    if project.status == "running" && project.mapped_port.is_some() {
+    // For multi-service projects, check if any service container is running
+    let is_multi = project.service_count.unwrap_or(1) > 1;
+    if project.status == "running" && project.mapped_port.is_some() && !is_multi {
         if !is_remote {
             if let Some(ref container_id) = project.container_id {
                 let actually_running = state
@@ -570,6 +759,21 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
             let _ = state.route_sync_tx.send(());
             return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
         }
+    } else if project.status == "running" && is_multi {
+        // Multi-service fast path: check if any service container is actually running
+        let has_running = if !is_remote {
+            let running = state.docker.list_running_litebin_containers().await
+                .unwrap_or_default();
+            running.iter().any(|c| c.project_id == project_id)
+        } else {
+            // Remote: trust the DB status
+            true
+        };
+        if has_running {
+            let _ = state.route_sync_tx.send(());
+            return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+        }
+        tracing::info!(project = %project_id, "waker: multi-service containers all down");
     } else if project.status == "running" && project.mapped_port.is_none() {
         tracing::info!(project = %project_id, "waker: running but mapped_port is null, recreating");
     }
@@ -602,9 +806,11 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
     <div class="msg">
         <h2>This website is currently offline</h2>
         <p>Auto-start is disabled!</p>
+        {}
     </div>
 </body>
 </html>"#,
+            footer_html()
             )),
         )
             .into_response();

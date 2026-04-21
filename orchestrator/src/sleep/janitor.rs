@@ -70,17 +70,53 @@ async fn sweep(
 
     // 3. Now safe to stop containers — routes already removed
     for project in &idle_projects {
-        let Some(ref container_id) = project.container_id else {
-            continue;
-        };
+        let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
 
-        let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
+        if project.service_count.unwrap_or(1) > 1 && is_local {
+            // Multi-service local: stop all service containers
+            let services: Vec<(String, Option<String>)> = match sqlx::query_as(
+                "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status = 'running'",
+            )
+            .bind(&project.id)
+            .fetch_all(&state.db)
+            .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(project = %project.id, error = %e, "janitor: failed to fetch services");
+                    continue;
+                }
+            };
 
-        if is_remote {
-            let node_id = project.node_id.as_deref().unwrap();
-            stop_remote_container(state, &project.id, node_id, container_id).await;
-        } else {
-            stop_local_container(state, &project.id, container_id).await;
+            for (svc_name, cid) in &services {
+                if let Some(container_id) = cid {
+                    stop_local_container(state, &project.id, container_id).await;
+                    let _ = sqlx::query(
+                        "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                    )
+                    .bind(&project.id)
+                    .bind(svc_name)
+                    .execute(&state.db)
+                    .await;
+                }
+            }
+
+            // Clear project's denormalized container_id
+            let _ = sqlx::query(
+                "UPDATE projects SET container_id = NULL, mapped_port = NULL WHERE id = ?"
+            )
+            .bind(&project.id)
+            .execute(&state.db)
+            .await;
+        } else if let Some(ref container_id) = project.container_id {
+            let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
+
+            if is_remote {
+                let node_id = project.node_id.as_deref().unwrap();
+                stop_remote_container(state, &project.id, node_id, container_id).await;
+            } else {
+                stop_local_container(state, &project.id, container_id).await;
+            }
         }
     }
 

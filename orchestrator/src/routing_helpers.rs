@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::config::Config;
 use litebin_common::routing::{ProjectCustomRoute, ProjectRoute, RoutingProvider};
-use litebin_common::types::Project;
+use litebin_common::types::{container_name, Project, ProjectService};
 
 /// Bulk-load custom routes for a set of project IDs. Returns a map of project_id -> Vec<ProjectCustomRoute>.
 async fn resolve_custom_routes(
@@ -63,17 +63,42 @@ pub async fn resolve_routes(
         let Some(_mapped_port) = project.mapped_port else {
             continue;
         };
-        if project.status != "running" {
+        if project.status != "running" && project.status != "degraded" {
             continue;
         }
 
-        let Some(internal_port) = project.internal_port else {
-            continue;
+        // For multi-service projects, look up the public service from project_services
+        let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
+        let (upstream_name, internal_port, container_upstream) = if project.service_count.unwrap_or(1) > 1 {
+            let public_svc: Option<ProjectService> = sqlx::query_as(
+                "SELECT * FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'running' LIMIT 1",
+            )
+            .bind(&project.id)
+            .fetch_optional(db)
+            .await?;
+
+            match public_svc {
+                Some(svc) => {
+                    let port = svc.port.unwrap_or(project.internal_port.unwrap_or(0)) as u16;
+                    let cname = container_name(&project.id, &svc.service_name, None);
+                    let cu = if is_local { Some(format!("{}:{}", cname, port)) } else { None };
+                    (cname, port as i64, cu)
+                }
+                None => {
+                    // Fallback to single-service behavior
+                    let port = project.internal_port.unwrap_or(0);
+                    let cu = if is_local { Some(format!("litebin-{}:{}", project.id, port)) } else { None };
+                    (format!("litebin-{}", project.id), port, cu)
+                }
+            }
+        } else {
+            let port = project.internal_port.unwrap_or(0);
+            let cu = if is_local { Some(format!("litebin-{}:{}", project.id, port)) } else { None };
+            (format!("litebin-{}", project.id), port, cu)
         };
 
         let (upstream, node_public_ip) = match project.node_id.as_deref() {
             Some(node_id) if node_id != "local" => {
-                // Remote node — look up the node's host IP and public IP
                 let row: Option<(String, Option<String>)> = sqlx::query_as(
                     "SELECT host, public_ip FROM nodes WHERE id = ?",
                 )
@@ -94,20 +119,15 @@ pub async fn resolve_routes(
                 }
             }
             _ => {
-                // Local node — route directly via Docker network by container name
                 let local_ip: Option<String> = sqlx::query_scalar(
                     "SELECT public_ip FROM nodes WHERE id = 'local'",
                 )
                 .fetch_optional(db)
                 .await?
                 .flatten();
-                (format!("litebin-{}:{}", project.id, internal_port), local_ip)
+                (format!("{}:{}", upstream_name, internal_port), local_ip)
             }
         };
-
-        // Container-level upstream for agent Caddy in cloudflare_dns mode
-        let container_upstream =
-            Some(format!("litebin-{}:{}", project.id, internal_port));
 
         let custom_routes = custom_routes_map.get(&project.id).cloned().unwrap_or_default();
 
@@ -183,7 +203,7 @@ pub async fn resolve_all_routes(
     orchestrator_upstream: &str,
 ) -> anyhow::Result<Vec<ProjectRoute>> {
     let all_running = sqlx::query_as::<_, Project>(
-        "SELECT * FROM projects WHERE status = 'running'",
+        "SELECT * FROM projects WHERE status IN ('running', 'degraded')",
     )
     .fetch_all(db)
     .await?;

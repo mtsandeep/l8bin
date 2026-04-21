@@ -108,6 +108,7 @@ fn parse_info_output(json: &str) -> Result<ProjectInfo> {
 /// Result of building a Docker image.
 pub struct SavedImage {
     pub path: String,
+    pub image_id: String,
     pub image_size: u64,
     pub compressed_size: u64,
 }
@@ -822,6 +823,13 @@ fn save_tar(image_tag: &str) -> Result<SavedImage> {
     let gz_path = std::env::temp_dir().join(format!("l8b-{}.tar.gz", safe_name));
     let tar_path_str = tar_path.to_string_lossy().to_string();
 
+    // Get image ID from local Docker (authoritative source)
+    let inspect = Command::new("docker")
+        .args(["inspect", "--format", "{{.Id}}", image_tag])
+        .output()
+        .context("failed to inspect image")?;
+    let image_id = String::from_utf8_lossy(&inspect.stdout).trim().to_string();
+
     // docker save → uncompressed tar
     let output = Command::new("docker")
         .args(["save", "-o", &tar_path_str, image_tag])
@@ -851,6 +859,7 @@ fn save_tar(image_tag: &str) -> Result<SavedImage> {
 
     Ok(SavedImage {
         path: gz_path.to_string_lossy().to_string(),
+        image_id,
         image_size,
         compressed_size,
     })

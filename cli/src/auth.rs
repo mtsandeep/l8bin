@@ -119,7 +119,7 @@ pub fn authenticated_client(config: &CliConfig) -> Result<reqwest::Client> {
 
     let client = reqwest::Client::builder()
         .default_headers(headers)
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(300))
         .build()?;
 
     Ok(client)
@@ -184,6 +184,38 @@ pub async fn session_get(
         .send()
         .await
         .with_context(|| format!("GET {} failed", url))?;
+
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_str(&body_text)
+        .unwrap_or(serde_json::json!({"raw": body_text}));
+
+    if !status.is_success() {
+        let error = json["error"].as_str().unwrap_or(&body_text);
+        anyhow::bail!("{} ({}): {}", url, status, error);
+    }
+
+    Ok(json)
+}
+
+/// POST multipart form to the API using session (cookie) auth.
+pub async fn session_post_multipart(
+    client: &reqwest::Client,
+    server: &str,
+    path: &str,
+    form: reqwest::multipart::Form,
+) -> Result<serde_json::Value> {
+    let session = load_session()
+        .ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
+
+    let url = format!("{}{}", server.trim_end_matches('/'), path);
+    let resp = client
+        .post(&url)
+        .header("Cookie", &session.cookie)
+        .multipart(form)
+        .send()
+        .await
+        .with_context(|| format!("POST {} failed", url))?;
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();

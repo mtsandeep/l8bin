@@ -86,40 +86,78 @@ pub async fn stop_project(
 
     // Spawn background task to do the actual Docker stop
     let project_id_bg = project_id.clone();
+    let service_count = project.service_count.unwrap_or(1);
     tokio::spawn(async move {
         let project_id = project_id_bg;
-        if is_remote {
-            let node_id = project.node_id.as_deref().unwrap().to_string();
-            let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
-                Ok(c) => c,
+
+        if service_count > 1 {
+            // Multi-service: stop all service containers in reverse dependency order
+            let services: Vec<(String, Option<String>, Option<String>)> = match sqlx::query_as(
+                "SELECT service_name, container_id, depends_on FROM project_services WHERE project_id = ? AND status = 'running'",
+            )
+            .bind(&project_id)
+            .fetch_all(&state.db)
+            .await {
+                Ok(s) => s,
                 Err(e) => {
-                    tracing::error!(project = %project_id, error = %e, "stop: node client unavailable");
+                    tracing::error!(project = %project_id, error = %e, "stop: failed to fetch services");
                     return;
                 }
             };
-            let node = match get_node_from_db(&state.db, &node_id).await {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::error!(project = %project_id, error = ?e, "stop: failed to get node");
-                    return;
+
+            // Simple approach: stop in reverse of the fetched order (dependencies first)
+            for (svc_name, cid, _) in services.iter().rev() {
+                if let Some(container_id) = cid {
+                    let _ = state.docker.stop_container(container_id).await;
+                    let _ = sqlx::query(
+                        "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                    )
+                    .bind(&project_id)
+                    .bind(svc_name)
+                    .execute(&state.db)
+                    .await;
+                    tracing::info!(project = %project_id, service = %svc_name, "service stopped");
                 }
-            };
-            let base_url = agent_base_url(&state.config, &node);
-            let _ = client
-                .post(&format!("{}/containers/stop", base_url))
-                .json(&json!({"container_id": container_id}))
-                .send()
-                .await;
+            }
         } else {
-            let _ = state.docker.stop_container(&container_id).await;
+            // Single-service: stop the one container
+            if is_remote {
+                let node_id = project.node_id.as_deref().unwrap().to_string();
+                let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!(project = %project_id, error = %e, "stop: node client unavailable");
+                        return;
+                    }
+                };
+                let node = match get_node_from_db(&state.db, &node_id).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::error!(project = %project_id, error = ?e, "stop: failed to get node");
+                        return;
+                    }
+                };
+                let base_url = agent_base_url(&state.config, &node);
+                let _ = client
+                    .post(&format!("{}/containers/stop", base_url))
+                    .json(&json!({"container_id": container_id}))
+                    .send()
+                    .await;
+            } else {
+                let _ = state.docker.stop_container(&container_id).await;
+            }
         }
 
         let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-            .bind(now)
-            .bind(&project_id)
-            .execute(&state.db)
-            .await;
+        let _ = if service_count > 1 {
+            sqlx::query("UPDATE projects SET status = 'stopped', container_id = NULL, mapped_port = NULL, updated_at = ? WHERE id = ?")
+        } else {
+            sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
+        }
+        .bind(now)
+        .bind(&project_id)
+        .execute(&state.db)
+        .await;
 
         sync_caddy(&state).await;
         tracing::info!(project = %project_id, "project stopped via API");
@@ -305,7 +343,8 @@ pub async fn start_project(
 
         let extra_env = read_local_project_env(&project_id);
 
-        let (new_container_id, mapped_port) = state.docker.run_container(&project_clone, extra_env, None).await
+        let config = litebin_common::types::RunServiceConfig::from_project(&project_clone, extra_env);
+        let (new_container_id, mapped_port) = state.docker.run_service_container(&config).await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to recreate: {e}")))?;
 
         write_local_env_snapshot(&project_id);
@@ -343,8 +382,39 @@ pub async fn delete_project(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    // Remove container — branch on node location
-    if let Some(ref container_id) = project.container_id {
+    // Remove container(s) — branch on node location
+    let is_local = project
+        .node_id
+        .as_deref()
+        .map(|n| n == "local")
+        .unwrap_or(true);
+
+    if project.service_count.unwrap_or(1) > 1 && is_local {
+        // Multi-service local: remove all service containers + per-project network
+        let services: Vec<(String, Option<String>)> = match sqlx::query_as(
+            "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
+        )
+        .bind(&project_id)
+        .fetch_all(&state.db)
+        .await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(project = %project_id, error = %e, "delete: failed to fetch services");
+                Vec::new()
+            }
+        };
+
+        for (svc_name, cid) in &services {
+            if let Some(container_id) = cid {
+                let _ = state.docker.stop_container(container_id).await;
+                let _ = state.docker.remove_container(container_id).await;
+                tracing::info!(project = %project_id, service = %svc_name, "service container removed during delete");
+            }
+        }
+
+        // Remove per-project network
+        let _ = state.docker.remove_project_network(&project_id, None).await;
+    } else if let Some(ref container_id) = project.container_id {
         let is_remote = project
             .node_id
             .as_deref()
@@ -507,7 +577,8 @@ pub async fn recreate_project(
 
         let extra_env = read_local_project_env(&project_id);
 
-        let (container_id, mapped_port) = state.docker.run_container(&project, extra_env, None).await
+        let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
+        let (container_id, mapped_port) = state.docker.run_service_container(&config).await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to recreate: {e}")))?;
 
         sqlx::query("UPDATE projects SET container_id = ?, mapped_port = ?, status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?")

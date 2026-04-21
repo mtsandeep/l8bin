@@ -16,6 +16,7 @@ use crate::AppState;
 #[derive(Deserialize)]
 pub struct UploadQueryParams {
     pub project_id: String,
+    pub image_id: String,
     pub node_id: Option<String>,
 }
 
@@ -49,41 +50,24 @@ pub async fn upload_image(
     };
 
     let node_id = params.node_id.as_deref().unwrap_or("local");
+    let image_id = params.image_id;
 
-    let image_id = if node_id == "local" {
-        // Local path: stream body directly to DockerManager
+    if node_id == "local" {
+        // Local path: stream body directly to Docker to load the image
         let byte_stream = body.into_data_stream();
-        let expected_tag = format!("l8b/{}:latest", params.project_id);
-
-        // Try loading via bollard API
-        match state.docker.load_image(byte_stream).await {
-            Ok(id) => id,
-            Err(e) => {
-                // If bollard didn't return an ID, the image may still have loaded.
-                // Try to get the ID by inspecting the expected tag.
-                tracing::warn!(error = %e, "load_image did not return ID, trying inspect by tag");
-                match state.docker.image_id_by_tag(&expected_tag).await {
-                    Ok(id) => id,
-                    Err(inspect_err) => {
-                        tracing::error!(error = %e, inspect_error = %inspect_err, "failed to load image locally");
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({"error": format!("failed to load image: {e}")})),
-                        )
-                            .into_response();
-                    }
-                }
-            }
+        if let Err(e) = state.docker.load_image(byte_stream).await {
+            tracing::error!(error = %e, project = %params.project_id, "failed to load image");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("failed to load image: {e}")})),
+            ).into_response();
         }
     } else {
         // Remote path: stream body to agent via channel bridge
-        match stream_to_agent(&state, node_id, body).await {
-            Ok(id) => id,
-            Err((status, error)) => {
-                return (status, Json(serde_json::json!({"error": error}))).into_response();
-            }
+        if let Err((status, error)) = stream_to_agent(&state, node_id, body, &image_id).await {
+            return (status, Json(serde_json::json!({"error": error}))).into_response();
         }
-    };
+    }
 
     (StatusCode::OK, Json(UploadResponse { image_id })).into_response()
 }
@@ -92,7 +76,8 @@ async fn stream_to_agent(
     state: &AppState,
     node_id: &str,
     body: Body,
-) -> Result<String, (StatusCode, String)> {
+    image_id: &str,
+) -> Result<(), (StatusCode, String)> {
     use litebin_common::types::Node;
 
     let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
@@ -124,7 +109,7 @@ async fn stream_to_agent(
     let streaming_body = reqwest::Body::wrap_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
 
     let resp = client
-        .post(format!("{}/images/load", base_url))
+        .post(format!("{}/images/load?image_id={}", base_url, image_id))
         .header("Content-Type", "application/x-tar")
         .body(streaming_body)
         .send()
@@ -136,13 +121,5 @@ async fn stream_to_agent(
         return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent image load failed: {body_text}")));
     }
 
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid response: {e}")))?;
-
-    json["image_id"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing image_id in response".to_string()))
+    Ok(())
 }

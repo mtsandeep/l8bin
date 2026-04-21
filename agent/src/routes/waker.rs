@@ -12,6 +12,10 @@ use tokio::sync::Notify;
 
 use crate::{AgentState, WakeGuard};
 
+fn footer_html() -> String {
+    format!(r#"<footer style="position:fixed;bottom:16px;left:0;right:0;text-align:center;color:#94a3b8;font-size:1rem;">Powered by <a href="https://l8bin.com" style="color:#7c3aed;text-decoration:none;">l8bin</a></footer>"#)
+}
+
 /// Check if the client wants JSON (not HTML). Used to return 503+JSON for API clients.
 fn wants_json(headers: &HeaderMap) -> bool {
     !headers
@@ -80,18 +84,13 @@ pub async fn wake(
         }
     };
 
-    let container_name = format!("litebin-{}", subdomain);
-
-    // Try to find the container
-    let container_id = match state.docker.find_container_by_name(&container_name).await {
-        Ok(Some(id)) => id,
-        Ok(None) => {
-            return not_found_page();
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to look up container");
-            return not_found_page();
-        }
+    // Try to find the container — single-service name first, then multi-service prefix
+    let container_id = if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}", subdomain)).await {
+        id
+    } else if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}.", subdomain)).await {
+        id
+    } else {
+        return not_found_page();
     };
 
     // Check if container is running
@@ -175,11 +174,14 @@ pub async fn wake(
                                     auto_stop_timeout_mins: 0,
                                     auto_start_enabled: false,
                                     last_active_at: None,
+                                    service_count: None,
+                                    service_summary: None,
                                     created_at: 0,
                                     updated_at: 0,
                                 };
 
-                                let (new_container_id, port) = state_clone.docker.run_container(&project, extra_env, None).await?;
+                                let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
+                                let (new_container_id, port) = state_clone.docker.run_service_container(&config).await?;
                                 super::containers::write_env_snapshot(&subdomain_clone);
 
                                 rebuild_local_caddy(&state_clone).await?;
@@ -329,7 +331,7 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
 /// Preserves sleeping custom domain routes, TLS config, and other orchestrator-managed routes.
 fn merge_routes_with_persisted(
     base: &serde_json::Value,
-    containers: &[(String, u16, u16)],
+    containers: &[litebin_common::docker::RunningContainer],
     domain: &str,
 ) -> serde_json::Value {
     let existing_routes = base["apps"]["http"]["servers"]["srv0"]["routes"]
@@ -353,11 +355,12 @@ fn merge_routes_with_persisted(
     }
 
     // Add/update running container routes using Docker network container names.
-    // Uses litebin-{project_id}:{internal_port} instead of localhost:{mapped_port}
-    // because in production the agent Caddy is a separate container on the Docker network.
-    for (project_id, internal_port, _mapped_port) in containers {
-        let subdomain_host = format!("{}.{}", project_id, domain);
-        let upstream = format!("litebin-{}:{}", project_id, internal_port);
+    // Uses the container_name from the parsed info for multi-service support.
+    // Only public services (web) get subdomain routes.
+    for c in containers {
+        // For multi-service, only route via the primary container name for the subdomain
+        let upstream = format!("{}:{}", c.container_name, c.internal_port);
+        let subdomain_host = format!("{}.{}", c.project_id, domain);
         route_map.insert(
             subdomain_host.clone(),
             json!({
@@ -386,7 +389,6 @@ fn merge_routes_with_persisted(
             }
         }
         for host in hosts_to_upgrade {
-            let upstream = format!("litebin-{}:{}", project_id, internal_port);
             route_map.insert(
                 host.clone(),
                 json!({
@@ -435,7 +437,7 @@ fn merge_routes_with_persisted(
 /// Used on first wake before orchestrator has pushed any config, or on agent startup.
 /// Uses inline PEM content (load_pem) so the certs don't need to exist inside the Caddy container.
 fn build_config_from_scratch(
-    containers: &[(String, u16, u16)],
+    containers: &[litebin_common::docker::RunningContainer],
     domain: &str,
     cert_pem: &str,
     key_pem: &str,
@@ -443,9 +445,9 @@ fn build_config_from_scratch(
     let mut routes: Vec<serde_json::Value> = Vec::new();
 
     // Running container routes using Docker network names
-    for (project_id, internal_port, _mapped_port) in containers {
-        let host = format!("{}.{}", project_id, domain);
-        let upstream = format!("litebin-{}:{}", project_id, internal_port);
+    for c in containers {
+        let host = format!("{}.{}", c.project_id, domain);
+        let upstream = format!("{}:{}", c.container_name, c.internal_port);
         routes.push(json!({
             "match": [{ "host": [host] }],
             "handle": [{
@@ -635,10 +637,12 @@ fn loading_page(project_id: &str) -> Response<Body> {
     <div class="loader">
         <div class="spinner"></div>
         <p>Starting <strong>{}</strong>...</p>
+        {}
     </div>
 </body>
 </html>"#,
-        project_id, project_id
+        project_id, project_id,
+        footer_html()
     );
 
     Response::builder()
@@ -649,26 +653,30 @@ fn loading_page(project_id: &str) -> Response<Body> {
 }
 
 fn error_page(_project_id: &str) -> Response<Body> {
-    let html = r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="30">
     <title>Offline</title>
     <style>
-        body { font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
-        .msg { text-align: center; }
-        h2 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
-        p { color: #64748b; margin: 0; font-size: 0.875rem; }
+        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
+        .msg {{ text-align: center; }}
+        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
+        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
     </style>
 </head>
 <body>
     <div class="msg">
         <h2>Failed to start the website</h2>
         <p>Retrying in 30 seconds...</p>
+        {}
     </div>
 </body>
-</html>"#;
+</html>"#,
+        footer_html()
+    );
 
     Response::builder()
         .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -678,25 +686,29 @@ fn error_page(_project_id: &str) -> Response<Body> {
 }
 
 fn offline_page() -> Response<Body> {
-    let html = r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Offline</title>
     <style>
-        body { font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
-        .msg { text-align: center; }
-        h2 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
-        p { color: #64748b; margin: 0; font-size: 0.875rem; }
+        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
+        .msg {{ text-align: center; }}
+        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
+        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
     </style>
 </head>
 <body>
     <div class="msg">
         <h2>This website is currently offline</h2>
         <p>Auto-start is disabled!</p>
+        {}
     </div>
 </body>
-</html>"#;
+</html>"#,
+        footer_html()
+    );
 
     Response::builder()
         .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -752,25 +764,29 @@ pub struct CaddyAskParams {
 }
 
 fn not_found_page() -> Response<Body> {
-    let html = r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Not Found</title>
     <style>
-        body { font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
-        .msg { text-align: center; }
-        h2 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
-        p { color: #64748b; margin: 0; font-size: 0.875rem; }
+        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
+        .msg {{ text-align: center; }}
+        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
+        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
     </style>
 </head>
 <body>
     <div class="msg">
         <h2>Project not found</h2>
         <p>This project does not exist or has been removed.</p>
+        {}
     </div>
 </body>
-</html>"#;
+</html>"#,
+        footer_html()
+    );
 
     Response::builder()
         .status(StatusCode::NOT_FOUND)

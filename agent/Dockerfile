@@ -10,21 +10,24 @@ COPY litebin-common/Cargo.toml litebin-common/Cargo.toml
 COPY agent/Cargo.toml agent/Cargo.toml
 COPY orchestrator/Cargo.toml orchestrator/Cargo.toml
 COPY cli/Cargo.toml cli/Cargo.toml
+COPY compose-bollard/Cargo.toml compose-bollard/Cargo.toml
 
 # Stub all workspace members so cargo can cache deps
-RUN mkdir -p litebin-common/src agent/src orchestrator/src cli/src \
+RUN mkdir -p litebin-common/src agent/src orchestrator/src cli/src compose-bollard/src \
     && echo "pub fn placeholder() {}" > litebin-common/src/lib.rs \
     && echo "fn main() {}" > agent/src/main.rs \
     && echo "fn main() {}" > orchestrator/src/main.rs \
-    && echo "fn main() {}" > cli/src/main.rs
+    && echo "fn main() {}" > cli/src/main.rs \
+    && echo "pub fn placeholder() {}" > compose-bollard/src/lib.rs
 
 RUN cargo build --release --bin litebin-agent 2>/dev/null || true
 
 # Copy real sources and build
 COPY litebin-common/src litebin-common/src
 COPY agent/src agent/src
+COPY compose-bollard/src compose-bollard/src
 
-RUN touch litebin-common/src/lib.rs agent/src/main.rs \
+RUN touch litebin-common/src/lib.rs agent/src/main.rs compose-bollard/src/lib.rs \
     && cargo build --release --bin litebin-agent
 
 FROM debian:trixie-slim

@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -34,17 +34,23 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+#[derive(Deserialize)]
+pub struct LoadImageQueryParams {
+    pub image_id: String,
+}
+
 /// POST /images/load
 /// Accepts a raw tar body (docker save output) and loads it into Docker.
 /// Streams the body directly to Docker without buffering.
 pub async fn load_image(
     State(state): State<AgentState>,
+    Query(params): Query<LoadImageQueryParams>,
     body: Body,
 ) -> impl IntoResponse {
     let byte_stream = body.into_data_stream();
 
     match state.docker.load_image(byte_stream).await {
-        Ok(image_id) => (StatusCode::OK, Json(LoadImageResponse { image_id })).into_response(),
+        Ok(_) => (StatusCode::OK, Json(LoadImageResponse { image_id: params.image_id })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "failed to load image");
             (

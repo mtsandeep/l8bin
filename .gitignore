@@ -45,3 +45,6 @@ test-apps/load-tests/k6.exe
 
 #others
 local-release/
+
+# Docker compose local overrides
+docker-compose.override.yml
