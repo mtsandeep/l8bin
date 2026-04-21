@@ -284,6 +284,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/{id}/disk-usage", get(routes::stats::project_disk_usage))
         .route("/projects/{id}/logs", get(routes::stats::project_logs))
         .route("/projects/{id}/recreate", post(routes::manage::recreate_project))
+        .route("/projects/{id}/volumes/{name}", delete(routes::volumes::delete_volume))
+        .route("/projects/{id}/volumes", delete(routes::volumes::delete_all_volumes))
         .route("/nodes", get(routes::nodes::list_nodes))
         .route("/nodes", post(routes::nodes::create_node))
         .route("/nodes/{id}", delete(routes::nodes::delete_node))

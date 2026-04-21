@@ -44,8 +44,19 @@ pub struct Project {
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
     pub custom_domain: Option<String>,
+    pub volumes: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// A volume mount for bind-mounting host directories into containers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeMount {
+    /// Path inside the container, e.g. "/app/uploads"
+    pub path: String,
+    /// Directory name under projects/{id}/data/. Defaults to project_id if omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

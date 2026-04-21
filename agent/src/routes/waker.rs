@@ -170,6 +170,7 @@ pub async fn wake(
                                     memory_limit_mb: meta.memory_limit_mb,
                                     cpu_limit: meta.cpu_limit,
                                     custom_domain: None,
+                                    volumes: meta.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
                                     auto_stop_enabled: false,
                                     auto_stop_timeout_mins: 0,
                                     auto_start_enabled: false,

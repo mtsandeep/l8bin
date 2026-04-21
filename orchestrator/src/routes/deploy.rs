@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::auth::backend::PasswordBackend;
-use litebin_common::types::Node;
+use litebin_common::types::{Node, VolumeMount};
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::AppState;
@@ -26,6 +26,8 @@ pub struct DeployRequest {
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
     pub custom_domain: Option<String>,
+    pub volumes: Option<Vec<VolumeMount>>,
+    pub cleanup_volumes: Option<bool>,
 }
 
 pub async fn deploy(
@@ -106,10 +108,22 @@ pub async fn deploy(
         .flatten();
 
     // 2. Upsert project in DB with status='deploying'
+    // Capture old volumes for orphan detection
+    let old_volumes: Option<Vec<VolumeMount>> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT volumes FROM projects WHERE id = ?"
+    )
+    .bind(&payload.project_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|v| serde_json::from_str(&v).ok());
+
+    let volumes_json = payload.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
     if let Err(e) = sqlx::query(
         r#"
-        INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'deploying', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'deploying', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id = excluded.user_id,
             image = excluded.image,
@@ -124,6 +138,7 @@ pub async fn deploy(
             memory_limit_mb = CASE WHEN excluded.memory_limit_mb IS NOT NULL THEN excluded.memory_limit_mb ELSE projects.memory_limit_mb END,
             cpu_limit = CASE WHEN excluded.cpu_limit IS NOT NULL THEN excluded.cpu_limit ELSE projects.cpu_limit END,
             custom_domain = CASE WHEN excluded.custom_domain IS NOT NULL THEN excluded.custom_domain ELSE projects.custom_domain END,
+            volumes = CASE WHEN excluded.volumes IS NOT NULL THEN excluded.volumes ELSE projects.volumes END,
             updated_at = excluded.updated_at
         "#,
     )
@@ -140,6 +155,7 @@ pub async fn deploy(
     .bind(payload.memory_limit_mb)
     .bind(payload.cpu_limit)
     .bind(&payload.custom_domain)
+    .bind(&volumes_json)
     .bind(now)
     .bind(now)
     .execute(&state.db)
@@ -302,6 +318,7 @@ pub async fn deploy(
                 "cmd": project.cmd,
                 "memory_limit_mb": project.memory_limit_mb,
                 "cpu_limit": project.cpu_limit,
+                "volumes": payload.volumes,
             }))
             .send()
             .await
@@ -494,6 +511,31 @@ pub async fn deploy(
         "deploy complete"
     );
 
+    // 9. Detect orphaned volumes and optionally clean up
+    let mut orphaned_volumes: Vec<String> = Vec::new();
+    if let Some(ref old) = old_volumes {
+        let new_names: std::collections::HashSet<String> = payload.volumes
+            .as_ref()
+            .map(|v| v.iter().map(|vm| vm.name.clone().unwrap_or_else(|| payload.project_id.clone())).collect())
+            .unwrap_or_default();
+        for vm in old {
+            let name = vm.name.as_deref().unwrap_or(&payload.project_id);
+            if !new_names.contains(name) {
+                let path = std::path::PathBuf::from("projects")
+                    .join(&payload.project_id)
+                    .join("data")
+                    .join(name);
+                if path.exists() {
+                    orphaned_volumes.push(path.display().to_string());
+                    if payload.cleanup_volumes == Some(true) {
+                        let _ = std::fs::remove_dir_all(&path);
+                        tracing::info!(path = %path.display(), "cleaned up orphaned volume");
+                    }
+                }
+            }
+        }
+    }
+
     (
         StatusCode::OK,
         Json(json!({
@@ -501,7 +543,8 @@ pub async fn deploy(
             "project_id": payload.project_id,
             "url": url,
             "custom_domain": payload.custom_domain,
-            "mapped_port": mapped_port
+            "mapped_port": mapped_port,
+            "orphaned_volumes": orphaned_volumes
         })),
     )
         .into_response()

@@ -14,7 +14,7 @@ use bollard::Docker;
 use futures_util::StreamExt;
 use serde::{Serialize, Deserialize};
 
-use crate::types::Project;
+use crate::types::{Project, VolumeMount};
 
 #[derive(Clone)]
 pub struct DockerManager {
@@ -100,6 +100,16 @@ impl DockerManager {
         Ok(())
     }
 
+    /// Ensure a project data directory exists. Returns the path.
+    pub fn ensure_data_dir(project_id: &str, volume_name: &str) -> std::io::Result<std::path::PathBuf> {
+        let dir = std::path::PathBuf::from("projects")
+            .join(project_id)
+            .join("data")
+            .join(volume_name);
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
     /// Run a container for a project, returning (container_id, mapped_port).
     /// If `mapped_port` is None, Docker auto-assigns the host port and this function
     /// inspects the container to retrieve it. If `mapped_port` is Some, that port is
@@ -135,8 +145,24 @@ impl DockerManager {
             .unwrap_or(self.cpu_limit);
         let nano_cpus = (nano_cpus * 1_000_000_000.0) as i64;
 
+        // Build bind mounts from project volumes
+        let binds: Vec<String> = if let Some(ref vols_json) = project.volumes {
+            serde_json::from_str::<Vec<VolumeMount>>(vols_json)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|v| {
+                    let name = v.name.as_deref().unwrap_or(&project.id);
+                    let host_path = Self::ensure_data_dir(&project.id, name).ok()?;
+                    Some(format!("{}:{}", host_path.display(), v.path))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let host_config = HostConfig {
             port_bindings: Some(port_bindings),
+            binds: if binds.is_empty() { None } else { Some(binds) },
             memory: Some(memory),
             nano_cpus: Some(nano_cpus),
             network_mode: Some(self.network.clone()),

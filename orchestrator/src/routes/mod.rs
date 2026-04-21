@@ -11,5 +11,6 @@ pub mod nodes;
 pub mod projects;
 pub mod settings;
 pub mod stats;
+pub mod volumes;
 pub mod waker;
 pub mod wake_report;

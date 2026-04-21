@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use litebin_common::types::ContainerStatus;
+use litebin_common::types::{ContainerStatus, VolumeMount};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash as StdHash, Hasher};
 use std::collections::hash_map::DefaultHasher;
@@ -24,6 +24,7 @@ pub struct RunRequest {
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
+    pub volumes: Option<Vec<VolumeMount>>,
 }
 
 #[derive(Serialize)]
@@ -191,6 +192,7 @@ pub struct ProjectMetadata {
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
+    pub volumes: Option<Vec<VolumeMount>>,
 }
 
 /// Path to the metadata file for a project.
@@ -199,13 +201,14 @@ pub fn metadata_path(project_id: &str) -> std::path::PathBuf {
 }
 
 /// Write project metadata to disk after successful container creation.
-pub fn write_project_metadata(project_id: &str, image: &str, internal_port: i64, cmd: Option<&str>, memory_limit_mb: Option<i64>, cpu_limit: Option<f64>) {
+pub fn write_project_metadata(project_id: &str, image: &str, internal_port: i64, cmd: Option<&str>, memory_limit_mb: Option<i64>, cpu_limit: Option<f64>, volumes: Option<Vec<VolumeMount>>) {
     let meta = ProjectMetadata {
         image: image.to_string(),
         internal_port,
         cmd: cmd.map(|s| s.to_string()),
         memory_limit_mb,
         cpu_limit,
+        volumes,
     };
     let path = metadata_path(project_id);
     if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&meta).unwrap_or_default()) {
@@ -262,6 +265,7 @@ pub async fn run_container(
         memory_limit_mb: req.memory_limit_mb,
         cpu_limit: req.cpu_limit,
         custom_domain: None,
+        volumes: req.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
         auto_stop_enabled: false,
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
@@ -279,7 +283,7 @@ pub async fn run_container(
             // Rebuild agent Caddy config so the new container gets a route
             let _ = super::waker::rebuild_local_caddy(&state).await;
             write_env_snapshot(&req.project_id);
-            write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit);
+            write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, req.volumes.clone());
             (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
         }
         Err(e) => (
@@ -323,6 +327,7 @@ pub async fn recreate_container(
         memory_limit_mb: req.memory_limit_mb,
         cpu_limit: req.cpu_limit,
         custom_domain: None,
+        volumes: req.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
         auto_stop_enabled: false,
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
@@ -340,7 +345,7 @@ pub async fn recreate_container(
             // Rebuild agent Caddy config so the new container gets a route
             let _ = super::waker::rebuild_local_caddy(&state).await;
             write_env_snapshot(&req.project_id);
-            write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit);
+            write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, req.volumes.clone());
             (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
         }
         Err(e) => (
@@ -397,6 +402,7 @@ pub async fn start_container(
                 memory_limit_mb: req.memory_limit_mb,
                 cpu_limit: req.cpu_limit,
                 custom_domain: None,
+                volumes: None, // start uses existing container, volumes unchanged
                 auto_stop_enabled: false,
                 auto_stop_timeout_mins: 0,
                 auto_start_enabled: false,
@@ -409,7 +415,7 @@ pub async fn start_container(
                 Ok((_container_id, mapped_port)) => {
                     let _ = super::waker::rebuild_local_caddy(&state).await;
                     write_env_snapshot(project_id);
-                    write_project_metadata(project_id, &image, internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit);
+                    write_project_metadata(project_id, &image, internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, None);
                     (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
                 }
                 Err(e) => (
