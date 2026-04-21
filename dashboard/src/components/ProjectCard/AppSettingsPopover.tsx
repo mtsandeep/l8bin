@@ -1,0 +1,220 @@
+import { useState, useEffect, useRef } from "react";
+import { ChevronDown, Terminal } from "lucide-react";
+import ResourceLimitInput from "../ResourceLimitInput";
+import { useToast } from "../ToastContext";
+import {
+  type Project,
+  updateProjectSettings,
+  redeployProject,
+} from "../../api";
+import RedeployModal from "./RedeployModal";
+
+interface AppSettingsPopoverProps {
+  project: Project;
+  isStopping: boolean;
+  onRefresh: () => void;
+  onClose: () => void;
+}
+
+export default function AppSettingsPopover({
+  project,
+  isStopping,
+  onRefresh,
+  onClose,
+}: AppSettingsPopoverProps) {
+  const [appImage, setAppImage] = useState(project.image ?? "");
+  const [appPort, setAppPort] = useState(project.internal_port ?? 3000);
+  const [cmd, setCmd] = useState(project.cmd ?? "");
+  const [memMb, setMemMb] = useState(project.memory_limit_mb ?? 256);
+  const [cpuLimit, setCpuLimit] = useState(project.cpu_limit ?? 0.5);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Redeploy modal
+  const [showRedeployModal, setShowRedeployModal] = useState(false);
+
+  const ref = useRef<HTMLDivElement>(null);
+  const { showToast } = useToast();
+
+  // Sync from project prop (e.g. after refresh)
+  useEffect(() => {
+    setAppImage(project.image ?? "");
+    setAppPort(project.internal_port ?? 3000);
+    setCmd(project.cmd ?? "");
+    setMemMb(project.memory_limit_mb ?? 256);
+    setCpuLimit(project.cpu_limit ?? 0.5);
+  }, [project.image, project.internal_port, project.cmd, project.memory_limit_mb, project.cpu_limit]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+
+  const handleSave = async () => {
+    const prev = { cmd, memMb, cpuLimit };
+    setSettingsError(null);
+
+    try {
+      await updateProjectSettings(project.id, { cmd, memory_limit_mb: memMb, cpu_limit: cpuLimit });
+      onClose();
+      onRefresh();
+    } catch (e) {
+      setCmd(prev.cmd);
+      setMemMb(prev.memMb);
+      setCpuLimit(prev.cpuLimit);
+      setSettingsError(e instanceof Error ? e.message : "Failed to update settings");
+      showToast(e instanceof Error ? e.message : "Failed to update settings");
+    }
+  };
+
+  const handleSaveAndRedeploy = async () => {
+    // Save settings first
+    setSettingsError(null);
+    try {
+      await updateProjectSettings(project.id, { cmd, memory_limit_mb: memMb, cpu_limit: cpuLimit });
+      // Open redeploy modal with current (edited) values
+      setShowRedeployModal(true);
+    } catch (e) {
+      setSettingsError(e instanceof Error ? e.message : "Failed to update settings");
+      showToast(e instanceof Error ? e.message : "Failed to update settings");
+    }
+  };
+
+  const handleRedeploy = async (cleanupVolumes: boolean) => {
+    setShowRedeployModal(false);
+    setLoading(true);
+    try {
+      await redeployProject(project.id, appImage, appPort, cmd, memMb, cpuLimit, cleanupVolumes);
+      onClose();
+      onRefresh();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Redeploy failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+    <div ref={ref}>
+      <button
+        onClick={(e) => e.stopPropagation()}
+        className={`w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer ${
+          "bg-slate-900/80 border-violet-500/40 text-slate-300"
+        }`}
+      >
+        <div className="flex items-center gap-1.5">
+          <Terminal size={12} />
+          <span className="text-[10px] uppercase tracking-wider">App</span>
+        </div>
+        {loading ? (
+          <span className="text-[10px] text-violet-400 animate-pulse">deploying...</span>
+        ) : (
+          <ChevronDown size={12} className="text-slate-500" />
+        )}
+      </button>
+      <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-slate-800 border border-slate-700/70 rounded-md shadow-xl px-3 py-3 space-y-3">
+        {settingsError && (
+          <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1.5">
+            {settingsError}
+          </div>
+        )}
+        <div>
+          <span className="text-xs text-slate-400 block mb-1.5">Docker image</span>
+          <input
+            type="text"
+            value={appImage}
+            onChange={(e) => setAppImage(e.target.value)}
+            placeholder="nginx:alpine"
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
+          />
+        </div>
+        <div>
+          <span className="text-xs text-slate-400 block mb-1.5">App port</span>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={appPort}
+            onChange={(e) => setAppPort(Number(e.target.value))}
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+          />
+        </div>
+        <div>
+          <span className="text-xs text-slate-400 block mb-1.5">Command override</span>
+          <input
+            type="text"
+            value={cmd}
+            onChange={(e) => setCmd(e.target.value)}
+            placeholder="default (image entrypoint)"
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
+          />
+        </div>
+        <ResourceLimitInput
+          label="Memory limit"
+          value={memMb}
+          onChange={setMemMb}
+          unit="MB"
+          min={64}
+          normalMax={4096}
+          absoluteMax={65536}
+          normalStep={64}
+          overStep={1024}
+          highLabel="high memory"
+          minLabel="64 MB"
+          normalMaxLabel="4 GB"
+          inputClass="bg-slate-700"
+        />
+        <ResourceLimitInput
+          label="CPU limit"
+          value={cpuLimit}
+          onChange={setCpuLimit}
+          unit="vCPU"
+          min={0.1}
+          normalMax={4}
+          absoluteMax={32}
+          normalStep={0.1}
+          overStep={1}
+          highLabel="high cpu"
+          minLabel="0.1"
+          normalMaxLabel="4 vCPU"
+          inputClass="bg-slate-700"
+        />
+        <div className="flex gap-2">
+          <button
+            onClick={handleSave}
+            disabled={loading}
+            className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            Save
+          </button>
+          <button
+            onClick={handleSaveAndRedeploy}
+            disabled={loading || isStopping || !appImage.trim()}
+            className="flex-1 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            Save & Redeploy
+          </button>
+        </div>
+      </div>
+    </div>
+
+      {showRedeployModal && (
+        <RedeployModal
+          project={project}
+          appImage={appImage}
+          appPort={appPort}
+          isStopping={isStopping}
+          onRedeploy={handleRedeploy}
+          onCancel={() => setShowRedeployModal(false)}
+        />
+      )}
+    </>
+  );
+}

@@ -1,5 +1,13 @@
 const API_BASE = '';
 
+function parseErrorMessage(text: string, fallback: string): string {
+  try {
+    const json = JSON.parse(text);
+    if (json.error) return json.error;
+  } catch {}
+  return text || fallback;
+}
+
 export interface Project {
   id: string;
   name: string | null;
@@ -18,6 +26,7 @@ export interface Project {
   memory_limit_mb: number | null;
   cpu_limit: number | null;
   custom_domain: string | null;
+  volumes: string | null; // JSON-encoded array of VolumeMount
   created_at: number;
   updated_at: number;
 }
@@ -69,7 +78,7 @@ export async function deployProject(payload: DeployPayload): Promise<void> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Deploy failed');
+    throw new Error(parseErrorMessage(text, 'Deploy failed'));
   }
 }
 
@@ -128,7 +137,7 @@ export async function updateGlobalSettings(patch: Partial<GlobalSettings>): Prom
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Failed to update settings');
+    throw new Error(parseErrorMessage(text, 'Failed to update settings'));
   }
   return res.json();
 }
@@ -140,7 +149,7 @@ export async function cleanupDnsRecords(): Promise<{ deleted_count: number }> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Failed to cleanup DNS records');
+    throw new Error(parseErrorMessage(text, 'Failed to cleanup DNS records'));
   }
   return res.json();
 }
@@ -152,7 +161,7 @@ export async function syncDnsRecords(): Promise<{ created: number; deleted: numb
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Failed to sync DNS records');
+    throw new Error(parseErrorMessage(text, 'Failed to sync DNS records'));
   }
   return res.json();
 }
@@ -169,20 +178,25 @@ export async function updateProjectSettings(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Failed to update project settings');
+    throw new Error(parseErrorMessage(text, 'Failed to update project settings'));
   }
 }
 
-export async function redeployProject(projectId: string, image: string, port: number, cmd?: string | null, memoryLimitMb?: number | null, cpuLimit?: number | null): Promise<void> {
+export async function redeployProject(projectId: string, image: string, port: number, cmd?: string | null, memoryLimitMb?: number | null, cpuLimit?: number | null, cleanupVolumes?: boolean): Promise<void> {
   const res = await fetch(`${API_BASE}/deploy`, {
-    method: 'POST',
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ project_id: projectId, image, port, cmd: cmd ?? undefined, memory_limit_mb: memoryLimitMb ?? undefined, cpu_limit: cpuLimit ?? undefined }),
+    body: JSON.stringify({ project_id: projectId, image, port, cmd: cmd ?? undefined, memory_limit_mb: memoryLimitMb ?? undefined, cpu_limit: cpuLimit ?? undefined, cleanup_volumes: cleanupVolumes || undefined }),
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Redeploy failed');
+    let msg = text || 'Redeploy failed';
+    try {
+      const json = JSON.parse(text);
+      if (json.error) msg = json.error;
+    } catch {}
+    throw new Error(msg);
   }
 }
 
@@ -193,7 +207,7 @@ export async function recreateProject(projectId: string): Promise<void> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Recreate failed');
+    throw new Error(parseErrorMessage(text, 'Recreate failed'));
   }
 }
 
@@ -204,7 +218,7 @@ export async function stopProject(projectId: string): Promise<void> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Stop failed');
+    throw new Error(parseErrorMessage(text, 'Stop failed'));
   }
 }
 
@@ -215,7 +229,7 @@ export async function startProject(projectId: string): Promise<void> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Start failed');
+    throw new Error(parseErrorMessage(text, 'Start failed'));
   }
 }
 
@@ -226,7 +240,7 @@ export async function deleteProject(projectId: string): Promise<void> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || 'Delete failed');
+    throw new Error(parseErrorMessage(text, 'Delete failed'));
   }
 }
 
@@ -425,6 +439,81 @@ export async function revokeDeployToken(tokenId: string): Promise<void> {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || 'Failed to revoke deploy token');
+  }
+}
+
+// --- Volumes ---
+
+export interface VolumeMount {
+  path: string;
+  name?: string;
+}
+
+export async function deleteVolume(projectId: string, name: string): Promise<{ deleted: string }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/volumes/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to delete volume');
+  }
+  return res.json();
+}
+
+export async function deleteAllVolumes(projectId: string): Promise<{ deleted: string[] }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/volumes`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to delete volumes');
+  }
+  return res.json();
+}
+
+// --- Custom Routes ---
+
+export interface ProjectRoute {
+  id: string;
+  project_id: string;
+  route_type: string; // "path" | "alias"
+  path: string | null;
+  subdomain: string | null;
+  upstream: string;
+  priority: number;
+  created_at: number;
+}
+
+export async function fetchProjectRoutes(projectId: string): Promise<ProjectRoute[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/routes`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch routes');
+  return res.json();
+}
+
+export async function createProjectRoute(projectId: string, payload: { route_type: string; path?: string; subdomain?: string; upstream: string; priority?: number }): Promise<ProjectRoute> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/routes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to create route');
+  }
+  return res.json();
+}
+
+export async function deleteProjectRoute(projectId: string, routeId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/routes/${encodeURIComponent(routeId)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to delete route');
   }
 }
 
