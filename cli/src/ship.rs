@@ -446,7 +446,7 @@ async fn build_and_deploy(
     );
     deploy_spinner.enable_steady_tick(std::time::Duration::from_millis(100));
     deploy_spinner.set_message("Deploying...");
-    let deploy_resp = crate::deploy::deploy(
+    let deploy_resp = crate::deploy::redeploy(
         client, server, project_id, &image_id, port, None, None, None, None, true,
     )
     .await?;

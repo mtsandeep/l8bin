@@ -5,8 +5,46 @@ use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
 use crate::config::Config;
-use litebin_common::routing::{ProjectRoute, RoutingProvider};
+use litebin_common::routing::{ProjectCustomRoute, ProjectRoute, RoutingProvider};
 use litebin_common::types::Project;
+
+/// Bulk-load custom routes for a set of project IDs. Returns a map of project_id -> Vec<ProjectCustomRoute>.
+async fn resolve_custom_routes(
+    db: &SqlitePool,
+    project_ids: &[String],
+) -> anyhow::Result<std::collections::HashMap<String, Vec<ProjectCustomRoute>>> {
+    if project_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders = project_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let query = format!(
+        "SELECT id, project_id, route_type, path, subdomain, upstream, priority, created_at FROM project_routes WHERE project_id IN ({}) ORDER BY priority, created_at",
+        placeholders
+    );
+
+    let mut builder = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String, i64, i64)>(&query);
+    for pid in project_ids {
+        builder = builder.bind(pid);
+    }
+
+    let rows = builder.fetch_all(db).await?;
+
+    let mut map: std::collections::HashMap<String, Vec<ProjectCustomRoute>> = std::collections::HashMap::new();
+    for (id, project_id, route_type, path, subdomain, upstream, priority, _created_at) in rows {
+        map.entry(project_id.clone()).or_default().push(ProjectCustomRoute {
+            id,
+            project_id,
+            route_type,
+            path,
+            subdomain,
+            upstream,
+            priority,
+        });
+    }
+
+    Ok(map)
+}
 
 /// Resolve the upstream address for each project by looking up its assigned node.
 /// Local projects use `host.docker.internal:{port}`, remote projects use `{node_host}:{port}`.
@@ -15,6 +53,10 @@ pub async fn resolve_routes(
     db: &SqlitePool,
     domain: &str,
 ) -> anyhow::Result<Vec<ProjectRoute>> {
+    // Bulk-load custom routes for all projects
+    let project_ids: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
+    let custom_routes_map = resolve_custom_routes(db, &project_ids).await?;
+
     let mut routes = Vec::with_capacity(projects.len());
 
     for project in projects {
@@ -67,6 +109,8 @@ pub async fn resolve_routes(
         let container_upstream =
             Some(format!("litebin-{}:{}", project.id, internal_port));
 
+        let custom_routes = custom_routes_map.get(&project.id).cloned().unwrap_or_default();
+
         routes.push(ProjectRoute {
             project_id: project.id.clone(),
             subdomain_host: format!("{}.{}", project.id, domain),
@@ -78,6 +122,7 @@ pub async fn resolve_routes(
             upstream_tls: project.node_id.as_deref() != Some("local")
                 && project.node_id.is_some(),
             container_upstream,
+            custom_routes,
         });
     }
 
@@ -123,6 +168,7 @@ async fn resolve_sleeping_custom_domain_routes(
             host_rewrite: Some(format!("{}.{}", project.id, domain)),
             upstream_tls: false, // sleeping routes proxy to local orchestrator
             container_upstream: None, // sleeping projects have no running container
+            custom_routes: vec![], // sleeping projects don't need custom routes
         });
     }
 

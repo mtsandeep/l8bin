@@ -111,7 +111,7 @@ pub async fn test_server() -> TestServer {
 /// Build the full router for tests.
 /// Uses a custom 401-returning auth guard instead of the redirect-based login_required!.
 pub fn build_router(state: AppState) -> Router {
-    use axum::routing::{delete, get, patch, post};
+    use axum::routing::{delete, get, patch, post, put};
     use tower_http::cors::CorsLayer;
 
     use crate::routes;
@@ -158,7 +158,8 @@ pub fn build_router(state: AppState) -> Router {
 
     // Deploy + image upload (session OR deploy token auth — no login_required layer)
     let deploy_routes = Router::new()
-        .route("/deploy", post(routes::deploy::deploy))
+        .route("/deploy", post(routes::deploy::deploy_create))
+        .route("/deploy", put(routes::deploy::deploy_update))
         .route("/images/upload", post(routes::images::upload_image));
 
     // Deploy token management (session auth)

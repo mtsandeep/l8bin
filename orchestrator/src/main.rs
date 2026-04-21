@@ -15,7 +15,7 @@ mod tests;
 use std::sync::Arc;
 
 use axum::{
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use axum_login::login_required;
@@ -286,6 +286,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/{id}/recreate", post(routes::manage::recreate_project))
         .route("/projects/{id}/volumes/{name}", delete(routes::volumes::delete_volume))
         .route("/projects/{id}/volumes", delete(routes::volumes::delete_all_volumes))
+        .route("/projects/{id}/routes", get(routes::projects::list_routes))
+        .route("/projects/{id}/routes", post(routes::projects::create_route))
+        .route("/projects/{id}/routes/{route_id}", delete(routes::projects::delete_route))
         .route("/nodes", get(routes::nodes::list_nodes))
         .route("/nodes", post(routes::nodes::create_node))
         .route("/nodes/{id}", delete(routes::nodes::delete_node))
@@ -301,7 +304,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Routes - Deploy + image upload (session OR deploy token auth)
     let deploy_routes = Router::new()
-        .route("/deploy", post(routes::deploy::deploy))
+        .route("/deploy", post(routes::deploy::deploy_create))
+        .route("/deploy", put(routes::deploy::deploy_update))
         .route("/images/upload", post(routes::images::upload_image));
 
     // Routes - Deploy token management (session auth)

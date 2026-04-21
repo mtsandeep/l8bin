@@ -30,30 +30,124 @@ pub struct DeployRequest {
     pub cleanup_volumes: Option<bool>,
 }
 
-pub async fn deploy(
+/// POST /deploy — Create a new project deployment (fails with 409 if project already exists).
+pub async fn deploy_create(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(payload): Json<DeployRequest>,
 ) -> impl IntoResponse {
-    // Auth: session first, then deploy token fallback
-    let user_id = match auth_session.user {
-        Some(u) => u.id,
-        None => {
-            // Try deploy token from Authorization: Bearer <token>
-            match crate::auth::extract_deploy_token(&state, &headers, &payload.project_id).await {
-                Some(uid) => uid,
-                None => {
-                    return (
-                        StatusCode::UNAUTHORIZED,
-                        Json(json!({"error": "Authentication required. Use session login or provide a deploy token."})),
-                    )
-                        .into_response();
-                }
-            }
-        }
+    let user_id = match authenticate(&auth_session, &state, &headers, &payload.project_id).await {
+        Ok(id) => id,
+        Err(resp) => return resp,
     };
 
+    // Validate
+    if let Some(resp) = validate_project_id(&state, &payload).await {
+        return resp;
+    }
+
+    // Check project doesn't already exist
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
+        .bind(&payload.project_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+    if exists > 0 {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "Project already exists"})),
+        ).into_response();
+    }
+
+    execute_deploy(state, user_id, payload, false).await
+}
+
+/// PUT /deploy — Redeploy an existing project (upserts, creating if missing).
+pub async fn deploy_update(
+    auth_session: AuthSession<PasswordBackend>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<DeployRequest>,
+) -> impl IntoResponse {
+    let user_id = match authenticate(&auth_session, &state, &headers, &payload.project_id).await {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    // Validate
+    if let Some(resp) = validate_project_id(&state, &payload).await {
+        return resp;
+    }
+
+    execute_deploy(state, user_id, payload, true).await
+}
+
+/// Authenticate via session or deploy token.
+async fn authenticate(
+    auth_session: &AuthSession<PasswordBackend>,
+    state: &AppState,
+    headers: &HeaderMap,
+    project_id: &str,
+) -> Result<String, axum::response::Response> {
+    match &auth_session.user {
+        Some(u) => Ok(u.id.clone()),
+        None => {
+            match crate::auth::extract_deploy_token(state, headers, project_id).await {
+                Some(uid) => Ok(uid),
+                None => Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": "Authentication required. Use session login or provide a deploy token."})),
+                ).into_response()),
+            }
+        }
+    }
+}
+
+/// Validate project ID: reserved subdomains, DNS-safe label, alias conflicts.
+async fn validate_project_id(
+    state: &AppState,
+    payload: &DeployRequest,
+) -> Option<axum::response::Response> {
+    if payload.project_id == state.config.dashboard_subdomain {
+        return Some((StatusCode::BAD_REQUEST, Json(json!({"error": "This ID is reserved"}))).into_response());
+    }
+    if payload.project_id == state.config.poke_subdomain {
+        return Some((StatusCode::BAD_REQUEST, Json(json!({"error": "This ID is reserved"}))).into_response());
+    }
+    if !crate::validation::is_valid_project_id(&payload.project_id) {
+        return Some((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Project ID must be 1-63 lowercase letters, digits, or hyphens (no leading/trailing hyphens)"})),
+        ).into_response());
+    }
+
+    // Reject project IDs that conflict with existing alias routes
+    let alias_conflict: Option<String> = sqlx::query_scalar(
+        "SELECT project_id FROM project_routes WHERE route_type = 'alias' AND subdomain = ? LIMIT 1"
+    )
+    .bind(&payload.project_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    if let Some(pid) = alias_conflict {
+        return Some((
+            StatusCode::CONFLICT,
+            Json(json!({"error": format!("project ID '{}' is already used as an alias for project '{}'", payload.project_id, pid)})),
+        ).into_response());
+    }
+
+    None
+}
+
+/// Shared deploy execution logic. When `is_update` is true, uses upsert (ON CONFLICT DO UPDATE).
+async fn execute_deploy(
+    state: AppState,
+    user_id: String,
+    payload: DeployRequest,
+    is_update: bool,
+) -> axum::response::Response {
     let now = chrono::Utc::now().timestamp();
 
     let auto_stop_enabled = payload.auto_stop_enabled.unwrap_or(true);
@@ -64,32 +158,9 @@ pub async fn deploy(
         project_id = %payload.project_id,
         image = %payload.image,
         port = %payload.port,
+        is_update = is_update,
         "deploy request received"
     );
-
-    // Reserve the dashboard subdomain
-    if payload.project_id == state.config.dashboard_subdomain {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "This ID is reserved"})),
-        ).into_response();
-    }
-
-    // Reserve the poke subdomain
-    if payload.project_id == state.config.poke_subdomain {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "This ID is reserved"})),
-        ).into_response();
-    }
-
-    // Validate project ID (DNS-safe label)
-    if !crate::validation::is_valid_project_id(&payload.project_id) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Project ID must be 1-63 lowercase letters, digits, or hyphens (no leading/trailing hyphens)"})),
-        ).into_response();
-    }
 
     // 1. Acquire deploy lock for this project_id (serializes concurrent deploys)
     let semaphore = state
@@ -99,7 +170,7 @@ pub async fn deploy(
         .clone();
     let _permit = semaphore.acquire().await.unwrap();
 
-    // 1b. Capture old image before upsert (for cleanup after deploy)
+    // 2. Capture old image before upsert (for cleanup after deploy)
     let old_image = sqlx::query_scalar::<_, String>("SELECT image FROM projects WHERE id = ?")
         .bind(&payload.project_id)
         .fetch_optional(&state.db)
@@ -107,7 +178,7 @@ pub async fn deploy(
         .ok()
         .flatten();
 
-    // 2. Upsert project in DB with status='deploying'
+    // 3. Insert or upsert project in DB with status='deploying'
     // Capture old volumes for orphan detection
     let old_volumes: Option<Vec<VolumeMount>> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT volumes FROM projects WHERE id = ?"
@@ -117,55 +188,91 @@ pub async fn deploy(
     .await
     .ok()
     .flatten()
+    .flatten()
     .and_then(|v| serde_json::from_str(&v).ok());
 
     let volumes_json = payload.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-    if let Err(e) = sqlx::query(
-        r#"
-        INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'deploying', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            user_id = excluded.user_id,
-            image = excluded.image,
-            internal_port = excluded.internal_port,
-            status = 'deploying',
-            name = CASE WHEN excluded.name IS NOT NULL THEN excluded.name ELSE COALESCE(projects.name, excluded.name) END,
-            description = CASE WHEN excluded.description IS NOT NULL THEN excluded.description ELSE COALESCE(projects.description, excluded.description) END,
-            auto_stop_enabled = excluded.auto_stop_enabled,
-            auto_stop_timeout_mins = excluded.auto_stop_timeout_mins,
-            auto_start_enabled = excluded.auto_start_enabled,
-            cmd = CASE WHEN excluded.cmd IS NOT NULL THEN excluded.cmd ELSE projects.cmd END,
-            memory_limit_mb = CASE WHEN excluded.memory_limit_mb IS NOT NULL THEN excluded.memory_limit_mb ELSE projects.memory_limit_mb END,
-            cpu_limit = CASE WHEN excluded.cpu_limit IS NOT NULL THEN excluded.cpu_limit ELSE projects.cpu_limit END,
-            custom_domain = CASE WHEN excluded.custom_domain IS NOT NULL THEN excluded.custom_domain ELSE projects.custom_domain END,
-            volumes = CASE WHEN excluded.volumes IS NOT NULL THEN excluded.volumes ELSE projects.volumes END,
-            updated_at = excluded.updated_at
-        "#,
-    )
-    .bind(&payload.project_id)
-    .bind(&user_id)
-    .bind(&payload.name)
-    .bind(&payload.description)
-    .bind(&payload.image)
-    .bind(payload.port)
-    .bind(auto_stop_enabled)
-    .bind(auto_stop_timeout_mins)
-    .bind(auto_start_enabled)
-    .bind(&payload.cmd)
-    .bind(payload.memory_limit_mb)
-    .bind(payload.cpu_limit)
-    .bind(&payload.custom_domain)
-    .bind(&volumes_json)
-    .bind(now)
-    .bind(now)
-    .execute(&state.db)
-    .await
-    {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("database error: {e}")})),
+
+    let result = if is_update {
+        sqlx::query(
+            r#"
+            INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'deploying', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                user_id = excluded.user_id,
+                image = excluded.image,
+                internal_port = excluded.internal_port,
+                status = 'deploying',
+                name = CASE WHEN excluded.name IS NOT NULL THEN excluded.name ELSE COALESCE(projects.name, excluded.name) END,
+                description = CASE WHEN excluded.description IS NOT NULL THEN excluded.description ELSE COALESCE(projects.description, excluded.description) END,
+                auto_stop_enabled = excluded.auto_stop_enabled,
+                auto_stop_timeout_mins = excluded.auto_stop_timeout_mins,
+                auto_start_enabled = excluded.auto_start_enabled,
+                cmd = CASE WHEN excluded.cmd IS NOT NULL THEN excluded.cmd ELSE projects.cmd END,
+                memory_limit_mb = CASE WHEN excluded.memory_limit_mb IS NOT NULL THEN excluded.memory_limit_mb ELSE projects.memory_limit_mb END,
+                cpu_limit = CASE WHEN excluded.cpu_limit IS NOT NULL THEN excluded.cpu_limit ELSE projects.cpu_limit END,
+                custom_domain = CASE WHEN excluded.custom_domain IS NOT NULL THEN excluded.custom_domain ELSE projects.custom_domain END,
+                volumes = CASE WHEN excluded.volumes IS NOT NULL THEN excluded.volumes ELSE projects.volumes END,
+                updated_at = excluded.updated_at
+            "#,
         )
-            .into_response();
+        .bind(&payload.project_id)
+        .bind(&user_id)
+        .bind(&payload.name)
+        .bind(&payload.description)
+        .bind(&payload.image)
+        .bind(payload.port)
+        .bind(auto_stop_enabled)
+        .bind(auto_stop_timeout_mins)
+        .bind(auto_start_enabled)
+        .bind(&payload.cmd)
+        .bind(payload.memory_limit_mb)
+        .bind(payload.cpu_limit)
+        .bind(&payload.custom_domain)
+        .bind(&volumes_json)
+        .bind(now)
+        .bind(now)
+        .execute(&state.db)
+        .await
+    } else {
+        // Create-only: plain INSERT, no ON CONFLICT
+        sqlx::query(
+            r#"
+            INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'deploying', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&payload.project_id)
+        .bind(&user_id)
+        .bind(&payload.name)
+        .bind(&payload.description)
+        .bind(&payload.image)
+        .bind(payload.port)
+        .bind(auto_stop_enabled)
+        .bind(auto_stop_timeout_mins)
+        .bind(auto_start_enabled)
+        .bind(&payload.cmd)
+        .bind(payload.memory_limit_mb)
+        .bind(payload.cpu_limit)
+        .bind(&payload.custom_domain)
+        .bind(&volumes_json)
+        .bind(now)
+        .bind(now)
+        .execute(&state.db)
+        .await
+    };
+
+    if let Err(e) = result {
+        let msg = e.to_string();
+        let status = if msg.contains("UNIQUE constraint") {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        return (
+            status,
+            Json(json!({"error": if msg.contains("UNIQUE constraint") { format!("project '{}' already exists", payload.project_id) } else { format!("database error: {msg}") } })),
+        ).into_response();
     }
 
     // 3. Read project back from DB (so cmd reflects stored value, not just payload)

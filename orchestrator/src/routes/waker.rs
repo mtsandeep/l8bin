@@ -421,6 +421,50 @@ async fn restart_crashed_container(
     Ok(())
 }
 
+/// Look up a project by alias route. Handles both:
+/// - "{alias}.{project_id}" (project-scoped, e.g. "api2.test")
+/// - "{alias}" (domain-level, e.g. "api2")
+async fn resolve_alias_project(db: &sqlx::SqlitePool, rest: &str) -> Result<Option<crate::db::models::Project>, ()> {
+    // Case A: "{alias}.{project_id}" — project-scoped alias
+    if let Some((_alias, pid)) = rest.rsplit_once('.') {
+        let route_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM project_routes WHERE project_id = ? AND route_type = 'alias' AND subdomain = ?"
+        )
+        .bind(pid)
+        .bind(_alias)
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
+
+        if route_exists > 0 {
+            return sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+                .bind(pid)
+                .fetch_optional(db)
+                .await
+                .map_err(|_| ());
+        }
+    }
+
+    // Case B: "{alias}" — domain-level alias
+    let alias_pid: Option<String> = sqlx::query_scalar(
+        "SELECT project_id FROM project_routes WHERE route_type = 'alias' AND subdomain = ? LIMIT 1"
+    )
+    .bind(rest)
+    .fetch_optional(db)
+    .await
+    .unwrap_or(None);
+
+    if let Some(pid) = alias_pid {
+        return sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+            .bind(&pid)
+            .fetch_optional(db)
+            .await
+            .map_err(|_| ());
+    }
+
+    Ok(None)
+}
+
 /// Core waker logic — shared by the fallback handler and the subdomain intercept middleware.
 pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Response {
 
@@ -440,7 +484,17 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
         .await
         {
             Ok(Some(p)) => Some(p),
-            Ok(None) => None,
+            Ok(None) => {
+                // No project with that ID — check if it's an alias route
+                // e.g., "api2.localhost" or "api2.test.localhost"
+                let rest = host.strip_suffix(&domain_suffix).unwrap_or("");
+                let alias_pid = resolve_alias_project(&state.db, rest).await;
+                match alias_pid {
+                    Ok(Some(p)) => Some(p),
+                    Ok(None) => None,
+                    Err(_) => None,
+                }
+            }
             Err(e) => {
                 tracing::error!(error = %e, "waker: db error");
                 return (StatusCode::INTERNAL_SERVER_ERROR, not_found_page_html()).into_response();

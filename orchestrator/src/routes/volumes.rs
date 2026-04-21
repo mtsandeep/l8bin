@@ -13,7 +13,7 @@ use crate::AppState;
 /// DELETE /projects/:id/volumes/:name — Remove a specific volume data directory.
 pub async fn delete_volume(
     auth_session: AuthSession<PasswordBackend>,
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Path((project_id, name)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
@@ -43,7 +43,7 @@ pub async fn delete_volume(
 /// DELETE /projects/:id/volumes — Remove all volume data directories for a project.
 pub async fn delete_all_volumes(
     auth_session: AuthSession<PasswordBackend>,
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Path(project_id): Path<String>,
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {

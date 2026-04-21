@@ -10,7 +10,7 @@ pub struct DeployResponse {
     pub mapped_port: Option<u16>,
 }
 
-/// POST /deploy to the orchestrator
+/// POST /deploy to the orchestrator (create-only)
 pub async fn deploy(
     client: &reqwest::Client,
     server: &str,
@@ -22,6 +22,40 @@ pub async fn deploy(
     memory: Option<i64>,
     cpu: Option<f64>,
     auto_stop_enabled: bool,
+) -> Result<DeployResponse> {
+    send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, reqwest::Method::POST, "deploy request failed".into(), "deploy failed".into()).await
+}
+
+/// PUT /deploy to the orchestrator (redeploy)
+pub async fn redeploy(
+    client: &reqwest::Client,
+    server: &str,
+    project_id: &str,
+    image: &str,
+    port: u16,
+    node_id: Option<&str>,
+    cmd: Option<&str>,
+    memory: Option<i64>,
+    cpu: Option<f64>,
+    auto_stop_enabled: bool,
+) -> Result<DeployResponse> {
+    send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, reqwest::Method::PUT, "redeploy request failed".into(), "redeploy failed".into()).await
+}
+
+async fn send_deploy(
+    client: &reqwest::Client,
+    server: &str,
+    project_id: &str,
+    image: &str,
+    port: u16,
+    node_id: Option<&str>,
+    cmd: Option<&str>,
+    memory: Option<i64>,
+    cpu: Option<f64>,
+    auto_stop_enabled: bool,
+    method: reqwest::Method,
+    err_prefix: String,
+    err_msg: String,
 ) -> Result<DeployResponse> {
     let url = format!("{}/deploy", server.trim_end_matches('/'));
 
@@ -46,17 +80,17 @@ pub async fn deploy(
     }
 
     let resp = client
-        .post(&url)
+        .request(method, &url)
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await
-        .context("deploy request failed")?;
+        .context(err_prefix)?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body_text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("deploy failed ({}): {}", status, body_text);
+        anyhow::bail!("{} ({}): {}", err_msg, status, body_text);
     }
 
     resp.json().await.context("failed to parse deploy response")

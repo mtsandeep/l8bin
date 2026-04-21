@@ -62,14 +62,49 @@ pub async fn ask(
         }
     }
 
-    // 4. Dashboard subdomain approval
+    // 5. Alias routes: check if domain matches "{alias}.{project_id}.{domain}" or "{alias}.{domain}"
+    let suffix = format!(".{}", state.config.domain);
+    if let Some(rest) = domain.strip_suffix(&suffix) {
+        // Case A: "{alias}.{project_id}" — project-scoped alias (e.g., api2.test.localhost)
+        if let Some((alias, project_id)) = rest.rsplit_once('.') {
+            let route_exists = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM project_routes WHERE project_id = ? AND route_type = 'alias' AND subdomain = ?"
+            )
+            .bind(project_id)
+            .bind(alias)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+
+            if route_exists > 0 {
+                tracing::debug!(domain = %domain, project = %project_id, alias = %alias, "caddy ask: approved (project-scoped alias)");
+                return StatusCode::OK;
+            }
+        }
+
+        // Case B: "{alias}" — domain-level alias (e.g., api2.localhost)
+        let route_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM project_routes WHERE route_type = 'alias' AND subdomain = ?"
+        )
+        .bind(rest)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        if route_exists > 0 {
+            tracing::debug!(domain = %domain, alias = %rest, "caddy ask: approved (domain-level alias)");
+            return StatusCode::OK;
+        }
+    }
+
+    // 6. Dashboard subdomain approval
     let dashboard_host = format!("{}.{}", state.config.dashboard_subdomain, state.config.domain);
     if domain == &dashboard_host {
         tracing::debug!(domain = %domain, "caddy ask: approved (dashboard subdomain)");
         return StatusCode::OK;
     }
 
-    // 5. Poke subdomain approval
+    // 7. Poke subdomain approval
     let poke_host = format!("{}.{}", state.config.poke_subdomain, state.config.domain);
     if domain == &poke_host {
         tracing::debug!(domain = %domain, "caddy ask: approved (poke subdomain)");
