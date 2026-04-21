@@ -12,6 +12,37 @@ use tokio::sync::Notify;
 
 use crate::{AgentState, WakeGuard};
 
+/// Check if the client wants JSON (not HTML). Used to return 503+JSON for API clients.
+fn wants_json(headers: &HeaderMap) -> bool {
+    !headers
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_lowercase().contains("text/html"))
+        .unwrap_or(false)
+}
+
+/// 503 JSON response for API clients while a container is starting.
+fn starting_json_response() -> Response<Body> {
+    let body = json!({"error": "starting", "retry_after": 5}).to_string();
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header("Content-Type", "application/json")
+        .header("Retry-After", "5")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// 503 JSON response for offline/auto-start-disabled projects.
+fn offline_json_response() -> Response<Body> {
+    let body = json!({"error": "offline", "retry_after": 5}).to_string();
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header("Content-Type", "application/json")
+        .header("Retry-After", "5")
+        .body(Body::from(body))
+        .unwrap()
+}
+
 type HmacSha256 = Hmac<Sha256>;
 
 /// Get the domain from registration state. Returns None if not registered.
@@ -27,6 +58,8 @@ pub async fn wake(
     headers: HeaderMap,
     _req: Request<Body>,
 ) -> Response<Body> {
+    let json = wants_json(&headers);
+
     let domain = match get_domain(&state) {
         Some(d) => d,
         None => {
@@ -71,7 +104,7 @@ pub async fn wake(
     if is_running {
         // Container is running — rebuild local Caddy and return loading page
         let _ = rebuild_local_caddy(&state).await;
-        return loading_page(&subdomain);
+        return if json { starting_json_response() } else { loading_page(&subdomain) };
     }
 
     // Check auto_start_enabled before waking
@@ -84,7 +117,7 @@ pub async fn wake(
         .unwrap_or(true); // default true if not pushed yet (backward compat)
 
     if !auto_start {
-        return offline_page();
+        return if json { offline_json_response() } else { offline_page() };
     }
 
     // Container is stopped — single-flight wake via Entry API
@@ -208,7 +241,7 @@ pub async fn wake(
                 });
             });
 
-            loading_page(&subdomain)
+            if json { starting_json_response() } else { loading_page(&subdomain) }
         }
         dashmap::mapref::entry::Entry::Occupied(entry) => {
             // Someone else is already waking (or has completed)
@@ -218,13 +251,13 @@ pub async fn wake(
                 // Remove old lock so the next request can start a fresh wake
                 state.wake_locks.remove(&subdomain);
                 if success {
-                    loading_page(&subdomain)
+                    if json { starting_json_response() } else { loading_page(&subdomain) }
                 } else {
                     error_page(&subdomain)
                 }
             } else {
                 // Wake still in progress — show loading page
-                loading_page(&subdomain)
+                if json { starting_json_response() } else { loading_page(&subdomain) }
             }
         }
     }

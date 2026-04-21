@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use futures_util::FutureExt;
 use serde_json::json;
@@ -9,6 +9,25 @@ use litebin_common::types::Node;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::AppState;
+
+/// Check if the client wants JSON (not HTML). Used to return 503+JSON for API clients.
+fn wants_json(headers: &HeaderMap) -> bool {
+    !headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_lowercase().contains("text/html"))
+        .unwrap_or(false)
+}
+
+/// 503 JSON response for API clients while a container is starting.
+fn starting_json_response() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "5")],
+        json!({"error": "starting", "retry_after": 5}).to_string(),
+    )
+        .into_response()
+}
 
 fn loading_page_html(subdomain: &str) -> Html<String> {
     Html(format!(
@@ -402,7 +421,7 @@ async fn restart_crashed_container(
 }
 
 /// Core waker logic — shared by the fallback handler and the subdomain intercept middleware.
-pub async fn wake_for_host(state: AppState, host: &str) -> Response {
+pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Response {
 
     let domain_suffix = format!(".{}", state.config.domain);
 
@@ -486,21 +505,29 @@ pub async fn wake_for_host(state: AppState, host: &str) -> Response {
                         }
                     }
                     let _ = state.route_sync_tx.send(());
-                    return loading_page_html(&project_id).into_response();
+                    return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
                 }
             } else {
                 let _ = state.route_sync_tx.send(());
-                return loading_page_html(&project_id).into_response();
+                return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
             }
         } else {
             let _ = state.route_sync_tx.send(());
-            return loading_page_html(&project_id).into_response();
+            return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
         }
     } else if project.status == "running" && project.mapped_port.is_none() {
         tracing::info!(project = %project_id, "waker: running but mapped_port is null, recreating");
     }
 
     if !project.auto_start_enabled {
+        if wants_json {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "5")],
+                json!({"error": "offline", "retry_after": 5}).to_string(),
+            )
+                .into_response();
+        }
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Html(format!(
@@ -584,7 +611,7 @@ pub async fn wake_for_host(state: AppState, host: &str) -> Response {
                 }
             });
 
-            loading_page_html(&project_id).into_response()
+            if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() }
         }
         dashmap::mapref::entry::Entry::Occupied(entry) => {
             let guard = entry.get().clone();
@@ -595,7 +622,7 @@ pub async fn wake_for_host(state: AppState, host: &str) -> Response {
                 return error_page_html().into_response();
             }
             tracing::info!(project = %project_id, "waker: wake already in progress");
-            loading_page_html(&project_id).into_response()
+            if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() }
         }
     }
 }
@@ -609,7 +636,8 @@ pub async fn wake(
         .get(axum::http::header::HOST)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    wake_for_host(state, host).await
+    let json = wants_json(&headers);
+    wake_for_host(state, host, json).await
 }
 
 /// Middleware that intercepts requests for app subdomains BEFORE axum's route matcher.
@@ -641,5 +669,6 @@ pub async fn waker_intercept(
     }
 
     // Everything else is an app request (subdomain or custom domain) — handle via waker
-    wake_for_host(state, host).await
+    let json = wants_json(req.headers());
+    wake_for_host(state, host, json).await
 }
