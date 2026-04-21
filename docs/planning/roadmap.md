@@ -297,18 +297,11 @@ l8b clone myapp myapp-staging
 
 ## Quick Wins (Can Be Done Anytime)
 
-### SEO Fix: 503 on Loading Page
-
-The auto-wake loading page returns HTTP 200. Googlebot may index the spinner. Return `503 Service Unavailable` with `Retry-After` instead.
-
-- `orchestrator/src/routes/waker.rs` — `loading_page_html()`
-- `agent/src/routes/waker.rs` — `loading_page()`
-
-See [todo.md](../todo.md) for details.
-
 ### Environment Variable Store
 
 Per-project env var management via dashboard and CLI. Currently env vars are set at deploy time only.
+
+> **Note:** The multi-service MVP handles env vars via compose `environment:` + project `.env` file. This feature would add a dashboard/CLI API for managing them without SSH.
 
 - New `project_env_vars` table
 - API endpoints: GET/PUT/DELETE per-project env vars
