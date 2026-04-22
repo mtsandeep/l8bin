@@ -36,11 +36,7 @@ export interface Project {
 export interface ProjectStats {
   project_id: string;
   status: string;
-  cpu_percent: number;
-  memory_usage: number;
-  memory_limit: number;
-  disk_gb: number;
-  services?: ServiceInfo[];
+  services: ServiceInfo[];
 }
 
 export interface ServiceInfo {
@@ -52,6 +48,7 @@ export interface ServiceInfo {
   cpu_percent?: number;
   memory_usage?: number;
   memory_limit?: number;
+  cpu_limit?: number;
   disk_gb?: number;
 }
 

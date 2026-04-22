@@ -283,8 +283,8 @@ async fn build_and_deploy(
     port: u16,
     mut secret: Vec<std::path::PathBuf>,
 ) -> Result<String> {
-    // Check for docker-compose.yml → use compose deploy endpoint
-    let compose_paths = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
+    // Check for docker-compose.yaml → use compose deploy endpoint
+    let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
     let compose_file = compose_paths
         .iter()
         .find(|p| project_dir.join(p).exists());
@@ -504,7 +504,7 @@ fn short_image(image: &str) -> String {
     }
 }
 
-/// Deploy a multi-service project via docker-compose.yml.
+/// Deploy a multi-service project via docker-compose.yaml.
 /// For services with `build:`, builds each image with Railpack, uploads to orchestrator.
 /// For services with `image:`, the orchestrator pulls from registry.
 /// Sends resolved compose (all `build:` → `image: sha256:...`) to the orchestrator.

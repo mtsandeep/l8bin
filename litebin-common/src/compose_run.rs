@@ -1,0 +1,125 @@
+use std::collections::HashMap;
+
+use compose_bollard::{BollardMappingOptions, ComposeFile, ComposeParser};
+
+use crate::types::RunServiceConfig;
+
+/// Result of building service configs from a compose file.
+/// Contains everything needed to deploy/wake a multi-service project.
+pub struct ComposeRunPlan {
+    /// Service names in topological (dependency) order.
+    pub service_order: Vec<String>,
+    /// Name of the public-facing service (if any).
+    pub public_service_name: Option<String>,
+    /// Per-service RunServiceConfig, aligned with service_order.
+    pub configs: Vec<RunServiceConfig>,
+}
+
+impl ComposeRunPlan {
+    /// Build a `ComposeRunPlan` from a pre-parsed `ComposeFile`.
+    /// Use this when you've already parsed/validated the compose (e.g. deploy path).
+    pub fn from_compose(
+        compose: &ComposeFile,
+        project_id: &str,
+        extra_env: &[String],
+        instance_id: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let service_order = compose
+            .topological_sort()
+            .map_err(|e| anyhow::anyhow!("dependency error: {}", e))?;
+
+        let public_service_name = compose
+            .detect_public_service()
+            .map_err(|e| anyhow::anyhow!("public service detection: {}", e))?;
+
+        let configs = build_configs(compose, project_id, extra_env, instance_id, &public_service_name, &service_order);
+
+        Ok(Self {
+            service_order,
+            public_service_name,
+            configs,
+        })
+    }
+}
+
+/// Build a `ComposeRunPlan` from compose YAML string.
+/// Parses, validates, and builds configs in one step.
+/// Use this when you just need the plan (e.g. agent wake, batch-run).
+pub fn build_compose_run_plan(
+    compose_yaml: &str,
+    project_id: &str,
+    extra_env: &[String],
+    instance_id: Option<&str>,
+) -> anyhow::Result<ComposeRunPlan> {
+    let compose = ComposeParser::parse(compose_yaml)
+        .map_err(|e| anyhow::anyhow!("invalid compose: {}", e))?;
+
+    ComposeRunPlan::from_compose(&compose, project_id, extra_env, instance_id)
+}
+
+fn build_configs(
+    compose: &ComposeFile,
+    project_id: &str,
+    extra_env: &[String],
+    instance_id: Option<&str>,
+    public_service_name: &Option<String>,
+    service_order: &[String],
+) -> Vec<RunServiceConfig> {
+    let env_map: HashMap<String, String> = extra_env
+        .iter()
+        .filter_map(|s| {
+            let mut parts = s.splitn(2, '=');
+            Some((parts.next()?.to_string(), parts.next()?.to_string()))
+        })
+        .collect();
+
+    let options = BollardMappingOptions {
+        env_overrides: env_map,
+        auto_tmpfs_for_readonly: true,
+    };
+
+    service_order
+        .iter()
+        .filter_map(|svc_name| {
+            let svc = compose.services.get(svc_name)?;
+            let image = svc.image.clone()?;
+
+            let is_public = public_service_name.as_deref() == Some(svc_name.as_str());
+
+            let port: Option<u16> = svc.ports.as_ref()
+                .and_then(|p| p.first())
+                .and_then(|p| p.split(':').last()?.parse().ok());
+
+            let bollard_config = svc.to_bollard_config(&options);
+
+            let memory_limit_mb: Option<i64> = svc.memory_bytes()
+                .map(|bytes| (bytes / (1024 * 1024)) as i64);
+            let cpu_limit: Option<f64> = svc.cpus.as_ref()
+                .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())));
+
+            Some(RunServiceConfig {
+                project_id: project_id.to_string(),
+                service_name: svc_name.clone(),
+                instance_id: instance_id.map(|s| s.to_string()),
+                image,
+                port,
+                cmd: None,
+                entrypoint: None,
+                working_dir: svc.working_dir.clone(),
+                user: svc.user.clone(),
+                env: extra_env.to_vec(),
+                memory_limit_mb,
+                cpu_limit,
+                shm_size: None,
+                tmpfs: None,
+                read_only: None,
+                extra_hosts: None,
+                networks: None,
+                binds: svc.volumes.clone(),
+                is_public,
+                bollard_create_body: Some(bollard_config.create_body),
+                bollard_host_config: Some(bollard_config.host_config),
+            })
+        })
+        .collect()
+}

@@ -73,9 +73,9 @@ async fn sweep(
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
 
         if project.service_count.unwrap_or(1) > 1 && is_local {
-            // Multi-service local: stop all service containers
-            let services: Vec<(String, Option<String>)> = match sqlx::query_as(
-                "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status = 'running'",
+            // Multi-service local: stop all service containers in reverse dependency order
+            let services: Vec<(String, Option<String>, Option<String>)> = match sqlx::query_as(
+                "SELECT service_name, container_id, depends_on FROM project_services WHERE project_id = ? AND status = 'running'",
             )
             .bind(&project.id)
             .fetch_all(&state.db)
@@ -88,9 +88,52 @@ async fn sweep(
                 }
             };
 
-            for (svc_name, cid) in &services {
+            // Stop in reverse of the fetched order (dependencies first, dependents last)
+            for (svc_name, cid, _) in services.iter().rev() {
                 if let Some(container_id) = cid {
                     stop_local_container(state, &project.id, container_id).await;
+                    let _ = sqlx::query(
+                        "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                    )
+                    .bind(&project.id)
+                    .bind(svc_name)
+                    .execute(&state.db)
+                    .await;
+                }
+            }
+
+            // Clear project's denormalized container_id
+            let _ = sqlx::query(
+                "UPDATE projects SET container_id = NULL, mapped_port = NULL WHERE id = ?"
+            )
+            .bind(&project.id)
+            .execute(&state.db)
+            .await;
+        } else if project.service_count.unwrap_or(1) > 1 && !is_local {
+            // Multi-service remote: stop all service containers via agent
+            let node_id = match project.node_id.as_deref() {
+                Some(n) if n != "local" => n.to_string(),
+                _ => continue,
+            };
+
+            let services: Vec<(String, Option<String>, Option<String>)> = match sqlx::query_as(
+                "SELECT service_name, container_id, depends_on FROM project_services WHERE project_id = ? AND status = 'running'",
+            )
+            .bind(&project.id)
+            .fetch_all(&state.db)
+            .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(project = %project.id, error = %e, "janitor: failed to fetch remote services");
+                    continue;
+                }
+            };
+
+            // Stop in reverse dependency order
+            for (svc_name, cid, _) in services.iter().rev() {
+                if let Some(container_id) = cid {
+                    stop_remote_container(state, &project.id, &node_id, container_id).await;
                     let _ = sqlx::query(
                         "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?"
                     )

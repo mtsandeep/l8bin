@@ -93,6 +93,15 @@ pub async fn wake(
         return not_found_page();
     };
 
+    // Detect multi-service project: check if there are multiple containers with the prefix
+    let is_multi_service = {
+        let prefix = format!("litebin-{}.", subdomain);
+        match state.docker.list_containers_by_prefix(&prefix).await {
+            Ok(containers) => containers.len() > 1,
+            Err(_) => false,
+        }
+    };
+
     // Check if container is running
     let is_running = state
         .docker
@@ -133,106 +142,128 @@ pub async fn wake(
             let state_clone = state.clone();
             let subdomain_clone = subdomain.clone();
             let container_id_clone = container_id.clone();
+            let is_multi_clone = is_multi_service;
 
             tokio::spawn(async move {
-                tracing::info!(
-                    project_id = %subdomain_clone,
-                    container_id = %container_id_clone,
-                    "agent wake: starting container"
-                );
-
-                let result = async {
-                    // Check if .env has changed — if so, recreate to pick up new vars
-                    let env_changed = super::containers::env_has_changed(&subdomain_clone);
-
-                    if env_changed {
-                        // Read metadata to recreate without asking orchestrator
-                        let meta = super::containers::read_project_metadata(&subdomain_clone);
-                        match meta {
-                            Some(meta) => {
-                                tracing::info!(project_id = %subdomain_clone, "agent wake: env changed, recreating container");
-                                let _ = state_clone.docker.remove_by_name(&subdomain_clone).await;
-
-                                let extra_env = super::containers::read_project_env(&subdomain_clone);
-                                let project = litebin_common::types::Project {
-                                    id: subdomain_clone.clone(),
-                                    user_id: String::new(),
-                                    name: None,
-                                    description: None,
-                                    image: Some(meta.image.clone()),
-                                    internal_port: Some(meta.internal_port),
-                                    mapped_port: None,
-                                    container_id: None,
-                                    node_id: None,
-                                    status: "running".to_string(),
-                                    cmd: meta.cmd.clone(),
-                                    memory_limit_mb: meta.memory_limit_mb,
-                                    cpu_limit: meta.cpu_limit,
-                                    custom_domain: None,
-                                    volumes: meta.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
-                                    auto_stop_enabled: false,
-                                    auto_stop_timeout_mins: 0,
-                                    auto_start_enabled: false,
-                                    last_active_at: None,
-                                    service_count: None,
-                                    service_summary: None,
-                                    created_at: 0,
-                                    updated_at: 0,
-                                };
-
-                                let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
-                                let (new_container_id, port) = state_clone.docker.run_service_container(&config).await?;
-                                super::containers::write_env_snapshot(&subdomain_clone);
-
-                                rebuild_local_caddy(&state_clone).await?;
-                                report_wake_to_master(&state_clone, &subdomain_clone, &new_container_id, port).await;
-                                tracing::info!(project_id = %subdomain_clone, port = %port, "agent wake: container recreated with new env");
-                                return anyhow::Ok(());
-                            }
-                            None => {
-                                tracing::warn!(project_id = %subdomain_clone, "agent wake: env changed but no metadata.json, falling back to docker start");
-                                // Fall through to docker start below
-                            }
+                if is_multi_clone {
+                    tracing::info!(project_id = %subdomain_clone, "agent wake: multi-service wake");
+                    let result = wake_multi_service(&state_clone, &subdomain_clone).await;
+                    match result {
+                        Ok(_) => guard.success.store(true, std::sync::atomic::Ordering::Relaxed),
+                        Err(e) => {
+                            tracing::warn!(project_id = %subdomain_clone, error = %e, "agent wake: multi-service failed");
+                            guard.success.store(false, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
-
-                    // Fast path: env unchanged, just start the existing container
-                    state_clone
-                        .docker
-                        .start_existing_container(&container_id_clone)
-                        .await?;
-
-                    // Wait briefly for port assignment
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-                    // Get the mapped port
-                    let port = state_clone.docker.inspect_mapped_port(&container_id_clone).await?;
+                    guard.completed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    guard.notify.notify_waiters();
+                    let key = subdomain_clone.clone();
+                    let locks = state_clone.wake_locks.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        locks.remove(&key);
+                    });
+                } else {
                     tracing::info!(
                         project_id = %subdomain_clone,
-                        port = %port,
-                        "agent wake: container started"
+                        container_id = %container_id_clone,
+                        "agent wake: starting container"
                     );
 
-                    // Rebuild local Caddy with all running containers
-                    rebuild_local_caddy(&state_clone).await?;
+                    let result = async {
+                        // Check if .env has changed — if so, recreate to pick up new vars
+                        let env_changed = super::containers::env_has_changed(&subdomain_clone);
 
-                    // Report to master (best-effort, don't block on failure)
-                    report_wake_to_master(&state_clone, &subdomain_clone, &container_id_clone, port).await;
+                        if env_changed {
+                            // Read metadata to recreate without asking orchestrator
+                            let meta = super::containers::read_project_metadata(&subdomain_clone);
+                            match meta {
+                                Some(meta) => {
+                                    tracing::info!(project_id = %subdomain_clone, "agent wake: env changed, recreating container");
+                                    let _ = state_clone.docker.remove_by_name(&subdomain_clone).await;
 
-                    anyhow::Ok(())
-                }
-                .await;
+                                    let extra_env = super::containers::read_project_env(&subdomain_clone);
+                                    let project = litebin_common::types::Project {
+                                        id: subdomain_clone.clone(),
+                                        user_id: String::new(),
+                                        name: None,
+                                        description: None,
+                                        image: Some(meta.image.clone()),
+                                        internal_port: Some(meta.internal_port),
+                                        mapped_port: None,
+                                        container_id: None,
+                                        node_id: None,
+                                        status: "running".to_string(),
+                                        cmd: meta.cmd.clone(),
+                                        memory_limit_mb: meta.memory_limit_mb,
+                                        cpu_limit: meta.cpu_limit,
+                                        custom_domain: None,
+                                        volumes: meta.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
+                                        auto_stop_enabled: false,
+                                        auto_stop_timeout_mins: 0,
+                                        auto_start_enabled: false,
+                                        last_active_at: None,
+                                        service_count: None,
+                                        service_summary: None,
+                                        created_at: 0,
+                                        updated_at: 0,
+                                    };
 
-                match result {
-                    Ok(_) => {
-                        tracing::info!(project_id = %subdomain_clone, "agent wake: success");
-                        guard.success.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
+                                    let (new_container_id, port) = state_clone.docker.run_service_container(&config).await?;
+                                    super::containers::write_env_snapshot(&subdomain_clone);
+
+                                    rebuild_local_caddy(&state_clone).await?;
+                                    report_wake_to_master(&state_clone, &subdomain_clone, &new_container_id, port).await;
+                                    tracing::info!(project_id = %subdomain_clone, port = %port, "agent wake: container recreated with new env");
+                                    return anyhow::Ok(());
+                                }
+                                None => {
+                                    tracing::warn!(project_id = %subdomain_clone, "agent wake: env changed but no metadata.json, falling back to docker start");
+                                    // Fall through to docker start below
+                                }
+                            }
+                        }
+
+                        // Fast path: env unchanged, just start the existing container
+                        state_clone
+                            .docker
+                            .start_existing_container(&container_id_clone)
+                            .await?;
+
+                        // Wait briefly for port assignment
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+                        // Get the mapped port
+                        let port = state_clone.docker.inspect_mapped_port(&container_id_clone).await?;
+                        tracing::info!(
+                            project_id = %subdomain_clone,
+                            port = %port,
+                            "agent wake: container started"
+                        );
+
+                        // Rebuild local Caddy with all running containers
+                        rebuild_local_caddy(&state_clone).await?;
+
+                        // Report to master (best-effort, don't block on failure)
+                        report_wake_to_master(&state_clone, &subdomain_clone, &container_id_clone, port).await;
+
+                        anyhow::Ok(())
                     }
-                    Err(e) => {
-                        tracing::warn!(project_id = %subdomain_clone, error = %e, "agent wake: failed");
-                        guard.success.store(false, std::sync::atomic::Ordering::Relaxed);
+                    .await;
+
+                    match result {
+                        Ok(_) => {
+                            tracing::info!(project_id = %subdomain_clone, "agent wake: success");
+                            guard.success.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            tracing::warn!(project_id = %subdomain_clone, error = %e, "agent wake: failed");
+                            guard.success.store(false, std::sync::atomic::Ordering::Relaxed);
+                        }
                     }
                 }
+
                 guard.completed.store(true, std::sync::atomic::Ordering::Relaxed);
                 guard.notify.notify_waiters();
 
@@ -761,6 +792,83 @@ pub async fn caddy_ask(
 #[derive(serde::Deserialize)]
 pub struct CaddyAskParams {
     pub domain: Option<String>,
+}
+
+/// Wake a multi-service project: read compose.yaml, parse topological order,
+/// start all service containers in dependency order, rebuild Caddy, report to master.
+async fn wake_multi_service(state: &AgentState, project_id: &str) -> anyhow::Result<()> {
+    // Read compose.yaml from disk
+    let compose_yaml = match litebin_common::docker::DockerManager::read_compose(project_id) {
+        Some(yaml) => yaml,
+        None => {
+            anyhow::bail!("no compose.yaml found for multi-service project {}", project_id);
+        }
+    };
+
+    let extra_env = super::containers::read_project_env(project_id);
+
+    let plan = litebin_common::compose_run::build_compose_run_plan(
+        &compose_yaml, project_id, &extra_env, None,
+    )?;
+
+    tracing::info!(
+        project_id = %project_id,
+        services = ?plan.service_order,
+        "wake_multi_service: starting services in dependency order"
+    );
+
+    // Ensure per-project network
+    state.docker.ensure_project_network(project_id, None).await?;
+
+    // Connect Caddy to the project network
+    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
+        .unwrap_or_else(|_| "litebin-caddy".into());
+    let project_network = litebin_common::types::project_network_name(project_id, None);
+    let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
+
+    let mut public_container_id: Option<String> = None;
+    let mut public_mapped_port: Option<u16> = None;
+
+    for config in &plan.configs {
+        // Remove existing stopped container before recreating
+        let _ = state.docker.remove_by_service_name(project_id, &config.service_name, None).await;
+
+        match state.docker.run_service_container(config).await {
+            Ok((container_id, mapped_port)) => {
+                tracing::info!(
+                    project_id = %project_id,
+                    service = %config.service_name,
+                    container = %container_id,
+                    port = %mapped_port,
+                    "wake_multi_service: service started"
+                );
+                if config.is_public {
+                    public_container_id = Some(container_id.clone());
+                    public_mapped_port = Some(mapped_port);
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    project_id = %project_id,
+                    service = %config.service_name,
+                    error = %e,
+                    "wake_multi_service: failed to start service"
+                );
+                anyhow::bail!("failed to start service {}: {}", config.service_name, e);
+            }
+        }
+    }
+
+    // Rebuild local Caddy with all running containers
+    rebuild_local_caddy(state).await?;
+
+    // Report to master with public service info
+    if let (Some(cid), Some(port)) = (public_container_id, public_mapped_port) {
+        report_wake_to_master(state, project_id, &cid, port).await;
+    }
+
+    tracing::info!(project_id = %project_id, "wake_multi_service: all services started");
+    Ok(())
 }
 
 fn not_found_page() -> Response<Body> {

@@ -183,38 +183,20 @@ async fn remote_recreate(
     Ok(())
 }
 
-/// Start all services of a multi-service project from the stored compose.yml.
-/// Reads compose.yml, starts services in dependency order, waits for healthchecks.
+/// Start all services of a multi-service project from the stored compose.yaml.
+/// Reads compose.yaml, starts services in dependency order, waits for healthchecks.
 async fn start_multi_service(state: &AppState, project: &crate::db::models::Project) -> Result<(), Response> {
     let project_id = &project.id;
 
-    // Read compose.yml from disk
+    // Read compose.yaml from disk
     let compose_yaml = DockerManager::read_compose(project_id)
         .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "compose.yml not found").into_response())?;
 
     let compose: compose_bollard::ComposeFile = match compose_bollard::ComposeParser::parse(&compose_yaml) {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!(error = %e, "failed to parse compose.yml");
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yml: {e}")).into_response());
-        }
-    };
-
-    // Determine start order (topological sort)
-    let start_order = match compose.topological_sort() {
-        Ok(order) => order,
-        Err(e) => {
-            tracing::error!(error = %e, "dependency cycle detected");
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("dependency cycle: {e}")).into_response());
-        }
-    };
-
-    // Find the public service
-    let public_service = match compose.detect_public_service() {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(error = %e, "public service detection failed");
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("public service error: {e}")).into_response());
+            tracing::error!(error = %e, "failed to parse compose.yaml");
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yaml: {e}")).into_response());
         }
     };
 
@@ -233,52 +215,27 @@ async fn start_multi_service(state: &AppState, project: &crate::db::models::Proj
     }
 
     // Pull any missing images
-    for svc_name in &start_order {
-        if let Some(Some(image)) = compose.services.get(svc_name).map(|s| s.image.clone()) {
-            if !image.starts_with("sha256:") {
-                if let Err(e) = state.docker.pull_image(&image).await {
-                    tracing::warn!(service = %svc_name, image = %image, error = %e, "pull failed, continuing");
-                }
+    let extra_env = crate::routes::manage::read_local_project_env(project_id);
+    let plan = litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose error: {e}")).into_response())?;
+
+    for config in &plan.configs {
+        if !config.image.starts_with("sha256:") {
+            if let Err(e) = state.docker.pull_image(&config.image).await {
+                tracing::warn!(service = %config.service_name, image = %config.image, error = %e, "pull failed, continuing");
             }
         }
     }
 
     // Start services in dependency order
-    let extra_env = crate::routes::manage::read_local_project_env(project_id);
     let mut public_container_id = String::new();
     let mut public_mapped_port: u16 = 0;
 
-    for svc_name in &start_order {
-        let svc = &compose.services[svc_name];
-        let is_public = public_service.as_deref() == Some(svc_name.as_str());
+    for run_config in &plan.configs {
+        let svc_name = &run_config.service_name;
+        let is_public = run_config.is_public;
 
-        let bollard_config = svc.to_bollard_config(&compose_bollard::BollardMappingOptions::default());
-
-        let run_config = litebin_common::types::RunServiceConfig {
-            project_id: project_id.clone(),
-            service_name: svc_name.clone(),
-            instance_id: None,
-            image: svc.image.clone().unwrap_or_default(),
-            port: svc.exposed_ports().first().map(|(p, _)| *p),
-            cmd: svc.cmd_list().map(|v| v.join(" ")),
-            entrypoint: svc.entrypoint_list(),
-            working_dir: svc.working_dir.clone(),
-            user: svc.user.clone(),
-            env: extra_env.clone(),
-            memory_limit_mb: svc.memory_bytes().map(|b| (b / (1024 * 1024)) as i64),
-            cpu_limit: svc.nano_cpus().map(|n| n as f64 / 1_000_000_000.0),
-            shm_size: svc.shm_size.as_ref().and_then(|s| crate::routes::deploy::parse_compose_size(s)),
-            tmpfs: None,
-            read_only: svc.read_only,
-            extra_hosts: svc.extra_hosts.clone(),
-            networks: None,
-            binds: None,
-            is_public,
-            bollard_create_body: Some(bollard_config.create_body),
-            bollard_host_config: Some(bollard_config.host_config),
-        };
-
-        match state.docker.run_service_container(&run_config).await {
+        match state.docker.run_service_container(run_config).await {
             Ok((container_id, mapped_port)) => {
                 tracing::info!(service = %svc_name, container_id = %container_id, port = %mapped_port, "waker: multi-service container started");
 
@@ -288,7 +245,10 @@ async fn start_multi_service(state: &AppState, project: &crate::db::models::Proj
                 }
 
                 // Wait for healthcheck if defined
-                if svc.healthcheck.is_some() {
+                let has_healthcheck = compose.services.get(svc_name)
+                    .and_then(|s| s.healthcheck.as_ref())
+                    .is_some();
+                if has_healthcheck {
                     tracing::info!(service = %svc_name, "waker: waiting for healthcheck");
                     if let Err(e) = state.docker.wait_for_healthy(&container_id, true).await {
                         tracing::warn!(service = %svc_name, error = %e, "healthcheck failed, continuing");
@@ -432,7 +392,7 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
         let is_multi = project.service_count.unwrap_or(1) > 1;
 
         if is_multi {
-            // Multi-service: start all services from compose.yml
+            // Multi-service: start all services from compose.yaml
             return start_multi_service(state, project).await;
         }
 
@@ -547,7 +507,7 @@ async fn restart_crashed_container(
     let is_multi = project.service_count.unwrap_or(1) > 1;
 
     if is_multi {
-        // Multi-service: start all services from compose.yml
+        // Multi-service: start all services from compose.yaml
         // run_service_container handles idempotent cleanup internally
         return start_multi_service(state, project).await;
     }

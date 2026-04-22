@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
-/// Parsed representation of a docker-compose.yml file.
+/// Parsed representation of a docker-compose.yaml file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeFile {
     #[serde(default)]
     pub services: HashMap<String, ComposeService>,
 }
 
-/// A single service from docker-compose.yml.
+/// A single service from docker-compose.yaml.
 /// Fields are kept as Option<String> / Option<Vec<String>> to match compose format.
 /// `#[serde(flatten)]` captures unknown fields silently.
 /// Build configuration from a compose service.

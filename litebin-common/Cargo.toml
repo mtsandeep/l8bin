@@ -19,6 +19,7 @@ chrono = { version = "0.4", features = ["serde"] }
 urlencoding = "2"
 shlex = "1"
 sysinfo = "0.33"
+compose-bollard = { path = "../compose-bollard" }
 
 [dev-dependencies]
 proptest = "1"

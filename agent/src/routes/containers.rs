@@ -614,6 +614,8 @@ pub struct ContainerStatsResponse {
     pub memory_usage: u64,
     pub memory_limit: u64,
     pub disk_gb: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<f64>,
 }
 
 /// POST /containers/stats
@@ -631,16 +633,17 @@ pub async fn batch_container_stats(
                 // Check running state
                 let is_running = docker.is_container_running(&id).await.unwrap_or(false);
                 if !is_running {
-                    let disk_gb = docker.disk_usage(&id).await
-                        .map(|d| d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0))
-                        .unwrap_or(0.0);
+                    let disk = docker.disk_usage(&id).await.unwrap_or_else(|_| litebin_common::docker::DiskUsage {
+                        size_rw: 0, size_root_fs: 0, cpu_limit: None,
+                    });
                     return ContainerStatsResponse {
                         container_id: id,
                         state: "stopped".to_string(),
                         cpu_percent: 0.0,
                         memory_usage: 0,
                         memory_limit: 0,
-                        disk_gb,
+                        disk_gb: disk.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0),
+                        cpu_limit: disk.cpu_limit,
                     };
                 }
 
@@ -655,10 +658,9 @@ pub async fn batch_container_stats(
                     memory_limit: 0,
                 });
 
-                let disk_gb = match disk_res {
-                    Ok(d) => d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0),
-                    Err(_) => 0.0,
-                };
+                let disk = disk_res.unwrap_or_else(|_| litebin_common::docker::DiskUsage {
+                    size_rw: 0, size_root_fs: 0, cpu_limit: None,
+                });
 
                 ContainerStatsResponse {
                     container_id: id,
@@ -666,7 +668,8 @@ pub async fn batch_container_stats(
                     cpu_percent: stats.cpu_percent,
                     memory_usage: stats.memory_usage,
                     memory_limit: stats.memory_limit,
-                    disk_gb,
+                    disk_gb: disk.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0),
+                    cpu_limit: disk.cpu_limit,
                 }
             })
         })
@@ -681,8 +684,151 @@ pub async fn batch_container_stats(
             memory_usage: 0,
             memory_limit: 0,
             disk_gb: 0.0,
+            cpu_limit: None,
         }));
     }
 
     (StatusCode::OK, Json(results)).into_response()
+}
+
+// ── Multi-Service Batch Run ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct BatchRunRequest {
+    pub project_id: String,
+    pub compose_yaml: String,
+    /// Ordered list of service names to start (topologically sorted by orchestrator).
+    pub service_order: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct BatchRunResponse {
+    pub services: Vec<ServiceRunResult>,
+}
+
+#[derive(Serialize)]
+pub struct ServiceRunResult {
+    pub service_name: String,
+    pub container_id: Option<String>,
+    pub mapped_port: Option<u16>,
+    pub error: Option<String>,
+}
+
+/// POST /containers/batch-run
+/// Deploy a multi-service project on the agent: store compose, pull images, start in order.
+pub async fn batch_run(
+    State(state): State<AgentState>,
+    Json(req): Json<BatchRunRequest>,
+) -> impl IntoResponse {
+    tracing::info!(
+        project = %req.project_id,
+        services = ?req.service_order,
+        "batch-run request received"
+    );
+
+    // Ensure project directory exists
+    ensure_project_dir_and_env(&req.project_id);
+
+    // Store compose.yaml
+    let compose_path = projects_dir().join(&req.project_id).join("compose.yaml");
+    if let Err(e) = std::fs::write(&compose_path, &req.compose_yaml) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: format!("failed to store compose.yaml: {e}") }),
+        ).into_response();
+    }
+
+    let extra_env = read_project_env(&req.project_id);
+
+    // Build compose run plan (parse, topo sort, detect public, map configs)
+    let plan = match litebin_common::compose_run::build_compose_run_plan(
+        &req.compose_yaml, &req.project_id, &extra_env, None,
+    ) {
+        Ok(p) => p,
+        Err(e) => return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: format!("invalid compose: {e}") }),
+        ).into_response(),
+    };
+
+    // Clean up existing containers from a previous deploy (by name prefix)
+    let prefix = format!("litebin-{}.", req.project_id);
+    if let Ok(all_containers) = state.docker.list_containers_by_prefix(&prefix).await {
+        for cid in &all_containers {
+            let _ = state.docker.stop_container(cid).await;
+            let _ = state.docker.remove_container(cid).await;
+        }
+    }
+
+    // Ensure per-project network
+    if let Err(e) = state.docker.ensure_project_network(&req.project_id, None).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: format!("failed to create project network: {e}") }),
+        ).into_response();
+    }
+
+    // Connect Caddy to the project network
+    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
+        .unwrap_or_else(|_| "litebin-caddy".into());
+    let project_network = litebin_common::types::project_network_name(&req.project_id, None);
+    let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
+
+    // Pull all images in parallel
+    let images_to_pull: Vec<String> = plan.configs.iter().map(|c| c.image.clone()).collect();
+    let pull_handles: Vec<_> = images_to_pull.into_iter().map(|image| {
+        let docker = state.docker.clone();
+        tokio::spawn(async move {
+            (image.clone(), docker.pull_image(&image).await.map_err(|e| e.to_string()))
+        })
+    }).collect();
+
+    for handle in pull_handles {
+        if let Ok((image, result)) = handle.await {
+            if let Err(e) = result {
+                tracing::error!(image = %image, error = %e, "batch-run: failed to pull image");
+            }
+        }
+    }
+
+    // Start services in topological order
+    let mut results: Vec<ServiceRunResult> = Vec::new();
+    for config in &plan.configs {
+        match state.docker.run_service_container(config).await {
+            Ok((container_id, mapped_port)) => {
+                tracing::info!(
+                    project = %req.project_id,
+                    service = %config.service_name,
+                    container = %container_id,
+                    port = %mapped_port,
+                    "batch-run: service started"
+                );
+                results.push(ServiceRunResult {
+                    service_name: config.service_name.clone(),
+                    container_id: Some(container_id),
+                    mapped_port: Some(mapped_port),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                tracing::error!(
+                    project = %req.project_id,
+                    service = %config.service_name,
+                    error = %e,
+                    "batch-run: failed to start service"
+                );
+                results.push(ServiceRunResult {
+                    service_name: config.service_name.clone(),
+                    container_id: None,
+                    mapped_port: None,
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    }
+
+    // Rebuild local Caddy with all running containers
+    let _ = super::waker::rebuild_local_caddy(&state).await;
+
+    (StatusCode::OK, Json(BatchRunResponse { services: results })).into_response()
 }

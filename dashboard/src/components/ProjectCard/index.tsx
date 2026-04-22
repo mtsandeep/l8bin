@@ -270,21 +270,28 @@ export default function ProjectCard({
                         {shortImage(svc.image)}
                         {svc.port ? ` | :${svc.port}` : ""}
                       </p>
-                      {svc.memory_usage !== undefined && (
-                        <div className="flex items-center gap-2 mt-1 text-[10px] font-mono">
+                      <div className="flex items-center gap-2 mt-1 text-[10px] font-mono">
+                        {svc.cpu_limit !== undefined && (
                           <span className="text-slate-500">
-                            mem {formatBytes(svc.memory_usage)}
-                            {svc.memory_limit
-                              ? ` / ${formatBytes(svc.memory_limit)}`
-                              : ""}
+                            cpu {svc.cpu_limit.toFixed(1)}
                           </span>
-                          {svc.disk_gb !== undefined && svc.disk_gb > 0 && (
-                            <span className="text-slate-500">
-                              disk {svc.disk_gb.toFixed(2)} GB
-                            </span>
-                          )}
-                        </div>
-                      )}
+                        )}
+                        {svc.memory_limit !== undefined && (
+                          <span className="text-slate-500">
+                            mem limit {formatBytes(svc.memory_limit)}
+                          </span>
+                        )}
+                        {svc.memory_usage !== undefined && (
+                          <span className="text-slate-400">
+                            mem {formatBytes(svc.memory_usage)}
+                          </span>
+                        )}
+                        {svc.disk_gb !== undefined && svc.disk_gb > 0 && (
+                          <span className="text-slate-500">
+                            disk {svc.disk_gb.toFixed(2)} GB
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))
                 )}

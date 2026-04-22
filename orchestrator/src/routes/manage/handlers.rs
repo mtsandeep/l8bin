@@ -1,40 +1,13 @@
 use axum::{extract::Path, extract::State, http::StatusCode, Json};
-use serde::Serialize;
 use serde_json::json;
-use std::hash::Hasher;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-use litebin_common::types::Node;
 use crate::nodes;
 use crate::AppState;
 
-#[derive(Serialize)]
-pub struct MessageResponse {
-    pub message: String,
-}
-
-/// Build the base URL for an agent node.
-pub fn agent_base_url(config: &crate::config::Config, node: &Node) -> String {
-    if config.ca_cert_path.is_empty() {
-        format!("http://{}:{}", node.host, node.agent_port)
-    } else {
-        format!("https://{}:{}", node.host, node.agent_port)
-    }
-}
-
-/// Fetch a Node record from the DB by node_id.
-pub async fn get_node_from_db(
-    db: &sqlx::SqlitePool,
-    node_id: &str,
-) -> Result<Node, (StatusCode, String)> {
-    sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-        .bind(node_id)
-        .fetch_optional(db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("node '{}' not found", node_id)))
-}
+use super::helpers::{MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, read_local_project_env, sync_caddy, write_local_env_snapshot};
+use super::multi_service;
 
 /// POST /projects/:id/stop
 pub async fn stop_project(
@@ -91,34 +64,7 @@ pub async fn stop_project(
         let project_id = project_id_bg;
 
         if service_count > 1 {
-            // Multi-service: stop all service containers in reverse dependency order
-            let services: Vec<(String, Option<String>, Option<String>)> = match sqlx::query_as(
-                "SELECT service_name, container_id, depends_on FROM project_services WHERE project_id = ? AND status = 'running'",
-            )
-            .bind(&project_id)
-            .fetch_all(&state.db)
-            .await {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(project = %project_id, error = %e, "stop: failed to fetch services");
-                    return;
-                }
-            };
-
-            // Simple approach: stop in reverse of the fetched order (dependencies first)
-            for (svc_name, cid, _) in services.iter().rev() {
-                if let Some(container_id) = cid {
-                    let _ = state.docker.stop_container(container_id).await;
-                    let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?"
-                    )
-                    .bind(&project_id)
-                    .bind(svc_name)
-                    .execute(&state.db)
-                    .await;
-                    tracing::info!(project = %project_id, service = %svc_name, "service stopped");
-                }
-            }
+            multi_service::stop_all_services(&state, &project_id).await;
         } else {
             // Single-service: stop the one container
             if is_remote {
@@ -199,7 +145,7 @@ pub async fn start_project(
                 "multi-service start on remote nodes is not yet supported".to_string(),
             ));
         }
-        start_all_services(&state, &project).await?;
+        multi_service::start_all_services(&state, &project).await?;
         return Ok(Json(MessageResponse {
             message: format!("project '{}' started", project_id),
         }));
@@ -405,30 +351,7 @@ pub async fn delete_project(
         .unwrap_or(true);
 
     if project.service_count.unwrap_or(1) > 1 && is_local {
-        // Multi-service local: remove all service containers + per-project network
-        let services: Vec<(String, Option<String>)> = match sqlx::query_as(
-            "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
-        )
-        .bind(&project_id)
-        .fetch_all(&state.db)
-        .await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(project = %project_id, error = %e, "delete: failed to fetch services");
-                Vec::new()
-            }
-        };
-
-        for (svc_name, cid) in &services {
-            if let Some(container_id) = cid {
-                let _ = state.docker.stop_container(container_id).await;
-                let _ = state.docker.remove_container(container_id).await;
-                tracing::info!(project = %project_id, service = %svc_name, "service container removed during delete");
-            }
-        }
-
-        // Remove per-project network
-        let _ = state.docker.remove_project_network(&project_id, None).await;
+        multi_service::delete_all_services(&state, &project_id).await;
     } else if let Some(ref container_id) = project.container_id {
         let is_remote = project
             .node_id
@@ -510,16 +433,87 @@ pub async fn recreate_project(
         ));
     }
 
-    // Multi-service: stop all, remove all, then re-deploy from compose.yml
+    // Multi-service: stop all, remove all, then re-deploy from compose.yaml
     if project.service_count.unwrap_or(1) > 1 {
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         if !is_local {
-            return Err((
-                StatusCode::NOT_IMPLEMENTED,
-                "multi-service recreate on remote nodes is not yet supported".to_string(),
-            ));
+            // Remote multi-service recreate: call agent batch-run
+            let node_id = project.node_id.as_deref().unwrap();
+            let node = match get_node_from_db(&state.db, node_id).await {
+                Ok(n) => n,
+                Err(e) => return Err((StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {:?}", e))),
+            };
+            let client = match nodes::client::get_node_client(&state.node_clients, node_id) {
+                Ok(c) => c,
+                Err(e) => return Err((StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {:?}", e))),
+            };
+            let base_url = agent_base_url(&state.config, &node);
+
+            // Read compose.yaml from local disk (stored during deploy)
+            let compose_path = std::path::PathBuf::from("projects").join(&project_id).join("compose.yaml");
+            let compose_yaml = match std::fs::read_to_string(&compose_path) {
+                Ok(c) => c,
+                Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("compose.yaml not found: {e}"))),
+            };
+
+            // Get service names from DB (agent will topo-sort from compose)
+            let svc_names: Vec<String> = sqlx::query_scalar(
+                "SELECT service_name FROM project_services WHERE project_id = ? ORDER BY service_name"
+            )
+            .bind(&project_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+
+            let resp = match client
+                .post(format!("{}/containers/batch-run", base_url))
+                .json(&json!({
+                    "project_id": &project_id,
+                    "compose_yaml": &compose_yaml,
+                    "service_order": &svc_names,
+                }))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return Err((StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}"))),
+            };
+
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("remote recreate failed: {body}")));
+            }
+
+            // Update project_services with results from agent
+            let batch_result: serde_json::Value = resp.json().await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
+
+            if let Some(svc_results) = batch_result["services"].as_array() {
+                for svc in svc_results {
+                    let svc_name = svc["service_name"].as_str().unwrap_or("");
+                    let container_id = svc["container_id"].as_str();
+                    let mapped_port = svc["mapped_port"].as_u64().map(|p| p as i64);
+                    let status = if container_id.is_some() { "running" } else { "error" };
+                    let _ = sqlx::query(
+                        "UPDATE project_services SET container_id = ?, mapped_port = ?, status = ? WHERE project_id = ? AND service_name = ?"
+                    )
+                    .bind(container_id)
+                    .bind(mapped_port)
+                    .bind(status)
+                    .bind(&project_id)
+                    .bind(svc_name)
+                    .execute(&state.db)
+                    .await;
+                }
+            }
+
+            let _ = state.route_sync_tx.send(());
+
+            return Ok(Json(MessageResponse {
+                message: format!("project '{}' recreated on node '{}'", project_id, node_id),
+            }));
         }
-        return recreate_all_services(&state, &project).await;
+        return multi_service::recreate_all_services(&state, &project).await;
     }
 
     // Acquire deploy lock to serialize with concurrent deploys
@@ -624,355 +618,6 @@ pub async fn recreate_project(
     sync_caddy(&state).await;
 
     tracing::info!(project = %project_id, port = %mapped_port, "project recreated");
-
-    Ok(Json(MessageResponse {
-        message: format!("project '{}' recreated", project_id),
-    }))
-}
-
-
-/// Ensure the project-specific directory exists and has a placeholder .env if missing.
-pub fn ensure_project_dir_and_env(project_id: &str) {
-    let project_dir = std::path::PathBuf::from("projects").join(project_id);
-    if let Err(e) = std::fs::create_dir_all(&project_dir) {
-        tracing::error!(project = project_id, error = %e, "failed to create project directory");
-        return;
-    }
-
-    let env_path = project_dir.join(".env");
-    if !env_path.exists() {
-        let placeholder = "# Place your runtime environment variables here\n# These variables are injected directly into your container at startup.\n";
-        if let Err(e) = std::fs::write(&env_path, placeholder) {
-            tracing::error!(project = project_id, error = %e, "failed to create placeholder .env");
-        } else {
-            tracing::info!(project = project_id, path = %env_path.display(), "created placeholder .env");
-        }
-    }
-}
-
-/// Read env vars from the local project .env file.
-pub fn read_local_project_env(project_id: &str) -> Vec<String> {
-    // Ensure the directory and placeholder exist
-    ensure_project_dir_and_env(project_id);
-
-    let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
-    if !env_path.exists() {
-        return Vec::new();
-    }
-    match dotenvy::from_path_iter(&env_path) {
-        Ok(iter) => iter
-            .filter_map(|item| item.ok())
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect(),
-        Err(e) => {
-            tracing::warn!(project = project_id, error = %e, "failed to parse .env");
-            Vec::new()
-        }
-    }
-}
-
-/// Hash a file's raw content. Returns 0 if the file doesn't exist.
-fn file_hash(path: &std::path::Path) -> u64 {
-    match std::fs::read(path) {
-        Ok(bytes) => {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            std::hash::Hash::hash(&bytes, &mut hasher);
-            hasher.finish()
-        }
-        Err(_) => 0,
-    }
-}
-
-/// Hash the content portion of a .env.l8bin snapshot (strips the 5-line header).
-/// Returns 0 if the file doesn't exist.
-fn snapshot_content_hash(path: &std::path::Path) -> u64 {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return 0,
-    };
-    // Skip the header: 4 comment lines + 1 blank line
-    let payload: String = content.lines().skip(5).collect::<Vec<_>>().join("\n");
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&payload, &mut hasher);
-    hasher.finish()
-}
-
-/// Check if the project .env has changed since the last container creation.
-pub fn local_env_has_changed(project_id: &str) -> bool {
-    let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
-    let snapshot_path = std::path::PathBuf::from("projects").join(project_id).join(".env.l8bin");
-
-    let env_hash = file_hash(&env_path);
-    // .env.l8bin has a 5-line header (4 comments + blank line) — strip it before hashing
-    let snapshot_hash = snapshot_content_hash(&snapshot_path);
-
-    let changed = env_hash != snapshot_hash;
-    tracing::info!(project = project_id, env_hash = env_hash, snapshot_hash = snapshot_hash, changed = changed, "env change check");
-    changed
-}
-
-/// Write .env.l8bin snapshot — a copy of the current .env with a header.
-/// Called after successfully creating a container with injected env vars.
-pub fn write_local_env_snapshot(project_id: &str) {
-    let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
-    let snapshot_path = std::path::PathBuf::from("projects").join(project_id).join(".env.l8bin");
-
-    let content = match std::fs::read_to_string(&env_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let header = "# Auto-generated by LiteBin — do not edit manually.\n\
-        # This records the env vars last injected into your container.\n\
-        # Compare with .env to see pending changes.\n\
-        # Docs: https://github.com/mtsandeep/l8bin/blob/main/docs/env-secrets.md\n";
-
-    if let Err(e) = std::fs::write(&snapshot_path, format!("{}\n{}", header, content)) {
-        tracing::warn!(project = project_id, error = %e, "failed to write .env.l8bin snapshot");
-    } else {
-        tracing::info!(project = project_id, "wrote .env.l8bin snapshot");
-    }
-}
-
-/// Remove an image from the node if no container is using it.
-/// All errors are logged and swallowed — cleanup must never block the caller.
-pub async fn cleanup_unused_image(state: &AppState, node_id: Option<&str>, image: &str) {
-    let node_id = node_id.unwrap_or("local");
-    if node_id == "local" {
-        match state.docker.remove_unused_image(image).await {
-            Ok(true) => tracing::info!(image = %image, "cleaned up unused local image"),
-            Ok(false) => {}
-            Err(e) => tracing::warn!(image = %image, error = %e, "failed to clean up local image"),
-        }
-    } else {
-        let client = match nodes::client::get_node_client(&state.node_clients, node_id) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(node_id = %node_id, error = %e, "cleanup: node client unavailable");
-                return;
-            }
-        };
-        let node = match get_node_from_db(&state.db, node_id).await {
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!(node_id = %node_id, error = ?e, "cleanup: node not found");
-                return;
-            }
-        };
-        let base_url = agent_base_url(&state.config, &node);
-        match client
-            .post(format!("{}/images/remove-unused", base_url))
-            .json(&json!({ "image": image }))
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                tracing::info!(image = %image, node_id = %node_id, "cleaned up unused remote image");
-            }
-            Ok(resp) => {
-                tracing::warn!(image = %image, node_id = %node_id, status = %resp.status(), "cleanup: agent returned non-success");
-            }
-            Err(e) => {
-                tracing::warn!(image = %image, node_id = %node_id, error = %e, "cleanup: agent unreachable");
-            }
-        }
-    }
-}
-
-pub async fn sync_caddy(state: &AppState) {
-    let routes = match crate::routing_helpers::resolve_all_routes(
-        &state.db, &state.config.domain, &format!("litebin-orchestrator:{}", state.config.port),
-    ).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to resolve routes");
-            return;
-        }
-    };
-
-    let upstream = format!("litebin-orchestrator:{}", state.config.port);
-    if let Err(e) = state
-        .router
-        .read()
-        .await
-        .sync_routes(&routes, &state.config.domain, &upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, true)
-        .await
-    {
-        tracing::error!(error = %e, "failed to sync routes");
-    }
-}
-
-// ── Multi-Service Helpers ──────────────────────────────────────────────────
-
-/// Start all services for a multi-service project (reads compose.yml from disk).
-/// Used by `start_project` API and can be reused by other callers.
-pub async fn start_all_services(
-    state: &AppState,
-    project: &crate::db::models::Project,
-) -> Result<(), (StatusCode, String)> {
-    let project_id = &project.id;
-
-    let compose_yaml = litebin_common::docker::DockerManager::read_compose(project_id)
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "compose.yml not found".to_string()))?;
-
-    let compose = compose_bollard::ComposeParser::parse(&compose_yaml)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yml: {e}")))?;
-
-    let start_order = compose.topological_sort()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("dependency cycle: {e}")))?;
-
-    let public_service = compose.detect_public_service()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("public service error: {e}")))?;
-
-    // Ensure per-project network
-    state.docker.ensure_project_network(project_id, None).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("network error: {e}")))?;
-
-    // Connect Caddy to the project network
-    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-caddy".into());
-    let project_network = litebin_common::types::project_network_name(project_id, None);
-    if let Err(e) = state.docker.connect_container_to_network(&caddy_container, &project_network).await {
-        tracing::warn!(error = %e, container = %caddy_container, network = %project_network, "failed to connect caddy to project network");
-    }
-
-    let extra_env = read_local_project_env(project_id);
-    let mut public_container_id = String::new();
-    let mut public_mapped_port: u16 = 0;
-
-    for svc_name in &start_order {
-        let svc = &compose.services[svc_name];
-        let is_public = public_service.as_deref() == Some(svc_name.as_str());
-
-        let bollard_config = svc.to_bollard_config(&compose_bollard::BollardMappingOptions::default());
-
-        let run_config = litebin_common::types::RunServiceConfig {
-            project_id: project_id.clone(),
-            service_name: svc_name.clone(),
-            instance_id: None,
-            image: svc.image.clone().unwrap_or_default(),
-            port: svc.exposed_ports().first().map(|(p, _)| *p),
-            cmd: svc.cmd_list().map(|v| v.join(" ")),
-            entrypoint: svc.entrypoint_list(),
-            working_dir: svc.working_dir.clone(),
-            user: svc.user.clone(),
-            env: extra_env.clone(),
-            memory_limit_mb: svc.memory_bytes().map(|b| (b / (1024 * 1024)) as i64),
-            cpu_limit: svc.nano_cpus().map(|n| n as f64 / 1_000_000_000.0),
-            shm_size: svc.shm_size.as_ref().and_then(|s| crate::routes::deploy::parse_compose_size(s)),
-            tmpfs: None,
-            read_only: svc.read_only,
-            extra_hosts: svc.extra_hosts.clone(),
-            networks: None,
-            binds: None,
-            is_public,
-            bollard_create_body: Some(bollard_config.create_body),
-            bollard_host_config: Some(bollard_config.host_config),
-        };
-
-        let (container_id, mapped_port) = state.docker.run_service_container(&run_config).await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to start service '{}': {}", svc_name, e)))?;
-
-        tracing::info!(service = %svc_name, container_id = %container_id, port = %mapped_port, "multi-service: service started");
-
-        // Wait for network readiness
-        if let Err(e) = state.docker.wait_for_network_ready(&container_id).await {
-            tracing::warn!(service = %svc_name, error = %e, "network readiness timeout, continuing");
-        }
-
-        // Wait for healthcheck if defined
-        if svc.healthcheck.is_some() {
-            if let Err(e) = state.docker.wait_for_healthy(&container_id, true).await {
-                tracing::warn!(service = %svc_name, error = %e, "healthcheck failed, continuing");
-            }
-        }
-
-        // Update project_services row
-        let _ = sqlx::query(
-            "UPDATE project_services SET container_id = ?, mapped_port = ?, status = 'running' WHERE project_id = ? AND service_name = ?"
-        )
-        .bind(&container_id)
-        .bind(mapped_port as i64)
-        .bind(project_id)
-        .bind(svc_name)
-        .execute(&state.db)
-        .await;
-
-        if is_public {
-            public_container_id = container_id;
-            public_mapped_port = mapped_port;
-        }
-    }
-
-    write_local_env_snapshot(project_id);
-    let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query(
-        "UPDATE projects SET status = 'running', container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(if public_container_id.is_empty() { None } else { Some(public_container_id) })
-    .bind(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) })
-    .bind(now)
-    .bind(now)
-    .bind(project_id)
-    .execute(&state.db)
-    .await;
-
-    sync_caddy(state).await;
-    tracing::info!(project = %project_id, "all multi-service containers started");
-    Ok(())
-}
-
-/// Recreate all services for a multi-service project.
-/// Stops and removes all existing containers, then re-deploys from compose.yml.
-async fn recreate_all_services(
-    state: &AppState,
-    project: &crate::db::models::Project,
-) -> Result<Json<MessageResponse>, (StatusCode, String)> {
-    let project_id = &project.id;
-
-    // Acquire deploy lock
-    let semaphore = state
-        .deploy_locks
-        .entry(project_id.clone())
-        .or_insert_with(|| Arc::new(Semaphore::new(1)))
-        .clone();
-    let _permit = semaphore.acquire().await.unwrap();
-
-    // Stop and remove all existing service containers
-    let services: Vec<litebin_common::types::ProjectService> = sqlx::query_as(
-        "SELECT * FROM project_services WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
-
-    for svc in &services {
-        if let Some(ref cid) = svc.container_id {
-            let _ = state.docker.stop_container(cid).await;
-            let _ = state.docker.remove_container(cid).await;
-            tracing::info!(project = %project_id, service = %svc.service_name, "recreate: service container removed");
-        }
-        // Reset service status
-        let _ = sqlx::query(
-            "UPDATE project_services SET container_id = NULL, mapped_port = NULL, status = 'stopped' WHERE project_id = ? AND service_name = ?"
-        )
-        .bind(project_id)
-        .bind(&svc.service_name)
-        .execute(&state.db)
-        .await;
-    }
-
-    // Clear project-level container cache
-    let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query("UPDATE projects SET container_id = NULL, mapped_port = NULL, status = 'stopped', updated_at = ? WHERE id = ?")
-        .bind(now)
-        .bind(project_id)
-        .execute(&state.db)
-        .await;
-
-    // Re-deploy all services
-    start_all_services(state, project).await?;
 
     Ok(Json(MessageResponse {
         message: format!("project '{}' recreated", project_id),

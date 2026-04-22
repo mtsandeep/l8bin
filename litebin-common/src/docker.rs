@@ -316,11 +316,11 @@ impl DockerManager {
         }
     }
 
-    /// Read the compose.yml for a project. Returns None if the file doesn't exist.
+    /// Read the compose.yaml for a project. Returns None if the file doesn't exist.
     pub fn read_compose(project_id: &str) -> Option<String> {
         let path = std::path::PathBuf::from("projects")
             .join(project_id)
-            .join("compose.yml");
+            .join("compose.yaml");
         std::fs::read_to_string(&path).ok()
     }
 
@@ -805,7 +805,11 @@ impl DockerManager {
         let info = self.docker.inspect_container(container_id, Some(opts)).await?;
         let size_rw = info.size_rw.unwrap_or(0) as u64;
         let size_root_fs = info.size_root_fs.unwrap_or(0) as u64;
-        Ok(DiskUsage { size_rw, size_root_fs })
+        let cpu_limit = info.host_config
+            .and_then(|h| h.nano_cpus)
+            .filter(|&n| n > 0)
+            .map(|n| n as f64 / 1_000_000_000.0);
+        Ok(DiskUsage { size_rw, size_root_fs, cpu_limit })
     }
 
     /// Load a Docker image from a tar stream (output of `docker save`).
@@ -949,8 +953,9 @@ pub struct ContainerStats {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DiskUsage {
-    pub size_rw: u64,      // Writable layer size (bytes written by container)
-    pub size_root_fs: u64, // Total image + writable layer
+    pub size_rw: u64,              // Writable layer size (bytes written by container)
+    pub size_root_fs: u64,         // Total image + writable layer
+    pub cpu_limit: Option<f64>,    // CPU limit from HostConfig.NanoCpus (e.g. 1.5 = 1.5 cores)
 }
 
 pub fn is_port_ready(port: u16) -> bool {

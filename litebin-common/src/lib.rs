@@ -1,5 +1,6 @@
 pub mod caddy;
 pub mod cloudflare;
+pub mod compose_run;
 pub mod docker;
 pub mod heartbeat;
 pub mod net;

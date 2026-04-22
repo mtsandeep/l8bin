@@ -7,7 +7,7 @@ pub use error::{ComposeError, Result};
 pub use mapping::{BollardMappingOptions, ComposeBollardConfig};
 pub use parse::{ComposeFile, ComposeService};
 
-/// Parse a docker-compose.yml string into a ComposeFile.
+/// Parse a docker-compose.yaml string into a ComposeFile.
 pub struct ComposeParser;
 
 impl ComposeParser {

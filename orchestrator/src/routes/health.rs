@@ -58,6 +58,7 @@ async fn fetch_service_stats(
     let disk = disk_res.unwrap_or(litebin_common::docker::DiskUsage {
         size_rw: 0,
         size_root_fs: 0,
+        cpu_limit: None,
     });
 
     Some(ServiceStats {

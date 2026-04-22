@@ -141,6 +141,25 @@ pub async fn wake_report(
         }
     }
 
+    // Also update the public service's row in project_services
+    let _ = sqlx::query(
+        "UPDATE project_services SET status = 'running', container_id = ?, mapped_port = ? WHERE project_id = ? AND is_public = 1",
+    )
+    .bind(&report.container_id)
+    .bind(report.mapped_port as i64)
+    .bind(&report.project_id)
+    .execute(&state.db)
+    .await;
+
+    // For multi-service projects, update remaining non-public services to running
+    // (the agent started them all, but we only have the public service's container_id)
+    let _ = sqlx::query(
+        "UPDATE project_services SET status = 'running' WHERE project_id = ? AND status = 'stopped'",
+    )
+    .bind(&report.project_id)
+    .execute(&state.db)
+    .await;
+
     // Trigger debounced route sync
     let _ = state.route_sync_tx.send(());
 

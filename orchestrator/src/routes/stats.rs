@@ -20,6 +20,8 @@ pub struct ServiceInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disk_gb: Option<f64>,
 }
 
@@ -27,10 +29,6 @@ pub struct ServiceInfo {
 pub struct StatsResponse {
     pub project_id: String,
     pub status: String,
-    pub cpu_percent: f64,
-    pub memory_usage: u64,
-    pub memory_limit: u64,
-    pub disk_gb: f64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub services: Vec<ServiceInfo>,
 }
@@ -59,20 +57,29 @@ pub struct LogsResponse {
     pub lines: Vec<String>,
 }
 
-/// Given a map of container_id -> (cpu, memory_usage, memory_limit, disk_gb),
+/// Per-container live stats collected from Docker.
+/// (cpu_percent, memory_usage, memory_limit, disk_gb, cpu_limit)
+type LiveStats = (f64, u64, u64, f64, Option<f64>);
+
+/// Given a map of container_id -> live stats,
 /// attach per-service stats to each ServiceInfo and return the final Vec.
+/// When running, memory_limit from Docker stats overrides the DB value.
+/// cpu_limit from inspect is used if DB value is None.
 fn enrich_services(
     services: &[(ServiceInfo, Option<String>)],
-    stats_map: &std::collections::HashMap<String, (f64, u64, u64, f64)>,
+    stats_map: &std::collections::HashMap<String, LiveStats>,
 ) -> Vec<ServiceInfo> {
     services.iter().map(|(svc, cid)| {
         let mut enriched = svc.clone();
         if let Some(container_id) = cid {
-            if let Some(&(cpu, mem_usage, mem_limit, disk)) = stats_map.get(container_id) {
+            if let Some(&(cpu, mem_usage, mem_limit, disk, cpu_limit)) = stats_map.get(container_id) {
                 enriched.cpu_percent = Some(cpu);
                 enriched.memory_usage = Some(mem_usage);
                 enriched.memory_limit = Some(mem_limit);
                 enriched.disk_gb = Some(disk);
+                if enriched.cpu_limit.is_none() {
+                    enriched.cpu_limit = cpu_limit;
+                }
             }
         }
         enriched
@@ -119,11 +126,11 @@ async fn batch_load_services(
     // Load from project_services table
     let placeholders = project_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let query = format!(
-        "SELECT project_id, service_name, image, port, is_public, status, container_id FROM project_services WHERE project_id IN ({}) ORDER BY service_name",
+        "SELECT project_id, service_name, image, port, is_public, status, container_id, memory_limit_mb, cpu_limit FROM project_services WHERE project_id IN ({}) ORDER BY service_name",
         placeholders
     );
 
-    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, bool, String, Option<String>)>(&query);
+    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, bool, String, Option<String>, Option<i64>, Option<f64>)>(&query);
     for pid in project_ids {
         builder = builder.bind(pid);
     }
@@ -132,7 +139,8 @@ async fn batch_load_services(
 
     // Group by project_id
     let mut map: std::collections::HashMap<String, Vec<(ServiceInfo, Option<String>)>> = std::collections::HashMap::new();
-    for (project_id, service_name, image, port, is_public, status, container_id) in rows {
+    for (project_id, service_name, image, port, is_public, status, container_id, memory_limit_mb, cpu_limit) in rows {
+        let memory_limit = memory_limit_mb.map(|mb| (mb as u64) * 1024 * 1024);
         map.entry(project_id).or_default().push((
             ServiceInfo {
                 service_name,
@@ -142,7 +150,8 @@ async fn batch_load_services(
                 status,
                 cpu_percent: None,
                 memory_usage: None,
-                memory_limit: None,
+                memory_limit,
+                cpu_limit,
                 disk_gb: None,
             },
             container_id,
@@ -166,6 +175,20 @@ async fn batch_load_services(
 
         if let Some((image, port, status, container_id)) = row {
             if !image.is_empty() {
+                // Fetch limits from projects table for single-service fallback
+                let limits: Option<(Option<i64>, Option<f64>)> = sqlx::query_as(
+                    "SELECT memory_limit_mb, cpu_limit FROM projects WHERE id = ?"
+                )
+                .bind(pid)
+                .fetch_optional(db)
+                .await
+                .unwrap_or(None)
+                .and_then(|r: (Option<i64>, Option<f64>)| Some(r));
+
+                let (memory_limit, cpu_limit) = limits
+                    .map(|(mb, cpu)| (mb.map(|m| (m as u64) * 1024 * 1024), cpu))
+                    .unwrap_or((None, None));
+
                 map.entry(pid.clone()).or_default().push((
                     ServiceInfo {
                         service_name: "web".to_string(),
@@ -175,7 +198,8 @@ async fn batch_load_services(
                         status,
                         cpu_percent: None,
                         memory_usage: None,
-                        memory_limit: None,
+                        memory_limit,
+                        cpu_limit,
                         disk_gb: None,
                     },
                     container_id,
@@ -185,6 +209,10 @@ async fn batch_load_services(
     }
 
     map
+}
+
+fn make_stats_response(project_id: String, status: String, services: Vec<ServiceInfo>) -> StatsResponse {
+    StatsResponse { project_id, status, services }
 }
 
 /// GET /projects/stats — returns stats + disk + services for all projects in one call
@@ -219,44 +247,36 @@ pub async fn all_project_stats(
             let first_cid = container_ids.first().map(|s| s.as_str()).unwrap_or("");
 
             if first_cid.is_empty() {
-                results.push(StatsResponse {
-                    project_id: project.id.clone(),
-                    status: project.status.clone(),
-                    cpu_percent: 0.0,
-                    memory_usage: 0,
-                    memory_limit: 0,
-                    disk_gb: 0.0,
-                    services: services_raw.into_iter().map(|(s, _)| s).collect(),
-                });
+                results.push(make_stats_response(
+                    project.id.clone(),
+                    project.status.clone(),
+                    services_raw.into_iter().map(|(s, _)| s).collect(),
+                ));
                 continue;
             }
 
             // Use cached disk if available
             if let Some(bytes) = state.disk_cache.get(&project.id) {
-                results.push(StatsResponse {
-                    project_id: project.id.clone(),
-                    status: project.status.clone(),
-                    cpu_percent: 0.0,
-                    memory_usage: 0,
-                    memory_limit: 0,
-                    disk_gb: *bytes as f64 / (1024.0 * 1024.0 * 1024.0),
-                    services: services_raw.into_iter().map(|(s, _)| s).collect(),
-                });
+                let mut services = services_raw.into_iter().map(|(s, _)| s).collect::<Vec<_>>();
+                // Attach cached disk to the first service
+                if let Some(first_svc) = services.first_mut() {
+                    first_svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                }
+                results.push(make_stats_response(
+                    project.id.clone(),
+                    project.status.clone(),
+                    services,
+                ));
             } else {
                 let node_id = project.node_id.as_deref().unwrap_or("local");
                 if node_id == "local" {
                     disk_lookups.push((project.id.clone(), first_cid.to_string(), services_raw));
                 } else {
-                    // For remote stopped projects, just use 0 disk
-                    results.push(StatsResponse {
-                        project_id: project.id.clone(),
-                        status: project.status.clone(),
-                        cpu_percent: 0.0,
-                        memory_usage: 0,
-                        memory_limit: 0,
-                        disk_gb: 0.0,
-                        services: services_raw.into_iter().map(|(s, _)| s).collect(),
-                    });
+                    results.push(make_stats_response(
+                        project.id.clone(),
+                        project.status.clone(),
+                        services_raw.into_iter().map(|(s, _)| s).collect(),
+                    ));
                 }
             }
             continue;
@@ -267,15 +287,11 @@ pub async fn all_project_stats(
         let services_raw = services_map.get(&project.id).cloned().unwrap_or_default();
 
         if container_ids.is_empty() {
-            results.push(StatsResponse {
-                project_id: project.id.clone(),
-                status: project.status.clone(),
-                cpu_percent: 0.0,
-                memory_usage: 0,
-                memory_limit: 0,
-                disk_gb: 0.0,
-                services: services_raw.into_iter().map(|(s, _)| s).collect(),
-            });
+            results.push(make_stats_response(
+                project.id.clone(),
+                project.status.clone(),
+                services_raw.into_iter().map(|(s, _)| s).collect(),
+            ));
             continue;
         }
 
@@ -299,15 +315,15 @@ pub async fn all_project_stats(
             })
             .unwrap_or(0.0);
 
-        results.push(StatsResponse {
+        let mut services = services_raw.into_iter().map(|(s, _)| s).collect::<Vec<_>>();
+        if let Some(first_svc) = services.first_mut() {
+            first_svc.disk_gb = Some(disk_gb);
+        }
+        results.push(make_stats_response(
             project_id,
-            status: "stopped".to_string(),
-            cpu_percent: 0.0,
-            memory_usage: 0,
-            memory_limit: 0,
-            disk_gb,
-            services: services_raw.into_iter().map(|(s, _)| s).collect(),
-        });
+            "stopped".to_string(),
+            services,
+        ));
     }
 
     // Fetch local stats — per-container for per-service breakdown
@@ -315,11 +331,7 @@ pub async fn all_project_stats(
         let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
 
         // Collect stats for each container
-        let mut per_container: std::collections::HashMap<String, (f64, u64, u64, f64)> = std::collections::HashMap::new();
-        let mut total_cpu = 0.0f64;
-        let mut total_mem = 0u64;
-        let mut total_limit = 0u64;
-        let mut total_disk = 0.0f64;
+        let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
         let mut any_running = false;
 
         for cid in container_ids {
@@ -353,47 +365,39 @@ pub async fn all_project_stats(
                 }
             };
 
-            let disk = match disk_res {
+            let (disk, cpu_limit) = match disk_res {
                 Ok(d) => {
                     state.disk_cache.insert(project_id.clone(), d.size_root_fs as i64);
-                    d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0)
+                    (d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0), d.cpu_limit)
                 }
-                Err(_) => 0.0,
+                Err(_) => (0.0, None),
             };
 
-            total_cpu += cpu;
-            total_mem += mem_usage;
-            total_limit += mem_limit;
-            total_disk += disk;
-            per_container.insert(cid.clone(), (cpu, mem_usage, mem_limit, disk));
+            per_container.insert(cid.clone(), (cpu, mem_usage, mem_limit, disk, cpu_limit));
         }
 
         if !any_running {
+            let mut services = services_raw.into_iter().map(|(s, _)| s).collect::<Vec<_>>();
             let disk_gb = state.disk_cache.get(project_id)
                 .map(|bytes| *bytes as f64 / (1024.0 * 1024.0 * 1024.0))
                 .unwrap_or(0.0);
-            results.push(StatsResponse {
-                project_id: project_id.clone(),
-                status: "stopped".to_string(),
-                cpu_percent: 0.0,
-                memory_usage: 0,
-                memory_limit: 0,
-                disk_gb,
-                services: services_raw.into_iter().map(|(s, _)| s).collect(),
-            });
+            if let Some(first_svc) = services.first_mut() {
+                first_svc.disk_gb = Some(disk_gb);
+            }
+            results.push(make_stats_response(
+                project_id.clone(),
+                "stopped".to_string(),
+                services,
+            ));
             continue;
         }
 
         let services = enrich_services(&services_raw, &per_container);
-        results.push(StatsResponse {
-            project_id: project_id.clone(),
-            status: "running".to_string(),
-            cpu_percent: total_cpu,
-            memory_usage: total_mem,
-            memory_limit: total_limit,
-            disk_gb: total_disk,
+        results.push(make_stats_response(
+            project_id.clone(),
+            "running".to_string(),
             services,
-        });
+        ));
     }
 
     // Fetch remote stats — one POST per node with all container IDs
@@ -414,15 +418,11 @@ pub async fn all_project_stats(
                 tracing::warn!(node_id = %node_id, error = %e, "batch stats: node client unavailable");
                 for (project_id, _) in projects_containers {
                     let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                    results.push(StatsResponse {
-                        project_id: project_id.clone(),
-                        status: "running".to_string(),
-                        cpu_percent: 0.0,
-                        memory_usage: 0,
-                        memory_limit: 0,
-                        disk_gb: 0.0,
-                        services: services_raw.into_iter().map(|(s, _)| s).collect(),
-                    });
+                    results.push(make_stats_response(
+                        project_id.clone(),
+                        "running".to_string(),
+                        services_raw.into_iter().map(|(s, _)| s).collect(),
+                    ));
                 }
                 continue;
             }
@@ -434,15 +434,11 @@ pub async fn all_project_stats(
                 tracing::warn!(node_id = %node_id, error = ?e, "batch stats: node not found");
                 for (project_id, _) in projects_containers {
                     let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                    results.push(StatsResponse {
-                        project_id: project_id.clone(),
-                        status: "running".to_string(),
-                        cpu_percent: 0.0,
-                        memory_usage: 0,
-                        memory_limit: 0,
-                        disk_gb: 0.0,
-                        services: services_raw.into_iter().map(|(s, _)| s).collect(),
-                    });
+                    results.push(make_stats_response(
+                        project_id.clone(),
+                        "running".to_string(),
+                        services_raw.into_iter().map(|(s, _)| s).collect(),
+                    ));
                 }
                 continue;
             }
@@ -461,15 +457,11 @@ pub async fn all_project_stats(
                 tracing::warn!(node_id = %node_id, error = %e, "batch stats: agent unreachable");
                 for (project_id, _) in projects_containers {
                     let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                    results.push(StatsResponse {
-                        project_id: project_id.clone(),
-                        status: "running".to_string(),
-                        cpu_percent: 0.0,
-                        memory_usage: 0,
-                        memory_limit: 0,
-                        disk_gb: 0.0,
-                        services: services_raw.into_iter().map(|(s, _)| s).collect(),
-                    });
+                    results.push(make_stats_response(
+                        project_id.clone(),
+                        "running".to_string(),
+                        services_raw.into_iter().map(|(s, _)| s).collect(),
+                    ));
                 }
                 continue;
             }
@@ -480,21 +472,17 @@ pub async fn all_project_stats(
             tracing::warn!(node_id = %node_id, body = %body, "batch stats: agent returned error");
             for (project_id, _) in projects_containers {
                 let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                results.push(StatsResponse {
-                    project_id: project_id.clone(),
-                    status: "running".to_string(),
-                    cpu_percent: 0.0,
-                    memory_usage: 0,
-                    memory_limit: 0,
-                    disk_gb: 0.0,
-                    services: services_raw.into_iter().map(|(s, _)| s).collect(),
-                });
+                results.push(make_stats_response(
+                    project_id.clone(),
+                    "running".to_string(),
+                    services_raw.into_iter().map(|(s, _)| s).collect(),
+                ));
             }
             continue;
         }
 
         // Collect per-container stats and group by project
-        let mut per_container: std::collections::HashMap<String, (f64, u64, u64, f64)> = std::collections::HashMap::new();
+        let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
         let mut project_stats: std::collections::HashMap<String, (f64, u64, u64, f64)> = std::collections::HashMap::new();
 
         match resp.json::<Vec<serde_json::Value>>().await {
@@ -523,8 +511,9 @@ pub async fn all_project_stats(
                     let cpu = item["cpu_percent"].as_f64().unwrap_or(0.0);
                     let mem_usage = item["memory_usage"].as_u64().unwrap_or(0);
                     let mem_limit = item["memory_limit"].as_u64().unwrap_or(0);
+                    let cpu_limit = item["cpu_limit"].as_f64();
 
-                    per_container.insert(cid.to_string(), (cpu, mem_usage, mem_limit, disk_gb));
+                    per_container.insert(cid.to_string(), (cpu, mem_usage, mem_limit, disk_gb, cpu_limit));
 
                     let entry = project_stats.entry(project_id.clone()).or_insert((0.0, 0, 0, 0.0));
                     entry.0 += cpu;
@@ -541,31 +530,27 @@ pub async fn all_project_stats(
         // Build results for each project on this node
         for (project_id, _) in projects_containers {
             let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-            if let Some(&(cpu, mem, limit, disk)) = project_stats.get(project_id) {
+            if project_stats.contains_key(project_id) {
                 let services = enrich_services(&services_raw, &per_container);
-                results.push(StatsResponse {
-                    project_id: project_id.clone(),
-                    status: "running".to_string(),
-                    cpu_percent: cpu,
-                    memory_usage: mem,
-                    memory_limit: limit,
-                    disk_gb: disk,
+                results.push(make_stats_response(
+                    project_id.clone(),
+                    "running".to_string(),
                     services,
-                });
+                ));
             } else {
                 // All containers were stopped
+                let mut services = services_raw.into_iter().map(|(s, _)| s).collect::<Vec<_>>();
                 let disk_gb = state.disk_cache.get(project_id)
                     .map(|bytes| *bytes as f64 / (1024.0 * 1024.0 * 1024.0))
                     .unwrap_or(0.0);
-                results.push(StatsResponse {
-                    project_id: project_id.clone(),
-                    status: "stopped".to_string(),
-                    cpu_percent: 0.0,
-                    memory_usage: 0,
-                    memory_limit: 0,
-                    disk_gb,
-                    services: services_raw.into_iter().map(|(s, _)| s).collect(),
-                });
+                if let Some(first_svc) = services.first_mut() {
+                    first_svc.disk_gb = Some(disk_gb);
+                }
+                results.push(make_stats_response(
+                    project_id.clone(),
+                    "stopped".to_string(),
+                    services,
+                ));
             }
         }
     }
@@ -598,38 +583,26 @@ pub async fn project_stats(
         .unwrap_or_default();
 
     if project.status != "running" {
-        return Ok(Json(StatsResponse {
+        return Ok(Json(make_stats_response(
             project_id,
-            status: project.status,
-            cpu_percent: 0.0,
-            memory_usage: 0,
-            memory_limit: 0,
-            disk_gb: 0.0,
-            services: services_raw.into_iter().map(|(s, _)| s).collect(),
-        }));
+            project.status,
+            services_raw.into_iter().map(|(s, _)| s).collect(),
+        )));
     }
 
     // Get all running container IDs for this project (multi-service aware)
     let (container_ids, _) = project_container_ids(&state.db, &project).await;
     if container_ids.is_empty() {
-        return Ok(Json(StatsResponse {
+        return Ok(Json(make_stats_response(
             project_id,
-            status: project.status,
-            cpu_percent: 0.0,
-            memory_usage: 0,
-            memory_limit: 0,
-            disk_gb: 0.0,
-            services: services_raw.into_iter().map(|(s, _)| s).collect(),
-        }));
+            project.status,
+            services_raw.into_iter().map(|(s, _)| s).collect(),
+        )));
     }
 
-    // Aggregate stats across all service containers, per-service breakdown
-    let mut total_cpu = 0.0f64;
-    let mut total_mem = 0u64;
-    let mut total_limit = 0u64;
-    let mut total_disk = 0.0f64;
+    // Per-service stats breakdown
     let mut any_running = false;
-    let mut per_container: std::collections::HashMap<String, (f64, u64, u64, f64)> = std::collections::HashMap::new();
+    let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
 
     for cid in &container_ids {
         let actually_running = state.docker.is_container_running(cid).await.unwrap_or(false);
@@ -647,16 +620,12 @@ pub async fn project_stats(
             Err(_) => (0.0, 0, 0),
         };
 
-        let disk = match disk_res {
-            Ok(d) => d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0),
-            Err(_) => 0.0,
+        let (disk, cpu_limit) = match disk_res {
+            Ok(d) => (d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0), d.cpu_limit),
+            Err(_) => (0.0, None),
         };
 
-        total_cpu += cpu;
-        total_mem += mem_usage;
-        total_limit += mem_limit;
-        total_disk += disk;
-        per_container.insert(cid.clone(), (cpu, mem_usage, mem_limit, disk));
+        per_container.insert(cid.clone(), (cpu, mem_usage, mem_limit, disk, cpu_limit));
     }
 
     if !any_running {
@@ -668,27 +637,19 @@ pub async fn project_stats(
             .await;
         sync_caddy(&state).await;
 
-        return Ok(Json(StatsResponse {
+        return Ok(Json(make_stats_response(
             project_id,
-            status: "stopped".to_string(),
-            cpu_percent: 0.0,
-            memory_usage: 0,
-            memory_limit: 0,
-            disk_gb: 0.0,
-            services: services_raw.into_iter().map(|(s, _)| s).collect(),
-        }));
+            "stopped".to_string(),
+            services_raw.into_iter().map(|(s, _)| s).collect(),
+        )));
     }
 
     let services = enrich_services(&services_raw, &per_container);
-    Ok(Json(StatsResponse {
+    Ok(Json(make_stats_response(
         project_id,
-        status: project.status,
-        cpu_percent: total_cpu,
-        memory_usage: total_mem,
-        memory_limit: total_limit,
-        disk_gb: total_disk,
+        project.status,
         services,
-    }))
+    )))
 }
 
 /// GET /projects/:id/disk-usage
