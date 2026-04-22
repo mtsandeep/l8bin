@@ -27,6 +27,8 @@ export interface Project {
   cpu_limit: number | null;
   custom_domain: string | null;
   volumes: string | null; // JSON-encoded array of VolumeMount
+  service_count: number | null;
+  service_summary: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -38,6 +40,19 @@ export interface ProjectStats {
   memory_usage: number;
   memory_limit: number;
   disk_gb: number;
+  services?: ServiceInfo[];
+}
+
+export interface ServiceInfo {
+  service_name: string;
+  image: string;
+  port: number | null;
+  is_public: boolean;
+  status: string;
+  cpu_percent?: number;
+  memory_usage?: number;
+  memory_limit?: number;
+  disk_gb?: number;
 }
 
 export async function fetchProjects(): Promise<Project[]> {
