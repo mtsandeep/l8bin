@@ -13,6 +13,7 @@ import { useToast } from "../ToastContext";
 import {
   type Project,
   type ProjectRoute,
+  type ServiceInfo,
   type VolumeMount,
   fetchProjectRoutes,
   createProjectRoute,
@@ -25,6 +26,7 @@ import {
 interface SettingsPopoverProps {
   project: Project;
   domain: string;
+  services: ServiceInfo[];
   dnsTarget: string;
   projectName: string;
   projectDescription: string;
@@ -43,6 +45,7 @@ interface SettingsPopoverProps {
 export default function SettingsPopover({
   project,
   domain,
+  services,
   dnsTarget,
   projectName,
   projectDescription,
@@ -593,18 +596,23 @@ export default function SettingsPopover({
                   placeholder="litebin-myapp-api:3001"
                   className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500 pr-2"
                 />
-                {project.internal_port && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setNewRouteUpstream(
-                        `litebin-${project.id}:${project.internal_port}`,
-                      )
-                    }
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded text-[9px] bg-slate-600 text-slate-300 hover:bg-slate-500 transition-colors cursor-pointer"
-                    title={`Use this project's port (${project.internal_port})`}>
-                    {project.internal_port}
-                  </button>
+                {services.length > 0 && (
+                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex gap-0.5">
+                    {services.filter(s => s.port != null).map(s => (
+                      <button
+                        key={s.service_name}
+                        type="button"
+                        onClick={() =>
+                          setNewRouteUpstream(
+                            `litebin-${project.id}.${s.service_name}:${s.port}`,
+                          )
+                        }
+                        className="px-1.5 py-0.5 rounded text-[9px] bg-slate-600 text-slate-300 hover:bg-slate-500 transition-colors cursor-pointer"
+                        title={`${s.service_name}:${s.port}`}>
+                        {s.port}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
               <div className="flex items-center gap-2">

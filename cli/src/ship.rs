@@ -104,9 +104,12 @@ async fn new_project_flow(
     println!("  {}", format!("L8B_TOKEN={}", token).dimmed());
     println!();
 
-    // Port
+    // Port — auto-detect 80 from Dockerfile/compose, otherwise prompt
     let port: u16 = if let Some(p) = port_override {
         p
+    } else if detect_port_80(project_dir) {
+        println!("  {} Detected exposed port 80", "::".dimmed());
+        80
     } else {
         let input: String = Input::new()
             .with_prompt("App port")
@@ -192,19 +195,34 @@ async fn existing_project_flow(
     match action_idx {
         0 => {
             // Redeploy — build, upload, deploy
-            let port: u16 = if let Some(p) = port_override {
-                p
-            } else {
-                let input: String = Input::new()
-                    .with_prompt("App port")
-                    .default("3000".to_string())
-                    .interact_text()?;
-                input
-                    .parse::<u16>()
-                    .context("Port must be a number (1-65535)")?
-            };
+            // Check for compose file — if found, ports come from compose, no prompt needed
+            let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
+            let compose_file = compose_paths
+                .iter()
+                .find(|p| project_dir.join(p).exists());
 
-            let url = build_and_deploy(client, server, project_id, project_dir, port, secret_override).await?;
+            let url = if compose_file.is_some() {
+                // Multi-service: compose handles ports
+                build_and_deploy(client, server, project_id, project_dir, 0, secret_override).await?
+            } else if detect_port_80(project_dir) {
+                // Single-service with EXPOSE 80 in Dockerfile
+                println!("  {} Detected exposed port 80", "::".dimmed());
+                build_and_deploy(client, server, project_id, project_dir, 80, secret_override).await?
+            } else {
+                // Single-service: ask for port
+                let port: u16 = if let Some(p) = port_override {
+                    p
+                } else {
+                    let input: String = Input::new()
+                        .with_prompt("App port")
+                        .default("3000".to_string())
+                        .interact_text()?;
+                    input
+                        .parse::<u16>()
+                        .context("Port must be a number (1-65535)")?
+                };
+                build_and_deploy(client, server, project_id, project_dir, port, secret_override).await?
+            };
             println!();
             println!();
             println!("  {} Live at: {}", "🌐".dimmed(), url.green().bold());
@@ -271,6 +289,39 @@ async fn existing_project_flow(
     }
 
     Ok(())
+}
+
+/// Detect if port 80 is exposed in Dockerfile or compose file.
+fn detect_port_80(project_dir: &Path) -> bool {
+    // Check compose first
+    let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
+    if let Some(name) = compose_paths.iter().find(|p| project_dir.join(p).exists()) {
+        if let Ok(content) = std::fs::read_to_string(project_dir.join(name)) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if (trimmed == "- '80'" || trimmed == "- \"80\"") && !trimmed.starts_with('#') {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Check Dockerfile
+    let dockerfile = project_dir.join("Dockerfile");
+    if let Ok(content) = std::fs::read_to_string(&dockerfile) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.to_uppercase().starts_with("EXPOSE") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 && parts[1] == "80" {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 // Build & deploy
@@ -559,18 +610,79 @@ async fn deploy_compose(
 
     let mut resolved_images: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
+    // Collect .env files from the project root (where docker-compose.yml lives)
+    let mut root_env_files: Vec<String> = std::fs::read_dir(project_dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with(".env"))
+        .collect();
+
+    root_env_files.sort_by(|a, b| {
+        let score = |name: &str| {
+            if name == ".env" { 0 }
+            else if name.contains(".prod") { 1 }
+            else if name.contains(".local") { 2 }
+            else { 1 }
+        };
+        score(a).cmp(&score(b)).then(a.cmp(b))
+    });
+
+    let mut root_env_paths: Vec<std::path::PathBuf> = Vec::new();
+    if !root_env_files.is_empty() {
+        loop {
+            let choices = vec!["Yes (all / standard order)", "No", "Pick specific..."];
+            let selection = Select::new()
+                .with_prompt("  🔒 Found .env files. Include build-time secrets?")
+                .items(&choices)
+                .default(0)
+                .interact()?;
+
+            match selection {
+                0 => {
+                    println!("  {} Using standard merge order (later files override earlier ones):", "::".dimmed());
+                    println!("     {}", root_env_files.join(" < ").dimmed());
+                    for name in &root_env_files {
+                        root_env_paths.push(project_dir.join(name));
+                    }
+                    break;
+                }
+                1 => {
+                    println!("  {} No build-time secrets included", "::".dimmed());
+                    break;
+                }
+                2 => {
+                    let chosen = dialoguer::MultiSelect::new()
+                        .with_prompt("  🔒 Select secrets [Space to select, Enter to confirm]")
+                        .items(&root_env_files)
+                        .interact()?;
+
+                    if !chosen.is_empty() {
+                        for idx in chosen {
+                            root_env_paths.push(project_dir.join(&root_env_files[idx]));
+                        }
+                        break;
+                    } else {
+                        println!("  {} {}", "!".red(), "No files selected. Pick at least one, or choose 'No' to continue without secrets.".yellow());
+                        continue;
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
     for info in &build_infos {
         let svc_dir = project_dir.join(&info.build_context).canonicalize()
             .with_context(|| format!("build context '{}' does not exist for service '{}'", info.build_context, info.svc_name))?;
         // Strip Windows extended-length path prefix (\\?\) — Docker doesn't understand it
         let svc_dir = Path::new(svc_dir.to_str().unwrap().trim_start_matches(r"\\?\"));
 
-        // Check for .env files in the service directory
-        let mut secret = Vec::new();
+        // Check for .env files in the service directory + project root
+        let mut secret = root_env_paths.clone();
         if let Ok(entries) = std::fs::read_dir(&svc_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(".env") {
+                if name.starts_with(".env") && !secret.iter().any(|p| p.file_name() == Some(entry.file_name().as_os_str())) {
                     secret.push(entry.path());
                 }
             }

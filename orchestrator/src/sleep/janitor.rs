@@ -93,7 +93,7 @@ async fn sweep(
                 if let Some(container_id) = cid {
                     stop_local_container(state, &project.id, container_id).await;
                     let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                        "UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND service_name = ?"
                     )
                     .bind(&project.id)
                     .bind(svc_name)
@@ -135,7 +135,7 @@ async fn sweep(
                 if let Some(container_id) = cid {
                     stop_remote_container(state, &project.id, &node_id, container_id).await;
                     let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                        "UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND service_name = ?"
                     )
                     .bind(&project.id)
                     .bind(svc_name)

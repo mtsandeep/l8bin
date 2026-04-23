@@ -107,6 +107,47 @@ impl MasterProxyRouter {
             // otherwise fall back to host upstream.
             let dial = p.container_upstream.as_deref().unwrap_or(&p.upstream);
 
+            // 0. Custom routes: path-based and subdomain-based (sorted by priority within
+            //    this project). Must come BEFORE the catch-all host route.
+            let mut sorted_custom: Vec<_> = p.custom_routes.iter().collect();
+            sorted_custom.sort_by_key(|cr| cr.priority);
+            for cr in &sorted_custom {
+                match cr.route_type.as_str() {
+                    "path" => {
+                        let mut hosts = vec![p.subdomain_host.clone()];
+                        if let Some(ref cd) = p.custom_domain {
+                            hosts.push(cd.clone());
+                        }
+                        let path = cr.path.as_deref().unwrap_or("/");
+                        routes.push(json!({
+                            "match": [{ "host": hosts, "path": [path] }],
+                            "handle": [{
+                                "handler": "reverse_proxy",
+                                "upstreams": [{ "dial": &cr.upstream }]
+                            }]
+                        }));
+                    }
+                    "subdomain" | "alias" => {
+                        let alias = cr.subdomain.as_deref().unwrap_or("");
+                        let mut hosts = vec![format!("{}.{}", alias, p.subdomain_host)];
+                        if let Some(ref cd) = p.custom_domain {
+                            hosts.push(format!("{}.{}", alias, cd));
+                        }
+                        if cr.route_type == "alias" {
+                            hosts.push(format!("{}.{}", alias, domain));
+                        }
+                        routes.push(json!({
+                            "match": [{ "host": hosts }],
+                            "handle": [{
+                                "handler": "reverse_proxy",
+                                "upstreams": [{ "dial": &cr.upstream }]
+                            }]
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+
             // 1. Subdomain route: {project_id}.{domain} → upstream
             let mut handle = json!({
                 "handler": "reverse_proxy",
@@ -235,49 +276,6 @@ impl MasterProxyRouter {
                             }
                         }]
                     }));
-                }
-            }
-
-            // Custom routes: path-based and subdomain-based
-            let mut sorted_custom: Vec<_> = p.custom_routes.iter().collect();
-            sorted_custom.sort_by_key(|cr| cr.priority);
-            for cr in &sorted_custom {
-                match cr.route_type.as_str() {
-                    "path" => {
-                        // Path-based route on all project hosts
-                        let mut hosts = vec![p.subdomain_host.clone()];
-                        if let Some(ref cd) = p.custom_domain {
-                            hosts.push(cd.clone());
-                        }
-                        let path = cr.path.as_deref().unwrap_or("/");
-                        routes.push(json!({
-                            "match": [{ "host": hosts, "path": [path] }],
-                            "handle": [{
-                                "handler": "reverse_proxy",
-                                "upstreams": [{ "dial": &cr.upstream }]
-                            }]
-                        }));
-                    }
-                    "subdomain" | "alias" => {
-                        // Alias-based: {alias}.{subdomain_host}, {alias}.{custom_domain}, and {alias}.{domain}
-                        let alias = cr.subdomain.as_deref().unwrap_or("");
-                        let mut hosts = vec![format!("{}.{}", alias, p.subdomain_host)];
-                        if let Some(ref cd) = p.custom_domain {
-                            hosts.push(format!("{}.{}", alias, cd));
-                        }
-                        // Domain-level alias: {alias}.{domain} (only for "alias" type)
-                        if cr.route_type == "alias" {
-                            hosts.push(format!("{}.{}", alias, domain));
-                        }
-                        routes.push(json!({
-                            "match": [{ "host": hosts }],
-                            "handle": [{
-                                "handler": "reverse_proxy",
-                                "upstreams": [{ "dial": &cr.upstream }]
-                            }]
-                        }));
-                    }
-                    _ => {}
                 }
             }
         }

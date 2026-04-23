@@ -11,6 +11,7 @@ pub struct ServiceInfo {
     pub service_name: String,
     pub image: String,
     pub port: Option<i64>,
+    pub mapped_port: Option<i64>,
     pub is_public: bool,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,11 +139,11 @@ async fn batch_load_services(
     // Load from project_services table
     let placeholders = project_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let query = format!(
-        "SELECT project_id, service_name, image, port, is_public, status, container_id, memory_limit_mb, cpu_limit FROM project_services WHERE project_id IN ({}) ORDER BY service_name",
+        "SELECT project_id, service_name, image, port, mapped_port, is_public, status, container_id, memory_limit_mb, cpu_limit FROM project_services WHERE project_id IN ({}) ORDER BY service_name",
         placeholders
     );
 
-    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, bool, String, Option<String>, Option<i64>, Option<f64>)>(&query);
+    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, Option<i64>, bool, String, Option<String>, Option<i64>, Option<f64>)>(&query);
     for pid in project_ids {
         builder = builder.bind(pid);
     }
@@ -151,13 +152,14 @@ async fn batch_load_services(
 
     // Group by project_id
     let mut map: std::collections::HashMap<String, Vec<(ServiceInfo, Option<String>)>> = std::collections::HashMap::new();
-    for (project_id, service_name, image, port, is_public, status, container_id, memory_limit_mb, cpu_limit) in rows {
+    for (project_id, service_name, image, port, mapped_port, is_public, status, container_id, memory_limit_mb, cpu_limit) in rows {
         let memory_limit = memory_limit_mb.map(|mb| (mb as u64) * 1024 * 1024);
         map.entry(project_id).or_default().push((
             ServiceInfo {
                 service_name,
                 image,
                 port,
+                mapped_port,
                 is_public,
                 status,
                 cpu_percent: None,
@@ -177,15 +179,15 @@ async fn batch_load_services(
             continue;
         }
         // Check if this project has an image (deployed)
-        let row: Option<(String, Option<i64>, String, Option<String>)> = sqlx::query_as(
-            "SELECT image, internal_port, status, container_id FROM projects WHERE id = ?"
+        let row: Option<(String, Option<i64>, Option<i64>, String, Option<String>)> = sqlx::query_as(
+            "SELECT image, internal_port, mapped_port, status, container_id FROM projects WHERE id = ?"
         )
         .bind(pid)
         .fetch_optional(db)
         .await
         .unwrap_or(None);
 
-        if let Some((image, port, status, container_id)) = row {
+        if let Some((image, port, mapped_port, status, container_id)) = row {
             if !image.is_empty() {
                 // Fetch limits from projects table for single-service fallback
                 let limits: Option<(Option<i64>, Option<f64>)> = sqlx::query_as(
@@ -206,6 +208,7 @@ async fn batch_load_services(
                         service_name: "web".to_string(),
                         image,
                         port,
+                        mapped_port,
                         is_public: true,
                         status,
                         cpu_percent: None,

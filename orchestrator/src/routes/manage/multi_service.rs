@@ -187,10 +187,17 @@ pub async fn start_services(
                         match docker.start_existing_container(existing_cid).await {
                             Ok(()) => {
                                 any_started.store(true, std::sync::atomic::Ordering::Relaxed);
-                                // Update service status
+                                // Re-resolve mapped port from Docker (may have been cleared on previous stop)
+                                let actual_port = if existing_port == 0 && run_config.is_public {
+                                    docker.inspect_mapped_port(existing_cid).await.unwrap_or(0)
+                                } else {
+                                    existing_port
+                                };
+                                // Update service status and mapped port
                                 let _ = sqlx::query(
-                                    "UPDATE project_services SET status = 'running' WHERE project_id = ? AND service_name = ?"
+                                    "UPDATE project_services SET status = 'running', mapped_port = ? WHERE project_id = ? AND service_name = ?"
                                 )
+                                .bind(actual_port as i64)
                                 .bind(&run_config.project_id)
                                 .bind(&svc)
                                 .execute(&db)
@@ -198,7 +205,7 @@ pub async fn start_services(
                                 tracing::info!(service = %svc, container_id = %existing_cid, "started existing stopped container");
                                 return Ok(StartedService {
                                     container_id: existing_cid.clone(),
-                                    mapped_port: existing_port,
+                                    mapped_port: actual_port,
                                     is_public,
                                 });
                             }
@@ -385,7 +392,7 @@ pub async fn stop_services(
         if let Some(container_id) = cid {
             let _ = state.docker.stop_container(container_id).await;
             let _ = sqlx::query(
-                "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                "UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND service_name = ?"
             )
             .bind(project_id)
             .bind(svc_name)

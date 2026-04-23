@@ -221,6 +221,10 @@ pub async fn resolve_all_routes(
     .fetch_all(db)
     .await?;
 
+    // Load custom routes for multi-service projects
+    let multi_ids: Vec<String> = multi_running.iter().map(|p| p.id.clone()).collect();
+    let multi_custom_routes = resolve_custom_routes(db, &multi_ids).await?;
+
     for project in &multi_running {
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         let node_public_ip = if is_local {
@@ -247,7 +251,7 @@ pub async fn resolve_all_routes(
             host_rewrite: None,
             upstream_tls: !is_local && project.node_id.is_some(),
             container_upstream: None,
-            custom_routes: vec![],
+            custom_routes: multi_custom_routes.get(&project.id).cloned().unwrap_or_default(),
         });
     }
 

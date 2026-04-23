@@ -43,6 +43,7 @@ export interface ServiceInfo {
   service_name: string;
   image: string;
   port: number | null;
+  mapped_port?: number | null;
   is_public: boolean;
   status: string;
   cpu_percent?: number;

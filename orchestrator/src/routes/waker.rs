@@ -662,7 +662,7 @@ pub async fn wake_for_host(
                 let now = chrono::Utc::now().timestamp();
                 for service_name in &stopped_services {
                     let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?",
+                        "UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND service_name = ?",
                     )
                     .bind(&project_id)
                     .bind(service_name)

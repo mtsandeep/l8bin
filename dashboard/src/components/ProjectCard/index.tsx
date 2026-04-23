@@ -325,7 +325,7 @@ export default function ProjectCard({
                         className="text-[10px] text-slate-500 truncate font-mono mt-0.5"
                         title={svc.image}>
                         {shortImage(svc.image)}
-                        {svc.port ? ` | :${svc.port}` : ""}
+                        {svc.port ? ` | ${svc.mapped_port && svc.mapped_port > 0 ? `${svc.mapped_port}:${svc.port}` : `:${svc.port}`}` : ""}
                       </p>
                       <div className="flex items-center gap-2 mt-1 text-[10px] font-mono">
                         {svc.cpu_limit !== undefined && (
@@ -358,8 +358,16 @@ export default function ProjectCard({
           <p
             className="text-xs text-slate-500 truncate font-mono"
             title={project.image ?? ""}>
-            {shortImage(project.image)}
-            {project.mapped_port ? ` | port: ${project.mapped_port}` : ""}
+            {isMultiService
+              ? `${shortImage(project.image)} +${services.length - 1}`
+              : shortImage(project.image)}
+            {isMultiService
+              ? services.filter(s => s.mapped_port && s.mapped_port > 0).length > 0
+                ? ` | ports: ${services.filter(s => s.mapped_port && s.mapped_port > 0).map(s => s.mapped_port).join(", ")}`
+                : ""
+              : project.mapped_port
+                ? ` | port: ${project.mapped_port}`
+                : ""}
           </p>
           <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
             <span
@@ -471,6 +479,7 @@ export default function ProjectCard({
               <SettingsPopover
                 project={project}
                 domain={domain}
+                services={services}
                 dnsTarget={dnsTarget}
                 projectName={projectName}
                 projectDescription={projectDescription}
