@@ -1,9 +1,10 @@
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
 use futures_util::FutureExt;
 use serde_json::json;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 
 use litebin_common::docker::DockerManager;
 use litebin_common::types::Node;
@@ -11,8 +12,62 @@ use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::AppState;
 
-fn footer_html() -> String {
-    format!(r#"<footer style="position:fixed;bottom:16px;left:0;right:0;text-align:center;color:#94a3b8;font-size:1rem;">Powered by <a href="https://l8bin.com" style="color:#7c3aed;text-decoration:none;">l8bin</a></footer>"#)
+/// Hop-by-hop headers that must not be forwarded when proxying.
+const HOP_BY_HOP: &[&str] = &[
+    "connection", "transfer-encoding", "upgrade", "keep-alive",
+    "proxy-connection", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "trailer",
+];
+
+/// Reverse-proxy a request to a container on the Docker network.
+/// Streams the response back to the client.
+async fn proxy_request(
+    client: &reqwest::Client,
+    method: Method,
+    upstream: &str,
+    path_and_query: Option<&str>,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let url = format!("http://{}{}", upstream, path_and_query.unwrap_or("/"));
+
+    let mut req = client.request(method, &url);
+    for (name, value) in headers.iter() {
+        if HOP_BY_HOP.contains(&name.as_str().to_lowercase().as_str()) {
+            continue;
+        }
+        req = req.header(name, value);
+    }
+    if !body.is_empty() {
+        req = req.body(body);
+    }
+
+    match req.send().await {
+        Ok(resp) => {
+            let mut builder = Response::builder().status(resp.status());
+            for (name, value) in resp.headers().iter() {
+                if HOP_BY_HOP.contains(&name.as_str().to_lowercase().as_str()) {
+                    continue;
+                }
+                builder = builder.header(name, value);
+            }
+            builder
+                .body(axum::body::Body::from_stream(resp.bytes_stream()))
+                .unwrap_or_else(|_| {
+                    Response::builder()
+                        .status(StatusCode::BAD_GATEWAY)
+                        .body(axum::body::Body::from("Bad gateway"))
+                        .unwrap()
+                })
+        }
+        Err(e) => {
+            tracing::error!(error = %e, upstream = %upstream, "proxy error");
+            Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(axum::body::Body::from("Bad gateway"))
+                .unwrap()
+        }
+    }
 }
 
 /// Check if the client wants JSON (not HTML). Used to return 503+JSON for API clients.
@@ -35,84 +90,19 @@ fn starting_json_response() -> Response {
 }
 
 fn loading_page_html(subdomain: &str) -> Html<String> {
-    Html(format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="1">
-    <title>Starting {}</title>
-    <style>
-        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
-        .loader {{ text-align: center; }}
-        .spinner {{ width: 40px; height: 40px; border: 4px solid #334155; border-top: 4px solid #38bdf8; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }}
-        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-    </style>
-</head>
-<body>
-    <div class="loader">
-        <div class="spinner"></div>
-        <p>Starting <strong>{}</strong>...</p>
-        {}
-    </div>
-</body>
-</html>"#,
-        subdomain, subdomain,
-        footer_html()
-    ))
+    Html(litebin_common::waker_pages::loading_page_html(subdomain))
 }
 
 fn error_page_html() -> Html<String> {
-    Html(format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="30">
-    <title>Offline</title>
-    <style>
-        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
-        .msg {{ text-align: center; }}
-        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
-        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
-    </style>
-</head>
-<body>
-    <div class="msg">
-        <h2>Failed to start the website</h2>
-        <p>Retrying in 30 seconds...</p>
-        {}
-    </div>
-</body>
-</html>"#,
-        footer_html()
-    ))
+    Html(litebin_common::waker_pages::error_page_html())
 }
 
 fn not_found_page_html() -> Html<String> {
-    Html(format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Not Found</title>
-    <style>
-        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
-        .msg {{ text-align: center; }}
-        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
-        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
-    </style>
-</head>
-<body>
-    <div class="msg">
-        <h2>Project not found</h2>
-        <p>This project does not exist or has been removed.</p>
-        {}
-    </div>
-</body>
-</html>"#,
-        footer_html()
-    ))
+    Html(litebin_common::waker_pages::not_found_page_html())
+}
+
+fn offline_page_html() -> Html<String> {
+    Html(litebin_common::waker_pages::offline_page_html())
 }
 
 /// Recreate a container on a remote agent (no image pull).
@@ -214,46 +204,118 @@ async fn start_multi_service(state: &AppState, project: &crate::db::models::Proj
         tracing::warn!(error = %e, container = %caddy_container, network = %project_network, "failed to connect caddy to project network");
     }
 
+    // Connect orchestrator to the project network so it can proxy to multi-service containers
+    let orchestrator_container = std::env::var("ORCHESTRATOR_CONTAINER_NAME")
+        .unwrap_or_else(|_| "litebin-orchestrator".into());
+    if let Err(e) = state.docker.connect_container_to_network(&orchestrator_container, &project_network).await {
+        tracing::warn!(error = %e, container = %orchestrator_container, network = %project_network, "failed to connect orchestrator to project network");
+    }
+
     // Pull any missing images
     let extra_env = crate::routes::manage::read_local_project_env(project_id);
     let plan = litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose error: {e}")).into_response())?;
 
+    // Build owned lookup: service_name -> RunServiceConfig
+    // Pre-compute which services need healthcheck waits
+    let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
+        plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
+    let healthy_wait_set: std::collections::HashSet<String> = plan.service_order.iter()
+        .filter(|s| plan.needs_healthy_wait(s))
+        .cloned()
+        .collect();
+    let has_healthcheck: std::collections::HashSet<String> = plan.service_order.iter()
+        .filter(|s| compose.services.get(s.as_str()).and_then(|svc| svc.healthcheck.as_ref()).is_some())
+        .cloned()
+        .collect();
+
+    // Pre-load existing container states so we can skip already-running services
+    let existing_containers: std::collections::HashMap<String, (String, u16)> = {
+        let rows: Vec<(String, Option<String>, Option<i64>)> = sqlx::query_as(
+            "SELECT service_name, container_id, mapped_port FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
+        )
+        .bind(project_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        let mut map = std::collections::HashMap::new();
+        for (name, cid, port) in rows {
+            if let Some(cid) = cid {
+                map.insert(name, (cid, port.unwrap_or(0) as u16));
+            }
+        }
+        map
+    };
+
+    // Pull images only for services that don't have an existing container
     for config in &plan.configs {
-        if !config.image.starts_with("sha256:") {
+        if !config.image.starts_with("sha256:") && !existing_containers.contains_key(&config.service_name) {
             if let Err(e) = state.docker.pull_image(&config.image).await {
                 tracing::warn!(service = %config.service_name, image = %config.image, error = %e, "pull failed, continuing");
             }
         }
     }
 
-    // Start services in dependency order
+    // Start services level by level — parallel within each level
     let mut public_container_id = String::new();
     let mut public_mapped_port: u16 = 0;
+    let any_created = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    for run_config in &plan.configs {
-        let svc_name = &run_config.service_name;
-        let is_public = run_config.is_public;
+    for level in &plan.service_levels {
+        let mut tasks: JoinSet<Result<(String, u16, bool), String>> = JoinSet::new();
 
-        match state.docker.run_service_container(run_config).await {
-            Ok((container_id, mapped_port)) => {
-                tracing::info!(service = %svc_name, container_id = %container_id, port = %mapped_port, "waker: multi-service container started");
+        for svc_name in level {
+            let run_config = configs_map[svc_name].clone();
+            let db = state.db.clone();
+            let docker = state.docker.clone();
+            let svc = svc_name.clone();
+            let needs_healthy = healthy_wait_set.contains(svc_name) && has_healthcheck.contains(svc_name);
+            let is_public = run_config.is_public;
+            let pid = project_id.clone();
+            let existing = existing_containers.get(svc_name).cloned();
+            let any_created = any_created.clone();
 
-                // Wait for Docker network to assign a valid IP
-                if let Err(e) = state.docker.wait_for_network_ready(&container_id).await {
-                    tracing::warn!(service = %svc_name, error = %e, "network readiness timeout, continuing");
+            tasks.spawn(async move {
+                // If container exists, just start it (fast path — no recreate)
+                if let Some((ref existing_cid, existing_port)) = existing {
+                    if docker.is_container_running(existing_cid).await.unwrap_or(false) {
+                        tracing::info!(service = %svc, "waker: service already running, skipping");
+                        return Ok((existing_cid.clone(), existing_port, is_public));
+                    }
+                    // Container exists but is stopped — just start it
+                    docker.start_existing_container(existing_cid).await
+                        .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
+                    // Update service status in DB
+                    let _ = sqlx::query(
+                        "UPDATE project_services SET status = 'running' WHERE project_id = ? AND service_name = ?"
+                    )
+                    .bind(&pid)
+                    .bind(&svc)
+                    .execute(&db)
+                    .await;
+                    tracing::info!(service = %svc, container_id = %existing_cid, port = %existing_port, "waker: started existing stopped container");
+                    return Ok((existing_cid.clone(), existing_port, is_public));
                 }
 
-                // Wait for healthcheck if defined
-                let has_healthcheck = compose.services.get(svc_name)
-                    .and_then(|s| s.healthcheck.as_ref())
-                    .is_some();
-                if has_healthcheck {
-                    tracing::info!(service = %svc_name, "waker: waiting for healthcheck");
-                    if let Err(e) = state.docker.wait_for_healthy(&container_id, true).await {
-                        tracing::warn!(service = %svc_name, error = %e, "healthcheck failed, continuing");
+                let (container_id, mapped_port) = docker.run_service_container(&run_config).await
+                    .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
+
+                any_created.store(true, std::sync::atomic::Ordering::Relaxed);
+
+                tracing::info!(service = %svc, container_id = %container_id, port = %mapped_port, "waker: multi-service container created");
+
+                // Wait for Docker network to assign a valid IP
+                if let Err(e) = docker.wait_for_network_ready(&container_id).await {
+                    tracing::warn!(service = %svc, error = %e, "network readiness timeout, continuing");
+                }
+
+                // Wait for healthcheck only if a downstream service depends on it with service_healthy
+                if needs_healthy {
+                    tracing::info!(service = %svc, "waker: waiting for healthcheck");
+                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
+                        tracing::warn!(service = %svc, error = %e, "healthcheck failed, continuing");
                     } else {
-                        tracing::info!(service = %svc_name, "healthcheck passed");
+                        tracing::info!(service = %svc, "healthcheck passed");
                     }
                 }
 
@@ -263,22 +325,32 @@ async fn start_multi_service(state: &AppState, project: &crate::db::models::Proj
                 )
                 .bind(&container_id)
                 .bind(mapped_port as i64)
-                .bind(project_id)
-                .bind(svc_name)
-                .execute(&state.db)
+                .bind(&pid)
+                .bind(&svc)
+                .execute(&db)
                 .await;
 
-                if is_public {
-                    public_container_id = container_id;
-                    public_mapped_port = mapped_port;
+                Ok((container_id, mapped_port, is_public))
+            });
+        }
+
+        // Collect results from this level
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok(Ok((container_id, mapped_port, is_public))) => {
+                    if is_public {
+                        public_container_id = container_id;
+                        public_mapped_port = mapped_port;
+                    }
                 }
-            }
-            Err(e) => {
-                tracing::error!(service = %svc_name, error = %e, "waker: failed to start service");
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to start service '{}': {e}", svc_name),
-                ).into_response());
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "waker: failed to start service");
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, e).into_response());
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "waker: service task panicked");
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, "service task panicked".to_string()).into_response());
+                }
             }
         }
     }
@@ -298,6 +370,13 @@ async fn start_multi_service(state: &AppState, project: &crate::db::models::Proj
     .await;
 
     tracing::info!(project = %project_id, "waker: all multi-service containers started");
+
+    // Wait for Docker DNS to propagate only if we created new containers (not just started existing ones).
+    // Starting existing containers preserves their network config, so DNS is already ready.
+    if any_created.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+
     Ok(())
 }
 
@@ -613,7 +692,15 @@ async fn resolve_alias_project(db: &sqlx::SqlitePool, rest: &str) -> Result<Opti
 }
 
 /// Core waker logic — shared by the fallback handler and the subdomain intercept middleware.
-pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Response {
+pub async fn wake_for_host(
+    state: AppState,
+    host: &str,
+    wants_json: bool,
+    method: Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
 
     let domain_suffix = format!(".{}", state.config.domain);
 
@@ -720,20 +807,164 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
             return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
         }
     } else if project.status == "running" && is_multi {
-        // Multi-service fast path: check if any service container is actually running
-        let has_running = if !is_remote {
-            let running = state.docker.list_running_litebin_containers().await
-                .unwrap_or_default();
-            running.iter().any(|c| c.project_id == project_id)
-        } else {
-            // Remote: trust the DB status
-            true
-        };
-        if has_running {
-            let _ = state.route_sync_tx.send(());
+        // If a wake is still in progress (e.g. DNS wait after container start), show loading page
+        if state.wake_locks.contains_key(&project_id) {
             return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
         }
-        tracing::info!(project = %project_id, "waker: multi-service containers all down");
+
+        // Multi-service running: health-check all services (throttled) and proxy to container.
+        // This path is hit because multi-service projects always route through the orchestrator.
+        let should_check = state
+            .multi_svc_health_check
+            .get(&project_id)
+            .map(|t| t.elapsed() >= std::time::Duration::from_secs(5))
+            .unwrap_or(true);
+
+        let mut public_service_up = true;
+
+        if should_check && !is_remote {
+            state.multi_svc_health_check.insert(project_id.clone(), std::time::Instant::now());
+
+            let services: Vec<(String, Option<String>)> = sqlx::query_as(
+                "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status = 'running' AND container_id IS NOT NULL",
+            )
+            .bind(&project_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+
+            let mut stopped_services = Vec::new();
+            for (service_name, container_id) in &services {
+                if let Some(cid) = container_id {
+                    if !state.docker.is_container_running(cid).await.unwrap_or(false) {
+                        stopped_services.push(service_name.clone());
+                    }
+                }
+            }
+
+            if !stopped_services.is_empty() {
+                tracing::info!(project = %project_id, stopped = ?stopped_services, "waker: multi-service has crashed services");
+
+                let now = chrono::Utc::now().timestamp();
+                for service_name in &stopped_services {
+                    let _ = sqlx::query(
+                        "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?",
+                    )
+                    .bind(&project_id)
+                    .bind(service_name)
+                    .execute(&state.db)
+                    .await;
+                }
+
+                // Check if the public service is among the crashed ones
+                let public_down: bool = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'stopped'",
+                )
+                .bind(&project_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(0) > 0;
+
+                if public_down {
+                    // Public service is down — fall through to wake lock (loading page)
+                    public_service_up = false;
+                    let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
+                        .bind(now)
+                        .bind(&project_id)
+                        .execute(&state.db)
+                        .await;
+                    tracing::info!(project = %project_id, "waker: public service down, marking stopped");
+                } else {
+                    // Non-public services down but public service up — silently recover in background
+                    let _ = sqlx::query("UPDATE projects SET status = 'degraded', updated_at = ? WHERE id = ? AND status != 'degraded'")
+                        .bind(now)
+                        .bind(&project_id)
+                        .execute(&state.db)
+                        .await;
+                    let _ = state.route_sync_tx.send(());
+
+                    // Spawn background recovery (start_multi_service is idempotent — skips running services)
+                    let state_clone = state.clone();
+                    let project_clone = project.clone();
+                    tokio::spawn(async move {
+                        tracing::info!(project = %project_clone.id, "waker: background recovery of degraded services");
+                        match start_multi_service(&state_clone, &project_clone).await {
+                            Ok(_) => {
+                                let _ = state_clone.route_sync_tx.send(());
+                                tracing::info!(project = %project_clone.id, "waker: background recovery succeeded");
+                            }
+                            Err(resp) => tracing::warn!(project = %project_clone.id, status = %resp.status(), "waker: background recovery failed"),
+                        }
+                    });
+                }
+            }
+        }
+
+        if public_service_up {
+            // Public service is healthy — proxy the request to the container
+            let public_svc: Option<(String, Option<i64>)> = sqlx::query_as(
+                "SELECT service_name, port FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'running' LIMIT 1",
+            )
+            .bind(&project_id)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
+
+            if let Some((svc_name, port)) = public_svc {
+                let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
+                let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
+                let resp = proxy_request(&state.proxy_client, method, &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body).await;
+                // If proxy fails (e.g. DNS not ready after orchestrator restart), return loading page
+                // instead of 502. The auto-refresh will retry in 1 second.
+                if resp.status() == StatusCode::BAD_GATEWAY {
+                    return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+                }
+                return resp;
+            }
+
+            // No public service found — fall through to wake lock
+            tracing::warn!(project = %project_id, "waker: multi-service has no public service, falling through");
+        }
+        // If public service is down, fall through to wake lock below (loading page + start all)
+    } else if project.status == "degraded" {
+        // Degraded: some services stopped, some running. Proxy to public service if it's up,
+        // recover remaining in background.
+        tracing::info!(project = %project_id, "waker: degraded project, starting remaining services");
+
+        // Proxy to public service if it's running — don't fall through to wake lock
+        let public_svc: Option<(String, Option<i64>)> = sqlx::query_as(
+            "SELECT service_name, port FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'running' LIMIT 1",
+        )
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+        if let Some((svc_name, port)) = public_svc {
+            let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
+            let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
+
+            // Spawn background recovery (idempotent — skips already-running services)
+            let state_clone = state.clone();
+            let project_clone = project.clone();
+            tokio::spawn(async move {
+                tracing::info!(project = %project_clone.id, "waker: background recovery of degraded services");
+                match start_multi_service(&state_clone, &project_clone).await {
+                    Ok(_) => {
+                        let _ = state_clone.route_sync_tx.send(());
+                        tracing::info!(project = %project_clone.id, "waker: background recovery succeeded");
+                    }
+                    Err(resp) => tracing::warn!(project = %project_clone.id, status = %resp.status(), "waker: background recovery failed"),
+                }
+            });
+
+            let resp = proxy_request(&state.proxy_client, method, &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body).await;
+            if resp.status() == StatusCode::BAD_GATEWAY {
+                return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+            }
+            return resp;
+        }
+        // Public service is down — fall through to wake lock + start_multi_service below
     } else if project.status == "running" && project.mapped_port.is_none() {
         tracing::info!(project = %project_id, "waker: running but mapped_port is null, recreating");
     }
@@ -747,33 +978,7 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
             )
                 .into_response();
         }
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Html(format!(
-                r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Offline</title>
-    <style>
-        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
-        .msg {{ text-align: center; }}
-        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
-        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
-    </style>
-</head>
-<body>
-    <div class="msg">
-        <h2>This website is currently offline</h2>
-        <p>Auto-start is disabled!</p>
-        {}
-    </div>
-</body>
-</html>"#,
-            footer_html()
-            )),
-        )
-            .into_response();
+        return (StatusCode::SERVICE_UNAVAILABLE, offline_page_html()).into_response();
     }
 
     // Single-flight dedup: first caller spawns background wake, all get loading page immediately.
@@ -789,7 +994,7 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
         dashmap::mapref::entry::Entry::Vacant(entry) => {
             let guard = entry.insert(guard);
 
-            let is_stopped = project.status == "stopped";
+            let is_stopped = project.status == "stopped" || project.status == "degraded";
             let state_clone = state.clone();
             let project_clone = project.clone();
             let project_id_bg = project_id.clone();
@@ -798,7 +1003,9 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
             tracing::info!(project = %project_id, host = %host, "waker: spawning background wake");
 
             tokio::spawn(async move {
-                let wake_fut = if is_stopped {
+                let wake_fut = if is_multi {
+                    start_multi_service(&state_clone, &project_clone).boxed()
+                } else if is_stopped {
                     start_stopped_container(&state_clone, &project_clone).boxed()
                 } else {
                     restart_crashed_container(&state_clone, &project_clone).boxed()
@@ -851,14 +1058,19 @@ pub async fn wake_for_host(state: AppState, host: &str, wants_json: bool) -> Res
 /// Catch-all fallback handler. Caddy proxies here when no project-specific route matches.
 pub async fn wake(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    req: axum::http::Request<axum::body::Body>,
 ) -> Response {
-    let host = headers
+    let (parts, body) = req.into_parts();
+    let host = parts.headers
         .get(axum::http::header::HOST)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let json = wants_json(&headers);
-    wake_for_host(state, host, json).await
+    let json = wants_json(&parts.headers);
+    let method = parts.method.clone();
+    let uri = parts.uri.clone();
+    let headers = parts.headers.clone();
+    let body = axum::body::to_bytes(body, 10 * 1024 * 1024).await.unwrap_or_default();
+    wake_for_host(state, host, json, method, &uri, &headers, body).await
 }
 
 /// Middleware that intercepts requests for app subdomains BEFORE axum's route matcher.
@@ -874,12 +1086,13 @@ pub async fn waker_intercept(
         .headers()
         .get(axum::http::header::HOST)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+        .unwrap_or("")
+        .to_string();
 
     let config = &state.config;
     let dashboard_host = format!("{}.{}", config.dashboard_subdomain, config.domain);
     let poke_host = format!("{}.{}", config.poke_subdomain, config.domain);
-    let host_without_port = host.split(':').next().unwrap_or(host);
+    let host_without_port = host.split(':').next().unwrap_or(&host);
 
     // Let dashboard, poke, and bare domain requests pass through to the router
     if host_without_port == config.domain
@@ -891,5 +1104,10 @@ pub async fn waker_intercept(
 
     // Everything else is an app request (subdomain or custom domain) — handle via waker
     let json = wants_json(req.headers());
-    wake_for_host(state, host, json).await
+    let (parts, body) = req.into_parts();
+    let method = parts.method.clone();
+    let uri = parts.uri.clone();
+    let headers = parts.headers.clone();
+    let body = axum::body::to_bytes(body, 10 * 1024 * 1024).await.unwrap_or_default();
+    wake_for_host(state, &host, json, method, &uri, &headers, body).await
 }

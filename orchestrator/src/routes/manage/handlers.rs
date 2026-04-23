@@ -3,6 +3,8 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+use litebin_common::docker::DockerManager;
+
 use crate::nodes;
 use crate::AppState;
 
@@ -95,11 +97,7 @@ pub async fn stop_project(
         }
 
         let now = chrono::Utc::now().timestamp();
-        let _ = if service_count > 1 {
-            sqlx::query("UPDATE projects SET status = 'stopped', container_id = NULL, mapped_port = NULL, updated_at = ? WHERE id = ?")
-        } else {
-            sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-        }
+        let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
         .bind(now)
         .bind(&project_id)
         .execute(&state.db)
@@ -621,5 +619,201 @@ pub async fn recreate_project(
 
     Ok(Json(MessageResponse {
         message: format!("project '{}' recreated", project_id),
+    }))
+}
+
+/// Build a RunServiceConfig for a single service by reading compose.yaml.
+fn get_service_config(project_id: &str, service_name: &str) -> Result<litebin_common::types::RunServiceConfig, (StatusCode, String)> {
+    let compose_yaml = DockerManager::read_compose(project_id)
+        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "compose.yaml not found".to_string()))?;
+
+    let compose = compose_bollard::ComposeParser::parse(&compose_yaml)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yaml: {e}")))?;
+
+    let extra_env = read_local_project_env(project_id);
+    let plan = litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose error: {e}")))?;
+
+    plan.configs.into_iter()
+        .find(|c| c.service_name == service_name)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("service '{}' not found in compose.yaml", service_name)))
+}
+
+/// POST /projects/:id/services/:name/start
+pub async fn start_service(
+    State(state): State<AppState>,
+    Path((project_id, service_name)): Path<(String, String)>,
+) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+    let project = sqlx::query_as::<_, crate::db::models::Project>(
+        "SELECT * FROM projects WHERE id = ?",
+    )
+    .bind(&project_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+    .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+
+    // Look up existing service state
+    let row = sqlx::query_as::<_, (String, Option<String>, Option<i64>)>(
+        "SELECT status, container_id, mapped_port FROM project_services WHERE project_id = ? AND service_name = ?",
+    )
+    .bind(&project_id)
+    .bind(&service_name)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+
+    let (status, existing_cid, _) = row.ok_or((StatusCode::NOT_FOUND, format!("service '{}' not found", service_name)))?;
+
+    if status == "running" {
+        // Check if actually running — if so, skip
+        if let Some(ref cid) = existing_cid {
+            if state.docker.is_container_running(cid).await.unwrap_or(false) {
+                return Ok(Json(MessageResponse {
+                    message: format!("service '{}' is already running", service_name),
+                }));
+            }
+        }
+    }
+
+    let config = get_service_config(&project_id, &service_name)?;
+
+    let (container_id, mapped_port) = state.docker.run_service_container(&config).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to start service '{}': {}", service_name, e)))?;
+
+    // Wait for network
+    if let Err(e) = state.docker.wait_for_network_ready(&container_id).await {
+        tracing::warn!(service = %service_name, error = %e, "network readiness timeout, continuing");
+    }
+
+    sqlx::query(
+        "UPDATE project_services SET container_id = ?, mapped_port = ?, status = 'running' WHERE project_id = ? AND service_name = ?",
+    )
+    .bind(&container_id)
+    .bind(mapped_port as i64)
+    .bind(&project_id)
+    .bind(&service_name)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+
+    // Update project status if it was stopped
+    if project.status != "running" {
+        let now = chrono::Utc::now().timestamp();
+        let _ = sqlx::query("UPDATE projects SET status = 'running', updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(&project_id)
+            .execute(&state.db)
+            .await;
+    }
+
+    sync_caddy(&state).await;
+    tracing::info!(project = %project_id, service = %service_name, "service started");
+
+    Ok(Json(MessageResponse {
+        message: format!("service '{}' started", service_name),
+    }))
+}
+
+/// POST /projects/:id/services/:name/stop
+pub async fn stop_service(
+    State(state): State<AppState>,
+    Path((project_id, service_name)): Path<(String, String)>,
+) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+    let _project = sqlx::query_as::<_, crate::db::models::Project>(
+        "SELECT * FROM projects WHERE id = ?",
+    )
+    .bind(&project_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+    .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+
+    let container_id = match sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT container_id FROM project_services WHERE project_id = ? AND service_name = ? AND status = 'running' AND container_id IS NOT NULL",
+    )
+    .bind(&project_id)
+    .bind(&service_name)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))? {
+        Some((Some(cid),)) => cid,
+        _ => return Ok(Json(MessageResponse {
+            message: format!("service '{}' is not running", service_name),
+        })),
+    };
+
+    let _ = state.docker.stop_container(&container_id).await;
+
+    sqlx::query(
+        "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?",
+    )
+    .bind(&project_id)
+    .bind(&service_name)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+
+    sync_caddy(&state).await;
+    tracing::info!(project = %project_id, service = %service_name, "service stopped");
+
+    Ok(Json(MessageResponse {
+        message: format!("service '{}' stopped", service_name),
+    }))
+}
+
+/// POST /projects/:id/services/:name/restart
+pub async fn restart_service(
+    State(state): State<AppState>,
+    Path((project_id, service_name)): Path<(String, String)>,
+) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+    let _project = sqlx::query_as::<_, crate::db::models::Project>(
+        "SELECT * FROM projects WHERE id = ?",
+    )
+    .bind(&project_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+    .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+
+    // Stop existing container if running
+    if let Some((Some(ref cid),)) = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT container_id FROM project_services WHERE project_id = ? AND service_name = ? AND container_id IS NOT NULL",
+    )
+    .bind(&project_id)
+    .bind(&service_name)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))? {
+        if state.docker.is_container_running(cid).await.unwrap_or(false) {
+            let _ = state.docker.stop_container(cid).await;
+        }
+    }
+
+    let config = get_service_config(&project_id, &service_name)?;
+
+    let (container_id, mapped_port) = state.docker.run_service_container(&config).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to restart service '{}': {}", service_name, e)))?;
+
+    if let Err(e) = state.docker.wait_for_network_ready(&container_id).await {
+        tracing::warn!(service = %service_name, error = %e, "network readiness timeout, continuing");
+    }
+
+    sqlx::query(
+        "UPDATE project_services SET container_id = ?, mapped_port = ?, status = 'running' WHERE project_id = ? AND service_name = ?",
+    )
+    .bind(&container_id)
+    .bind(mapped_port as i64)
+    .bind(&project_id)
+    .bind(&service_name)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+
+    sync_caddy(&state).await;
+    tracing::info!(project = %project_id, service = %service_name, "service restarted");
+
+    Ok(Json(MessageResponse {
+        message: format!("service '{}' restarted", service_name),
     }))
 }

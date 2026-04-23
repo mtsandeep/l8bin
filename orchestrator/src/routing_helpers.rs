@@ -63,7 +63,7 @@ pub async fn resolve_routes(
         let Some(_mapped_port) = project.mapped_port else {
             continue;
         };
-        if project.status != "running" && project.status != "degraded" {
+        if project.status != "running" {
             continue;
         }
 
@@ -202,13 +202,91 @@ pub async fn resolve_all_routes(
     domain: &str,
     orchestrator_upstream: &str,
 ) -> anyhow::Result<Vec<ProjectRoute>> {
+    // Running single-service projects get direct container routes
     let all_running = sqlx::query_as::<_, Project>(
-        "SELECT * FROM projects WHERE status IN ('running', 'degraded')",
+        "SELECT * FROM projects WHERE status = 'running' AND (service_count IS NULL OR service_count <= 1)",
     )
     .fetch_all(db)
     .await?;
 
     let mut routes = resolve_routes(&all_running, db, domain).await?;
+
+    // Multi-service running projects always route through the orchestrator waker,
+    // which health-checks all services on every request (throttled) and proxies to
+    // the container when healthy. This ensures crashed backend services are detected
+    // and recovered without depending on dashboard stats polling.
+    let multi_running = sqlx::query_as::<_, Project>(
+        "SELECT * FROM projects WHERE status = 'running' AND service_count > 1",
+    )
+    .fetch_all(db)
+    .await?;
+
+    for project in &multi_running {
+        let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
+        let node_public_ip = if is_local {
+            sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM nodes WHERE id = 'local'")
+                .fetch_optional(db)
+                .await?
+                .flatten()
+        } else {
+            let node_id = project.node_id.as_deref().unwrap_or("local");
+            sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM nodes WHERE id = ?")
+                .bind(node_id)
+                .fetch_optional(db)
+                .await?
+                .flatten()
+        };
+
+        routes.push(ProjectRoute {
+            project_id: project.id.clone(),
+            subdomain_host: format!("{}.{}", project.id, domain),
+            upstream: if is_local { orchestrator_upstream.to_string() } else { format!("{}:443", project.node_id.as_deref().unwrap_or("localhost")) },
+            custom_domain: project.custom_domain.clone(),
+            node_id: project.node_id.clone(),
+            node_public_ip,
+            host_rewrite: None,
+            upstream_tls: !is_local && project.node_id.is_some(),
+            container_upstream: None,
+            custom_routes: vec![],
+        });
+    }
+
+    // Degraded projects (some services stopped) — route to orchestrator so waker can recover
+    let degraded = sqlx::query_as::<_, Project>(
+        "SELECT * FROM projects WHERE status = 'degraded'",
+    )
+    .fetch_all(db)
+    .await?;
+
+    for project in &degraded {
+        let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
+        let node_public_ip = if is_local {
+            sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM nodes WHERE id = 'local'")
+                .fetch_optional(db)
+                .await?
+                .flatten()
+        } else {
+            let node_id = project.node_id.as_deref().unwrap_or("local");
+            sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM nodes WHERE id = ?")
+                .bind(node_id)
+                .fetch_optional(db)
+                .await?
+                .flatten()
+        };
+
+        routes.push(ProjectRoute {
+            project_id: project.id.clone(),
+            subdomain_host: format!("{}.{}", project.id, domain),
+            upstream: if is_local { orchestrator_upstream.to_string() } else { format!("{}:443", project.node_id.as_deref().unwrap_or("localhost")) },
+            custom_domain: project.custom_domain.clone(),
+            node_id: project.node_id.clone(),
+            node_public_ip,
+            host_rewrite: if is_local { None } else { Some(format!("{}.{}", project.id, domain)) },
+            upstream_tls: !is_local && project.node_id.is_some(),
+            container_upstream: None,
+            custom_routes: vec![],
+        });
+    }
 
     match resolve_sleeping_custom_domain_routes(db, domain, orchestrator_upstream).await {
         Ok(sleeping_cd_routes) => routes.extend(sleeping_cd_routes),

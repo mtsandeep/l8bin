@@ -245,6 +245,39 @@ export async function startProject(projectId: string): Promise<void> {
   }
 }
 
+export async function startService(projectId: string, serviceName: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/services/${encodeURIComponent(serviceName)}/start`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Start service failed'));
+  }
+}
+
+export async function stopService(projectId: string, serviceName: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/services/${encodeURIComponent(serviceName)}/stop`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Stop service failed'));
+  }
+}
+
+export async function restartService(projectId: string, serviceName: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/services/${encodeURIComponent(serviceName)}/restart`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Restart service failed'));
+  }
+}
+
 export async function deleteProject(projectId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/projects/${projectId}`, {
     method: 'DELETE',

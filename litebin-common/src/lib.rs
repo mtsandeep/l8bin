@@ -7,3 +7,4 @@ pub mod net;
 pub mod routing;
 pub mod sys;
 pub mod types;
+pub mod waker_pages;

@@ -7,10 +7,16 @@ use crate::types::RunServiceConfig;
 /// Result of building service configs from a compose file.
 /// Contains everything needed to deploy/wake a multi-service project.
 pub struct ComposeRunPlan {
-    /// Service names in topological (dependency) order.
+    /// Service names in topological (dependency) order (flattened).
     pub service_order: Vec<String>,
+    /// Service names grouped by topological level for parallel startup.
+    /// Services within the same level have no dependencies on each other.
+    pub service_levels: Vec<Vec<String>>,
+    /// service_name → [(dep_name, condition)] from depends_on.
+    /// Conditions: "service_started" (default), "service_healthy", "service_completed_successfully".
+    pub dependency_conditions: HashMap<String, Vec<(String, String)>>,
     /// Name of the public-facing service (if any).
-    pub public_service_name: Option<String>,
+    pub pub_service_name: Option<String>,
     /// Per-service RunServiceConfig, aligned with service_order.
     pub configs: Vec<RunServiceConfig>,
 }
@@ -24,21 +30,48 @@ impl ComposeRunPlan {
         extra_env: &[String],
         instance_id: Option<&str>,
     ) -> anyhow::Result<Self> {
-        let service_order = compose
-            .topological_sort()
+        let service_levels = compose
+            .topological_levels()
             .map_err(|e| anyhow::anyhow!("dependency error: {}", e))?;
 
-        let public_service_name = compose
+        let service_order: Vec<String> = service_levels.iter().flatten().cloned().collect();
+
+        let pub_service_name = compose
             .detect_public_service()
             .map_err(|e| anyhow::anyhow!("public service detection: {}", e))?;
 
-        let configs = build_configs(compose, project_id, extra_env, instance_id, &public_service_name, &service_order);
+        // Build dependency_conditions map from all services
+        let mut dependency_conditions: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        for (name, service) in &compose.services {
+            let conditions = service.dependency_conditions();
+            if !conditions.is_empty() {
+                dependency_conditions.insert(name.clone(), conditions);
+            }
+        }
+
+        let configs = build_configs(compose, project_id, extra_env, instance_id, &pub_service_name, &service_order);
 
         Ok(Self {
             service_order,
-            public_service_name,
+            service_levels,
+            dependency_conditions,
+            pub_service_name,
             configs,
         })
+    }
+
+    /// Check if a service's healthcheck should be waited for.
+    /// Returns true if any service in a later level depends on this service
+    /// with condition "service_healthy".
+    pub fn needs_healthy_wait(&self, svc_name: &str) -> bool {
+        for conditions in self.dependency_conditions.values() {
+            for (dep, cond) in conditions {
+                if dep == svc_name && cond == "service_healthy" {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -62,7 +95,7 @@ fn build_configs(
     project_id: &str,
     extra_env: &[String],
     instance_id: Option<&str>,
-    public_service_name: &Option<String>,
+    pub_service_name: &Option<String>,
     service_order: &[String],
 ) -> Vec<RunServiceConfig> {
     let env_map: HashMap<String, String> = extra_env
@@ -84,7 +117,7 @@ fn build_configs(
             let svc = compose.services.get(svc_name)?;
             let image = svc.image.clone()?;
 
-            let is_public = public_service_name.as_deref() == Some(svc_name.as_str());
+            let is_public = pub_service_name.as_deref() == Some(svc_name.as_str());
 
             let port: Option<u16> = svc.ports.as_ref()
                 .and_then(|p| p.first())

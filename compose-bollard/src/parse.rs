@@ -100,6 +100,30 @@ impl ComposeService {
         }
     }
 
+    /// Parse `depends_on` into (dep_name, condition) pairs.
+    /// Short form `depends_on: [api]` defaults to "service_started".
+    /// Map form `{ postgres: { condition: service_healthy } }` preserves the condition.
+    pub fn dependency_conditions(&self) -> Vec<(String, String)> {
+        match &self.depends_on {
+            None => Vec::new(),
+            Some(serde_yaml::Value::Sequence(list)) => list
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| (s.to_string(), "service_started".to_string())))
+                .collect(),
+            Some(serde_yaml::Value::Mapping(map)) => map
+                .iter()
+                .filter_map(|(k, v)| {
+                    let name = k.as_str()?.to_string();
+                    let condition = v.get("condition")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("service_started");
+                    Some((name, condition.to_string()))
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Parse `environment` into a Vec<"KEY=VALUE">.
     /// Handles both `KEY: VALUE` (map) and `KEY=VALUE` (list) formats.
     pub fn env_list(&self) -> Vec<String> {

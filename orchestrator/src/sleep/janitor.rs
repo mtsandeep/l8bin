@@ -93,7 +93,7 @@ async fn sweep(
                 if let Some(container_id) = cid {
                     stop_local_container(state, &project.id, container_id).await;
                     let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                        "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?"
                     )
                     .bind(&project.id)
                     .bind(svc_name)
@@ -102,9 +102,9 @@ async fn sweep(
                 }
             }
 
-            // Clear project's denormalized container_id
+            // Clear project's denormalized mapped_port
             let _ = sqlx::query(
-                "UPDATE projects SET container_id = NULL, mapped_port = NULL WHERE id = ?"
+                "UPDATE projects SET mapped_port = NULL WHERE id = ?"
             )
             .bind(&project.id)
             .execute(&state.db)
@@ -135,7 +135,7 @@ async fn sweep(
                 if let Some(container_id) = cid {
                     stop_remote_container(state, &project.id, &node_id, container_id).await;
                     let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                        "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?"
                     )
                     .bind(&project.id)
                     .bind(svc_name)
@@ -144,9 +144,9 @@ async fn sweep(
                 }
             }
 
-            // Clear project's denormalized container_id
+            // Clear project's denormalized mapped_port
             let _ = sqlx::query(
-                "UPDATE projects SET container_id = NULL, mapped_port = NULL WHERE id = ?"
+                "UPDATE projects SET mapped_port = NULL WHERE id = ?"
             )
             .bind(&project.id)
             .execute(&state.db)

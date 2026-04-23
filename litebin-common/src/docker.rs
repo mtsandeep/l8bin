@@ -78,6 +78,25 @@ impl DockerManager {
         Ok(())
     }
 
+    /// Connect a container (e.g. the orchestrator) to all existing per-project networks.
+    /// This ensures the orchestrator can proxy to multi-service containers after a restart.
+    pub async fn connect_to_project_networks(&self, container_name: &str) {
+        match self.docker.list_networks(None).await {
+            Ok(networks) => {
+                for net in networks {
+                    if let Some(name) = net.name.as_deref() {
+                        if name.starts_with("litebin-") && name != "litebin-network" && name != self.network {
+                            if let Err(e) = self.connect_container_to_network(container_name, name).await {
+                                tracing::warn!(network = name, error = %e, "failed to connect to project network");
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "failed to list networks"),
+        }
+    }
+
     pub async fn pull_image(&self, image: &str) -> anyhow::Result<()> {
         tracing::info!(image = %image, "pulling image");
 

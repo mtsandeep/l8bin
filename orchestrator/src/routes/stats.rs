@@ -65,13 +65,25 @@ type LiveStats = (f64, u64, u64, f64, Option<f64>);
 /// attach per-service stats to each ServiceInfo and return the final Vec.
 /// When running, memory_limit from Docker stats overrides the DB value.
 /// cpu_limit from inspect is used if DB value is None.
+/// Container IDs in `stopped_cids` are marked as "stopped" with disk from cache.
 fn enrich_services(
     services: &[(ServiceInfo, Option<String>)],
     stats_map: &std::collections::HashMap<String, LiveStats>,
+    stopped_cids: &std::collections::HashSet<String>,
+    disk_cache: &dashmap::DashMap<String, i64>,
 ) -> Vec<ServiceInfo> {
     services.iter().map(|(svc, cid)| {
         let mut enriched = svc.clone();
         if let Some(container_id) = cid {
+            if stopped_cids.contains(container_id) {
+                enriched.status = "stopped".to_string();
+                enriched.cpu_percent = None;
+                enriched.memory_usage = None;
+                if let Some(bytes) = disk_cache.get(container_id) {
+                    enriched.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                }
+                return enriched;
+            }
             if let Some(&(cpu, mem_usage, mem_limit, disk, cpu_limit)) = stats_map.get(container_id) {
                 enriched.cpu_percent = Some(cpu);
                 enriched.memory_usage = Some(mem_usage);
@@ -94,7 +106,7 @@ async fn project_container_ids(
 ) -> (Vec<String>, bool) {
     if project.service_count.unwrap_or(1) > 1 {
         let services: Vec<(Option<String>,)> = sqlx::query_as(
-            "SELECT container_id FROM project_services WHERE project_id = ? AND status = 'running' AND container_id IS NOT NULL",
+            "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
         )
         .bind(&project.id)
         .fetch_all(db)
@@ -212,7 +224,16 @@ async fn batch_load_services(
 }
 
 fn make_stats_response(project_id: String, status: String, services: Vec<ServiceInfo>) -> StatsResponse {
-    StatsResponse { project_id, status, services }
+    // Compute effective status: if DB says "running" but not all services are up, mark as "degraded"
+    let effective_status = if status == "running"
+        && !services.is_empty()
+        && services.iter().any(|s| s.status != "running")
+    {
+        "degraded".to_string()
+    } else {
+        status
+    };
+    StatsResponse { project_id, status: effective_status, services }
 }
 
 /// GET /projects/stats — returns stats + disk + services for all projects in one call
@@ -237,16 +258,16 @@ pub async fn all_project_stats(
     let mut local_projects: Vec<(String, Vec<String>)> = Vec::new();
     // For remote projects: node_id -> Vec<(project_id, Vec<container_id>)>
     let mut remote_by_node: std::collections::HashMap<String, Vec<(String, Vec<String>)>> = std::collections::HashMap::new();
-    // Stopped projects that still need disk lookups: (project_id, container_id, services_raw)
-    let mut disk_lookups: Vec<(String, String, Vec<(ServiceInfo, Option<String>)>)> = Vec::new();
+    // Stopped local projects that need per-service disk lookups: (project_id, services_raw)
+    let mut disk_lookups: Vec<(String, Vec<(ServiceInfo, Option<String>)>)> = Vec::new();
 
     for project in &projects {
         if project.status != "running" {
-            let (container_ids, _) = project_container_ids(&state.db, project).await;
             let services_raw = services_map.get(&project.id).cloned().unwrap_or_default();
-            let first_cid = container_ids.first().map(|s| s.as_str()).unwrap_or("");
 
-            if first_cid.is_empty() {
+            // Check if any service has a container_id for disk lookup
+            let has_any_cid = services_raw.iter().any(|(_, cid)| cid.is_some());
+            if !has_any_cid {
                 results.push(make_stats_response(
                     project.id.clone(),
                     project.status.clone(),
@@ -255,29 +276,15 @@ pub async fn all_project_stats(
                 continue;
             }
 
-            // Use cached disk if available
-            if let Some(bytes) = state.disk_cache.get(&project.id) {
-                let mut services = services_raw.into_iter().map(|(s, _)| s).collect::<Vec<_>>();
-                // Attach cached disk to the first service
-                if let Some(first_svc) = services.first_mut() {
-                    first_svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
-                }
+            let node_id = project.node_id.as_deref().unwrap_or("local");
+            if node_id == "local" {
+                disk_lookups.push((project.id.clone(), services_raw));
+            } else {
                 results.push(make_stats_response(
                     project.id.clone(),
                     project.status.clone(),
-                    services,
+                    services_raw.into_iter().map(|(s, _)| s).collect(),
                 ));
-            } else {
-                let node_id = project.node_id.as_deref().unwrap_or("local");
-                if node_id == "local" {
-                    disk_lookups.push((project.id.clone(), first_cid.to_string(), services_raw));
-                } else {
-                    results.push(make_stats_response(
-                        project.id.clone(),
-                        project.status.clone(),
-                        services_raw.into_iter().map(|(s, _)| s).collect(),
-                    ));
-                }
             }
             continue;
         }
@@ -306,18 +313,26 @@ pub async fn all_project_stats(
         }
     }
 
-    // Handle disk-only lookups for stopped local containers
-    for (project_id, container_id, services_raw) in disk_lookups {
-        let disk_gb = state.docker.disk_usage(&container_id).await
-            .map(|d| {
-                state.disk_cache.insert(project_id.clone(), d.size_root_fs as i64);
-                d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0)
-            })
-            .unwrap_or(0.0);
-
-        let mut services = services_raw.into_iter().map(|(s, _)| s).collect::<Vec<_>>();
-        if let Some(first_svc) = services.first_mut() {
-            first_svc.disk_gb = Some(disk_gb);
+    // Handle per-service disk lookups for stopped local containers
+    for (project_id, services_raw) in disk_lookups {
+        let mut services: Vec<ServiceInfo> = Vec::with_capacity(services_raw.len());
+        for (mut svc, cid) in services_raw {
+            if let Some(ref container_id) = cid {
+                match state.docker.disk_usage(container_id).await {
+                    Ok(d) => {
+                        let disk_gb = d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0);
+                        svc.disk_gb = Some(disk_gb);
+                        state.disk_cache.insert(container_id.clone(), d.size_root_fs as i64);
+                    }
+                    Err(_) => {
+                        // Container removed or unreachable — fall back to cached value
+                        if let Some(bytes) = state.disk_cache.get(container_id) {
+                            svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                        }
+                    }
+                }
+            }
+            services.push(svc);
         }
         results.push(make_stats_response(
             project_id,
@@ -333,19 +348,20 @@ pub async fn all_project_stats(
         // Collect stats for each container
         let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
         let mut any_running = false;
+        let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for cid in container_ids {
             let actually_running = state.docker.is_container_running(cid).await.unwrap_or(false);
             if !actually_running {
-                // Still alive? — check
-                let now = chrono::Utc::now().timestamp();
+                stopped_cids.insert(cid.clone());
                 // Try to cache disk before marking stopped
                 if let Ok(d) = state.docker.disk_usage(cid).await {
-                    state.disk_cache.insert(project_id.clone(), d.size_root_fs as i64);
+                    state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
                 }
-                let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-                    .bind(now)
+                // Update this specific service to stopped in DB
+                let _ = sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND container_id = ?")
                     .bind(project_id)
+                    .bind(cid)
                     .execute(&state.db)
                     .await;
                 caddy_dirty = true;
@@ -367,7 +383,7 @@ pub async fn all_project_stats(
 
             let (disk, cpu_limit) = match disk_res {
                 Ok(d) => {
-                    state.disk_cache.insert(project_id.clone(), d.size_root_fs as i64);
+                    state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
                     (d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0), d.cpu_limit)
                 }
                 Err(_) => (0.0, None),
@@ -377,13 +393,21 @@ pub async fn all_project_stats(
         }
 
         if !any_running {
-            let mut services = services_raw.into_iter().map(|(s, _)| s).collect::<Vec<_>>();
-            let disk_gb = state.disk_cache.get(project_id)
-                .map(|bytes| *bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-                .unwrap_or(0.0);
-            if let Some(first_svc) = services.first_mut() {
-                first_svc.disk_gb = Some(disk_gb);
-            }
+            // All containers stopped — mark project as stopped
+            let now = chrono::Utc::now().timestamp();
+            let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
+                .bind(now)
+                .bind(project_id)
+                .execute(&state.db)
+                .await;
+            let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(mut svc, cid)| {
+                if let Some(container_id) = cid {
+                    if let Some(bytes) = state.disk_cache.get(&container_id) {
+                        svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                    }
+                }
+                svc
+            }).collect();
             results.push(make_stats_response(
                 project_id.clone(),
                 "stopped".to_string(),
@@ -392,12 +416,26 @@ pub async fn all_project_stats(
             continue;
         }
 
-        let services = enrich_services(&services_raw, &per_container);
+        let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
         results.push(make_stats_response(
             project_id.clone(),
             "running".to_string(),
             services,
         ));
+
+        // If some services are stopped but not all, mark project as "degraded" in DB
+        // so the route resolver points traffic to the orchestrator waker
+        if !stopped_cids.is_empty() && any_running {
+            let now = chrono::Utc::now().timestamp();
+            let _ = sqlx::query("UPDATE projects SET status = 'degraded', updated_at = ? WHERE id = ? AND status != 'degraded'")
+                .bind(now)
+                .bind(project_id)
+                .execute(&state.db)
+                .await;
+            if !caddy_dirty {
+                caddy_dirty = true;
+            }
+        }
     }
 
     // Fetch remote stats — one POST per node with all container IDs
@@ -484,6 +522,7 @@ pub async fn all_project_stats(
         // Collect per-container stats and group by project
         let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
         let mut project_stats: std::collections::HashMap<String, (f64, u64, u64, f64)> = std::collections::HashMap::new();
+        let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         match resp.json::<Vec<serde_json::Value>>().await {
             Ok(items) => {
@@ -494,14 +533,15 @@ pub async fn all_project_stats(
                     let disk_gb = item["disk_gb"].as_f64().unwrap_or(0.0);
 
                     if disk_gb > 0.0 {
-                        state.disk_cache.insert(project_id.clone(), (disk_gb * 1024.0 * 1024.0 * 1024.0) as i64);
+                        state.disk_cache.insert(cid.to_string(), (disk_gb * 1024.0 * 1024.0 * 1024.0) as i64);
                     }
 
                     if state_str == "stopped" {
-                        let now = chrono::Utc::now().timestamp();
-                        let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-                            .bind(now)
+                        stopped_cids.insert(cid.to_string());
+                        // Update this specific service to stopped in DB
+                        let _ = sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND container_id = ?")
                             .bind(&project_id)
+                            .bind(cid)
                             .execute(&state.db)
                             .await;
                         caddy_dirty = true;
@@ -531,21 +571,38 @@ pub async fn all_project_stats(
         for (project_id, _) in projects_containers {
             let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
             if project_stats.contains_key(project_id) {
-                let services = enrich_services(&services_raw, &per_container);
+                let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
                 results.push(make_stats_response(
                     project_id.clone(),
                     "running".to_string(),
                     services,
                 ));
-            } else {
-                // All containers were stopped
-                let mut services = services_raw.into_iter().map(|(s, _)| s).collect::<Vec<_>>();
-                let disk_gb = state.disk_cache.get(project_id)
-                    .map(|bytes| *bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-                    .unwrap_or(0.0);
-                if let Some(first_svc) = services.first_mut() {
-                    first_svc.disk_gb = Some(disk_gb);
+                // Mark degraded if some services stopped
+                if !stopped_cids.is_empty() {
+                    let now = chrono::Utc::now().timestamp();
+                    let _ = sqlx::query("UPDATE projects SET status = 'degraded', updated_at = ? WHERE id = ? AND status != 'degraded'")
+                        .bind(now)
+                        .bind(project_id)
+                        .execute(&state.db)
+                        .await;
+                    if !caddy_dirty { caddy_dirty = true; }
                 }
+            } else {
+                // All containers were stopped — mark project as stopped
+                let now = chrono::Utc::now().timestamp();
+                let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
+                    .bind(now)
+                    .bind(project_id)
+                    .execute(&state.db)
+                    .await;
+                let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(mut svc, cid)| {
+                    if let Some(container_id) = cid {
+                        if let Some(bytes) = state.disk_cache.get(&container_id) {
+                            svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                        }
+                    }
+                    svc
+                }).collect();
                 results.push(make_stats_response(
                     project_id.clone(),
                     "stopped".to_string(),
@@ -603,10 +660,18 @@ pub async fn project_stats(
     // Per-service stats breakdown
     let mut any_running = false;
     let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
+    let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for cid in &container_ids {
         let actually_running = state.docker.is_container_running(cid).await.unwrap_or(false);
         if !actually_running {
+            stopped_cids.insert(cid.clone());
+            // Update this specific service to stopped in DB
+            let _ = sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND container_id = ?")
+                .bind(&project_id)
+                .bind(cid)
+                .execute(&state.db)
+                .await;
             continue;
         }
         any_running = true;
@@ -644,7 +709,7 @@ pub async fn project_stats(
         )));
     }
 
-    let services = enrich_services(&services_raw, &per_container);
+    let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
     Ok(Json(make_stats_response(
         project_id,
         project.status,

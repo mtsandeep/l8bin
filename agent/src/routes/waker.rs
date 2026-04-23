@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use tokio::task::JoinSet;
 
 use axum::{
     body::Body,
     extract::State,
-    http::{HeaderMap, Request, Response, StatusCode},
+    http::{HeaderMap, Method, Request, Response, StatusCode},
 };
 use hmac::{Hmac, Mac};
 use serde_json::json;
@@ -11,9 +12,64 @@ use sha2::Sha256;
 use tokio::sync::Notify;
 
 use crate::{AgentState, WakeGuard};
+use litebin_common::docker::DockerManager;
 
-fn footer_html() -> String {
-    format!(r#"<footer style="position:fixed;bottom:16px;left:0;right:0;text-align:center;color:#94a3b8;font-size:1rem;">Powered by <a href="https://l8bin.com" style="color:#7c3aed;text-decoration:none;">l8bin</a></footer>"#)
+/// Hop-by-hop headers that must not be forwarded when proxying.
+const HOP_BY_HOP: &[&str] = &[
+    "connection", "transfer-encoding", "upgrade", "keep-alive",
+    "proxy-connection", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "trailer",
+];
+
+/// Reverse-proxy a request to a container on the Docker network.
+/// Streams the response back to the client.
+async fn proxy_request(
+    client: &reqwest::Client,
+    method: Method,
+    upstream: &str,
+    path_and_query: Option<&str>,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+) -> Response<Body> {
+    let url = format!("http://{}{}", upstream, path_and_query.unwrap_or("/"));
+
+    let mut req = client.request(method, &url);
+    for (name, value) in headers.iter() {
+        if HOP_BY_HOP.contains(&name.as_str().to_lowercase().as_str()) {
+            continue;
+        }
+        req = req.header(name, value);
+    }
+    if !body.is_empty() {
+        req = req.body(body);
+    }
+
+    match req.send().await {
+        Ok(resp) => {
+            let mut builder = Response::builder().status(resp.status());
+            for (name, value) in resp.headers().iter() {
+                if HOP_BY_HOP.contains(&name.as_str().to_lowercase().as_str()) {
+                    continue;
+                }
+                builder = builder.header(name, value);
+            }
+            builder
+                .body(Body::from_stream(resp.bytes_stream()))
+                .unwrap_or_else(|_| {
+                    Response::builder()
+                        .status(StatusCode::BAD_GATEWAY)
+                        .body(Body::from("Bad gateway"))
+                        .unwrap()
+                })
+        }
+        Err(e) => {
+            tracing::error!(error = %e, upstream = %upstream, "proxy error");
+            Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(Body::from("Bad gateway"))
+                .unwrap()
+        }
+    }
 }
 
 /// Check if the client wants JSON (not HTML). Used to return 503+JSON for API clients.
@@ -57,12 +113,17 @@ fn get_domain(state: &AgentState) -> Option<String> {
 /// Catch-all wake handler for the agent.
 /// Extracts the subdomain from the Host header, finds the matching container
 /// by name (`litebin-{subdomain}`), and wakes it if stopped.
+/// For multi-service projects, health-checks all services (throttled) and proxies.
 pub async fn wake(
     State(state): State<AgentState>,
-    headers: HeaderMap,
-    _req: Request<Body>,
+    req: Request<Body>,
 ) -> Response<Body> {
+    let (parts, body) = req.into_parts();
+    let headers = parts.headers.clone();
+    let method = parts.method.clone();
+    let uri = parts.uri.clone();
     let json = wants_json(&headers);
+    let body = axum::body::to_bytes(body, 10 * 1024 * 1024).await.unwrap_or_default();
 
     let domain = match get_domain(&state) {
         Some(d) => d,
@@ -109,8 +170,85 @@ pub async fn wake(
         .await
         .unwrap_or(false);
 
-    if is_running {
-        // Container is running — rebuild local Caddy and return loading page
+    if is_running && is_multi_service {
+        // If a wake is still in progress (e.g. DNS wait after container start), show loading page
+        if state.wake_locks.contains_key(&subdomain) {
+            return if json { starting_json_response() } else { loading_page(&subdomain) };
+        }
+
+        // Multi-service running: health-check all services (throttled) and proxy to container.
+        let should_check = state
+            .multi_svc_health_check
+            .get(&subdomain)
+            .map(|t| t.elapsed() >= std::time::Duration::from_secs(5))
+            .unwrap_or(true);
+
+        let mut public_service_up = true;
+
+        if should_check {
+            state.multi_svc_health_check.insert(subdomain.clone(), std::time::Instant::now());
+
+            let prefix = format!("litebin-{}.", subdomain);
+            let container_names = match state.docker.list_containers_by_prefix(&prefix).await {
+                Ok(names) => names,
+                Err(_) => Vec::new(),
+            };
+
+            let mut stopped_services = Vec::new();
+            for cname in &container_names {
+                if let Ok(Some(id)) = state.docker.find_container_by_name(cname).await {
+                    if !state.docker.is_container_running(&id).await.unwrap_or(false) {
+                        stopped_services.push(cname.clone());
+                    }
+                }
+            }
+
+            if !stopped_services.is_empty() {
+                tracing::info!(project = %subdomain, stopped = ?stopped_services, "agent waker: multi-service has crashed services");
+
+                // Check if the public service is among the crashed ones
+                let public_upstream = find_public_service_upstream(&subdomain);
+                let public_container_name = public_upstream.as_ref()
+                    .and_then(|u| u.split(':').next())
+                    .unwrap_or("");
+
+                let public_down = stopped_services.iter().any(|s| s == public_container_name);
+
+                if public_down {
+                    // Public service is down — fall through to wake lock (loading page)
+                    public_service_up = false;
+                } else {
+                    // Non-public services down but public service up — silently recover in background
+                    let state_clone = state.clone();
+                    let subdomain_clone = subdomain.clone();
+                    tokio::spawn(async move {
+                        tracing::info!(project = %subdomain_clone, "agent waker: background recovery of degraded services");
+                        match wake_multi_service(&state_clone, &subdomain_clone).await {
+                            Ok(_) => {
+                                let _ = rebuild_local_caddy(&state_clone).await;
+                                tracing::info!(project = %subdomain_clone, "agent waker: background recovery succeeded");
+                            }
+                            Err(e) => tracing::warn!(project = %subdomain_clone, error = %e, "agent waker: background recovery failed"),
+                        }
+                    });
+                }
+            }
+        }
+
+        if public_service_up {
+            // Public service is healthy — proxy the request to the container
+            if let Some(upstream) = find_public_service_upstream(&subdomain) {
+                let resp = proxy_request(&state.proxy_client, method, &upstream, uri.path_and_query().map(|pq| pq.as_str()), &headers, body).await;
+                if resp.status() == StatusCode::BAD_GATEWAY {
+                    return if json { starting_json_response() } else { loading_page(&subdomain) };
+                }
+                return resp;
+            }
+            tracing::warn!(project = %subdomain, "agent waker: multi-service has no public service upstream, falling through");
+        }
+        // Public service is down — fall through to wake lock below
+    } else if is_running {
+        // Single-service running — rebuild local Caddy and return loading page
         let _ = rebuild_local_caddy(&state).await;
         return if json { starting_json_response() } else { loading_page(&subdomain) };
     }
@@ -310,6 +448,22 @@ fn extract_subdomain<'a>(host: &'a str, domain: &str) -> Option<&'a str> {
     None
 }
 
+/// Find the upstream address for the public service of a multi-service project.
+/// Reads compose.yaml from disk, parses it, finds the service marked as public,
+/// and returns `{container_name}:{port}`.
+fn find_public_service_upstream(project_id: &str) -> Option<String> {
+    let compose_yaml = DockerManager::read_compose(project_id)?;
+    let extra_env = super::containers::read_project_env(project_id);
+    let plan = litebin_common::compose_run::build_compose_run_plan(
+        &compose_yaml, project_id, &extra_env, None,
+    ).ok()?;
+
+    let public = plan.configs.iter().find(|c| c.is_public)?;
+    let port = public.port.unwrap_or(80) as u16;
+    let container_name = litebin_common::types::container_name(project_id, &public.service_name, None);
+    Some(format!("{}:{}", container_name, port))
+}
+
 /// Rebuild the local Caddy config with all currently running litebin containers.
 /// Uses the last orchestrator-pushed config as a base (preserving sleeping custom domain
 /// routes, TLS config, etc.) and adds/updates routes for running containers from Docker.
@@ -385,27 +539,47 @@ fn merge_routes_with_persisted(
         }
     }
 
-    // Add/update running container routes using Docker network container names.
-    // Uses the container_name from the parsed info for multi-service support.
-    // Only public services (web) get subdomain routes.
+    // Group containers by project_id to detect multi-service projects
+    let mut by_project: std::collections::HashMap<String, Vec<&litebin_common::docker::RunningContainer>> =
+        std::collections::HashMap::new();
     for c in containers {
-        // For multi-service, only route via the primary container name for the subdomain
-        let upstream = format!("{}:{}", c.container_name, c.internal_port);
-        let subdomain_host = format!("{}.{}", c.project_id, domain);
-        route_map.insert(
-            subdomain_host.clone(),
-            json!({
-                "match": [{ "host": [subdomain_host] }],
-                "handle": [{
-                    "handler": "reverse_proxy",
-                    "upstreams": [{ "dial": upstream }]
-                }]
-            }),
-        );
+        by_project.entry(c.project_id.clone()).or_default().push(c);
+    }
 
-        // Upgrade sleeping custom domain routes for this container to running routes.
-        // A sleeping custom domain route has headers.request.set.Host = "{project_id}.{domain}".
-        // Replace it with a direct proxy to the container (no Host rewrite).
+    // Build routes: multi-service → wake server, single-service → direct to container
+    let wake_server_upstream = "host.docker.internal:8444";
+    for (project_id, svc_containers) in &by_project {
+        let subdomain_host = format!("{}.{}", project_id, domain);
+
+        if svc_containers.len() > 1 {
+            // Multi-service: route to agent wake server (health-checked per-request)
+            route_map.insert(
+                subdomain_host.clone(),
+                json!({
+                    "match": [{ "host": [subdomain_host] }],
+                    "handle": [{
+                        "handler": "reverse_proxy",
+                        "upstreams": [{ "dial": wake_server_upstream }]
+                    }]
+                }),
+            );
+        } else {
+            // Single-service: direct to container
+            let c = &svc_containers[0];
+            let upstream = format!("{}:{}", c.container_name, c.internal_port);
+            route_map.insert(
+                subdomain_host.clone(),
+                json!({
+                    "match": [{ "host": [subdomain_host] }],
+                    "handle": [{
+                        "handler": "reverse_proxy",
+                        "upstreams": [{ "dial": upstream }]
+                    }]
+                }),
+            );
+        }
+
+        // Upgrade sleeping custom domain routes for this project to running routes.
         let mut hosts_to_upgrade: Vec<String> = Vec::new();
         for (host, route) in &route_map {
             if let Some(set_host) = route
@@ -419,6 +593,12 @@ fn merge_routes_with_persisted(
                 }
             }
         }
+
+        let upstream_for_cd = if svc_containers.len() > 1 {
+            wake_server_upstream.to_string()
+        } else {
+            format!("{}:{}", svc_containers[0].container_name, svc_containers[0].internal_port)
+        };
         for host in hosts_to_upgrade {
             route_map.insert(
                 host.clone(),
@@ -426,7 +606,7 @@ fn merge_routes_with_persisted(
                     "match": [{ "host": [host] }],
                     "handle": [{
                         "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": upstream }]
+                        "upstreams": [{ "dial": upstream_for_cd }]
                     }]
                 }),
             );
@@ -475,17 +655,37 @@ fn build_config_from_scratch(
 ) -> serde_json::Value {
     let mut routes: Vec<serde_json::Value> = Vec::new();
 
-    // Running container routes using Docker network names
+    // Group containers by project_id to detect multi-service projects
+    let mut by_project: std::collections::HashMap<String, Vec<&litebin_common::docker::RunningContainer>> =
+        std::collections::HashMap::new();
     for c in containers {
-        let host = format!("{}.{}", c.project_id, domain);
-        let upstream = format!("{}:{}", c.container_name, c.internal_port);
-        routes.push(json!({
-            "match": [{ "host": [host] }],
-            "handle": [{
-                "handler": "reverse_proxy",
-                "upstreams": [{ "dial": upstream }]
-            }]
-        }));
+        by_project.entry(c.project_id.clone()).or_default().push(c);
+    }
+
+    let wake_server_upstream = "host.docker.internal:8444";
+    for (project_id, svc_containers) in &by_project {
+        let host = format!("{}.{}", project_id, domain);
+        if svc_containers.len() > 1 {
+            // Multi-service: route to agent wake server (health-checked per-request)
+            routes.push(json!({
+                "match": [{ "host": [host] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": wake_server_upstream }]
+                }]
+            }));
+        } else {
+            // Single-service: direct to container
+            let c = &svc_containers[0];
+            let upstream = format!("{}:{}", c.container_name, c.internal_port);
+            routes.push(json!({
+                "match": [{ "host": [host] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": upstream }]
+                }]
+            }));
+        }
     }
 
     // Catch-all returns 502 so master Caddy's handle_response triggers the waker
@@ -650,31 +850,7 @@ async fn report_wake_to_master(
 }
 
 fn loading_page(project_id: &str) -> Response<Body> {
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="1">
-    <title>Starting {}</title>
-    <style>
-        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
-        .loader {{ text-align: center; }}
-        .spinner {{ width: 40px; height: 40px; border: 4px solid #334155; border-top: 4px solid #38bdf8; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }}
-        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-    </style>
-</head>
-<body>
-    <div class="loader">
-        <div class="spinner"></div>
-        <p>Starting <strong>{}</strong>...</p>
-        {}
-    </div>
-</body>
-</html>"#,
-        project_id, project_id,
-        footer_html()
-    );
+    let html = litebin_common::waker_pages::loading_page_html(project_id);
 
     Response::builder()
         .status(StatusCode::OK)
@@ -684,30 +860,7 @@ fn loading_page(project_id: &str) -> Response<Body> {
 }
 
 fn error_page(_project_id: &str) -> Response<Body> {
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="30">
-    <title>Offline</title>
-    <style>
-        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
-        .msg {{ text-align: center; }}
-        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
-        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
-    </style>
-</head>
-<body>
-    <div class="msg">
-        <h2>Failed to start the website</h2>
-        <p>Retrying in 30 seconds...</p>
-        {}
-    </div>
-</body>
-</html>"#,
-        footer_html()
-    );
+    let html = litebin_common::waker_pages::error_page_html();
 
     Response::builder()
         .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -717,29 +870,7 @@ fn error_page(_project_id: &str) -> Response<Body> {
 }
 
 fn offline_page() -> Response<Body> {
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Offline</title>
-    <style>
-        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
-        .msg {{ text-align: center; }}
-        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
-        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
-    </style>
-</head>
-<body>
-    <div class="msg">
-        <h2>This website is currently offline</h2>
-        <p>Auto-start is disabled!</p>
-        {}
-    </div>
-</body>
-</html>"#,
-        footer_html()
-    );
+    let html = litebin_common::waker_pages::offline_page_html();
 
     Response::builder()
         .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -826,35 +957,92 @@ async fn wake_multi_service(state: &AgentState, project_id: &str) -> anyhow::Res
     let project_network = litebin_common::types::project_network_name(project_id, None);
     let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
 
+    // Connect agent to the project network so it can proxy to containers
+    let agent_container = std::env::var("AGENT_CONTAINER_NAME")
+        .unwrap_or_else(|_| "litebin-agent".into());
+    let _ = state.docker.connect_container_to_network(&agent_container, &project_network).await;
+
+    // Build owned lookup: service_name -> RunServiceConfig
+    let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
+        plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
+
     let mut public_container_id: Option<String> = None;
     let mut public_mapped_port: Option<u16> = None;
+    let any_created = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    for config in &plan.configs {
-        // Remove existing stopped container before recreating
-        let _ = state.docker.remove_by_service_name(project_id, &config.service_name, None).await;
+    // Start services level by level — parallel within each level
+    for level in &plan.service_levels {
+        let mut tasks: JoinSet<Result<(String, u16, bool), String>> = JoinSet::new();
 
-        match state.docker.run_service_container(config).await {
-            Ok((container_id, mapped_port)) => {
+        for svc_name in level {
+            let run_config = configs_map[svc_name].clone();
+            let docker = state.docker.clone();
+            let svc = svc_name.clone();
+            let is_public = run_config.is_public;
+            let pid = project_id.to_string();
+            let any_created = any_created.clone();
+
+            tasks.spawn(async move {
+                // Check if container already exists and is running
+                let cname = litebin_common::types::container_name(&pid, &svc, None);
+                if let Ok(Some(existing_id)) = docker.find_container_by_name(&cname).await {
+                    if docker.is_container_running(&existing_id).await.unwrap_or(false) {
+                        tracing::info!(
+                            project_id = %pid,
+                            service = %svc,
+                            "wake_multi_service: service already running, skipping"
+                        );
+                        // Return existing container info so public service tracking still works
+                        let port = run_config.port.unwrap_or(80) as u16;
+                        return Ok((existing_id, port, is_public));
+                    }
+                    // Container exists but is stopped — just start it (fast path)
+                    docker.start_existing_container(&existing_id).await
+                        .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
+                    tracing::info!(
+                        project_id = %pid,
+                        service = %svc,
+                        container = %existing_id,
+                        "wake_multi_service: started existing stopped container"
+                    );
+                    let port = run_config.port.unwrap_or(80) as u16;
+                    return Ok((existing_id, port, is_public));
+                }
+
+                let (container_id, mapped_port) = docker.run_service_container(&run_config).await
+                    .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
+
+                any_created.store(true, std::sync::atomic::Ordering::Relaxed);
+
                 tracing::info!(
-                    project_id = %project_id,
-                    service = %config.service_name,
+                    project_id = %pid,
+                    service = %svc,
                     container = %container_id,
                     port = %mapped_port,
-                    "wake_multi_service: service started"
+                    "wake_multi_service: service created"
                 );
-                if config.is_public {
-                    public_container_id = Some(container_id.clone());
-                    public_mapped_port = Some(mapped_port);
+
+                Ok((container_id, mapped_port, is_public))
+            });
+        }
+
+        // Collect results from this level
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok(Ok((container_id, mapped_port, is_public))) => {
+                    if is_public {
+                        public_container_id = Some(container_id.clone());
+                        public_mapped_port = Some(mapped_port);
+                    }
                 }
-            }
-            Err(e) => {
-                tracing::error!(
-                    project_id = %project_id,
-                    service = %config.service_name,
-                    error = %e,
-                    "wake_multi_service: failed to start service"
-                );
-                anyhow::bail!("failed to start service {}: {}", config.service_name, e);
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "wake_multi_service: failed to start service");
+                    anyhow::bail!("{}", e);
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "wake_multi_service: service task panicked");
+                    anyhow::bail!("service task panicked");
+                }
             }
         }
     }
@@ -868,33 +1056,17 @@ async fn wake_multi_service(state: &AgentState, project_id: &str) -> anyhow::Res
     }
 
     tracing::info!(project_id = %project_id, "wake_multi_service: all services started");
+
+    // Wait for Docker DNS to propagate only if we created new containers.
+    if any_created.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+
     Ok(())
 }
 
 fn not_found_page() -> Response<Body> {
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Not Found</title>
-    <style>
-        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
-        .msg {{ text-align: center; }}
-        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
-        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
-    </style>
-</head>
-<body>
-    <div class="msg">
-        <h2>Project not found</h2>
-        <p>This project does not exist or has been removed.</p>
-        {}
-    </div>
-</body>
-</html>"#,
-        footer_html()
-    );
+    let html = litebin_common::waker_pages::not_found_page_html();
 
     Response::builder()
         .status(StatusCode::NOT_FOUND)

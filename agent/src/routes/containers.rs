@@ -8,6 +8,7 @@ use litebin_common::types::{ContainerStatus, VolumeMount};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash as StdHash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use tokio::task::JoinSet;
 use crate::AgentState;
 
 fn projects_dir() -> std::path::PathBuf {
@@ -791,38 +792,63 @@ pub async fn batch_run(
         }
     }
 
-    // Start services in topological order
+    // Build owned lookup: service_name -> RunServiceConfig
+    let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
+        plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
+
+    // Start services level by level — parallel within each level
     let mut results: Vec<ServiceRunResult> = Vec::new();
-    for config in &plan.configs {
-        match state.docker.run_service_container(config).await {
-            Ok((container_id, mapped_port)) => {
-                tracing::info!(
-                    project = %req.project_id,
-                    service = %config.service_name,
-                    container = %container_id,
-                    port = %mapped_port,
-                    "batch-run: service started"
-                );
-                results.push(ServiceRunResult {
-                    service_name: config.service_name.clone(),
-                    container_id: Some(container_id),
-                    mapped_port: Some(mapped_port),
-                    error: None,
-                });
-            }
-            Err(e) => {
-                tracing::error!(
-                    project = %req.project_id,
-                    service = %config.service_name,
-                    error = %e,
-                    "batch-run: failed to start service"
-                );
-                results.push(ServiceRunResult {
-                    service_name: config.service_name.clone(),
-                    container_id: None,
-                    mapped_port: None,
-                    error: Some(e.to_string()),
-                });
+    for level in &plan.service_levels {
+        let mut tasks: JoinSet<ServiceRunResult> = JoinSet::new();
+
+        for svc_name in level {
+            let run_config = configs_map[svc_name].clone();
+            let docker = state.docker.clone();
+            let svc = svc_name.clone();
+            let pid = req.project_id.clone();
+
+            tasks.spawn(async move {
+                match docker.run_service_container(&run_config).await {
+                    Ok((container_id, mapped_port)) => {
+                        tracing::info!(
+                            project = %pid,
+                            service = %svc,
+                            container = %container_id,
+                            port = %mapped_port,
+                            "batch-run: service started"
+                        );
+                        ServiceRunResult {
+                            service_name: svc,
+                            container_id: Some(container_id),
+                            mapped_port: Some(mapped_port),
+                            error: None,
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            project = %pid,
+                            service = %svc,
+                            error = %e,
+                            "batch-run: failed to start service"
+                        );
+                        ServiceRunResult {
+                            service_name: svc,
+                            container_id: None,
+                            mapped_port: None,
+                            error: Some(e.to_string()),
+                        }
+                    }
+                }
+            });
+        }
+
+        // Collect results from this level
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok(r) => results.push(r),
+                Err(e) => {
+                    tracing::error!(error = %e, "batch-run: service task panicked");
+                }
             }
         }
     }

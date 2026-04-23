@@ -27,6 +27,12 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string; labe
     dot: 'bg-orange-400 animate-pulse',
     label: 'Stopping',
   },
+  degraded: {
+    bg: 'bg-yellow-500/10',
+    text: 'text-yellow-400',
+    dot: 'bg-yellow-400',
+    label: 'Degraded',
+  },
   waking: {
     bg: 'bg-sky-500/10',
     text: 'text-sky-400',

@@ -35,6 +35,10 @@ pub struct AgentState {
     pub registration: Arc<std::sync::RwLock<Option<AgentRegistration>>>,
     pub last_caddy_config: Arc<std::sync::RwLock<Option<serde_json::Value>>>,
     pub project_meta: Arc<std::sync::RwLock<HashMap<String, bool>>>,  // project_id → auto_start_enabled
+    // Reverse proxy client for multi-service projects (always routed through agent waker)
+    pub proxy_client: reqwest::Client,
+    // Per-project throttle for multi-service health checks (5s cooldown)
+    pub multi_svc_health_check: Arc<DashMap<String, std::time::Instant>>,
 }
 
 const REGISTRATION_FILE: &str = "data/agent-state.json";
@@ -154,6 +158,11 @@ async fn main() -> Result<()> {
         cpu_limit,
     )?);
 
+    // Connect agent to all existing project networks so it can proxy to containers
+    let agent_id = std::env::var("AGENT_CONTAINER_NAME")
+        .unwrap_or_else(|_| "litebin-agent".into());
+    docker.connect_to_project_networks(&agent_id).await;
+
     // Load persisted Caddy config (if orchestrator previously pushed one)
     let last_caddy_config: Arc<std::sync::RwLock<Option<serde_json::Value>>> =
         Arc::new(std::sync::RwLock::new(
@@ -178,6 +187,8 @@ async fn main() -> Result<()> {
         registration: registration.clone(),
         last_caddy_config: last_caddy_config.clone(),
         project_meta: project_meta.clone(),
+        proxy_client: reqwest::Client::new(),
+        multi_svc_health_check: Arc::new(DashMap::new()),
     };
 
     // Push persisted Caddy config on startup (so routes exist immediately)

@@ -1,6 +1,7 @@
 use axum::{http::StatusCode, Json};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::AppState;
 
@@ -29,7 +30,7 @@ pub async fn stop_all_services(state: &AppState, project_id: &str) {
         if let Some(container_id) = cid {
             let _ = state.docker.stop_container(container_id).await;
             let _ = sqlx::query(
-                "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?"
+                "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?"
             )
             .bind(&project_id)
             .bind(svc_name)
@@ -68,7 +69,15 @@ pub async fn delete_all_services(state: &AppState, project_id: &str) {
     let _ = state.docker.remove_project_network(&project_id, None).await;
 }
 
+/// Result of starting a single service container.
+struct StartedService {
+    container_id: String,
+    mapped_port: u16,
+    is_public: bool,
+}
+
 /// Start all services for a multi-service project (reads compose.yaml from disk).
+/// Uses parallel startup within topological levels and respects depends_on conditions.
 /// Used by `start_project` API and can be reused by other callers.
 pub async fn start_all_services(
     state: &AppState,
@@ -98,46 +107,88 @@ pub async fn start_all_services(
     let plan = litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose error: {e}")))?;
 
+    // Build owned lookup: service_name -> RunServiceConfig
+    // Pre-compute which services need healthcheck waits
+    let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
+        plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
+    let healthy_wait_set: std::collections::HashSet<String> = plan.service_order.iter()
+        .filter(|s| plan.needs_healthy_wait(s))
+        .cloned()
+        .collect();
+    let has_healthcheck: std::collections::HashSet<String> = plan.service_order.iter()
+        .filter(|s| compose.services.get(s.as_str()).and_then(|svc| svc.healthcheck.as_ref()).is_some())
+        .cloned()
+        .collect();
+
     let mut public_container_id = String::new();
     let mut public_mapped_port: u16 = 0;
 
-    for run_config in &plan.configs {
-        let svc_name = &run_config.service_name;
+    // Start services level by level — parallel within each level
+    for level in &plan.service_levels {
+        let mut tasks: JoinSet<Result<StartedService, String>> = JoinSet::new();
 
-        let (container_id, mapped_port) = state.docker.run_service_container(run_config).await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to start service '{}': {}", svc_name, e)))?;
+        for svc_name in level {
+            let run_config = configs_map[svc_name].clone();
+            let db = state.db.clone();
+            let docker = state.docker.clone();
+            let svc = svc_name.clone();
+            let needs_healthy = healthy_wait_set.contains(svc_name) && has_healthcheck.contains(svc_name);
+            let is_public = run_config.is_public;
 
-        tracing::info!(service = %svc_name, container_id = %container_id, port = %mapped_port, "multi-service: service started");
+            tasks.spawn(async move {
+                let (container_id, mapped_port) = docker.run_service_container(&run_config).await
+                    .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
 
-        // Wait for network readiness
-        if let Err(e) = state.docker.wait_for_network_ready(&container_id).await {
-            tracing::warn!(service = %svc_name, error = %e, "network readiness timeout, continuing");
+                tracing::info!(service = %svc, container_id = %container_id, port = %mapped_port, "multi-service: service started");
+
+                // Wait for network readiness
+                if let Err(e) = docker.wait_for_network_ready(&container_id).await {
+                    tracing::warn!(service = %svc, error = %e, "network readiness timeout, continuing");
+                }
+
+                // Wait for healthcheck only if a downstream service depends on it with service_healthy
+                if needs_healthy {
+                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
+                        tracing::warn!(service = %svc, error = %e, "healthcheck failed, continuing");
+                    }
+                }
+
+                // Update project_services row
+                let _ = sqlx::query(
+                    "UPDATE project_services SET container_id = ?, mapped_port = ?, status = 'running' WHERE project_id = ? AND service_name = ?"
+                )
+                .bind(&container_id)
+                .bind(mapped_port as i64)
+                .bind(&run_config.project_id)
+                .bind(&svc)
+                .execute(&db)
+                .await;
+
+                Ok(StartedService {
+                    container_id,
+                    mapped_port,
+                    is_public,
+                })
+            });
         }
 
-        // Wait for healthcheck if defined
-        let has_healthcheck = compose.services.get(svc_name)
-            .and_then(|s| s.healthcheck.as_ref())
-            .is_some();
-        if has_healthcheck {
-            if let Err(e) = state.docker.wait_for_healthy(&container_id, true).await {
-                tracing::warn!(service = %svc_name, error = %e, "healthcheck failed, continuing");
+        // Collect results from this level
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok(Ok(started)) => {
+                    if started.is_public {
+                        public_container_id = started.container_id;
+                        public_mapped_port = started.mapped_port;
+                    }
+                }
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "multi-service: service failed to start");
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "multi-service: service task panicked");
+                }
             }
-        }
-
-        // Update project_services row
-        let _ = sqlx::query(
-            "UPDATE project_services SET container_id = ?, mapped_port = ?, status = 'running' WHERE project_id = ? AND service_name = ?"
-        )
-        .bind(&container_id)
-        .bind(mapped_port as i64)
-        .bind(project_id)
-        .bind(svc_name)
-        .execute(&state.db)
-        .await;
-
-        if run_config.is_public {
-            public_container_id = container_id;
-            public_mapped_port = mapped_port;
         }
     }
 

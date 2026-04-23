@@ -74,6 +74,79 @@ impl ComposeFile {
         Ok(order)
     }
 
+    /// Return service names grouped by topological level (BFS layers).
+    /// Services within the same level have no dependencies on each other
+    /// and can be started in parallel.
+    pub fn topological_levels(&self) -> Result<Vec<Vec<String>>> {
+        if self.services.is_empty() {
+            return Err(ComposeError::NoServices);
+        }
+
+        let mut in_degree: HashMap<String, usize> = HashMap::new();
+        let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+
+        for name in self.services.keys() {
+            in_degree.entry(name.clone()).or_insert(0);
+        }
+
+        for (name, service) in &self.services {
+            for dep in service.dependency_names() {
+                if !self.services.contains_key(&dep) {
+                    return Err(ComposeError::GhostDependency {
+                        service: name.clone(),
+                        dep,
+                    });
+                }
+                in_degree.entry(dep.clone()).or_insert(0);
+                *in_degree.entry(name.clone()).or_insert(0) += 1;
+                dependents
+                    .entry(dep)
+                    .or_default()
+                    .push(name.clone());
+            }
+        }
+
+        let mut levels = Vec::new();
+        let mut current_level: Vec<String> = in_degree
+            .iter()
+            .filter(|&(_, &deg)| deg == 0)
+            .map(|(name, _)| name.clone())
+            .collect();
+        current_level.sort();
+
+        while !current_level.is_empty() {
+            let mut next_level = Vec::new();
+            for svc in &current_level {
+                if let Some(deps) = dependents.get(svc) {
+                    for dep in deps {
+                        let deg = in_degree.get_mut(dep).unwrap();
+                        *deg -= 1;
+                        if *deg == 0 {
+                            next_level.push(dep.clone());
+                        }
+                    }
+                }
+            }
+            levels.push(current_level);
+            next_level.sort();
+            current_level = next_level;
+        }
+
+        if levels.iter().flatten().count() != self.services.len() {
+            let all_started: Vec<String> = levels.iter().flatten().cloned().collect();
+            let remaining: Vec<String> = in_degree
+                .keys()
+                .filter(|n| !all_started.contains(n))
+                .cloned()
+                .collect();
+            return Err(ComposeError::CycleDetected {
+                chain: remaining.join(" -> "),
+            });
+        }
+
+        Ok(levels)
+    }
+
     /// Detect if there's a dependency cycle. Returns None if no cycle.
     pub fn detect_cycles(&self) -> Option<Vec<String>> {
         match self.topological_sort() {

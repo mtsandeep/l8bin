@@ -26,6 +26,9 @@ import {
   type ProjectStats,
   stopProject,
   startProject,
+  startService,
+  stopService,
+  restartService,
   deleteProject,
   recreateProject,
   redeployProject,
@@ -97,6 +100,7 @@ export default function ProjectCard({
 
   // Services popover (data comes from stats)
   const [showServicesPopover, setShowServicesPopover] = useState(false);
+  const [loadingService, setLoadingService] = useState<string | null>(null);
   const services = stats?.services ?? [];
   const servicesRef = useRef<HTMLDivElement>(null);
 
@@ -196,7 +200,7 @@ export default function ProjectCard({
                 title={project.description || undefined}>
                 {project.name || project.id}
               </h3>
-              <StatusBadge status={project.status} />
+              <StatusBadge status={stats?.status || project.status} />
               {services.length > 1 && (
                 <span
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer border transition-colors ${
@@ -257,6 +261,51 @@ export default function ProjectCard({
                             }`}>
                             {svc.status}
                           </span>
+                          {svc.status === "running" && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLoadingService(svc.service_name);
+                                  stopService(project.id, svc.service_name)
+                                    .then(() => { onRefresh(); setLoadingService(null); })
+                                    .catch((err) => { showToast(err instanceof Error ? err.message : 'Stop failed'); setLoadingService(null); });
+                                }}
+                                disabled={loadingService === svc.service_name}
+                                className="text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer p-0.5"
+                                title="Stop service">
+                                {loadingService === svc.service_name ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLoadingService(svc.service_name);
+                                  restartService(project.id, svc.service_name)
+                                    .then(() => { onRefresh(); setLoadingService(null); })
+                                    .catch((err) => { showToast(err instanceof Error ? err.message : 'Restart failed'); setLoadingService(null); });
+                                }}
+                                disabled={loadingService === svc.service_name}
+                                className="text-slate-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors disabled:opacity-50 cursor-pointer p-0.5"
+                                title="Restart service">
+                                {loadingService === svc.service_name ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
+                              </button>
+                            </>
+                          )}
+                          {svc.status !== "running" && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setLoadingService(svc.service_name);
+                                startService(project.id, svc.service_name)
+                                  .then(() => { onRefresh(); setLoadingService(null); })
+                                  .catch((err) => { showToast(err instanceof Error ? err.message : 'Start failed'); setLoadingService(null); });
+                              }}
+                              disabled={loadingService === svc.service_name}
+                              className="text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50 cursor-pointer p-0.5"
+                              title="Start service">
+                              {loadingService === svc.service_name ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
+                            </button>
+                          )}
                         </div>
                         {svc.cpu_percent !== undefined && (
                           <span className="text-[10px] text-slate-500 font-mono shrink-0">

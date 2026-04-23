@@ -45,6 +45,10 @@ pub struct AppState {
     pub wake_locks: Arc<DashMap<String, Arc<WakeGuard>>>,
     // Debounced route sync channel — send a signal to trigger a batched route sync
     pub route_sync_tx: tokio::sync::mpsc::UnboundedSender<()>,
+    // Reverse proxy client for multi-service projects (always routed through orchestrator)
+    pub proxy_client: reqwest::Client,
+    // Per-project throttle for multi-service health checks (5s cooldown)
+    pub multi_svc_health_check: Arc<DashMap<String, std::time::Instant>>,
 }
 
 pub struct WakeGuard {
@@ -162,6 +166,11 @@ async fn main() -> anyhow::Result<()> {
     docker.ping().await?;
     tracing::info!("docker connection verified");
 
+    // Connect orchestrator to all existing project networks so it can proxy to containers
+    let orchestrator_id = std::env::var("ORCHESTRATOR_CONTAINER_NAME")
+        .unwrap_or_else(|_| "litebin-orchestrator".into());
+    docker.connect_to_project_networks(&orchestrator_id).await;
+
     // Seed local node with real system memory, cpu, and disk
     let mut sys = sysinfo::System::new_all();
     sys.refresh_all();
@@ -214,6 +223,8 @@ async fn main() -> anyhow::Result<()> {
         deploy_locks,
         wake_locks,
         route_sync_tx,
+        proxy_client: reqwest::Client::new(),
+        multi_svc_health_check: Arc::new(DashMap::new()),
     };
 
     // Sync routes for any previously running projects (retry up to 5 times)
@@ -284,6 +295,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/{id}/disk-usage", get(routes::stats::project_disk_usage))
         .route("/projects/{id}/logs", get(routes::stats::project_logs))
         .route("/projects/{id}/recreate", post(routes::manage::recreate_project))
+        .route("/projects/{id}/services/{name}/start", post(routes::manage::start_service))
+        .route("/projects/{id}/services/{name}/stop", post(routes::manage::stop_service))
+        .route("/projects/{id}/services/{name}/restart", post(routes::manage::restart_service))
         .route("/projects/{id}/volumes/{name}", delete(routes::volumes::delete_volume))
         .route("/projects/{id}/volumes", delete(routes::volumes::delete_all_volumes))
         .route("/projects/{id}/routes", get(routes::projects::list_routes))
