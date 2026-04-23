@@ -212,10 +212,13 @@ export async function redeployProject(projectId: string, image: string, port: nu
   }
 }
 
-export async function recreateProject(projectId: string): Promise<void> {
+export async function recreateProject(projectId: string, services?: string[], pullImages?: boolean): Promise<void> {
+  const hasBody = services || pullImages;
   const res = await fetch(`${API_BASE}/projects/${projectId}/recreate`, {
     method: 'POST',
+    headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
     credentials: 'include',
+    body: hasBody ? JSON.stringify({ services, pull_images: pullImages || undefined }) : undefined,
   });
   if (!res.ok) {
     const text = await res.text();

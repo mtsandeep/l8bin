@@ -40,6 +40,7 @@ import StatsGrid from "./ProjectStats";
 import AppSettingsPopover from "./AppSettingsPopover";
 import SettingsPopover from "./SettingsPopover";
 import RedeployModal from "./RedeployModal";
+import ServiceSelectModal from "./ServiceSelectModal";
 
 interface ProjectCardProps {
   project: Project;
@@ -95,8 +96,13 @@ export default function ProjectCard({
   const [customDomainSaving, setCustomDomainSaving] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
-  // Redeploy modal from actions dropdown (uses project values, not edited)
+  // Redeploy modal from actions dropdown (single-service only, uses project values)
   const [showRedeployModal, setShowRedeployModal] = useState(false);
+
+  // Service select modal for multi-service recreate/redeploy
+  const [showServiceSelectModal, setShowServiceSelectModal] = useState(false);
+  const [serviceSelectAction, setServiceSelectAction] = useState<"recreate" | "redeploy">("recreate");
+  const isMultiService = (project.service_count ?? 0) > 1;
 
   // Services popover (data comes from stats)
   const [showServicesPopover, setShowServicesPopover] = useState(false);
@@ -182,9 +188,11 @@ export default function ProjectCard({
     );
   };
 
-  const isRunning = project.status === "running";
-  const isStopped = project.status === "stopped";
-  const isStopping = project.status === "stopping";
+  const effectiveStatus = stats?.status || project.status;
+  const isRunning = effectiveStatus === "running";
+  const isStopped = effectiveStatus === "stopped";
+  const isStopping = effectiveStatus === "stopping";
+  const isDegraded = effectiveStatus === "degraded";
   const isUnconfigured =
     project.status === "unconfigured" ||
     (project.status === "stopped" && !project.image);
@@ -533,7 +541,12 @@ export default function ProjectCard({
                     <button
                       onClick={() => {
                         setShowActions(false);
-                        setShowRedeployModal(true);
+                        if (isMultiService) {
+                          setServiceSelectAction("redeploy");
+                          setShowServiceSelectModal(true);
+                        } else {
+                          setShowRedeployModal(true);
+                        }
                       }}
                       className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer">
                       <RotateCcw size={13} className="text-sky-400" />
@@ -547,9 +560,14 @@ export default function ProjectCard({
                     <button
                       onClick={() => {
                         setShowActions(false);
-                        handleAction("recreate", () =>
-                          recreateProject(project.id).then(() => onRefresh()),
-                        );
+                        if (isMultiService) {
+                          setServiceSelectAction("recreate");
+                          setShowServiceSelectModal(true);
+                        } else {
+                          handleAction("recreate", () =>
+                            recreateProject(project.id).then(() => onRefresh()),
+                          );
+                        }
                       }}
                       className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer">
                       <RefreshCw size={13} className="text-emerald-400" />
@@ -626,7 +644,7 @@ export default function ProjectCard({
               Start
             </button>
           )}
-          {isRunning && (
+          {(isRunning || isDegraded) && (
             <button
               onClick={() => {
                 stopProject(project.id).catch((e) => {
@@ -636,7 +654,7 @@ export default function ProjectCard({
                 onRefresh();
               }}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors cursor-pointer"
-              title="Stop">
+              title={isDegraded ? "Stop remaining services" : "Stop"}>
               <Square size={12} />
               Stop
             </button>
@@ -692,6 +710,28 @@ export default function ProjectCard({
           isStopping={isStopping}
           onRedeploy={handleActionsRedeploy}
           onCancel={() => setShowRedeployModal(false)}
+        />
+      )}
+
+      {/* Service select modal for multi-service recreate/redeploy */}
+      {showServiceSelectModal && (
+        <ServiceSelectModal
+          projectName={project.name || project.id}
+          services={services}
+          title={serviceSelectAction === "redeploy" ? "Redeploy services" : "Recreate services"}
+          confirmLabel={serviceSelectAction === "redeploy" ? "Redeploy" : "Recreate"}
+          onConfirm={(selectedServices) => {
+            setShowServiceSelectModal(false);
+            handleAction(
+              serviceSelectAction === "redeploy" ? "redeploy" : "recreate",
+              () => recreateProject(
+                project.id,
+                selectedServices,
+                serviceSelectAction === "redeploy" ? true : undefined,
+              ).then(() => onRefresh()),
+            );
+          }}
+          onCancel={() => setShowServiceSelectModal(false)}
         />
       )}
     </div>

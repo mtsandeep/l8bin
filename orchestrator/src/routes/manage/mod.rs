@@ -7,3 +7,4 @@ pub use helpers::{
     agent_base_url, cleanup_unused_image, ensure_project_dir_and_env, get_node_from_db,
     local_env_has_changed, read_local_project_env, sync_caddy, write_local_env_snapshot,
 };
+pub use multi_service::{StartServicesOpts, start_services};

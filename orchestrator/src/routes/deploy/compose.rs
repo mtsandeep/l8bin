@@ -4,10 +4,8 @@ use axum_login::AuthSession;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 
 use crate::auth::backend::PasswordBackend;
-use litebin_common::compose_run::ComposeRunPlan;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::AppState;
@@ -203,7 +201,7 @@ pub async fn deploy_compose(
 
     // Acquire deploy lock
     let semaphore = state
-        .deploy_locks
+        .project_locks
         .entry(project_id.clone())
         .or_insert_with(|| Arc::new(Semaphore::new(1)))
         .clone();
@@ -476,33 +474,7 @@ pub async fn deploy_compose(
         }
     }
 
-    // Ensure per-project network
-    if let Err(e) = state.docker.ensure_project_network(&project_id, None).await {
-        tracing::error!(error = %e, "failed to create project network");
-        let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-            .bind(now).bind(&project_id).execute(&state.db).await;
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("failed to create network: {e}")})),
-        ).into_response();
-    }
-
-    // Connect Caddy to the project network so it can reach containers directly
-    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-caddy".into());
-    let project_network = litebin_common::types::project_network_name(&project_id, None);
-    if let Err(e) = state.docker.connect_container_to_network(&caddy_container, &project_network).await {
-        tracing::warn!(error = %e, container = %caddy_container, network = %project_network, "failed to connect caddy to project network");
-    }
-
-    // Connect orchestrator to the project network so it can proxy to multi-service containers
-    let orchestrator_container = std::env::var("ORCHESTRATOR_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-orchestrator".into());
-    if let Err(e) = state.docker.connect_container_to_network(&orchestrator_container, &project_network).await {
-        tracing::warn!(error = %e, container = %orchestrator_container, network = %project_network, "failed to connect orchestrator to project network");
-    }
-
-    // Pull all images
+    // Pull all images before starting (fail on any pull error)
     let images: Vec<String> = start_order.iter()
         .filter_map(|name| compose.services[name].image.clone())
         .collect();
@@ -525,158 +497,29 @@ pub async fn deploy_compose(
         ).into_response();
     }
 
-    // Build run configs from compose
-    let extra_env = crate::routes::manage::read_local_project_env(&project_id);
-    let plan = match ComposeRunPlan::from_compose(&compose, &project_id, &extra_env, None) {
-        Ok(p) => p,
-        Err(e) => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("failed to build service configs: {e}")})),
-        ).into_response(),
-    };
-
-    // Build owned lookup: service_name -> RunServiceConfig
-    // Pre-compute which services need healthcheck waits
-    let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
-        plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
-    let healthy_wait_set: std::collections::HashSet<String> = plan.service_order.iter()
-        .filter(|s| plan.needs_healthy_wait(s))
-        .cloned()
-        .collect();
-    let has_healthcheck: std::collections::HashSet<String> = plan.service_order.iter()
-        .filter(|s| compose.services.get(s.as_str()).and_then(|svc| svc.healthcheck.as_ref()).is_some())
-        .cloned()
-        .collect();
-
-    let mut started_containers: Vec<(String, String, u16)> = Vec::new(); // (service_name, container_id, mapped_port)
-    let mut public_container_id = String::new();
-    let mut public_mapped_port: u16 = 0;
-
-    // Start services level by level — parallel within each level
-    for level in &plan.service_levels {
-        let mut tasks: JoinSet<Result<(String, String, u16, bool), String>> = JoinSet::new();
-
-        for svc_name in level {
-            let run_config = configs_map[svc_name].clone();
-            let db = state.db.clone();
-            let docker = state.docker.clone();
-            let svc = svc_name.clone();
-            let needs_healthy = healthy_wait_set.contains(svc_name) && has_healthcheck.contains(svc_name);
-            let is_public = run_config.is_public;
-            let pid = project_id.clone();
-
-            tasks.spawn(async move {
-                let (container_id, mapped_port) = docker.run_service_container(&run_config).await
-                    .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
-
-                tracing::info!(service = %svc, container_id = %container_id, port = %mapped_port, "service started");
-
-                // Wait for Docker network to assign a valid IP
-                if let Err(e) = docker.wait_for_network_ready(&container_id).await {
-                    tracing::warn!(service = %svc, error = %e, "network readiness timeout, continuing");
-                }
-
-                // Wait for healthcheck only if a downstream service depends on it with service_healthy
-                if needs_healthy {
-                    tracing::info!(service = %svc, "waiting for healthcheck");
-                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
-                        tracing::warn!(service = %svc, error = %e, "healthcheck failed, continuing anyway");
-                    } else {
-                        tracing::info!(service = %svc, "healthcheck passed");
-                    }
-                }
-
-                // Update project_services
-                let _ = sqlx::query(
-                    "UPDATE project_services SET container_id = ?, mapped_port = ?, status = 'running' WHERE project_id = ? AND service_name = ?"
-                )
-                .bind(&container_id)
-                .bind(mapped_port as i64)
-                .bind(&pid)
-                .bind(&svc)
-                .execute(&db)
-                .await;
-
-                Ok((svc, container_id, mapped_port, is_public))
-            });
-        }
-
-        // Collect results from this level
-        while let Some(result) = tasks.join_next().await {
-            match result {
-                Ok(Ok((svc, container_id, mapped_port, is_public))) => {
-                    started_containers.push((svc.clone(), container_id.clone(), mapped_port));
-
-                    if is_public {
-                        public_container_id = container_id;
-                        public_mapped_port = mapped_port;
-                    }
-                }
-                Ok(Err(e)) => {
-                    tracing::error!(error = %e, "failed to start service");
-
-                    // Rollback: stop all started containers
-                    for (_, cid, _) in &started_containers {
-                        let _ = state.docker.stop_container(cid).await;
-                        let _ = state.docker.remove_container(cid).await;
-                    }
-
-                    // Reset all service statuses
-                    let _ = sqlx::query("UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ?")
-                        .bind(&project_id).execute(&state.db).await;
-                    let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                        .bind(now).bind(&project_id).execute(&state.db).await;
-
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({"error": e})),
-                    ).into_response();
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "service task panicked");
-
-                    // Rollback: stop all started containers
-                    for (_, cid, _) in &started_containers {
-                        let _ = state.docker.stop_container(cid).await;
-                        let _ = state.docker.remove_container(cid).await;
-                    }
-
-                    let _ = sqlx::query("UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ?")
-                        .bind(&project_id).execute(&state.db).await;
-                    let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                        .bind(now).bind(&project_id).execute(&state.db).await;
-
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({"error": "service task panicked"})),
-                    ).into_response();
-                }
-            }
-        }
+    // Start all services using the unified function.
+    // Network setup, Caddy/orchestrator connect, health checks, DB updates,
+    // and DNS wait are all handled internally by start_services.
+    if let Err((status, msg)) = crate::routes::manage::start_services(
+        &state,
+        &project,
+        crate::routes::manage::StartServicesOpts {
+            force_recreate: true,
+            pull_images: false, // already pulled above
+            services: None,
+            connect_orchestrator: true,
+            rollback_on_failure: true,
+        },
+    ).await {
+        return (status, Json(json!({"error": msg}))).into_response();
     }
 
-    // Update project row with public container info
-    let _ = sqlx::query(
-        "UPDATE projects SET container_id = ?, mapped_port = ?, node_id = 'local', status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?"
-    )
-    .bind(&public_container_id)
-    .bind(public_mapped_port as i64)
-    .bind(now)
-    .bind(now)
-    .bind(&project_id)
-    .execute(&state.db)
-    .await;
-
-    // Wait for Docker DNS to propagate after connecting to the project network
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    // Sync Caddy routes
+    // Full route sync after deploy
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
     let route_entries = match crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "failed to resolve routes after compose deploy");
-            // Don't fail the deploy — routes will sync on next cycle
             Vec::new()
         }
     };
@@ -691,7 +534,7 @@ pub async fn deploy_compose(
 
     tracing::info!(
         project_id = %project_id,
-        services = started_containers.len(),
+        services = start_order.len(),
         url = %url,
         "compose deploy complete"
     );
@@ -703,12 +546,6 @@ pub async fn deploy_compose(
             "project_id": project_id,
             "url": url,
             "custom_domain": custom_domain,
-            "mapped_port": public_mapped_port,
-            "services": started_containers.iter().map(|(name, cid, port)| json!({
-                "service_name": name,
-                "container_id": cid,
-                "mapped_port": port,
-            })).collect::<Vec<_>>(),
         })),
     )
         .into_response()

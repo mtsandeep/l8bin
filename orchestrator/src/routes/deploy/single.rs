@@ -164,7 +164,7 @@ async fn execute_deploy(
 
     // 1. Acquire deploy lock for this project_id (serializes concurrent deploys)
     let semaphore = state
-        .deploy_locks
+        .project_locks
         .entry(payload.project_id.clone())
         .or_insert_with(|| Arc::new(Semaphore::new(1)))
         .clone();
@@ -666,11 +666,11 @@ mod tests {
 
     #[tokio::test]
     async fn prop_deploy_lock_serializes_concurrent_ops() {
-        let deploy_locks: Arc<DashMap<String, Arc<Semaphore>>> = Arc::new(DashMap::new());
+        let project_locks: Arc<DashMap<String, Arc<Semaphore>>> = Arc::new(DashMap::new());
         let project_id = "test-project";
 
         // Create semaphore for project
-        let semaphore = deploy_locks
+        let semaphore = project_locks
             .entry(project_id.to_string())
             .or_insert_with(|| Arc::new(Semaphore::new(1)))
             .clone();

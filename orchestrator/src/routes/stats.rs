@@ -262,7 +262,7 @@ pub async fn all_project_stats(
     let mut disk_lookups: Vec<(String, Vec<(ServiceInfo, Option<String>)>)> = Vec::new();
 
     for project in &projects {
-        if project.status != "running" {
+        if project.status != "running" && project.status != "degraded" {
             let services_raw = services_map.get(&project.id).cloned().unwrap_or_default();
 
             // Check if any service has a container_id for disk lookup
@@ -334,9 +334,12 @@ pub async fn all_project_stats(
             }
             services.push(svc);
         }
+        // Derive status from actual service states instead of hardcoding "stopped"
+        let any_running = services.iter().any(|s| s.status == "running");
+        let status = if any_running { "degraded".to_string() } else { "stopped".to_string() };
         results.push(make_stats_response(
             project_id,
-            "stopped".to_string(),
+            status,
             services,
         ));
     }

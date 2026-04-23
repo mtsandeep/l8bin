@@ -21,7 +21,7 @@ use axum::{
 use axum_login::login_required;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
-use tokio::sync::{Notify, RwLock, Semaphore};
+use tokio::sync::{RwLock, Semaphore};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
@@ -41,20 +41,14 @@ pub struct AppState {
     // Phase 6 additions:
     pub node_clients: Arc<DashMap<String, Arc<reqwest::Client>>>,
     pub disk_cache: Arc<DashMap<String, i64>>,
-    pub deploy_locks: Arc<DashMap<String, Arc<Semaphore>>>,
-    pub wake_locks: Arc<DashMap<String, Arc<WakeGuard>>>,
+    pub project_locks: Arc<DashMap<String, Arc<Semaphore>>>,
+    pub wake_failures: Arc<DashMap<String, std::time::Instant>>,
     // Debounced route sync channel — send a signal to trigger a batched route sync
     pub route_sync_tx: tokio::sync::mpsc::UnboundedSender<()>,
     // Reverse proxy client for multi-service projects (always routed through orchestrator)
     pub proxy_client: reqwest::Client,
     // Per-project throttle for multi-service health checks (5s cooldown)
     pub multi_svc_health_check: Arc<DashMap<String, std::time::Instant>>,
-}
-
-pub struct WakeGuard {
-    pub notify: Notify,
-    pub success: std::sync::atomic::AtomicBool,
-    pub completed: std::sync::atomic::AtomicBool,
 }
 
 #[tokio::main]
@@ -160,8 +154,8 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let deploy_locks: Arc<DashMap<String, Arc<Semaphore>>> = Arc::new(DashMap::new());
-    let wake_locks: Arc<DashMap<String, Arc<WakeGuard>>> = Arc::new(DashMap::new());
+    let project_locks: Arc<DashMap<String, Arc<Semaphore>>> = Arc::new(DashMap::new());
+    let wake_failures: Arc<DashMap<String, std::time::Instant>> = Arc::new(DashMap::new());
     // Verify Docker connectivity
     docker.ping().await?;
     tracing::info!("docker connection verified");
@@ -220,8 +214,8 @@ async fn main() -> anyhow::Result<()> {
         router: router.clone(),
         node_clients,
         disk_cache: Arc::new(DashMap::new()),
-        deploy_locks,
-        wake_locks,
+        project_locks,
+        wake_failures,
         route_sync_tx,
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
