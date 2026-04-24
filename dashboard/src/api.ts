@@ -39,6 +39,11 @@ export interface ProjectStats {
   services: ServiceInfo[];
 }
 
+export interface ServiceVolumeInfo {
+  volume_name?: string;
+  container_path: string;
+}
+
 export interface ServiceInfo {
   service_name: string;
   image: string;
@@ -51,6 +56,7 @@ export interface ServiceInfo {
   memory_limit?: number;
   cpu_limit?: number;
   disk_gb?: number;
+  volumes?: ServiceVolumeInfo[];
 }
 
 export async function fetchProjects(): Promise<Project[]> {
@@ -295,11 +301,14 @@ export async function deleteProject(projectId: string): Promise<void> {
 
 export interface LogsResponse {
   project_id: string;
+  service_name: string | null;
   lines: string[];
 }
 
-export async function fetchLogs(projectId: string, tail = 100): Promise<LogsResponse> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/logs?tail=${tail}`, { credentials: 'include' });
+export async function fetchLogs(projectId: string, tail = 100, service?: string): Promise<LogsResponse> {
+  const params = new URLSearchParams({ tail: String(tail) });
+  if (service) params.set('service', service);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/logs?${params}`, { credentials: 'include' });
   if (!res.ok) throw new Error('Failed to fetch logs');
   return res.json();
 }

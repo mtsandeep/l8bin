@@ -176,7 +176,15 @@ pub async fn start_services(
                     // Smart path: try to reuse existing containers
                     if let Some((ref existing_cid, existing_port)) = existing {
                         if docker.is_container_running(existing_cid).await.unwrap_or(false) {
-                            // Already running — skip
+                            // Already running — fix stale DB status (e.g. stats polling
+                            // may have marked it 'stopped' after a transient check failure)
+                            let _ = sqlx::query(
+                                "UPDATE project_services SET status = 'running' WHERE project_id = ? AND service_name = ? AND status != 'running'"
+                            )
+                            .bind(&run_config.project_id)
+                            .bind(&svc)
+                            .execute(&db)
+                            .await;
                             return Ok(StartedService {
                                 container_id: existing_cid.clone(),
                                 mapped_port: existing_port,

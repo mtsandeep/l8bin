@@ -19,7 +19,6 @@ function aggregateFromServices(services: ServiceInfo[]) {
 
 export default function ProjectStats({
   stats,
-  isRunning,
   isUnconfigured,
 }: ProjectStatsProps) {
   if (isUnconfigured) {
@@ -46,18 +45,18 @@ export default function ProjectStats({
           <span className="text-[10px] uppercase tracking-wider">CPU</span>
         </div>
         <p className="text-sm font-medium text-slate-200">
-          {isRunning && totalCpu > 0 ? `${totalCpu.toFixed(1)}%` : "—"}
+          {totalCpu > 0 ? `${totalCpu.toFixed(1)}%` : "—"}
         </p>
       </div>
-      <div className="bg-slate-900/50 rounded-md px-3 py-2" title={isRunning && totalLimit > 0 ? `${formatBytes(totalMem)}/${formatBytes(totalLimit)}` : undefined}>
+      <div className="bg-slate-900/50 rounded-md px-3 py-2" title={totalLimit > 0 ? `${formatBytes(totalMem)}/${formatBytes(totalLimit)}` : undefined}>
         <div className="flex items-center gap-1.5 text-slate-500 mb-1">
           <MemoryStick size={12} />
           <span className="text-[10px] uppercase tracking-wider">Memory</span>
         </div>
         <p className="text-sm font-medium text-slate-200">
-          {isRunning && totalMem > 0 ? `${formatBytes(totalMem)}` : "—"}
+          {totalMem > 0 ? `${formatBytes(totalMem)}` : "—"}
         </p>
-        {isRunning && totalLimit > 0 && (
+        {totalLimit > 0 && (
           <div className="mt-1.5 h-1 bg-slate-700 rounded-full overflow-hidden">
             <div
               className="h-full bg-violet-500 rounded-full transition-all"

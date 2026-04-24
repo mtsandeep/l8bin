@@ -451,6 +451,42 @@ export default function SettingsPopover({
                 )}
               </div>
             )}
+
+            {/* Service Volumes (multi-service compose) */}
+            {services.length > 1 && services.some(s => s.volumes && s.volumes.length > 0) && (
+              <div className="border-t border-slate-700/50 pt-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <HardDrive size={11} />
+                  <span>Service Volumes</span>
+                </div>
+                {services.filter(s => s.volumes && s.volumes.length > 0).map(svc => (
+                  <div key={svc.service_name} className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                      <span className="font-medium">{svc.service_name}</span>
+                      {svc.is_public && (
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-sky-500/20 text-sky-400">public</span>
+                      )}
+                    </div>
+                    {svc.volumes!.map(vol => (
+                      <div
+                        key={vol.container_path}
+                        className="flex items-center gap-2 bg-slate-900/50 rounded px-2 py-1.5">
+                        <div className="min-w-0">
+                          <span className="text-xs text-slate-300 font-mono">
+                            {vol.container_path}
+                          </span>
+                          {vol.volume_name && (
+                            <span className="text-[10px] text-slate-500 ml-1.5">
+                              ← {vol.volume_name}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

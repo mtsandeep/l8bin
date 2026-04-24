@@ -26,14 +26,10 @@ import {
   type ProjectStats,
   stopProject,
   startProject,
-  startService,
-  stopService,
-  restartService,
   deleteProject,
   recreateProject,
   redeployProject,
   timeAgo,
-  formatBytes,
 } from "../../api";
 import SleepPopover from "./SleepPopover";
 import StatsGrid from "./ProjectStats";
@@ -41,6 +37,7 @@ import AppSettingsPopover from "./AppSettingsPopover";
 import SettingsPopover from "./SettingsPopover";
 import RedeployModal from "./RedeployModal";
 import ServiceSelectModal from "./ServiceSelectModal";
+import ServicesModal from "./ServicesModal";
 
 interface ProjectCardProps {
   project: Project;
@@ -106,7 +103,7 @@ export default function ProjectCard({
 
   // Services popover (data comes from stats)
   const [showServicesPopover, setShowServicesPopover] = useState(false);
-  const [loadingService, setLoadingService] = useState<string | null>(null);
+  const [showServicesModal, setShowServicesModal] = useState(false);
   const services = stats?.services ?? [];
   const servicesRef = useRef<HTMLDivElement>(null);
 
@@ -249,10 +246,17 @@ export default function ProjectCard({
                     No services
                   </div>
                 ) : (
-                  services.map((svc) => (
-                    <div key={svc.service_name} className="px-3 py-2">
-                      <div className="flex items-center justify-between gap-2">
+                  <>
+                    {services.map((svc) => (
+                      <div key={svc.service_name} className="flex items-center justify-between gap-2 px-3 py-1.5">
                         <div className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                              svc.status === "running"
+                                ? "bg-emerald-400"
+                                : "bg-slate-600"
+                            }`}
+                          />
                           <span className="text-xs font-medium text-slate-300 truncate">
                             {svc.service_name}
                           </span>
@@ -261,96 +265,26 @@ export default function ProjectCard({
                               public
                             </span>
                           )}
-                          <span
-                            className={`text-[10px] px-1 py-0.5 rounded ${
-                              svc.status === "running"
-                                ? "bg-emerald-500/20 text-emerald-400"
-                                : "bg-slate-700/60 text-slate-500"
-                            }`}>
-                            {svc.status}
-                          </span>
-                          {svc.status === "running" && (
-                            <>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setLoadingService(svc.service_name);
-                                  stopService(project.id, svc.service_name)
-                                    .then(() => { onRefresh(); setLoadingService(null); })
-                                    .catch((err) => { showToast(err instanceof Error ? err.message : 'Stop failed'); setLoadingService(null); });
-                                }}
-                                disabled={loadingService === svc.service_name}
-                                className="text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer p-0.5"
-                                title="Stop service">
-                                {loadingService === svc.service_name ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setLoadingService(svc.service_name);
-                                  restartService(project.id, svc.service_name)
-                                    .then(() => { onRefresh(); setLoadingService(null); })
-                                    .catch((err) => { showToast(err instanceof Error ? err.message : 'Restart failed'); setLoadingService(null); });
-                                }}
-                                disabled={loadingService === svc.service_name}
-                                className="text-slate-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors disabled:opacity-50 cursor-pointer p-0.5"
-                                title="Restart service">
-                                {loadingService === svc.service_name ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
-                              </button>
-                            </>
-                          )}
-                          {svc.status !== "running" && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setLoadingService(svc.service_name);
-                                startService(project.id, svc.service_name)
-                                  .then(() => { onRefresh(); setLoadingService(null); })
-                                  .catch((err) => { showToast(err instanceof Error ? err.message : 'Start failed'); setLoadingService(null); });
-                              }}
-                              disabled={loadingService === svc.service_name}
-                              className="text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50 cursor-pointer p-0.5"
-                              title="Start service">
-                              {loadingService === svc.service_name ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
-                            </button>
-                          )}
                         </div>
                         {svc.cpu_percent !== undefined && (
                           <span className="text-[10px] text-slate-500 font-mono shrink-0">
-                            {svc.cpu_percent.toFixed(1)}% cpu
+                            {svc.cpu_percent.toFixed(1)}%
                           </span>
                         )}
                       </div>
-                      <p
-                        className="text-[10px] text-slate-500 truncate font-mono mt-0.5"
-                        title={svc.image}>
-                        {shortImage(svc.image)}
-                        {svc.port ? ` | ${svc.mapped_port && svc.mapped_port > 0 ? `${svc.mapped_port}:${svc.port}` : `:${svc.port}`}` : ""}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1 text-[10px] font-mono">
-                        {svc.cpu_limit !== undefined && (
-                          <span className="text-slate-500">
-                            cpu {svc.cpu_limit.toFixed(1)}
-                          </span>
-                        )}
-                        {svc.memory_limit !== undefined && (
-                          <span className="text-slate-500">
-                            mem limit {formatBytes(svc.memory_limit)}
-                          </span>
-                        )}
-                        {svc.memory_usage !== undefined && (
-                          <span className="text-slate-400">
-                            mem {formatBytes(svc.memory_usage)}
-                          </span>
-                        )}
-                        {svc.disk_gb !== undefined && svc.disk_gb > 0 && (
-                          <span className="text-slate-500">
-                            disk {svc.disk_gb.toFixed(2)} GB
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))
+                    ))}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowServicesPopover(false);
+                        setShowServicesModal(true);
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 mt-0.5 text-[10px] font-medium text-violet-300 hover:bg-violet-500/10 rounded transition-colors cursor-pointer">
+                      <Layers size={10} />
+                      Explore services
+                      <ChevronRight size={10} />
+                    </button>
+                  </>
                 )}
               </div>
             )}
@@ -707,7 +641,7 @@ export default function ProjectCard({
         </div>
       </div>
       {showLogs && (
-        <LogViewer projectId={project.id} onClose={() => setShowLogs(false)} />
+        <LogViewer projectId={project.id} services={services} onClose={() => setShowLogs(false)} />
       )}
 
       {/* Redeploy modal from actions dropdown (uses project values) */}
@@ -741,6 +675,15 @@ export default function ProjectCard({
             );
           }}
           onCancel={() => setShowServiceSelectModal(false)}
+        />
+      )}
+
+      {showServicesModal && (
+        <ServicesModal
+          project={project}
+          services={services}
+          onClose={() => setShowServicesModal(false)}
+          onRefresh={onRefresh}
         />
       )}
     </div>

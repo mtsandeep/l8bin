@@ -350,6 +350,35 @@ pub async fn deploy_compose(
         .await;
     }
 
+    // Seed project_volumes rows from compose volume definitions
+    let _ = sqlx::query("DELETE FROM project_volumes WHERE project_id = ?")
+        .bind(&project_id)
+        .execute(&state.db)
+        .await;
+    for svc_name in &start_order {
+        let svc = &compose.services[svc_name];
+        if let Some(ref vols) = svc.volumes {
+            for vol_str in vols {
+                // Parse "source:target[:mode]" format
+                let parts: Vec<&str> = vol_str.splitn(3, ':').collect();
+                if parts.len() >= 2 {
+                    let volume_name = if !parts[0].is_empty() { Some(parts[0].to_string()) } else { None };
+                    let container_path = parts[1].to_string();
+                    let _ = sqlx::query(
+                        "INSERT OR IGNORE INTO project_volumes (project_id, service_name, volume_name, container_path)
+                         VALUES (?, ?, ?, ?)"
+                    )
+                    .bind(&project_id)
+                    .bind(svc_name)
+                    .bind(&volume_name)
+                    .bind(&container_path)
+                    .execute(&state.db)
+                    .await;
+                }
+            }
+        }
+    }
+
     let target_node_id = match nodes::selector::select_node(&state.db, &project, node_id.clone()).await {
         Ok(id) => id,
         Err(e) => {

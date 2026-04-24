@@ -7,6 +7,12 @@ use crate::AppState;
 use super::manage::{agent_base_url, get_node_from_db, sync_caddy};
 
 #[derive(Serialize, Clone)]
+pub struct ServiceVolumeInfo {
+    pub volume_name: Option<String>,
+    pub container_path: String,
+}
+
+#[derive(Serialize, Clone)]
 pub struct ServiceInfo {
     pub service_name: String,
     pub image: String,
@@ -24,6 +30,8 @@ pub struct ServiceInfo {
     pub cpu_limit: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disk_gb: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<ServiceVolumeInfo>,
 }
 
 #[derive(Serialize)]
@@ -167,9 +175,37 @@ async fn batch_load_services(
                 memory_limit,
                 cpu_limit,
                 disk_gb: None,
+                volumes: vec![],
             },
             container_id,
         ));
+    }
+
+    // Batch-load volumes for all project_services and attach them
+    {
+        let vol_placeholders = project_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let vol_query = format!(
+            "SELECT project_id, service_name, volume_name, container_path FROM project_volumes WHERE project_id IN ({})",
+            vol_placeholders
+        );
+        let mut vol_builder = sqlx::query_as::<_, (String, String, Option<String>, String)>(&vol_query);
+        for pid in project_ids {
+            vol_builder = vol_builder.bind(pid);
+        }
+        let vol_rows = vol_builder.fetch_all(db).await.unwrap_or_default();
+        for (pid, svc_name, vol_name, container_path) in vol_rows {
+            if let Some(services) = map.get_mut(&pid) {
+                for (svc, _) in services.iter_mut() {
+                    if svc.service_name == svc_name {
+                        svc.volumes.push(ServiceVolumeInfo {
+                            volume_name: vol_name,
+                            container_path,
+                        });
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // For single-service projects that have no project_services row, synthesize one from the projects table
@@ -216,6 +252,7 @@ async fn batch_load_services(
                         memory_limit,
                         cpu_limit,
                         disk_gb: None,
+                        volumes: vec![],
                     },
                     container_id,
                 ));
