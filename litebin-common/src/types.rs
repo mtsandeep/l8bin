@@ -55,14 +55,52 @@ pub struct Project {
     pub updated_at: i64,
 }
 
-/// A volume mount for bind-mounting host directories into containers.
+/// A volume mount for a container (Docker named volume or host bind mount).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeMount {
     /// Path inside the container, e.g. "/app/uploads"
     pub path: String,
-    /// Directory name under projects/{id}/data/. Defaults to project_id if omitted.
+    /// Volume source name. If starts with `/` or `./`, treated as a host bind mount path.
+    /// Otherwise treated as a Docker named volume (scoped with project_id). Defaults to project_id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+/// Resolve a volume source to its final form.
+/// - Named volumes: prefixed with `litebin_{project_id}_` (e.g. `pgdata` → `litebin_myproject_pgdata`)
+/// - Relative bind mounts (`./`): resolved relative to `projects/{project_id}/` (e.g. `./data` → `projects/myproject/data`)
+/// - Absolute bind mounts (`/`): passed through unchanged
+pub fn scope_volume_source(name: &str, project_id: &str) -> String {
+    if name.starts_with('/') {
+        name.to_string()
+    } else if name.starts_with("./") {
+        let relative = name.strip_prefix("./").unwrap();
+        format!("projects/{}/{}", project_id, relative)
+    } else {
+        format!("litebin_{}_{}", project_id, name)
+    }
+}
+
+/// Classification of a volume source for cleanup purposes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VolumeKind {
+    /// Docker named volume (e.g. `litebin_myproject_pgdata`)
+    DockerVolume,
+    /// Relative bind mount resolved by LiteBin (e.g. `projects/myproject/data`)
+    RelativeBindMount,
+    /// Absolute bind mount (e.g. `/host/path`) — user-managed, skip on delete
+    AbsoluteBindMount,
+}
+
+/// Classify a scoped volume source name to determine cleanup strategy.
+pub fn classify_volume(scoped_name: &str) -> VolumeKind {
+    if scoped_name.starts_with("projects/") {
+        VolumeKind::RelativeBindMount
+    } else if scoped_name.starts_with('/') {
+        VolumeKind::AbsoluteBindMount
+    } else {
+        VolumeKind::DockerVolume
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -196,15 +234,14 @@ impl RunServiceConfig {
     /// Build a `RunServiceConfig` from a `Project` (single-service "web" path).
     /// Converts Project fields into the unified service config format.
     pub fn from_project(project: &Project, extra_env: Vec<String>) -> Self {
-        // Build bind mounts from project volumes
+        // Build volume specs from project volumes (named volumes + bind mounts)
         let binds: Option<Vec<String>> = if let Some(ref vols_json) = project.volumes {
             let mounts: Vec<VolumeMount> = serde_json::from_str(vols_json).unwrap_or_default();
             let built: Vec<String> = mounts
                 .into_iter()
                 .filter_map(|v| {
                     let name = v.name.as_deref().unwrap_or(&project.id);
-                    let host_path = crate::docker::DockerManager::ensure_data_dir(&project.id, name).ok()?;
-                    Some(format!("{}:{}", host_path.display(), v.path))
+                    Some(format!("{}:{}", scope_volume_source(name, &project.id), v.path))
                 })
                 .collect();
             if built.is_empty() { None } else { Some(built) }

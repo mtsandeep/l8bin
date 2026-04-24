@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import {
   Loader2,
-  HardDrive,
   Settings,
   Plus,
   Route,
@@ -14,12 +13,9 @@ import {
   type Project,
   type ProjectRoute,
   type ServiceInfo,
-  type VolumeMount,
   fetchProjectRoutes,
   createProjectRoute,
   deleteProjectRoute,
-  deleteVolume,
-  deleteAllVolumes,
   updateProjectSettings,
 } from "../../api";
 
@@ -75,10 +71,6 @@ export default function SettingsPopover({
   const [addingRoute, setAddingRoute] = useState(false);
   const [deletingRouteId, setDeletingRouteId] = useState<string | null>(null);
 
-  // Volume delete state
-  const [deletingVolume, setDeletingVolume] = useState<string | null>(null);
-  const [showDeleteAllVolumes, setShowDeleteAllVolumes] = useState(false);
-
   const ref = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
 
@@ -92,15 +84,6 @@ export default function SettingsPopover({
     return () => document.removeEventListener("mousedown", handler);
   });
 
-  // Parsed volumes
-  const parsedVolumes: VolumeMount[] = (() => {
-    try {
-      return project.volumes ? JSON.parse(project.volumes) : [];
-    } catch {
-      return [];
-    }
-  })();
-
   const loadRoutes = async () => {
     setRoutesLoading(true);
     try {
@@ -111,31 +94,6 @@ export default function SettingsPopover({
       showToast(e instanceof Error ? e.message : "Failed to load routes");
     } finally {
       setRoutesLoading(false);
-    }
-  };
-
-  const handleDeleteVolume = async (name: string) => {
-    setDeletingVolume(name);
-    try {
-      await deleteVolume(project.id, name);
-      showToast("Volume data removed");
-      onRefresh();
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to delete volume");
-    } finally {
-      setDeletingVolume(null);
-    }
-  };
-
-  const handleDeleteAllVolumes = async () => {
-    try {
-      await deleteAllVolumes(project.id);
-      showToast("All volume data removed");
-      onRefresh();
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to delete volumes");
-    } finally {
-      setShowDeleteAllVolumes(false);
     }
   };
 
@@ -394,99 +352,6 @@ export default function SettingsPopover({
               </div>
             </div>
 
-            {/* Volumes */}
-            {parsedVolumes.length > 0 && (
-              <div className="border-t border-slate-700/50 pt-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <HardDrive size={11} />
-                  <span>Volumes</span>
-                </div>
-                {parsedVolumes.map((vol) => {
-                  const name = vol.name || project.id;
-                  return (
-                    <div
-                      key={vol.path}
-                      className="flex items-center justify-between gap-2 bg-slate-900/50 rounded px-2 py-1.5">
-                      <div className="min-w-0">
-                        <span className="text-xs text-slate-300 font-mono">
-                          {vol.path}
-                        </span>
-                        <span className="text-[10px] text-slate-500 ml-1.5">
-                          → {name}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteVolume(name)}
-                        disabled={deletingVolume === name}
-                        className="p-1 text-slate-500 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                        title="Remove volume data">
-                        {deletingVolume === name ? (
-                          <Loader2 size={11} className="animate-spin" />
-                        ) : (
-                          <Trash2 size={11} />
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
-                {showDeleteAllVolumes ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleDeleteAllVolumes}
-                      className="flex-1 py-1.5 rounded text-xs font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors cursor-pointer">
-                      Confirm Remove All
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteAllVolumes(false)}
-                      className="px-2 py-1.5 rounded text-xs text-slate-400 hover:text-slate-300 transition-colors cursor-pointer">
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setShowDeleteAllVolumes(true)}
-                    className="w-full py-1.5 rounded text-xs text-slate-500 hover:text-red-400 hover:bg-red-500/5 transition-colors cursor-pointer">
-                    Remove all volume data
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Service Volumes (multi-service compose) */}
-            {services.length > 1 && services.some(s => s.volumes && s.volumes.length > 0) && (
-              <div className="border-t border-slate-700/50 pt-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <HardDrive size={11} />
-                  <span>Service Volumes</span>
-                </div>
-                {services.filter(s => s.volumes && s.volumes.length > 0).map(svc => (
-                  <div key={svc.service_name} className="space-y-1">
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                      <span className="font-medium">{svc.service_name}</span>
-                      {svc.is_public && (
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-sky-500/20 text-sky-400">public</span>
-                      )}
-                    </div>
-                    {svc.volumes!.map(vol => (
-                      <div
-                        key={vol.container_path}
-                        className="flex items-center gap-2 bg-slate-900/50 rounded px-2 py-1.5">
-                        <div className="min-w-0">
-                          <span className="text-xs text-slate-300 font-mono">
-                            {vol.container_path}
-                          </span>
-                          {vol.volume_name && (
-                            <span className="text-[10px] text-slate-500 ml-1.5">
-                              ← {vol.volume_name}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 

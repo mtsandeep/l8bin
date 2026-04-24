@@ -507,30 +507,6 @@ export interface VolumeMount {
   name?: string;
 }
 
-export async function deleteVolume(projectId: string, name: string): Promise<{ deleted: string }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/volumes/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to delete volume');
-  }
-  return res.json();
-}
-
-export async function deleteAllVolumes(projectId: string): Promise<{ deleted: string[] }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/volumes`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to delete volumes');
-  }
-  return res.json();
-}
-
 // --- Custom Routes ---
 
 export interface ProjectRoute {

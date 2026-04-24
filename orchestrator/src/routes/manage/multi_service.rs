@@ -419,32 +419,25 @@ pub async fn stop_all_services(state: &AppState, project_id: &str) {
 
 // ── Delete services ──────────────────────────────────────────────────────────
 
-/// Remove all service containers and the per-project network for a multi-service project.
+/// Remove all service containers, volumes, and the per-project network for a multi-service project.
 /// Called from `delete_project`.
 pub async fn delete_all_services(state: &AppState, project_id: &str) {
-    let services: Vec<(String, Option<String>)> = match sqlx::query_as(
-        "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
+    // Fetch volume names from DB
+    let volumes: Vec<String> = match sqlx::query_as::<_, (String,)>(
+        "SELECT volume_name FROM project_volumes WHERE project_id = ? AND volume_name IS NOT NULL",
     )
     .bind(project_id)
     .fetch_all(&state.db)
-    .await {
-        Ok(s) => s,
+    .await
+    {
+        Ok(v) => v.into_iter().map(|(name,)| name).collect(),
         Err(e) => {
-            tracing::warn!(project = %project_id, error = %e, "delete: failed to fetch services");
+            tracing::warn!(project = %project_id, error = %e, "delete: failed to fetch volumes");
             Vec::new()
         }
     };
 
-    for (svc_name, cid) in &services {
-        if let Some(container_id) = cid {
-            let _ = state.docker.stop_container(container_id).await;
-            let _ = state.docker.remove_container(container_id).await;
-            tracing::info!(project = %project_id, service = %svc_name, "service container removed during delete");
-        }
-    }
-
-    // Remove per-project network
-    let _ = state.docker.remove_project_network(project_id, None).await;
+    let _ = state.docker.cleanup_project_resources(project_id, &volumes).await;
 }
 
 // ── Recreate services ─────────────────────────────────────────────────────────

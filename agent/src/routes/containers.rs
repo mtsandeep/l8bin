@@ -61,6 +61,12 @@ pub struct RemoveRequest {
 }
 
 #[derive(Deserialize)]
+pub struct CleanupRequest {
+    pub project_id: String,
+    pub volumes: Vec<String>,
+}
+
+#[derive(Deserialize)]
 pub struct LogsQuery {
     pub tail: Option<usize>,
 }
@@ -496,6 +502,28 @@ pub async fn remove_container(
             .into_response();
     }
 
+    StatusCode::OK.into_response()
+}
+
+/// POST /containers/cleanup
+/// Remove all project resources: containers, volumes, network, and project directory.
+pub async fn cleanup_project(
+    State(state): State<AgentState>,
+    Json(req): Json<CleanupRequest>,
+) -> impl IntoResponse {
+    tracing::info!(project = %req.project_id, "cleanup request received");
+
+    if let Err(e) = state.docker.cleanup_project_resources(&req.project_id, &req.volumes).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    tracing::info!(project = %req.project_id, "cleanup complete");
     StatusCode::OK.into_response()
 }
 

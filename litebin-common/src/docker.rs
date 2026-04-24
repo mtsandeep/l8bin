@@ -8,6 +8,7 @@ use bollard::models::{
 use bollard::query_parameters::{
     CreateContainerOptions, CreateImageOptions, ListContainersOptions, ListImagesOptions,
     LogsOptions, PruneImagesOptions, RemoveContainerOptions, RemoveImageOptions,
+    RemoveVolumeOptions,
     StartContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::Docker;
@@ -119,16 +120,6 @@ impl DockerManager {
 
         tracing::info!(image = %image, "image pulled successfully");
         Ok(())
-    }
-
-    /// Ensure a project data directory exists. Returns the path.
-    pub fn ensure_data_dir(project_id: &str, volume_name: &str) -> std::io::Result<std::path::PathBuf> {
-        let dir = std::path::PathBuf::from("projects")
-            .join(project_id)
-            .join("data")
-            .join(volume_name);
-        std::fs::create_dir_all(&dir)?;
-        Ok(dir)
     }
 
     /// Inspect a container and return the mapped host port.
@@ -294,6 +285,96 @@ impl DockerManager {
                 }
             }
         }
+    }
+
+    /// Remove a Docker named volume (ignores 404).
+    pub async fn remove_volume(&self, name: &str) -> anyhow::Result<()> {
+        match self.docker.remove_volume(name, None::<RemoveVolumeOptions>).await {
+            Ok(_) => {
+                tracing::info!(volume = %name, "removed docker volume");
+                Ok(())
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("404") || err_str.contains("not found") {
+                    tracing::debug!(volume = %name, "volume already gone");
+                    Ok(())
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
+    }
+
+    /// Remove a volume by its scoped name, handling Docker volumes, relative bind mounts,
+    /// and absolute bind mounts appropriately.
+    pub async fn remove_volume_by_name(&self, scoped_name: &str) -> anyhow::Result<()> {
+        match crate::types::classify_volume(scoped_name) {
+            crate::types::VolumeKind::DockerVolume => {
+                self.remove_volume(scoped_name).await
+            }
+            crate::types::VolumeKind::RelativeBindMount => {
+                let path = std::path::Path::new(scoped_name);
+                if path.exists() {
+                    std::fs::remove_dir_all(path)?;
+                    tracing::info!(path = %scoped_name, "removed bind mount directory");
+                }
+                Ok(())
+            }
+            crate::types::VolumeKind::AbsoluteBindMount => {
+                tracing::debug!(path = %scoped_name, "skipping absolute bind mount");
+                Ok(())
+            }
+        }
+    }
+
+    /// Clean up all resources for a project: containers, volumes, network, and project directory.
+    /// Used by both orchestrator (local delete) and agent (remote delete).
+    pub async fn cleanup_project_resources(
+        &self,
+        project_id: &str,
+        volumes: &[String],
+    ) -> anyhow::Result<()> {
+        // 1. Stop + remove all containers matching the project prefix
+        let prefix = format!("litebin-{}.", project_id);
+        if let Ok(container_ids) = self.list_containers_by_prefix(&prefix).await {
+            for cid in &container_ids {
+                let _ = self.stop_container(cid).await;
+                let _ = self.remove_container(cid).await;
+                tracing::info!(project = %project_id, container_id = %cid, "cleanup: removed container");
+            }
+        }
+
+        // 2. Also try single-service container name
+        let single_name = format!("litebin-{}", project_id);
+        if let Ok(single_ids) = self.list_containers_by_prefix(&single_name).await {
+            for cid in &single_ids {
+                if !cid.starts_with(&prefix) { // avoid double-remove
+                    let _ = self.stop_container(cid).await;
+                    let _ = self.remove_container(cid).await;
+                }
+            }
+        }
+
+        // 3. Remove volumes
+        for vol_name in volumes {
+            if let Err(e) = self.remove_volume_by_name(vol_name).await {
+                tracing::warn!(project = %project_id, volume = %vol_name, error = %e, "cleanup: failed to remove volume");
+            }
+        }
+
+        // 4. Remove per-project network
+        let _ = self.remove_project_network(project_id, None).await;
+
+        // 5. Remove project directory if it exists
+        let project_dir = std::path::Path::new("projects").join(project_id);
+        if project_dir.is_dir() {
+            if let Err(e) = std::fs::remove_dir_all(&project_dir) {
+                tracing::warn!(project = %project_id, error = %e, "cleanup: failed to remove project directory");
+            }
+        }
+
+        Ok(())
     }
 
     /// Connect a running container to a Docker network (idempotent).

@@ -271,6 +271,7 @@ async fn main() -> Result<()> {
         .route("/containers/{id}/disk-usage", get(routes::containers::container_disk_usage))
         .route("/containers/stats", post(routes::containers::batch_container_stats))
         .route("/containers/batch-run", post(routes::containers::batch_run))
+        .route("/containers/cleanup", post(routes::containers::cleanup_project))
         .route("/images/load", post(routes::images::load_image))
         .route("/images/remove-unused", post(routes::images::remove_unused_image))
         .route("/images/prune", post(routes::images::prune_images))

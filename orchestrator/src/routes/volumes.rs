@@ -10,67 +10,58 @@ use serde_json::json;
 use crate::auth::backend::PasswordBackend;
 use crate::AppState;
 
-/// DELETE /projects/:id/volumes/:name — Remove a specific volume data directory.
+/// DELETE /projects/:id/volumes/:name — Remove a specific volume.
 pub async fn delete_volume(
     auth_session: AuthSession<PasswordBackend>,
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((project_id, name)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
         return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Authentication required"}))).into_response();
     }
 
-    let path = std::path::PathBuf::from("projects")
-        .join(&project_id)
-        .join("data")
-        .join(&name);
+    let scoped = litebin_common::types::scope_volume_source(&name, &project_id);
 
-    if !path.exists() {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "Volume directory not found"}))).into_response();
-    }
-
-    if let Err(e) = std::fs::remove_dir_all(&path) {
+    if let Err(e) = state.docker.remove_volume_by_name(&scoped).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("Failed to remove volume: {e}")})),
         ).into_response();
     }
 
-    tracing::info!(project = %project_id, volume = %name, "volume data deleted");
-    (StatusCode::OK, Json(json!({"deleted": path.display().to_string()}))).into_response()
+    tracing::info!(project = %project_id, volume = %scoped, "volume deleted");
+    (StatusCode::OK, Json(json!({"deleted": scoped}))).into_response()
 }
 
-/// DELETE /projects/:id/volumes — Remove all volume data directories for a project.
+/// DELETE /projects/:id/volumes — Remove all volumes for a project.
 pub async fn delete_all_volumes(
     auth_session: AuthSession<PasswordBackend>,
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(project_id): Path<String>,
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
         return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Authentication required"}))).into_response();
     }
 
-    let data_dir = std::path::PathBuf::from("projects")
-        .join(&project_id)
-        .join("data");
-
-    if !data_dir.exists() {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "No data directory found"}))).into_response();
-    }
+    // Collect all scoped volume names for the project
+    let volumes: Vec<String> = sqlx::query_as::<_, (String,)>(
+        "SELECT volume_name FROM project_volumes WHERE project_id = ? AND volume_name IS NOT NULL",
+    )
+    .bind(&project_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(name,)| name)
+    .collect();
 
     let mut deleted: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&data_dir) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                if let Err(e) = std::fs::remove_dir_all(entry.path()) {
-                    tracing::warn!(path = %entry.path().display(), error = %e, "failed to remove volume dir");
-                } else {
-                    deleted.push(entry.path().display().to_string());
-                }
-            }
+    for vol_name in &volumes {
+        if state.docker.remove_volume_by_name(vol_name).await.is_ok() {
+            deleted.push(vol_name.clone());
         }
     }
 
-    tracing::info!(project = %project_id, count = deleted.len(), "all volume data deleted");
+    tracing::info!(project = %project_id, count = deleted.len(), "all volumes deleted");
     (StatusCode::OK, Json(json!({"deleted": deleted}))).into_response()
 }

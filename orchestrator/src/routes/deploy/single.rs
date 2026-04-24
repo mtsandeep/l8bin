@@ -629,16 +629,15 @@ async fn execute_deploy(
         for vm in old {
             let name = vm.name.as_deref().unwrap_or(&payload.project_id);
             if !new_names.contains(name) {
-                let path = std::path::PathBuf::from("projects")
-                    .join(&payload.project_id)
-                    .join("data")
-                    .join(name);
-                if path.exists() {
-                    orphaned_volumes.push(path.display().to_string());
-                    if payload.cleanup_volumes == Some(true) {
-                        let _ = std::fs::remove_dir_all(&path);
-                        tracing::info!(path = %path.display(), "cleaned up orphaned volume");
-                    }
+                let scoped = litebin_common::types::scope_volume_source(name, &payload.project_id);
+                match litebin_common::types::classify_volume(&scoped) {
+                    litebin_common::types::VolumeKind::AbsoluteBindMount => continue,
+                    _ => {}
+                }
+                orphaned_volumes.push(scoped.clone());
+                if payload.cleanup_volumes == Some(true) {
+                    let _ = state.docker.remove_volume_by_name(&scoped).await;
+                    tracing::info!(volume = %scoped, "cleaned up orphaned volume");
                 }
             }
         }

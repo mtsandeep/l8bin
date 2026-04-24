@@ -333,6 +333,31 @@ pub async fn start_project(
     }))
 }
 
+/// Build a list of scoped volume names for a project (from DB for multi-service, from JSON for single-service).
+fn build_volume_list(project: &crate::db::models::Project) -> Vec<String> {
+    if project.service_count.unwrap_or(1) > 1 {
+        // Multi-service: volumes are in project_volumes table (already scoped at deploy time)
+        // For remote delete, we pass what we have from the project record
+        // The agent will discover volumes from its own state
+        Vec::new()
+    } else if let Some(ref vols_json) = project.volumes {
+        serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(vols_json)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|v| {
+                let name = v.name.as_deref().unwrap_or(&project.id);
+                if name.starts_with('/') {
+                    None // absolute bind mount — user-managed
+                } else {
+                    Some(litebin_common::types::scope_volume_source(name, &project.id))
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 /// DELETE /projects/:id
 pub async fn delete_project(
     State(state): State<AppState>,
@@ -354,41 +379,40 @@ pub async fn delete_project(
         .map(|n| n == "local")
         .unwrap_or(true);
 
-    if project.service_count.unwrap_or(1) > 1 && is_local {
-        super::multi_service::delete_all_services(&state, &project_id).await;
-    } else if let Some(ref container_id) = project.container_id {
-        let is_remote = project
-            .node_id
-            .as_deref()
-            .map(|n| n != "local")
-            .unwrap_or(false);
-
-        if is_remote {
-            let node_id = project.node_id.as_deref().unwrap();
-            match nodes::client::get_node_client(&state.node_clients, node_id) {
-                Ok(client) => {
-                    match get_node_from_db(&state.db, node_id).await {
-                        Ok(node) => {
-                            let base_url = agent_base_url(&state.config, &node);
-                            let _ = client
-                                .post(&format!("{}/containers/remove", base_url))
-                                .json(&json!({
-                                    "container_id": container_id,
-                                }))
-                                .send()
-                                .await;
-                        }
-                        Err(e) => {
-                            tracing::warn!(node_id = %node_id, error = ?e, "delete: node not found, skipping remote remove");
-                        }
+    if is_local {
+        if project.service_count.unwrap_or(1) > 1 {
+            super::multi_service::delete_all_services(&state, &project_id).await;
+        } else {
+            // Collect volumes for single-service local cleanup
+            let volumes: Vec<String> = build_volume_list(&project);
+            let _ = state.docker.cleanup_project_resources(&project_id, &volumes).await;
+        }
+    } else {
+        // Remote: call agent cleanup endpoint
+        let node_id = project.node_id.as_deref().unwrap();
+        let volumes = build_volume_list(&project);
+        match nodes::client::get_node_client(&state.node_clients, node_id) {
+            Ok(client) => {
+                match get_node_from_db(&state.db, node_id).await {
+                    Ok(node) => {
+                        let base_url = agent_base_url(&state.config, &node);
+                        let _ = client
+                            .post(&format!("{}/containers/cleanup", base_url))
+                            .json(&json!({
+                                "project_id": project_id,
+                                "volumes": volumes,
+                            }))
+                            .send()
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(node_id = %node_id, error = ?e, "delete: node not found, skipping remote cleanup");
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(node_id = %node_id, error = %e, "delete: node client unavailable, skipping remote remove");
-                }
             }
-        } else {
-            let _ = state.docker.remove_container(container_id).await;
+            Err(e) => {
+                tracing::warn!(node_id = %node_id, error = %e, "delete: node client unavailable, skipping remote cleanup");
+            }
         }
     }
 

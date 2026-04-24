@@ -362,7 +362,9 @@ pub async fn deploy_compose(
                 // Parse "source:target[:mode]" format
                 let parts: Vec<&str> = vol_str.splitn(3, ':').collect();
                 if parts.len() >= 2 {
-                    let volume_name = if !parts[0].is_empty() { Some(parts[0].to_string()) } else { None };
+                    let volume_name = if !parts[0].is_empty() {
+                        Some(litebin_common::types::scope_volume_source(parts[0], &project_id))
+                    } else { None };
                     let container_path = parts[1].to_string();
                     let _ = sqlx::query(
                         "INSERT OR IGNORE INTO project_volumes (project_id, service_name, volume_name, container_path)

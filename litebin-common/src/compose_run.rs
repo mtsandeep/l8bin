@@ -130,6 +130,13 @@ fn build_configs(
             let cpu_limit: Option<f64> = svc.cpus.as_ref()
                 .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())));
 
+            // Scope named volumes to the project (e.g. "pgdata" -> "myproject_pgdata").
+            // Only prefix volumes whose source doesn't start with / or ./ (those are
+            // host bind mounts, not Docker named volumes).
+            let binds = svc.volumes.as_ref().map(|vols| {
+                vols.iter().map(|v| scope_volume_name(v, project_id)).collect::<Vec<_>>()
+            });
+
             Some(RunServiceConfig {
                 project_id: project_id.to_string(),
                 service_name: svc_name.clone(),
@@ -148,11 +155,24 @@ fn build_configs(
                 read_only: None,
                 extra_hosts: None,
                 networks: None,
-                binds: svc.volumes.clone(),
+                binds,
                 is_public,
                 bollard_create_body: Some(bollard_config.create_body),
                 bollard_host_config: Some(bollard_config.host_config),
             })
         })
         .collect()
+}
+
+/// Scope volume names in a compose volume spec with the project ID.
+///
+/// - `pgdata:/var/lib/postgresql/data` -> `litebin_myproject_pgdata:/var/lib/postgresql/data`
+/// - `/host/path:/container/path` -> unchanged (absolute bind mount)
+/// - `./data:/container/path` -> `projects/myproject/data:/container/path` (relative to project folder)
+fn scope_volume_name(volume_spec: &str, project_id: &str) -> String {
+    let (source, rest) = match volume_spec.split_once(':') {
+        Some((src, rest)) => (src, format!(":{}", rest)),
+        None => return volume_spec.to_string(),
+    };
+    format!("{}{}", crate::types::scope_volume_source(source, project_id), rest)
 }
