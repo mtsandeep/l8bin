@@ -249,6 +249,8 @@ pub async fn run_container(
             .into_response();
     }
 
+    ensure_project_dir_and_env(&req.project_id);
+
     let extra_env = read_project_env(&req.project_id);
 
     let project = litebin_common::types::Project {
@@ -700,6 +702,8 @@ pub struct BatchRunRequest {
     pub compose_yaml: String,
     /// Ordered list of service names to start (topologically sorted by orchestrator).
     pub service_order: Vec<String>,
+    /// If Some, only recreate these services (partial redeploy). If None, deploy all.
+    pub target_services: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -753,11 +757,30 @@ pub async fn batch_run(
     };
 
     // Clean up existing containers from a previous deploy (by name prefix)
+    // On partial redeploy, only remove targeted service containers
     let prefix = format!("litebin-{}.", req.project_id);
+    let target_set: Option<std::collections::HashSet<String>> = req.target_services.as_ref()
+        .map(|ts| ts.iter().cloned().collect());
     if let Ok(all_containers) = state.docker.list_containers_by_prefix(&prefix).await {
         for cid in &all_containers {
-            let _ = state.docker.stop_container(cid).await;
-            let _ = state.docker.remove_container(cid).await;
+            if let Some(ref targets) = target_set {
+                // Partial redeploy: check if this container belongs to a target service
+                if let Ok(inspect) = state.docker.inspect_container(cid).await {
+                    if let Some(ref name) = inspect.name {
+                        let trimmed = name.trim_start_matches('/');
+                        if let Some(svc_name) = trimmed.strip_prefix(&prefix) {
+                            if targets.contains(svc_name) {
+                                let _ = state.docker.stop_container(cid).await;
+                                let _ = state.docker.remove_container(cid).await;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Full deploy: remove all
+                let _ = state.docker.stop_container(cid).await;
+                let _ = state.docker.remove_container(cid).await;
+            }
         }
     }
 
@@ -775,8 +798,15 @@ pub async fn batch_run(
     let project_network = litebin_common::types::project_network_name(&req.project_id, None);
     let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
 
-    // Pull all images in parallel
-    let images_to_pull: Vec<String> = plan.configs.iter().map(|c| c.image.clone()).collect();
+    // Pull images in parallel (only for target services on partial redeploy)
+    let images_to_pull: Vec<String> = if let Some(ref targets) = target_set {
+        plan.configs.iter()
+            .filter(|c| targets.contains(&c.service_name))
+            .map(|c| c.image.clone())
+            .collect()
+    } else {
+        plan.configs.iter().map(|c| c.image.clone()).collect()
+    };
     let pull_handles: Vec<_> = images_to_pull.into_iter().map(|image| {
         let docker = state.docker.clone();
         tokio::spawn(async move {
@@ -802,6 +832,13 @@ pub async fn batch_run(
         let mut tasks: JoinSet<ServiceRunResult> = JoinSet::new();
 
         for svc_name in level {
+            // Apply target filter for partial redeploy
+            if let Some(ref targets) = target_set {
+                if !targets.contains(svc_name) {
+                    continue;
+                }
+            }
+
             let run_config = configs_map[svc_name].clone();
             let docker = state.docker.clone();
             let svc = svc_name.clone();

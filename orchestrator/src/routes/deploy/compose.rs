@@ -38,6 +38,7 @@ pub async fn deploy_compose(
     let mut auto_start_enabled = None;
     let mut custom_domain = None;
     let mut compose_content = None;
+    let mut target_services_raw = None;
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let field_name = match field.name() {
@@ -72,6 +73,9 @@ pub async fn deploy_compose(
             }
             "compose" => {
                 compose_content = field.bytes().await.ok();
+            }
+            "target_services" => {
+                target_services_raw = field.text().await.ok();
             }
             _ => {
                 tracing::debug!(field = %field_name, "ignoring unknown multipart field");
@@ -192,6 +196,11 @@ pub async fn deploy_compose(
     let auto_stop_mins = auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
     let auto_start = auto_start_enabled.unwrap_or(true);
 
+    // Parse target_services from comma-separated string (sent by CLI on partial redeploy)
+    let target_services: Option<Vec<String>> = target_services_raw.map(|s| {
+        s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+    });
+
     tracing::info!(
         project_id = %project_id,
         services = start_order.len(),
@@ -209,6 +218,7 @@ pub async fn deploy_compose(
 
     // Ensure project directory exists and write compose.yaml to disk
     crate::routes::manage::ensure_project_dir_and_env(&project_id);
+
     let compose_path = std::path::PathBuf::from("projects").join(&project_id).join("compose.yaml");
     if let Err(e) = std::fs::write(&compose_path, &compose_yaml) {
         return (
@@ -227,16 +237,19 @@ pub async fn deploy_compose(
     let service_count = compose.services.len() as i64;
     let service_summary = start_order.join(":");
 
+    // On partial redeploy, project stays running (we're only updating a subset of services)
+    let project_status = if target_services.is_some() { "running" } else { "deploying" };
+
     // Upsert project row
     let result = sqlx::query(
         r#"
         INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, service_count, service_summary, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'deploying', ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id = excluded.user_id,
             image = excluded.image,
             internal_port = excluded.internal_port,
-            status = 'deploying',
+            status = CASE WHEN excluded.status = 'running' THEN projects.status ELSE excluded.status END,
             name = CASE WHEN excluded.name IS NOT NULL THEN excluded.name ELSE COALESCE(projects.name, excluded.name) END,
             description = CASE WHEN excluded.description IS NOT NULL THEN excluded.description ELSE COALESCE(projects.description, excluded.description) END,
             auto_stop_enabled = excluded.auto_stop_enabled,
@@ -254,6 +267,7 @@ pub async fn deploy_compose(
     .bind(&description)
     .bind(&public_image)
     .bind(public_port)
+    .bind(project_status)
     .bind(auto_stop)
     .bind(auto_stop_mins)
     .bind(auto_start)
@@ -295,6 +309,8 @@ pub async fn deploy_compose(
     };
 
     // Seed project_services rows for each service in the compose file
+    let target_set: Option<std::collections::HashSet<String>> = target_services.as_ref()
+        .map(|ts| ts.iter().cloned().collect());
     for svc_name in &start_order {
         let svc = &compose.services[svc_name];
         let image = svc.image.clone().unwrap_or_default();
@@ -310,9 +326,16 @@ pub async fn deploy_compose(
         let cpu_limit: Option<f64> = svc.cpus.as_ref()
             .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())));
 
+        // On partial redeploy, only mark targeted services as 'deploying'
+        let status = if target_set.as_ref().map_or(true, |ts| ts.contains(svc_name)) {
+            "deploying"
+        } else {
+            // Preserve current status for non-targeted services
+            "running"
+        };
         let _ = sqlx::query(
             "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, is_public, depends_on, memory_limit_mb, cpu_limit, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'deploying')"
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&project_id)
         .bind(svc_name)
@@ -322,6 +345,7 @@ pub async fn deploy_compose(
         .bind(&depends_on)
         .bind(memory_limit_mb)
         .bind(cpu_limit)
+        .bind(status)
         .execute(&state.db)
         .await;
     }
@@ -373,6 +397,7 @@ pub async fn deploy_compose(
                 "project_id": project_id,
                 "compose_yaml": compose_yaml,
                 "service_order": start_order,
+                "target_services": target_services,
             }))
             .send()
             .await
@@ -464,54 +489,102 @@ pub async fn deploy_compose(
         ).into_response();
     }
 
-    // Clean up existing containers from a previous deploy (by name prefix).
-    // Handles orphaned containers from failed deploys.
-    let prefix = format!("litebin-{}.", project_id);
-    if let Ok(all_containers) = state.docker.list_containers_by_prefix(&prefix).await {
-        for cid in &all_containers {
-            let _ = state.docker.stop_container(cid).await;
-            let _ = state.docker.remove_container(cid).await;
-        }
-    }
+    // Partial redeploy: only recreate targeted services
+    if let Some(ref targets) = target_services {
+        tracing::info!(project = %project_id, targets = ?targets, "partial compose redeploy");
 
-    // Pull all images before starting (fail on any pull error)
-    let images: Vec<String> = start_order.iter()
-        .filter_map(|name| compose.services[name].image.clone())
-        .collect();
-    let mut pull_errors = Vec::new();
-    for image in &images {
-        if !image.starts_with("sha256:") {
-            if let Err(e) = state.docker.pull_image(image).await {
-                pull_errors.push(format!("{}: {}", image, e));
+        let target_set: std::collections::HashSet<String> = targets.iter().cloned().collect();
+
+        // Stop and remove targeted service containers
+        let prefix = format!("litebin-{}.", project_id);
+        if let Ok(all_containers) = state.docker.list_containers_by_prefix(&prefix).await {
+            for cid in &all_containers {
+                if let Ok(inspect) = state.docker.inspect_container(cid).await {
+                    if let Some(ref name) = inspect.name {
+                        let trimmed = name.trim_start_matches('/');
+                        if let Some(svc_name) = trimmed.strip_prefix(&prefix) {
+                            if target_set.contains(svc_name) {
+                                let _ = state.docker.stop_container(cid).await;
+                                let _ = state.docker.remove_container(cid).await;
+                                let _ = sqlx::query(
+                                    "UPDATE project_services SET container_id = NULL, mapped_port = NULL, status = 'stopped' WHERE project_id = ? AND service_name = ?"
+                                )
+                                .bind(&project_id)
+                                .bind(svc_name)
+                                .execute(&state.db)
+                                .await;
+                            }
+                        }
+                    }
+                }
             }
         }
-    }
-    if !pull_errors.is_empty() {
-        let msg = pull_errors.join("; ");
-        tracing::error!(errors = %msg, "failed to pull images");
-        let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-            .bind(now).bind(&project_id).execute(&state.db).await;
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("failed to pull images: {msg}")})),
-        ).into_response();
-    }
 
-    // Start all services using the unified function.
-    // Network setup, Caddy/orchestrator connect, health checks, DB updates,
-    // and DNS wait are all handled internally by start_services.
-    if let Err((status, msg)) = crate::routes::manage::start_services(
-        &state,
-        &project,
-        crate::routes::manage::StartServicesOpts {
-            force_recreate: true,
-            pull_images: false, // already pulled above
-            services: None,
-            connect_orchestrator: true,
-            rollback_on_failure: true,
-        },
-    ).await {
-        return (status, Json(json!({"error": msg}))).into_response();
+        // Start only the targeted services
+        if let Err((status, msg)) = crate::routes::manage::start_services(
+            &state,
+            &project,
+            crate::routes::manage::StartServicesOpts {
+                force_recreate: true,
+                pull_images: false,
+                services: Some(target_set),
+                connect_orchestrator: true,
+                rollback_on_failure: true,
+            },
+        ).await {
+            return (status, Json(json!({"error": msg}))).into_response();
+        }
+    } else {
+        // Full deploy: clean up existing containers, pull images, start all services
+        // Clean up existing containers from a previous deploy (by name prefix).
+        // Handles orphaned containers from failed deploys.
+        let prefix = format!("litebin-{}.", project_id);
+        if let Ok(all_containers) = state.docker.list_containers_by_prefix(&prefix).await {
+            for cid in &all_containers {
+                let _ = state.docker.stop_container(cid).await;
+                let _ = state.docker.remove_container(cid).await;
+            }
+        }
+
+        // Pull all images before starting (fail on any pull error)
+        let images: Vec<String> = start_order.iter()
+            .filter_map(|name| compose.services[name].image.clone())
+            .collect();
+        let mut pull_errors = Vec::new();
+        for image in &images {
+            if !image.starts_with("sha256:") {
+                if let Err(e) = state.docker.pull_image(image).await {
+                    pull_errors.push(format!("{}: {}", image, e));
+                }
+            }
+        }
+        if !pull_errors.is_empty() {
+            let msg = pull_errors.join("; ");
+            tracing::error!(errors = %msg, "failed to pull images");
+            let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
+                .bind(now).bind(&project_id).execute(&state.db).await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("failed to pull images: {msg}")})),
+            ).into_response();
+        }
+
+        // Start all services using the unified function.
+        // Network setup, Caddy/orchestrator connect, health checks, DB updates,
+        // and DNS wait are all handled internally by start_services.
+        if let Err((status, msg)) = crate::routes::manage::start_services(
+            &state,
+            &project,
+            crate::routes::manage::StartServicesOpts {
+                force_recreate: true,
+                pull_images: false, // already pulled above
+                services: None,
+                connect_orchestrator: true,
+                rollback_on_failure: true,
+            },
+        ).await {
+            return (status, Json(json!({"error": msg}))).into_response();
+        }
     }
 
     // Full route sync after deploy

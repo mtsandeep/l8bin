@@ -121,7 +121,7 @@ async fn new_project_flow(
     };
 
     // Build & deploy
-    let url = build_and_deploy(client, server, &name, project_dir, port, secret_override).await?;
+    let url = build_and_deploy(client, server, &name, project_dir, port, secret_override, true).await?;
 
     // Success
     println!("  {} Live at: {}", "🌐".dimmed(), url.green().bold());
@@ -203,11 +203,11 @@ async fn existing_project_flow(
 
             let url = if compose_file.is_some() {
                 // Multi-service: compose handles ports
-                build_and_deploy(client, server, project_id, project_dir, 0, secret_override).await?
+                build_and_deploy(client, server, project_id, project_dir, 0, secret_override, false).await?
             } else if detect_port_80(project_dir) {
                 // Single-service with EXPOSE 80 in Dockerfile
                 println!("  {} Detected exposed port 80", "::".dimmed());
-                build_and_deploy(client, server, project_id, project_dir, 80, secret_override).await?
+                build_and_deploy(client, server, project_id, project_dir, 80, secret_override, false).await?
             } else {
                 // Single-service: ask for port
                 let port: u16 = if let Some(p) = port_override {
@@ -221,7 +221,7 @@ async fn existing_project_flow(
                         .parse::<u16>()
                         .context("Port must be a number (1-65535)")?
                 };
-                build_and_deploy(client, server, project_id, project_dir, port, secret_override).await?
+                build_and_deploy(client, server, project_id, project_dir, port, secret_override, false).await?
             };
             println!();
             println!();
@@ -324,6 +324,23 @@ fn detect_port_80(project_dir: &Path) -> bool {
     false
 }
 
+fn show_env_path(server: &str, project_id: &str) {
+    let is_local = server.contains("localhost") || server.contains("127.0.0.1");
+    let home_prefix = if is_local {
+        dirs::home_dir()
+            .map(|h| format!("{}{sep}litebin", h.display(), sep = std::path::MAIN_SEPARATOR))
+            .unwrap_or_else(|| "~/litebin".to_string())
+    } else {
+        "~/litebin".to_string()
+    };
+    let sep = std::path::MAIN_SEPARATOR;
+    let home_env = format!("{}{sep}projects{sep}{project_id}{sep}.env", home_prefix);
+    let rel_env = format!(".{sep}litebin{sep}projects{sep}{project_id}{sep}.env");
+    println!("  {} Runtime secrets: {}  or  {}",
+        "🔒".dimmed(), home_env.yellow(), rel_env.yellow());
+    println!("     {}", "(default install path; if custom -InstallDir was used, prepend that path instead)".dimmed());
+}
+
 // Build & deploy
 
 async fn build_and_deploy(
@@ -333,6 +350,7 @@ async fn build_and_deploy(
     project_dir: &Path,
     port: u16,
     mut secret: Vec<std::path::PathBuf>,
+    is_new_project: bool,
 ) -> Result<String> {
     // Check for docker-compose.yaml → use compose deploy endpoint
     let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
@@ -341,7 +359,7 @@ async fn build_and_deploy(
         .find(|p| project_dir.join(p).exists());
 
     if let Some(compose_name) = compose_file {
-        return deploy_compose(client, server, project_id, project_dir, compose_name).await;
+        return deploy_compose(client, server, project_id, project_dir, compose_name, is_new_project).await;
     }
 
     // Detect project type
@@ -376,13 +394,15 @@ async fn build_and_deploy(
             .filter(|name| name.starts_with(".env"))
             .collect();
 
-        // Sort by precedence: shorter names (.env) first, more specific (.env.local) last
+        // Sort by precedence: templates first (.env.example), base (.env), overrides last (.env.local, .env.production)
+        // Later files override earlier ones, so highest priority file comes last
         env_files.sort_by(|a, b| {
             let score = |name: &str| {
-                if name == ".env" { 0 }
-                else if name.contains(".prod") { 1 }
-                else if name.contains(".local") { 2 }
-                else { 1 } // generic .env.*
+                if name == ".env.example" { 0 }       // template — lowest priority
+                else if name == ".env" { 1 }           // base defaults
+                else if name.contains(".local") { 3 }  // local overrides
+                else if name.contains(".prod") { 3 }   // production overrides
+                else { 2 }                             // generic .env.* (e.g. .env.development)
             };
             score(a).cmp(&score(b)).then(a.cmp(b))
         });
@@ -514,22 +534,7 @@ async fn build_and_deploy(
     .await?;
     deploy_spinner.finish_and_clear();
     println!("  {} Deploy successful!", "✔".green());
-    // Show path to runtime .env
-    let is_local = server.contains("localhost") || server.contains("127.0.0.1");
-    let home_prefix = if is_local {
-        dirs::home_dir()
-            .map(|h| format!("{}{sep}litebin", h.display(), sep = std::path::MAIN_SEPARATOR))
-            .unwrap_or_else(|| "~/litebin".to_string())
-    } else {
-        "~/litebin".to_string()
-    };
-    let sep = std::path::MAIN_SEPARATOR;
-    let home_env = format!("{}{sep}projects{sep}{project_id}{sep}.env", home_prefix);
-    let rel_env = format!(".{sep}litebin{sep}projects{sep}{project_id}{sep}.env");
-    println!("  {} Runtime secrets: {}  or  {}",
-        "🔒".dimmed(), home_env.yellow(), rel_env.yellow());
-    println!("     {}", "(default install path; if custom -InstallDir was used, prepend that path instead)".dimmed());
-
+    show_env_path(server, project_id);
     println!();
 
     // Clean up temp tar file
@@ -565,6 +570,7 @@ async fn deploy_compose(
     project_id: &str,
     project_dir: &Path,
     compose_name: &str,
+    is_new_project: bool,
 ) -> Result<String> {
     let compose_path = project_dir.join(compose_name);
     println!("  {} Found {} — deploying as multi-service", "🐳".dimmed(), compose_name.cyan());
@@ -578,6 +584,7 @@ async fn deploy_compose(
 
     // Phase 1: Build and upload images for services with `build:`
     // Collect build info into owned values so we can drop the borrow on `compose`
+    #[derive(Clone)]
     struct BuildInfo {
         svc_name: String,
         build_context: String,
@@ -597,6 +604,9 @@ async fn deploy_compose(
         }
     }
 
+    // Track which services to actually build (may be filtered by user on redeploy)
+    let mut is_partial_build = false;
+
     if !build_infos.is_empty() {
         let pull_count = total_services - build_infos.len();
         let pull_info = if pull_count > 0 {
@@ -605,6 +615,53 @@ async fn deploy_compose(
             String::new()
         };
         println!("  {} Found {} services — building {}{}", "🐳".dimmed(), total_services, build_infos.len(), pull_info);
+
+        // On redeploy with 2+ buildable services, ask which to build
+        if !is_new_project && build_infos.len() >= 2 {
+            let svc_names: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
+            loop {
+                let choices = vec!["Build all", "Pick specific..."];
+                let selection = Select::new()
+                    .with_prompt("  🔨 Which services to build?")
+                    .items(&choices)
+                    .default(0)
+                    .interact()?;
+
+                match selection {
+                    0 => {
+                        // Build all
+                        break;
+                    }
+                    1 => {
+                        // Pick specific
+                        let defaults = vec![false; svc_names.len()];
+                        let chosen = dialoguer::MultiSelect::new()
+                            .with_prompt("  🔨 Select services to build [Space to select, Enter to confirm]")
+                            .items(&svc_names)
+                            .defaults(&defaults)
+                            .interact()?;
+
+                        if !chosen.is_empty() {
+                            let selected: Vec<usize> = chosen;
+                            let selected_names: Vec<&str> = selected.iter().map(|&i| svc_names[i]).collect();
+                            println!("  {} Building: {}", "::".dimmed(), selected_names.join(", ").dimmed());
+                            let mut filtered = Vec::new();
+                            for idx in selected {
+                                filtered.push(build_infos[idx].clone());
+                            }
+                            build_infos = filtered;
+                            is_partial_build = true;
+                            break;
+                        } else {
+                            println!("  {} {}", "!".red(), "No services selected. Pick at least one, or choose 'Build all'.".yellow());
+                            continue;
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+
         println!("  {} Building {} service(s)...", "🔨".dimmed(), build_infos.len());
     }
 
@@ -619,10 +676,11 @@ async fn deploy_compose(
 
     root_env_files.sort_by(|a, b| {
         let score = |name: &str| {
-            if name == ".env" { 0 }
-            else if name.contains(".prod") { 1 }
-            else if name.contains(".local") { 2 }
-            else { 1 }
+            if name == ".env.example" { 0 }
+            else if name == ".env" { 1 }
+            else if name.contains(".local") { 3 }
+            else if name.contains(".prod") { 3 }
+            else { 2 }
         };
         score(a).cmp(&score(b)).then(a.cmp(b))
     });
@@ -738,16 +796,22 @@ async fn deploy_compose(
     deploy_spinner.enable_steady_tick(std::time::Duration::from_millis(100));
     deploy_spinner.set_message("Deploying compose...");
 
-    let form = reqwest::multipart::Form::new()
+    let mut form = reqwest::multipart::Form::new()
         .text("project_id", project_id.to_string())
         .part("compose", reqwest::multipart::Part::bytes(resolved_yaml.into_bytes())
             .file_name(compose_name.to_string())
             .mime_str("text/yaml")?);
+    if is_partial_build {
+        let target_list: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
+        form = form.text("target_services", target_list.join(","));
+    }
 
     let resp = auth::session_post_multipart(client, server, "/deploy/compose", form).await?;
     deploy_spinner.finish_and_clear();
 
     println!("  {} Compose deploy successful!", "✔".green());
+    show_env_path(server, project_id);
+    println!();
 
     // Stop BuildKit container
     println!("  🧹 Stopping BuildKit...");
