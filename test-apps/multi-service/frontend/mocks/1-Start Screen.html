@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>
+        window.FontAwesomeConfig = {
+          autoReplaceSvg: 'nest'
+        };
+      </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snack IQ 2 - Start Screen</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'retro-bg': '#FDFBF7',
+                        'retro-ink': '#111827',
+                        'retro-accent': '#FF4B3E',
+                        'retro-blue': '#2563EB',
+                        'retro-surface': '#FFFFFF',
+                        'retro-gray': '#F3F4F6',
+                        'retro-text': '#374151',
+                        'retro-muted': '#9CA3AF'
+                    },
+                    fontFamily: {
+                        'mono': ['"Space Mono"', 'monospace'],
+                        'sans': ['"Work Sans"', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'neubrutalism': '4px 4px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-lg': '8px 8px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-sm': '2px 2px 0px 0px rgba(17, 24, 39, 1)',
+                    },
+                    backgroundImage: {
+                        'noise': "url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E')",
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #FDFBF7;
+            background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E');
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #FDFBF7;
+            border-left: 2px solid #111827;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #111827;
+        }
+        
+        /* Preloader Animation Styles */
+        @keyframes fadeOut {
+            from { opacity: 1; visibility: visible; }
+            to { opacity: 0; visibility: hidden; }
+        }
+
+        @keyframes pixel-load {
+            0% { width: 0%; }
+            10% { width: 10%; }
+            20% { width: 20%; }
+            30% { width: 30%; }
+            40% { width: 40%; }
+            50% { width: 50%; }
+            60% { width: 60%; }
+            70% { width: 70%; }
+            80% { width: 80%; }
+            90% { width: 90%; }
+            100% { width: 100%; }
+        }
+
+        #preloader {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background-color: #FDFBF7;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s ease-out, visibility 0.5s ease-out;
+        }
+        
+        #preloader::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(255, 75, 62, 0.08) 0%, transparent 60%);
+            pointer-events: none;
+        }
+
+        .pixel-progress-container {
+            width: 300px;
+            height: 30px;
+            background-color: #FFFFFF;
+            border: 4px solid #111827;
+            box-shadow: inset 4px 4px 0px rgba(17, 24, 39, 0.1), 4px 4px 0px #FF4B3E;
+            position: relative;
+            margin-top: 2rem;
+            border-radius: 0;
+        }
+
+        .pixel-progress-bar {
+            height: 100%;
+            background: repeating-linear-gradient(
+                90deg,
+                #FF4B3E,
+                #FF4B3E 10px,
+                #e03a2e 10px,
+                #e03a2e 20px
+            );
+            width: 0%;
+            animation: pixel-load 2.5s steps(10, end) forwards;
+            border-right: 4px solid #111827;
+        }
+
+        .pixel-text {
+            font-family: 'Space Mono', monospace;
+            color: #111827;
+            font-size: 1.2rem;
+            margin-top: 1rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-shadow: 2px 2px 0px #FF4B3E;
+        }
+
+        .loader-icon {
+            font-size: 4rem;
+            color: #FF4B3E;
+            z-index: 10;
+            margin-bottom: 1rem;
+            filter: drop-shadow(4px 4px 0px #111827);
+        }
+
+        .loaded #preloader {
+            opacity: 0;
+            visibility: hidden;
+        }
+        
+        /* Skeleton loading styles for initial state */
+        .skeleton {
+            background: linear-gradient(90deg, #F3F4F6 25%, #E5E7EB 50%, #F3F4F6 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-color: transparent !important;
+            color: transparent !important;
+        }
+        
+        .skeleton * {
+            visibility: hidden;
+        }
+        
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+    </style>
+    
+    <script>
+        // Preloader Logic
+        window.addEventListener('load', function() {
+            // Update percentage counter
+            const counter = document.getElementById('loading-percentage');
+            let percent = 0;
+            const interval = setInterval(() => {
+                percent += 10;
+                if(percent <= 100) {
+                    counter.innerText = percent + '%';
+                }
+                if(percent >= 100) {
+                    clearInterval(interval);
+                }
+            }, 250); // Matches the 2.5s animation (250ms * 10 steps)
+
+            // Simulate loading data/assets
+            setTimeout(function() {
+                document.body.classList.add('loaded');
+                
+                // Remove skeleton classes after a slight delay to simulate content rendering
+                setTimeout(function() {
+                    const skeletons = document.querySelectorAll('.skeleton-target');
+                    skeletons.forEach(el => el.classList.remove('skeleton', 'skeleton-target'));
+                }, 300);
+                
+            }, 3000); // 3s simulated load time to allow animation to finish
+        });
+    </script>
+</head>
+<body class="font-sans text-retro-ink antialiased min-h-screen flex flex-col">
+
+    <!-- Fullscreen Preloader -->
+    <div id="preloader">
+        <i class="fa-solid fa-gamepad loader-icon"></i>
+        <div class="pixel-progress-container">
+            <div class="pixel-progress-bar"></div>
+        </div>
+        <div class="pixel-text">
+            Loading... <span id="loading-percentage">0%</span>
+        </div>
+        <div class="mt-6 font-mono text-retro-text text-xs max-w-md text-center px-4 uppercase tracking-widest border-[3px] border-retro-ink p-3 bg-white shadow-neubrutalism-sm rounded-lg">
+            Initializing Snack Database
+        </div>
+    </div>
+
+    <!-- Navigation Bar -->
+    <nav id="top-nav" class="w-full border-b-[3px] border-retro-ink bg-retro-bg sticky top-0 z-50">
+        <div class="max-w-[1440px] mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-retro-accent border-[3px] border-retro-ink rounded-lg shadow-neubrutalism-sm flex items-center justify-center">
+                    <i class="fa-solid fa-cookie-bite text-white text-xl"></i>
+                </div>
+                <span class="font-mono font-bold text-2xl tracking-tight">SNACK IQ 2</span>
+            </div>
+            
+            <div class="hidden md:flex items-center gap-8 font-mono font-bold text-sm tracking-wide uppercase">
+                <a href="#" class="relative px-2 py-1 group">
+                    <span class="text-retro-ink">Start Screen</span>
+                    <span class="absolute -bottom-2 left-0 w-full h-[3px] bg-retro-ink"></span>
+                </a>
+                <a href="#" class="relative px-2 py-1 group opacity-60 hover:opacity-100 transition-opacity">
+                    <span class="text-retro-ink">Quiz</span>
+                    <span class="absolute -bottom-2 left-0 w-0 h-[3px] bg-retro-ink group-hover:w-full transition-all duration-300"></span>
+                </a>
+                <a href="#" class="relative px-2 py-1 group opacity-60 hover:opacity-100 transition-opacity">
+                    <span class="text-retro-ink">Results</span>
+                    <span class="absolute -bottom-2 left-0 w-0 h-[3px] bg-retro-ink group-hover:w-full transition-all duration-300"></span>
+                </a>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <button class="font-mono font-bold text-sm border-[3px] border-retro-ink px-6 py-2.5 rounded-lg hover:bg-retro-ink hover:text-white transition-colors">
+                    LOG IN
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Layout -->
+    <main class="flex-grow flex flex-col lg:flex-row max-w-[1440px] mx-auto w-full">
+        
+        <!-- Left Column: Game Area (75%) -->
+        <section id="game-area" class="w-full lg:w-3/4 p-8 lg:p-16 flex flex-col justify-center min-h-[calc(100vh-80px)] border-r-[3px] border-retro-ink">
+            
+            <div class="max-w-3xl mx-auto w-full">
+                <!-- Header/Hero -->
+                <div class="mb-12">
+                    <div class="inline-block border-[3px] border-retro-ink bg-retro-blue text-white font-mono font-bold px-4 py-1.5 rounded-full text-sm mb-6 shadow-neubrutalism-sm transform -rotate-2">
+                        SEASON 2 IS LIVE!
+                    </div>
+                    <h1 class="text-6xl lg:text-8xl font-black tracking-tighter leading-[0.9] mb-6 uppercase">
+                        Guess The <br>
+                        <span class="text-retro-accent relative inline-block">
+                            Calories.
+                            <svg class="absolute w-full h-4 -bottom-1 left-0 text-retro-ink" viewBox="0 0 100 20" preserveAspectRatio="none">
+                                <path d="M0,10 Q50,20 100,10" fill="none" stroke="currentColor" stroke-width="4"></path>
+                            </svg>
+                        </span>
+                    </h1>
+                    <p class="text-xl lg:text-2xl font-medium text-retro-text leading-relaxed max-w-2xl font-mono">
+                        Test your nutritional intuition against the ultimate snack database. Can you spot the hidden calories before the timer runs out?
+                    </p>
+                </div>
+
+                <!-- Action Area -->
+                <div class="bg-white border-[3px] border-retro-ink rounded-2xl p-8 shadow-neubrutalism-lg max-w-xl skeleton-target skeleton">
+                    <form class="space-y-6">
+                        <div>
+                            <label for="player-name" class="block font-mono font-bold text-sm uppercase mb-2">Enter Player Name (Optional)</label>
+                            <input type="text" id="player-name" placeholder="E.g. SnackMaster99" 
+                                class="w-full bg-retro-bg border-[3px] border-retro-ink rounded-lg px-4 py-4 font-mono text-lg focus:outline-none focus:ring-4 focus:ring-retro-blue/20 transition-all placeholder:text-retro-muted font-bold">
+                            <p class="text-sm text-retro-text mt-2 font-mono"><i class="fa-solid fa-circle-info mr-1"></i> Used for the global leaderboard.</p>
+                        </div>
+
+                        <button type="button" class="w-full bg-retro-accent hover:bg-[#e03a2e] text-white border-[3px] border-retro-ink rounded-xl py-5 px-8 font-mono font-black text-2xl uppercase tracking-wider shadow-neubrutalism transition-transform active:translate-y-1 active:shadow-none flex items-center justify-center gap-3">
+                            <i class="fa-solid fa-play"></i> Start Quiz
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Features/Stats -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-16">
+                    <div class="border-[3px] border-retro-ink rounded-xl p-5 bg-[#E5E7EB] shadow-neubrutalism-sm skeleton-target skeleton">
+                        <i class="fa-solid fa-stopwatch text-3xl mb-3"></i>
+                        <h3 class="font-black text-lg uppercase mb-1">10 Seconds</h3>
+                        <p class="font-mono text-sm text-retro-text">Per question. Think fast.</p>
+                    </div>
+                    <div class="border-[3px] border-retro-ink rounded-xl p-5 bg-[#E5E7EB] shadow-neubrutalism-sm skeleton-target skeleton">
+                        <i class="fa-solid fa-database text-3xl mb-3"></i>
+                        <h3 class="font-black text-lg uppercase mb-1">500+ Snacks</h3>
+                        <p class="font-mono text-sm text-retro-text">From chips to gourmet treats.</p>
+                    </div>
+                    <div class="border-[3px] border-retro-ink rounded-xl p-5 bg-[#E5E7EB] shadow-neubrutalism-sm skeleton-target skeleton">
+                        <i class="fa-solid fa-trophy text-3xl mb-3"></i>
+                        <h3 class="font-black text-lg uppercase mb-1">Global Rank</h3>
+                        <p class="font-mono text-sm text-retro-text">Compete worldwide.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Column: Leaderboard Sidebar (25%) -->
+        <aside id="leaderboard-sidebar" class="w-full lg:w-1/4 bg-white flex flex-col min-h-[calc(100vh-80px)]">
+            
+            <!-- Leaderboard Header -->
+            <div class="p-6 border-b-[3px] border-retro-ink bg-retro-blue text-white">
+                <h2 class="font-black text-2xl uppercase tracking-wide flex items-center gap-3">
+                    <i class="fa-solid fa-ranking-star text-retro-accent"></i> Top Players
+                </h2>
+                <p class="font-mono text-sm mt-1 opacity-90">All-time high scores</p>
+            </div>
+
+            <!-- Leaderboard List -->
+            <div class="flex-grow overflow-y-auto p-4 space-y-3">
+                <!-- Rank 1 -->
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-ink rounded-xl bg-[#FFF9C4] shadow-neubrutalism-sm relative overflow-hidden skeleton-target skeleton">
+                    <div class="absolute -right-4 -top-4 text-6xl opacity-10"><i class="fa-solid fa-crown"></i></div>
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-retro-accent">#1</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-4.jpg" alt="Player" class="w-10 h-10 rounded-full border-2 border-retro-ink object-cover">
+                    <div class="flex-grow">
+                        <div class="font-bold text-sm truncate">CalorieKing</div>
+                        <div class="font-mono text-xs text-retro-text">Lvl 42</div>
+                    </div>
+                    <div class="font-black font-mono text-lg">9,450</div>
+                </div>
+
+                <!-- Rank 2 -->
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-ink rounded-xl bg-white shadow-neubrutalism-sm skeleton-target skeleton">
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-[#9CA3AF]">#2</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg" alt="Player" class="w-10 h-10 rounded-full border-2 border-retro-ink object-cover">
+                    <div class="flex-grow">
+                        <div class="font-bold text-sm truncate">SnackQueen</div>
+                        <div class="font-mono text-xs text-retro-text">Lvl 38</div>
+                    </div>
+                    <div class="font-black font-mono text-lg">8,920</div>
+                </div>
+
+                <!-- Rank 3 -->
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-ink rounded-xl bg-white shadow-neubrutalism-sm skeleton-target skeleton">
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-[#B45309]">#3</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-2.jpg" alt="Player" class="w-10 h-10 rounded-full border-2 border-retro-ink object-cover">
+                    <div class="flex-grow">
+                        <div class="font-bold text-sm truncate">MacroTracker</div>
+                        <div class="font-mono text-xs text-retro-text">Lvl 35</div>
+                    </div>
+                    <div class="font-black font-mono text-lg">8,100</div>
+                </div>
+
+                <!-- Ranks 4-10 -->
+                <div class="flex items-center gap-4 p-2 hover:bg-retro-gray rounded-lg transition-colors cursor-pointer">
+                    <div class="w-8 text-center font-mono font-bold text-sm text-retro-muted">4</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-7.jpg" alt="Player" class="w-8 h-8 rounded-full border border-retro-ink object-cover">
+                    <div class="flex-grow font-bold text-sm truncate">DietDestroyer</div>
+                    <div class="font-mono font-bold text-sm">7,850</div>
+                </div>
+                <div class="flex items-center gap-4 p-2 hover:bg-retro-gray rounded-lg transition-colors cursor-pointer">
+                    <div class="w-8 text-center font-mono font-bold text-sm text-retro-muted">5</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-8.jpg" alt="Player" class="w-8 h-8 rounded-full border border-retro-ink object-cover">
+                    <div class="flex-grow font-bold text-sm truncate">ProteinBro</div>
+                    <div class="font-mono font-bold text-sm">7,420</div>
+                </div>
+                <div class="flex items-center gap-4 p-2 hover:bg-retro-gray rounded-lg transition-colors cursor-pointer">
+                    <div class="w-8 text-center font-mono font-bold text-sm text-retro-muted">6</div>
+                    <div class="w-8 h-8 rounded-full border border-retro-ink bg-[#D1D5DB] flex items-center justify-center font-mono text-xs font-bold">JD</div>
+                    <div class="flex-grow font-bold text-sm truncate">JunkFoodJunkie</div>
+                    <div class="font-mono font-bold text-sm">7,100</div>
+                </div>
+                <div class="flex items-center gap-4 p-2 hover:bg-retro-gray rounded-lg transition-colors cursor-pointer">
+                    <div class="w-8 text-center font-mono font-bold text-sm text-retro-muted">7</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-1.jpg" alt="Player" class="w-8 h-8 rounded-full border border-retro-ink object-cover">
+                    <div class="flex-grow font-bold text-sm truncate">KetoKid</div>
+                    <div class="font-mono font-bold text-sm">6,950</div>
+                </div>
+            </div>
+
+            <!-- Scoring Info Footer -->
+            <div class="p-6 border-t-[3px] border-retro-ink bg-retro-bg">
+                <div class="border-[3px] border-retro-ink rounded-xl p-4 bg-white shadow-neubrutalism-sm skeleton-target skeleton">
+                    <h4 class="font-black text-sm uppercase mb-2 flex items-center gap-2">
+                        <i class="fa-solid fa-circle-question text-retro-blue"></i> How Scoring Works
+                    </h4>
+                    <ul class="font-mono text-xs text-retro-text space-y-2">
+                        <li class="flex items-start gap-2">
+                            <i class="fa-solid fa-check text-green-600 mt-0.5"></i>
+                            <span>Exact match = 1000 pts</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <i class="fa-solid fa-bullseye text-orange-500 mt-0.5"></i>
+                            <span>Within 50 cal = 500 pts</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <i class="fa-solid fa-bolt text-yellow-500 mt-0.5"></i>
+                            <span>Speed bonus: Up to 200 pts</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </aside>
+
+    </main>
+
+</body>
+</html>

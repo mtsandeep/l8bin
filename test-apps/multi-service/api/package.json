@@ -1,0 +1,13 @@
+{
+  "name": "snackiq-api",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "fastify": "^5.3.2",
+    "pg": "^8.14.1",
+    "uuid": "^11.1.0"
+  }
+}

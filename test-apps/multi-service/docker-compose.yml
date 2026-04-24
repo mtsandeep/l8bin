@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: snackiq
+      POSTGRES_USER: snackiq
+      POSTGRES_PASSWORD: snackiq123
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snackiq"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./api
+    ports:
+      - "3000"
+    environment:
+      DATABASE_URL: postgres://snackiq:snackiq123@postgres:5432/snackiq
+      AGENT_URL: http://agent:5000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  agent:
+    build: ./agent
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

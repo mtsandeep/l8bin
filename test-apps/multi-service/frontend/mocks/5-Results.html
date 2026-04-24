@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>
+        window.FontAwesomeConfig = {
+          autoReplaceSvg: 'nest'
+        };
+      </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snack IQ 2 - Results</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'retro-bg': '#FDFBF7',
+                        'retro-ink': '#111827',
+                        'retro-accent': '#FF4B3E',
+                        'retro-blue': '#2563EB',
+                        'retro-surface': '#FFFFFF',
+                        'retro-gray': '#F3F4F6',
+                        'retro-text': '#374151',
+                        'retro-muted': '#9CA3AF'
+                    },
+                    fontFamily: {
+                        'mono': ['"Space Mono"', 'monospace'],
+                        'sans': ['"Work Sans"', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'neubrutalism': '4px 4px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-lg': '8px 8px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-sm': '2px 2px 0px 0px rgba(17, 24, 39, 1)',
+                    },
+                    backgroundImage: {
+                        'noise': "url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E')",
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #FDFBF7;
+            background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E');
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #FDFBF7;
+            border-left: 2px solid #111827;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #111827;
+        }
+        
+        .modal-enter {
+            opacity: 0;
+            transform: scale(0.95);
+        }
+        .modal-enter-active {
+            opacity: 1;
+            transform: scale(1);
+            transition: opacity 300ms ease-out, transform 300ms ease-out;
+        }
+        .modal-exit {
+            opacity: 1;
+            transform: scale(1);
+        }
+        .modal-exit-active {
+            opacity: 0;
+            transform: scale(0.95);
+            transition: opacity 200ms ease-in, transform 200ms ease-in;
+        }
+    </style>
+</head>
+<body class="font-sans text-retro-ink antialiased min-h-screen flex flex-col m-0 p-0">
+
+    <!-- Navigation Bar -->
+    <nav id="top-nav" class="w-full border-b-[3px] border-retro-ink bg-retro-bg sticky top-0 z-50">
+        <div class="max-w-[1440px] mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-retro-accent border-[3px] border-retro-ink rounded-lg shadow-neubrutalism-sm flex items-center justify-center">
+                    <i class="fa-solid fa-cookie-bite text-white text-xl"></i>
+                </div>
+                <span class="font-mono font-bold text-2xl tracking-tight">SNACK IQ 2</span>
+            </div>
+            
+            <div class="hidden md:flex items-center gap-8 font-mono font-bold text-sm tracking-wide uppercase">
+                <a href="#" class="relative px-2 py-1 group opacity-60 hover:opacity-100 transition-opacity">
+                    <span class="text-retro-ink">Start Screen</span>
+                    <span class="absolute -bottom-2 left-0 w-0 h-[3px] bg-retro-ink group-hover:w-full transition-all duration-300"></span>
+                </a>
+                <a href="#" class="relative px-2 py-1 group opacity-60 hover:opacity-100 transition-opacity">
+                    <span class="text-retro-ink">Quiz</span>
+                    <span class="absolute -bottom-2 left-0 w-0 h-[3px] bg-retro-ink group-hover:w-full transition-all duration-300"></span>
+                </a>
+                <a href="#" class="relative px-2 py-1 group">
+                    <span class="text-retro-ink">Results</span>
+                    <span class="absolute -bottom-2 left-0 w-full h-[3px] bg-retro-ink"></span>
+                </a>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <button class="font-mono font-bold text-sm border-[3px] border-retro-ink px-6 py-2.5 rounded-lg hover:bg-retro-ink hover:text-white transition-colors">
+                    LOG IN
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Layout with Blur Effect -->
+    <main class="flex-grow flex flex-col lg:flex-row max-w-[1440px] mx-auto w-full filter blur-sm pointer-events-none">
+        
+        <!-- Left Column: Game Area (75%) -->
+        <section id="game-area" class="w-full lg:w-3/4 p-8 lg:p-16 flex flex-col min-h-[calc(100vh-80px)] border-r-[3px] border-retro-ink bg-retro-bg/50">
+            <div class="max-w-4xl mx-auto w-full flex flex-col flex-grow items-center justify-center">
+                <div class="text-center opacity-50">
+                    <h2 class="text-3xl font-black font-sans mb-4">Game Finished</h2>
+                    <p class="font-mono text-xl">Reviewing results...</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Column: Leaderboard Sidebar (25%) -->
+        <aside id="leaderboard-sidebar" class="w-full lg:w-1/4 bg-white flex flex-col min-h-[calc(100vh-80px)]">
+            <div class="p-6 border-b-[3px] border-retro-ink bg-retro-blue text-white">
+                <h2 class="font-black text-2xl uppercase tracking-wide flex items-center gap-3">
+                    <i class="fa-solid fa-ranking-star text-retro-accent"></i> Top Players
+                </h2>
+                <p class="font-mono text-sm mt-1 opacity-90">Current Game Session</p>
+            </div>
+
+            <div class="flex-grow overflow-y-auto p-4 space-y-3">
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-ink rounded-xl bg-[#FFF9C4] shadow-neubrutalism-sm relative overflow-hidden">
+                    <div class="absolute -right-4 -top-4 text-6xl opacity-10"><i class="fa-solid fa-crown"></i></div>
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-retro-accent">#1</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-4.jpg" alt="Player" class="w-10 h-10 rounded-full border-2 border-retro-ink object-cover">
+                    <div class="flex-grow">
+                        <div class="font-bold text-sm truncate">CalorieKing</div>
+                        <div class="font-mono text-xs text-retro-text">Lvl 42</div>
+                    </div>
+                    <div class="font-black font-mono text-lg">1,000</div>
+                </div>
+
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-ink rounded-xl bg-white shadow-neubrutalism-sm">
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-[#9CA3AF]">#2</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg" alt="Player" class="w-10 h-10 rounded-full border-2 border-retro-ink object-cover">
+                    <div class="flex-grow">
+                        <div class="font-bold text-sm truncate">SnackQueen</div>
+                        <div class="font-mono text-xs text-retro-text">Lvl 38</div>
+                    </div>
+                    <div class="font-black font-mono text-lg">950</div>
+                </div>
+
+                <!-- Highlighted Final Rank Row -->
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-accent rounded-xl bg-red-50 shadow-neubrutalism-sm relative group overflow-hidden">
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-retro-accent">#3</div>
+                    <div class="w-10 h-10 rounded-full border-[3px] border-retro-accent bg-retro-accent text-white flex items-center justify-center font-bold text-lg relative z-10">
+                        YOU
+                    </div>
+                    <div class="flex-grow relative z-10">
+                        <div class="font-bold text-sm text-retro-accent truncate">Guest_9942</div>
+                        <div class="font-mono text-xs font-bold text-retro-ink flex items-center gap-1">
+                            <i class="fa-solid fa-flag-checkered"></i> Finished
+                        </div>
+                    </div>
+                    <div class="font-black font-mono text-lg text-retro-ink relative z-10">850</div>
+                </div>
+            </div>
+        </aside>
+
+    </main>
+
+    <!-- Results Modal Overlay -->
+    <div id="final-results-modal" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <!-- Backdrop -->
+        <div class="absolute inset-0 bg-retro-ink/50 backdrop-blur-md"></div>
+        
+        <!-- Modal Content -->
+        <div class="bg-white border-[8px] border-retro-ink rounded-3xl p-8 lg:p-12 max-w-3xl w-full mx-auto shadow-neubrutalism-lg relative z-10 flex flex-col max-h-[90vh] overflow-y-auto">
+            
+            <!-- Close Button -->
+            <button onclick="closeModal()" class="absolute top-6 right-6 w-10 h-10 border-[3px] border-retro-ink rounded-full flex items-center justify-center hover:bg-retro-ink hover:text-white transition-colors z-20">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+
+            <!-- Header -->
+            <div class="text-center mb-10">
+                <div class="inline-block px-6 py-2 border-[3px] border-retro-ink bg-[#FFF9C4] rounded-full font-mono font-bold text-lg shadow-neubrutalism-sm mb-6 transform -rotate-2">
+                    <i class="fa-solid fa-star text-retro-accent"></i> FINAL SCORE <i class="fa-solid fa-star text-retro-accent"></i>
+                </div>
+                <h2 class="text-6xl lg:text-8xl font-black font-sans text-retro-ink tracking-tighter leading-none mb-4">
+                    850 <span class="text-3xl lg:text-4xl text-retro-muted font-bold">PTS</span>
+                </h2>
+                <p class="font-mono text-xl text-retro-text font-bold">You ranked <span class="text-retro-accent text-2xl underline decoration-[3px] underline-offset-4">#3</span> on the leaderboard!</p>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                <div class="border-[3px] border-retro-ink rounded-2xl p-6 bg-green-50 shadow-neubrutalism-sm text-center">
+                    <div class="w-12 h-12 bg-green-500 border-[3px] border-retro-ink rounded-full mx-auto flex items-center justify-center text-white text-xl mb-3">
+                        <i class="fa-solid fa-check"></i>
+                    </div>
+                    <div class="text-3xl font-black font-mono">2</div>
+                    <div class="text-sm font-bold uppercase text-retro-text mt-1">Correct</div>
+                </div>
+                
+                <div class="border-[3px] border-retro-ink rounded-2xl p-6 bg-red-50 shadow-neubrutalism-sm text-center">
+                    <div class="w-12 h-12 bg-retro-accent border-[3px] border-retro-ink rounded-full mx-auto flex items-center justify-center text-white text-xl mb-3">
+                        <i class="fa-solid fa-xmark"></i>
+                    </div>
+                    <div class="text-3xl font-black font-mono">1</div>
+                    <div class="text-sm font-bold uppercase text-retro-text mt-1">Incorrect</div>
+                </div>
+
+                <div class="border-[3px] border-retro-ink rounded-2xl p-6 bg-yellow-50 shadow-neubrutalism-sm text-center">
+                    <div class="w-12 h-12 bg-yellow-400 border-[3px] border-retro-ink rounded-full mx-auto flex items-center justify-center text-retro-ink text-xl mb-3">
+                        <i class="fa-solid fa-bolt"></i>
+                    </div>
+                    <div class="text-3xl font-black font-mono">15s</div>
+                    <div class="text-sm font-bold uppercase text-retro-text mt-1">Avg Time</div>
+                </div>
+            </div>
+
+            <!-- Mini Leaderboard Snippet -->
+            <div class="border-[3px] border-retro-ink rounded-2xl overflow-hidden mb-10 shadow-neubrutalism-sm">
+                <div class="bg-retro-blue text-white px-6 py-3 font-mono font-bold border-b-[3px] border-retro-ink">
+                    <i class="fa-solid fa-trophy mr-2"></i> YOUR STANDING
+                </div>
+                <div class="bg-white p-2">
+                    <div class="flex items-center gap-4 p-3 rounded-xl opacity-70">
+                        <div class="w-8 font-black text-xl text-retro-muted text-center">#2</div>
+                        <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg" alt="Player" class="w-8 h-8 rounded-full border-2 border-retro-ink">
+                        <div class="flex-grow font-bold text-sm">SnackQueen</div>
+                        <div class="font-black font-mono">950</div>
+                    </div>
+                    
+                    <div class="flex items-center gap-4 p-3 border-[3px] border-retro-accent rounded-xl bg-red-50 transform scale-[1.02] shadow-sm my-1">
+                        <div class="w-8 font-black text-xl text-retro-accent text-center">#3</div>
+                        <div class="w-8 h-8 rounded-full border-[2px] border-retro-accent bg-retro-accent text-white flex items-center justify-center font-bold text-xs">YOU</div>
+                        <div class="flex-grow font-bold text-sm text-retro-accent">Guest_9942</div>
+                        <div class="font-black font-mono text-retro-ink">850</div>
+                    </div>
+
+                    <div class="flex items-center gap-4 p-3 rounded-xl opacity-70">
+                        <div class="w-8 font-black text-xl text-retro-muted text-center">#4</div>
+                        <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-7.jpg" alt="Player" class="w-8 h-8 rounded-full border-2 border-retro-ink">
+                        <div class="flex-grow font-bold text-sm">DietDestroyer</div>
+                        <div class="font-black font-mono">800</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CTAs -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-auto">
+                <button class="w-full bg-white text-retro-ink border-[4px] border-retro-ink rounded-xl py-5 px-8 font-mono font-black text-xl uppercase tracking-wider shadow-neubrutalism hover:shadow-neubrutalism-lg transition-all active:translate-y-1 active:shadow-none flex items-center justify-center gap-3">
+                    <i class="fa-solid fa-list-check"></i> Review Answers
+                </button>
+                <button class="w-full bg-retro-accent text-white border-[4px] border-retro-ink rounded-xl py-5 px-8 font-mono font-black text-xl uppercase tracking-wider shadow-neubrutalism hover:shadow-neubrutalism-lg transition-all active:translate-y-1 active:shadow-none flex items-center justify-center gap-3">
+                    <i class="fa-solid fa-rotate-right"></i> Play Again
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function closeModal() {
+            const modal = document.getElementById('final-results-modal');
+            const main = document.querySelector('main');
+            
+            modal.style.opacity = '0';
+            modal.style.transition = 'opacity 0.3s ease';
+            
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                main.classList.remove('blur-sm', 'pointer-events-none');
+            }, 300);
+        }
+
+        // Close on Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeModal();
+            }
+        });
+    </script>
+</body>
+</html>

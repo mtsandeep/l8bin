@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>
+        window.FontAwesomeConfig = {
+          autoReplaceSvg: 'nest'
+        };
+      </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snack IQ 2 - Level 1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'retro-bg': '#FDFBF7',
+                        'retro-ink': '#111827',
+                        'retro-accent': '#FF4B3E',
+                        'retro-blue': '#2563EB',
+                        'retro-surface': '#FFFFFF',
+                        'retro-gray': '#F3F4F6',
+                        'retro-text': '#374151',
+                        'retro-muted': '#9CA3AF',
+                        'retro-green': '#10B981',
+                        'retro-yellow': '#F59E0B'
+                    },
+                    fontFamily: {
+                        'mono': ['"Space Mono"', 'monospace'],
+                        'sans': ['"Work Sans"', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'neubrutalism': '4px 4px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-lg': '8px 8px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-xl': '12px 12px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-sm': '2px 2px 0px 0px rgba(17, 24, 39, 1)',
+                    },
+                    backgroundImage: {
+                        'noise': "url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E')",
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #FDFBF7;
+            background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulance type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E');
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #FDFBF7;
+            border-left: 2px solid #111827;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #111827;
+        }
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes scaleIn {
+            from {
+                opacity: 0;
+                transform: scale(0.8);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        @keyframes slideInLeft {
+            from {
+                opacity: 0;
+                transform: translateX(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% {
+                box-shadow: 0 0 0 0 rgba(255, 75, 62, 0.7);
+            }
+            50% {
+                box-shadow: 0 0 0 20px rgba(255, 75, 62, 0);
+            }
+        }
+
+        .animate-fade-in-up {
+            animation: fadeInUp 0.6s ease-out forwards;
+        }
+
+        .animate-scale-in {
+            animation: scaleIn 0.5s ease-out forwards;
+        }
+
+        .animate-slide-in-left {
+            animation: slideInLeft 0.6s ease-out forwards;
+        }
+
+        .animate-slide-in-right {
+            animation: slideInRight 0.6s ease-out forwards;
+        }
+
+        .delay-100 { animation-delay: 0.1s; opacity: 0; }
+        .delay-200 { animation-delay: 0.2s; opacity: 0; }
+        .delay-300 { animation-delay: 0.3s; opacity: 0; }
+        .delay-400 { animation-delay: 0.4s; opacity: 0; }
+        .delay-500 { animation-delay: 0.5s; opacity: 0; }
+        .delay-600 { animation-delay: 0.6s; opacity: 0; }
+        .delay-700 { animation-delay: 0.7s; opacity: 0; }
+
+        .pulse-glow {
+            animation: pulse-glow 2s infinite;
+        }
+
+        .level-badge {
+            background: linear-gradient(135deg, #FF4B3E 0%, #e03a2e 100%);
+        }
+
+        .difficulty-easy {
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        }
+    </style>
+</head>
+<body class="font-sans text-retro-ink antialiased">
+
+    <!-- Navigation Bar -->
+    <nav id="top-nav" class="w-full border-b-[3px] border-retro-ink bg-retro-bg sticky top-0 z-50">
+        <div class="max-w-[1440px] mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-retro-accent border-[3px] border-retro-ink rounded-lg shadow-neubrutalism-sm flex items-center justify-center">
+                    <i class="fa-solid fa-cookie-bite text-white text-xl"></i>
+                </div>
+                <span class="font-mono font-bold text-2xl tracking-tight">SNACK IQ 2</span>
+            </div>
+            
+            <div class="hidden md:flex items-center gap-8 font-mono font-bold text-sm tracking-wide uppercase">
+                <a href="#" class="relative px-2 py-1 group opacity-60 hover:opacity-100 transition-opacity">
+                    <span class="text-retro-ink">Start Screen</span>
+                    <span class="absolute -bottom-2 left-0 w-0 h-[3px] bg-retro-ink group-hover:w-full transition-all duration-300"></span>
+                </a>
+                <a href="#" class="relative px-2 py-1 group">
+                    <span class="text-retro-ink">Quiz</span>
+                    <span class="absolute -bottom-2 left-0 w-full h-[3px] bg-retro-ink"></span>
+                </a>
+                <a href="#" class="relative px-2 py-1 group opacity-60 hover:opacity-100 transition-opacity">
+                    <span class="text-retro-ink">Results</span>
+                    <span class="absolute -bottom-2 left-0 w-0 h-[3px] bg-retro-ink group-hover:w-full transition-all duration-300"></span>
+                </a>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <div class="font-mono text-sm font-bold bg-white border-[3px] border-retro-ink px-4 py-2 rounded-lg shadow-neubrutalism-sm">
+                    <i class="fa-solid fa-user text-retro-blue mr-2"></i> SnackMaster99
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Level Intro Full Screen -->
+    <main id="level-intro-screen" class="min-h-[calc(100vh-80px)] flex items-center justify-center p-8 relative overflow-hidden">
+        
+        <!-- Background Decoration -->
+        <div class="absolute inset-0 opacity-5">
+            <div class="absolute top-10 left-10 w-32 h-32 border-[6px] border-retro-ink rounded-full"></div>
+            <div class="absolute bottom-20 right-20 w-40 h-40 border-[6px] border-retro-ink rotate-45"></div>
+            <div class="absolute top-1/2 left-1/4 w-24 h-24 border-[6px] border-retro-accent rounded-full"></div>
+            <div class="absolute bottom-1/3 right-1/3 w-28 h-28 border-[6px] border-retro-blue"></div>
+        </div>
+
+        <div class="max-w-5xl mx-auto w-full relative z-10">
+            
+            <!-- Level Badge -->
+            <div class="flex justify-center mb-8 animate-scale-in">
+                <div class="level-badge border-[4px] border-retro-ink rounded-3xl px-8 py-4 shadow-neubrutalism-lg inline-flex items-center gap-4">
+                    <div class="w-16 h-16 bg-white rounded-full border-[3px] border-retro-ink flex items-center justify-center">
+                        <span class="font-black text-3xl text-retro-accent">1</span>
+                    </div>
+                    <div class="text-white">
+                        <div class="font-mono text-sm uppercase tracking-widest opacity-90">Current Level</div>
+                        <div class="font-black text-4xl uppercase tracking-tight">Level One</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Title -->
+            <div class="text-center mb-12 animate-fade-in-up delay-100">
+                <h1 class="text-7xl lg:text-8xl font-black tracking-tighter leading-[0.9] mb-6 uppercase">
+                    Ready To<br>
+                    <span class="text-retro-accent relative inline-block">
+                        Begin?
+                        <svg class="absolute w-full h-5 -bottom-2 left-0 text-retro-ink" viewBox="0 0 100 20" preserveAspectRatio="none">
+                            <path d="M0,10 Q50,20 100,10" fill="none" stroke="currentColor" stroke-width="5"></path>
+                        </svg>
+                    </span>
+                </h1>
+                <p class="text-2xl font-medium text-retro-text font-mono max-w-2xl mx-auto">
+                    Get ready for your first challenge. Here's what you need to know.
+                </p>
+            </div>
+
+            <!-- Questions Info -->
+            <div class="flex justify-center mb-12 animate-fade-in-up delay-200">
+                <div class="bg-white border-[4px] border-retro-ink rounded-2xl px-12 py-6 shadow-neubrutalism-lg inline-flex items-center gap-4">
+                    <div class="w-14 h-14 bg-retro-blue border-[3px] border-retro-ink rounded-full flex items-center justify-center">
+                        <i class="fa-solid fa-list-check text-white text-2xl"></i>
+                    </div>
+                    <div>
+                        <div class="font-mono text-sm uppercase tracking-widest text-retro-muted">Questions Per Level</div>
+                        <div class="font-black text-4xl uppercase text-retro-ink">3 Questions</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rules Section -->
+            <div class="bg-white border-[4px] border-retro-ink rounded-2xl p-8 shadow-neubrutalism-xl mb-12 animate-fade-in-up delay-500">
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="w-12 h-12 bg-retro-accent border-[3px] border-retro-ink rounded-lg flex items-center justify-center">
+                        <i class="fa-solid fa-book text-white text-xl"></i>
+                    </div>
+                    <h2 class="font-black text-3xl uppercase">Level Rules</h2>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0">
+                            <div class="w-10 h-10 bg-retro-blue border-[3px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-clock text-white"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="font-black text-lg mb-1 uppercase">15 Seconds Per Question</h3>
+                            <p class="font-mono text-sm text-retro-text">You have 15 seconds to guess the calories for each snack. Timer starts immediately.</p>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0">
+                            <div class="w-10 h-10 bg-retro-green border-[3px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-bullseye text-white"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="font-black text-lg mb-1 uppercase">Accuracy Matters</h3>
+                            <p class="font-mono text-sm text-retro-text">The closer your guess, the more points. Exact matches earn maximum points.</p>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0">
+                            <div class="w-10 h-10 bg-retro-yellow border-[3px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-bolt text-white"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="font-black text-lg mb-1 uppercase">Speed Bonus</h3>
+                            <p class="font-mono text-sm text-retro-text">Answer faster to earn bonus points. Every second counts toward your final score.</p>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0">
+                            <div class="w-10 h-10 bg-retro-accent border-[3px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-trophy text-white"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="font-black text-lg mb-1 uppercase">No Second Chances</h3>
+                            <p class="font-mono text-sm text-retro-text">Once you submit an answer, it's final. Think carefully before confirming.</p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Scoring Breakdown -->
+            <div class="bg-retro-gray border-[4px] border-retro-ink rounded-2xl p-8 shadow-neubrutalism-lg mb-12 animate-fade-in-up delay-600">
+                <h2 class="font-black text-2xl uppercase mb-6 flex items-center gap-3">
+                    <i class="fa-solid fa-calculator text-retro-blue"></i> Scoring Breakdown
+                </h2>
+                
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between p-4 bg-white border-[3px] border-retro-ink rounded-xl">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-green-500 border-[2px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-check text-white text-sm"></i>
+                            </div>
+                            <span class="font-bold">Exact Match (0 cal difference)</span>
+                        </div>
+                        <span class="font-black font-mono text-xl text-green-600">1000 pts</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-4 bg-white border-[3px] border-retro-ink rounded-xl">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-blue-500 border-[2px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-bullseye text-white text-sm"></i>
+                            </div>
+                            <span class="font-bold">Very Close (1-25 cal difference)</span>
+                        </div>
+                        <span class="font-black font-mono text-xl text-blue-600">750 pts</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-4 bg-white border-[3px] border-retro-ink rounded-xl">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-yellow-500 border-[2px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-location-crosshairs text-white text-sm"></i>
+                            </div>
+                            <span class="font-bold">Close (26-50 cal difference)</span>
+                        </div>
+                        <span class="font-black font-mono text-xl text-yellow-600">500 pts</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-4 bg-white border-[3px] border-retro-ink rounded-xl">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-orange-500 border-[2px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-circle-dot text-white text-sm"></i>
+                            </div>
+                            <span class="font-bold">Fair (51-100 cal difference)</span>
+                        </div>
+                        <span class="font-black font-mono text-xl text-orange-600">250 pts</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-4 bg-white border-[3px] border-retro-ink rounded-xl">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-red-500 border-[2px] border-retro-ink rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-xmark text-white text-sm"></i>
+                            </div>
+                            <span class="font-bold">Off Target (100+ cal difference)</span>
+                        </div>
+                        <span class="font-black font-mono text-xl text-red-600">0 pts</span>
+                    </div>
+                </div>
+
+                <div class="mt-6 p-4 bg-retro-blue text-white border-[3px] border-retro-ink rounded-xl">
+                    <div class="flex items-center gap-3">
+                        <i class="fa-solid fa-bolt text-2xl"></i>
+                        <div>
+                            <div class="font-black text-lg uppercase">Speed Bonus</div>
+                            <p class="font-mono text-sm opacity-90">Answer in under 5 seconds: +200 pts | Under 10 seconds: +100 pts</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Start Button -->
+            <div class="text-center animate-fade-in-up delay-700">
+                <button class="bg-retro-accent hover:bg-[#e03a2e] text-white border-[4px] border-retro-ink rounded-2xl py-6 px-16 font-mono font-black text-3xl uppercase tracking-wider shadow-neubrutalism-xl transition-all active:translate-y-2 active:shadow-neubrutalism inline-flex items-center gap-4 pulse-glow">
+                    <i class="fa-solid fa-play"></i>
+                    Start Level 1
+                    <i class="fa-solid fa-arrow-right"></i>
+                </button>
+                
+                <p class="font-mono text-sm text-retro-text mt-6">
+                    <i class="fa-solid fa-lightbulb mr-2"></i> Pro Tip: Common snacks like chips and cookies range from 100-300 calories per serving
+                </p>
+            </div>
+
+        </div>
+
+    </main>
+
+</body>
+</html>

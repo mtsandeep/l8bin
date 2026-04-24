@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>
+        window.FontAwesomeConfig = {
+          autoReplaceSvg: 'nest'
+        };
+      </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snack IQ 2 - Quiz - Question 1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'retro-bg': '#FDFBF7',
+                        'retro-ink': '#111827',
+                        'retro-accent': '#FF4B3E',
+                        'retro-blue': '#2563EB',
+                        'retro-surface': '#FFFFFF',
+                        'retro-gray': '#F3F4F6',
+                        'retro-text': '#374151',
+                        'retro-muted': '#9CA3AF'
+                    },
+                    fontFamily: {
+                        'mono': ['"Space Mono"', 'monospace'],
+                        'sans': ['"Work Sans"', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'neubrutalism': '4px 4px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-lg': '8px 8px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-sm': '2px 2px 0px 0px rgba(17, 24, 39, 1)',
+                    },
+                    backgroundImage: {
+                        'noise': "url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E')",
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #FDFBF7;
+            background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E');
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #FDFBF7;
+            border-left: 2px solid #111827;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #111827;
+        }
+        
+        /* Custom Slider Styling */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 12px;
+            background: transparent;
+            outline: none;
+        }
+        
+        input[type="range"]::-webkit-slider-track {
+            width: 100%;
+            height: 12px;
+            background: #F3F4F6;
+            border: 3px solid #111827;
+            border-radius: 8px;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 32px;
+            height: 32px;
+            background: #FF4B3E;
+            border: 3px solid #111827;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 2px 2px 0px 0px rgba(17, 24, 39, 1);
+            transition: all 0.2s;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb:hover {
+            background: #e03a2e;
+            transform: scale(1.1);
+        }
+        
+        input[type="range"]::-webkit-slider-thumb:active {
+            box-shadow: 0px 0px 0px 0px rgba(17, 24, 39, 1);
+            transform: translateY(2px) scale(1.1);
+        }
+        
+        input[type="range"]::-moz-range-track {
+            width: 100%;
+            height: 12px;
+            background: #F3F4F6;
+            border: 3px solid #111827;
+            border-radius: 8px;
+        }
+        
+        input[type="range"]::-moz-range-thumb {
+            width: 32px;
+            height: 32px;
+            background: #FF4B3E;
+            border: 3px solid #111827;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 2px 2px 0px 0px rgba(17, 24, 39, 1);
+        }
+        
+        /* Hide number input spinner */
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        
+        input[type="number"] {
+            -moz-appearance: textfield;
+        }
+    </style>
+</head>
+<body class="font-sans text-retro-ink antialiased min-h-screen flex flex-col m-0 p-0">
+
+    <!-- Navigation Bar -->
+    <nav id="top-nav" class="w-full border-b-[3px] border-retro-ink bg-retro-bg sticky top-0 z-50">
+        <div class="max-w-[1440px] mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-retro-accent border-[3px] border-retro-ink rounded-lg shadow-neubrutalism-sm flex items-center justify-center">
+                    <i class="fa-solid fa-cookie-bite text-white text-xl"></i>
+                </div>
+                <span class="font-mono font-bold text-2xl tracking-tight">SNACK IQ 2</span>
+            </div>
+            
+            <div class="hidden md:flex items-center gap-8 font-mono font-bold text-sm tracking-wide uppercase">
+                <a href="#" class="relative px-2 py-1 group opacity-60 hover:opacity-100 transition-opacity">
+                    <span class="text-retro-ink">Start Screen</span>
+                    <span class="absolute -bottom-2 left-0 w-0 h-[3px] bg-retro-ink group-hover:w-full transition-all duration-300"></span>
+                </a>
+                <a href="#" class="relative px-2 py-1 group">
+                    <span class="text-retro-ink">Quiz</span>
+                    <span class="absolute -bottom-2 left-0 w-full h-[3px] bg-retro-ink"></span>
+                </a>
+                <a href="#" class="relative px-2 py-1 group opacity-60 hover:opacity-100 transition-opacity">
+                    <span class="text-retro-ink">Results</span>
+                    <span class="absolute -bottom-2 left-0 w-0 h-[3px] bg-retro-ink group-hover:w-full transition-all duration-300"></span>
+                </a>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <button class="font-mono font-bold text-sm border-[3px] border-retro-ink px-6 py-2.5 rounded-lg hover:bg-retro-ink hover:text-white transition-colors">
+                    LOG IN
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Layout -->
+    <main class="flex-grow flex flex-col lg:flex-row max-w-[1440px] mx-auto w-full">
+        
+        <!-- Left Column: Game Area (75%) -->
+        <section id="game-area" class="w-full lg:w-3/4 p-8 lg:p-16 flex flex-col min-h-[calc(100vh-80px)] border-r-[3px] border-retro-ink">
+            
+            <div class="max-w-4xl mx-auto w-full flex flex-col flex-grow">
+                
+                <!-- Quiz Header & Progress -->
+                <div class="flex items-center justify-between mb-8">
+                    <div class="inline-flex items-center gap-2 border-[3px] border-retro-ink bg-retro-accent text-white font-mono font-bold px-4 py-1.5 rounded-full text-sm shadow-neubrutalism-sm">
+                        <i class="fa-solid fa-layer-group"></i>
+                        <span>QUESTION 1 OF 3</span>
+                    </div>
+                    
+                    <div class="flex items-center gap-2 font-mono font-bold text-retro-ink bg-white border-[3px] border-retro-ink px-4 py-1.5 rounded-full shadow-neubrutalism-sm">
+                        <i class="fa-solid fa-stopwatch text-retro-accent"></i>
+                        <span>00:10</span>
+                    </div>
+                </div>
+
+                <!-- Question Main Card -->
+                <div class="bg-white border-[3px] border-retro-ink rounded-2xl p-8 lg:p-10 shadow-neubrutalism-lg flex-grow flex flex-col">
+                    
+                    <!-- Question Prompt -->
+                    <h2 class="text-3xl lg:text-4xl font-black font-sans leading-tight mb-8 text-center">
+                        How many calories are in a standard <span class="text-retro-accent underline decoration-[4px] underline-offset-4">Classic Glazed Donut</span>?
+                    </h2>
+
+                    <!-- Image/Illustration -->
+                    <div class="w-full max-w-md mx-auto mb-10">
+                        <div class="border-[4px] border-retro-ink rounded-xl overflow-hidden shadow-neubrutalism relative bg-[#FFE4E1] h-[300px] flex items-center justify-center">
+                            <img class="absolute inset-0 w-full h-full object-cover mix-blend-multiply opacity-80" src="https://storage.googleapis.com/uxpilot-auth.appspot.com/1b4a07c285-b8e01eafada0b353ecb5.png" alt="Retro pop art style illustration of a classic glazed donut with colorful sprinkles, dotted halftone background, vibrant colors" />
+                            
+                            <!-- Decorative element -->
+                            <div class="absolute -bottom-4 -right-4 bg-retro-blue text-white font-mono font-bold text-xs px-3 py-1 border-[2px] border-retro-ink rounded-full transform rotate-12 shadow-neubrutalism-sm">
+                                GUESS!
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Slider Answer Selection -->
+                    <div class="w-full max-w-2xl mx-auto flex-grow flex flex-col justify-center">
+                        <form id="quiz-form" class="space-y-8">
+                            
+                            <!-- Calorie Display -->
+                            <div class="text-center">
+                                <div class="inline-block bg-retro-blue border-[3px] border-retro-ink rounded-2xl px-8 py-6 shadow-neubrutalism-lg cursor-pointer hover:bg-[#1d4ed8] transition-colors" onclick="editCalorieValue()">
+                                    <div class="font-mono text-sm text-white/80 uppercase tracking-wider mb-2">Your Guess</div>
+                                    <input 
+                                        type="number" 
+                                        id="calorie-input" 
+                                        value="500" 
+                                        min="0" 
+                                        max="2000"
+                                        class="font-black text-6xl text-white bg-transparent border-none text-center w-full outline-none focus:ring-0"
+                                        style="width: 200px; -moz-appearance: textfield;"
+                                        oninput="syncSliderWithInput(this.value)"
+                                        onblur="validateInput(this)"
+                                    />
+                                    <div class="font-mono text-sm text-white/80 uppercase tracking-wider mt-2">Calories</div>
+                                </div>
+                            </div>
+
+                            <!-- Slider -->
+                            <div class="space-y-4 px-2">
+                                <div class="relative py-4">
+                                    <!-- Progress Track -->
+                                    <div class="absolute top-1/2 left-0 right-0 h-3 bg-retro-gray border-[3px] border-retro-ink rounded-lg -translate-y-1/2 pointer-events-none">
+                                        <div id="slider-progress" class="h-full bg-gradient-to-r from-green-400 via-orange-400 to-retro-accent rounded-l-md transition-all duration-150" style="width: 25%"></div>
+                                    </div>
+                                    
+                                    <input 
+                                        type="range" 
+                                        id="calorie-slider" 
+                                        min="0" 
+                                        max="2000" 
+                                        value="500" 
+                                        step="10"
+                                        oninput="updateCalorieDisplay(this.value)"
+                                        onchange="enableNextButton()"
+                                        class="w-full relative z-10"
+                                    >
+                                </div>
+                                
+                                <!-- Slider Labels -->
+                                <div class="flex justify-between items-center font-mono font-bold text-sm text-retro-text px-1">
+                                    <span class="flex items-center gap-1">
+                                        <i class="fa-solid fa-gauge-low text-green-600"></i>
+                                        0 cal
+                                    </span>
+                                    <span class="flex items-center gap-1">
+                                        1000 cal
+                                        <i class="fa-solid fa-gauge text-orange-500"></i>
+                                    </span>
+                                    <span class="flex items-center gap-1">
+                                        2000 cal
+                                        <i class="fa-solid fa-gauge-high text-retro-accent"></i>
+                                    </span>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    
+                    <!-- CTA Area -->
+                    <div class="mt-10 pt-8 border-t-[3px] border-retro-ink border-dashed flex justify-end">
+                        <button id="next-btn" class="bg-retro-accent hover:bg-[#e03a2e] text-white border-[3px] border-retro-ink rounded-xl py-4 px-10 font-mono font-black text-xl uppercase tracking-wider shadow-neubrutalism-lg transition-all active:translate-y-1 active:shadow-none flex items-center gap-3 cursor-pointer">
+                            Next Question <i class="fa-solid fa-arrow-right"></i>
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Column: Leaderboard Sidebar (25%) -->
+        <aside id="leaderboard-sidebar" class="w-full lg:w-1/4 bg-white flex flex-col min-h-[calc(100vh-80px)]">
+            
+            <!-- Leaderboard Header -->
+            <div class="p-6 border-b-[3px] border-retro-ink bg-retro-blue text-white">
+                <h2 class="font-black text-2xl uppercase tracking-wide flex items-center gap-3">
+                    <i class="fa-solid fa-ranking-star text-retro-accent"></i> Top Players
+                </h2>
+                <p class="font-mono text-sm mt-1 opacity-90">All-time high scores</p>
+            </div>
+
+            <!-- Leaderboard List -->
+            <div class="flex-grow overflow-y-auto p-4 space-y-3">
+                <!-- Rank 1 -->
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-ink rounded-xl bg-[#FFF9C4] shadow-neubrutalism-sm relative overflow-hidden">
+                    <div class="absolute -right-4 -top-4 text-6xl opacity-10"><i class="fa-solid fa-crown"></i></div>
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-retro-accent">#1</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-4.jpg" alt="Player" class="w-10 h-10 rounded-full border-2 border-retro-ink object-cover">
+                    <div class="flex-grow">
+                        <div class="font-bold text-sm truncate">CalorieKing</div>
+                        <div class="font-mono text-xs text-retro-text">Lvl 42</div>
+                    </div>
+                    <div class="font-black font-mono text-lg">9,450</div>
+                </div>
+
+                <!-- Rank 2 -->
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-ink rounded-xl bg-white shadow-neubrutalism-sm">
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-[#9CA3AF]">#2</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-5.jpg" alt="Player" class="w-10 h-10 rounded-full border-2 border-retro-ink object-cover">
+                    <div class="flex-grow">
+                        <div class="font-bold text-sm truncate">SnackQueen</div>
+                        <div class="font-mono text-xs text-retro-text">Lvl 38</div>
+                    </div>
+                    <div class="font-black font-mono text-lg">8,920</div>
+                </div>
+
+                <!-- Rank 3 -->
+                <div class="flex items-center gap-4 p-3 border-[3px] border-retro-ink rounded-xl bg-white shadow-neubrutalism-sm">
+                    <div class="w-8 h-8 flex items-center justify-center font-black text-xl text-[#B45309]">#3</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-2.jpg" alt="Player" class="w-10 h-10 rounded-full border-2 border-retro-ink object-cover">
+                    <div class="flex-grow">
+                        <div class="font-bold text-sm truncate">MacroTracker</div>
+                        <div class="font-mono text-xs text-retro-text">Lvl 35</div>
+                    </div>
+                    <div class="font-black font-mono text-lg">8,100</div>
+                </div>
+
+                <!-- Ranks 4-10 -->
+                <div class="flex items-center gap-4 p-2 hover:bg-retro-gray rounded-lg transition-colors cursor-pointer">
+                    <div class="w-8 text-center font-mono font-bold text-sm text-retro-muted">4</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-7.jpg" alt="Player" class="w-8 h-8 rounded-full border border-retro-ink object-cover">
+                    <div class="flex-grow font-bold text-sm truncate">DietDestroyer</div>
+                    <div class="font-mono font-bold text-sm">7,850</div>
+                </div>
+                <div class="flex items-center gap-4 p-2 hover:bg-retro-gray rounded-lg transition-colors cursor-pointer">
+                    <div class="w-8 text-center font-mono font-bold text-sm text-retro-muted">5</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-8.jpg" alt="Player" class="w-8 h-8 rounded-full border border-retro-ink object-cover">
+                    <div class="flex-grow font-bold text-sm truncate">ProteinBro</div>
+                    <div class="font-mono font-bold text-sm">7,420</div>
+                </div>
+                <div class="flex items-center gap-4 p-2 hover:bg-retro-gray rounded-lg transition-colors cursor-pointer">
+                    <div class="w-8 text-center font-mono font-bold text-sm text-retro-muted">6</div>
+                    <div class="w-8 h-8 rounded-full border border-retro-ink bg-[#D1D5DB] flex items-center justify-center font-mono text-xs font-bold">JD</div>
+                    <div class="flex-grow font-bold text-sm truncate">JunkFoodJunkie</div>
+                    <div class="font-mono font-bold text-sm">7,100</div>
+                </div>
+                <div class="flex items-center gap-4 p-2 hover:bg-retro-gray rounded-lg transition-colors cursor-pointer">
+                    <div class="w-8 text-center font-mono font-bold text-sm text-retro-muted">7</div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/avatars/avatar-1.jpg" alt="Player" class="w-8 h-8 rounded-full border border-retro-ink object-cover">
+                    <div class="flex-grow font-bold text-sm truncate">KetoKid</div>
+                    <div class="font-mono font-bold text-sm">6,950</div>
+                </div>
+            </div>
+
+            <!-- Scoring Info Footer -->
+            <div class="p-6 border-t-[3px] border-retro-ink bg-retro-bg">
+                <div class="border-[3px] border-retro-ink rounded-xl p-4 bg-white shadow-neubrutalism-sm">
+                    <h4 class="font-black text-sm uppercase mb-2 flex items-center gap-2">
+                        <i class="fa-solid fa-circle-question text-retro-blue"></i> How Scoring Works
+                    </h4>
+                    <ul class="font-mono text-xs text-retro-text space-y-2">
+                        <li class="flex items-start gap-2">
+                            <i class="fa-solid fa-check text-green-600 mt-0.5"></i>
+                            <span>Exact match = 1000 pts</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <i class="fa-solid fa-bullseye text-orange-500 mt-0.5"></i>
+                            <span>Within 50 cal = 500 pts</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <i class="fa-solid fa-bolt text-yellow-500 mt-0.5"></i>
+                            <span>Speed bonus: Up to 200 pts</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </aside>
+
+    </main>
+
+    <script>
+        function updateCalorieDisplay(value) {
+            document.getElementById('calorie-input').value = value;
+            updateSliderProgress(value);
+        }
+
+        function syncSliderWithInput(value) {
+            const numValue = Math.max(0, Math.min(2000, parseInt(value) || 0));
+            document.getElementById('calorie-slider').value = numValue;
+            updateSliderProgress(numValue);
+            enableNextButton();
+        }
+
+        function validateInput(input) {
+            let value = parseInt(input.value) || 0;
+            value = Math.max(0, Math.min(2000, value));
+            input.value = value;
+            document.getElementById('calorie-slider').value = value;
+            updateSliderProgress(value);
+        }
+
+        function updateSliderProgress(value) {
+            const percentage = (value / 2000) * 100;
+            document.getElementById('slider-progress').style.width = percentage + '%';
+        }
+
+        function editCalorieValue() {
+            const input = document.getElementById('calorie-input');
+            input.focus();
+            input.select();
+        }
+
+        function enableNextButton() {
+            const btn = document.getElementById('next-btn');
+            btn.disabled = false;
+        }
+
+        // Initialize progress bar on load
+        window.addEventListener('load', function() {
+            updateSliderProgress(500);
+        });
+    </script>
+</body>
+</html>

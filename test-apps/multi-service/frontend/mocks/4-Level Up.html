@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>
+        window.FontAwesomeConfig = {
+          autoReplaceSvg: 'nest'
+        };
+      </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snack IQ 2 - Level Up</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'retro-bg': '#FDFBF7',
+                        'retro-ink': '#111827',
+                        'retro-accent': '#FF4B3E',
+                        'retro-blue': '#2563EB',
+                        'retro-surface': '#FFFFFF',
+                        'retro-gray': '#F3F4F6',
+                        'retro-text': '#374151',
+                        'retro-muted': '#9CA3AF'
+                    },
+                    fontFamily: {
+                        'mono': ['"Space Mono"', 'monospace'],
+                        'sans': ['"Work Sans"', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'neubrutalism': '4px 4px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-lg': '8px 8px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-xl': '12px 12px 0px 0px rgba(17, 24, 39, 1)',
+                        'neubrutalism-sm': '2px 2px 0px 0px rgba(17, 24, 39, 1)',
+                    },
+                    backgroundImage: {
+                        'noise': "url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E')",
+                    },
+                    animation: {
+                        'bounce-slow': 'bounce 2s infinite',
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'float': 'float 3s ease-in-out infinite',
+                        'confetti': 'confetti 1s ease-out forwards',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0px)' },
+                            '50%': { transform: 'translateY(-20px)' },
+                        },
+                        confetti: {
+                            '0%': { transform: 'translateY(-100vh) rotate(0deg)', opacity: '1' },
+                            '100%': { transform: 'translateY(100vh) rotate(720deg)', opacity: '0' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #FDFBF7;
+            background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.05%22/%3E%3C/svg%3E');
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+        ::-webkit-scrollbar {
+            display: none;
+        }
+        
+        @keyframes scaleIn {
+            0% {
+                transform: scale(0) rotate(-180deg);
+                opacity: 0;
+            }
+            50% {
+                transform: scale(1.1) rotate(10deg);
+            }
+            100% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+        }
+        
+        .scale-in {
+            animation: scaleIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        
+        @keyframes slideUp {
+            from {
+                transform: translateY(50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        
+        .slide-up {
+            animation: slideUp 0.8s ease-out forwards;
+        }
+        
+        .confetti-piece {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: #FF4B3E;
+            top: -10px;
+            animation: confetti 3s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="font-sans text-retro-ink antialiased">
+
+    <!-- Full Screen Level Up Container -->
+    <div id="level-up-screen" class="min-h-screen w-full flex items-center justify-center p-4 sm:p-6 md:p-8 relative overflow-hidden">
+        
+        <!-- Animated Background Elements -->
+        <div class="absolute inset-0 pointer-events-none overflow-hidden">
+            <!-- Floating Icons -->
+            <div class="absolute top-[10%] left-[5%] text-6xl opacity-10 animate-float" style="animation-delay: 0s;">
+                <i class="fa-solid fa-trophy text-retro-accent"></i>
+            </div>
+            <div class="absolute top-[20%] right-[8%] text-5xl opacity-10 animate-float" style="animation-delay: 0.5s;">
+                <i class="fa-solid fa-star text-retro-blue"></i>
+            </div>
+            <div class="absolute bottom-[15%] left-[10%] text-7xl opacity-10 animate-float" style="animation-delay: 1s;">
+                <i class="fa-solid fa-medal text-yellow-500"></i>
+            </div>
+            <div class="absolute bottom-[25%] right-[12%] text-5xl opacity-10 animate-float" style="animation-delay: 1.5s;">
+                <i class="fa-solid fa-crown text-retro-accent"></i>
+            </div>
+            <div class="absolute top-[50%] left-[15%] text-4xl opacity-10 animate-float" style="animation-delay: 2s;">
+                <i class="fa-solid fa-fire text-orange-500"></i>
+            </div>
+            <div class="absolute top-[60%] right-[20%] text-6xl opacity-10 animate-float" style="animation-delay: 2.5s;">
+                <i class="fa-solid fa-rocket text-retro-blue"></i>
+            </div>
+        </div>
+
+        <!-- Main Content Card -->
+        <div class="relative z-10 w-full max-w-4xl">
+            
+            <!-- Success Badge -->
+            <div class="flex justify-center mb-8 slide-up" style="animation-delay: 0.2s;">
+                <div class="inline-flex items-center gap-3 bg-green-500 border-[4px] border-retro-ink rounded-full px-6 py-3 shadow-neubrutalism-lg">
+                    <i class="fa-solid fa-check-circle text-white text-2xl"></i>
+                    <span class="font-mono font-black text-white text-lg uppercase tracking-wider">Level Complete!</span>
+                </div>
+            </div>
+
+            <!-- Main Card -->
+            <div class="bg-white border-[6px] border-retro-ink rounded-3xl p-8 sm:p-12 md:p-16 shadow-neubrutalism-xl relative overflow-hidden slide-up" style="animation-delay: 0.4s;">
+                
+                <!-- Decorative Corner Elements -->
+                <div class="absolute top-0 left-0 w-20 h-20 border-b-[4px] border-r-[4px] border-retro-ink opacity-20"></div>
+                <div class="absolute top-0 right-0 w-20 h-20 border-b-[4px] border-l-[4px] border-retro-ink opacity-20"></div>
+                <div class="absolute bottom-0 left-0 w-20 h-20 border-t-[4px] border-r-[4px] border-retro-ink opacity-20"></div>
+                <div class="absolute bottom-0 right-0 w-20 h-20 border-t-[4px] border-l-[4px] border-retro-ink opacity-20"></div>
+
+                <!-- Level Badge -->
+                <div class="flex justify-center mb-8 scale-in" style="animation-delay: 0.6s;">
+                    <div class="relative">
+                        <div class="w-32 h-32 sm:w-40 sm:h-40 bg-gradient-to-br from-retro-accent to-orange-600 border-[5px] border-retro-ink rounded-full shadow-neubrutalism-lg flex items-center justify-center transform hover:rotate-12 transition-transform duration-300">
+                            <div class="text-center">
+                                <div class="font-mono text-sm text-white/80 uppercase tracking-wider">Level</div>
+                                <div class="font-black text-6xl text-white">1</div>
+                            </div>
+                        </div>
+                        <div class="absolute -bottom-2 -right-2 bg-retro-blue text-white font-mono font-bold text-xs px-3 py-1.5 border-[3px] border-retro-ink rounded-full shadow-neubrutalism-sm">
+                            <i class="fa-solid fa-check mr-1"></i> DONE
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Heading -->
+                <div class="text-center mb-6 slide-up" style="animation-delay: 0.8s;">
+                    <h1 class="font-black text-5xl sm:text-6xl md:text-7xl lg:text-8xl mb-4 leading-none">
+                        <span class="text-retro-ink">LEVEL</span>
+                        <span class="text-retro-accent block mt-2">COMPLETE!</span>
+                    </h1>
+                    <div class="flex justify-center gap-2 mt-4">
+                        <i class="fa-solid fa-star text-yellow-500 text-3xl animate-pulse-slow"></i>
+                        <i class="fa-solid fa-star text-yellow-500 text-3xl animate-pulse-slow" style="animation-delay: 0.2s;"></i>
+                        <i class="fa-solid fa-star text-yellow-500 text-3xl animate-pulse-slow" style="animation-delay: 0.4s;"></i>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10 slide-up" style="animation-delay: 1s;">
+                    <div class="bg-retro-gray border-[3px] border-retro-ink rounded-xl p-4 text-center shadow-neubrutalism-sm hover:shadow-neubrutalism transition-all">
+                        <div class="text-3xl mb-2">
+                            <i class="fa-solid fa-bullseye text-retro-accent"></i>
+                        </div>
+                        <div class="font-black text-3xl text-retro-ink mb-1">2/3</div>
+                        <div class="font-mono text-sm text-retro-text uppercase">Correct</div>
+                    </div>
+                    <div class="bg-retro-gray border-[3px] border-retro-ink rounded-xl p-4 text-center shadow-neubrutalism-sm hover:shadow-neubrutalism transition-all">
+                        <div class="text-3xl mb-2">
+                            <i class="fa-solid fa-fire text-orange-500"></i>
+                        </div>
+                        <div class="font-black text-3xl text-retro-ink mb-1">1,850</div>
+                        <div class="font-mono text-sm text-retro-text uppercase">Points</div>
+                    </div>
+                    <div class="bg-retro-gray border-[3px] border-retro-ink rounded-xl p-4 text-center shadow-neubrutalism-sm hover:shadow-neubrutalism transition-all">
+                        <div class="text-3xl mb-2">
+                            <i class="fa-solid fa-bolt text-yellow-500"></i>
+                        </div>
+                        <div class="font-black text-3xl text-retro-ink mb-1">45s</div>
+                        <div class="font-mono text-sm text-retro-text uppercase">Time</div>
+                    </div>
+                </div>
+
+                <!-- Achievement Unlocked -->
+                <div class="bg-gradient-to-r from-yellow-100 to-orange-100 border-[3px] border-retro-ink rounded-xl p-6 mb-10 shadow-neubrutalism slide-up" style="animation-delay: 1.2s;">
+                    <div class="flex items-center gap-4">
+                        <div class="w-16 h-16 bg-yellow-400 border-[3px] border-retro-ink rounded-xl flex items-center justify-center shadow-neubrutalism-sm flex-shrink-0">
+                            <i class="fa-solid fa-trophy text-retro-ink text-3xl"></i>
+                        </div>
+                        <div class="flex-grow">
+                            <div class="font-black text-lg mb-1">Achievement Unlocked!</div>
+                            <div class="font-mono text-sm text-retro-text">"Calorie Counter" - Complete your first level</div>
+                        </div>
+                        <div class="font-mono font-bold text-2xl text-retro-accent">+500</div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex flex-col sm:flex-row gap-4 slide-up" style="animation-delay: 1.4s;">
+                    <button class="flex-1 bg-retro-accent hover:bg-[#e03a2e] text-white border-[4px] border-retro-ink rounded-2xl py-6 px-8 font-black text-2xl uppercase tracking-wider shadow-neubrutalism-lg transition-all hover:shadow-neubrutalism active:translate-y-1 active:shadow-none flex items-center justify-center gap-4 group">
+                        <span>Start Level 2</span>
+                        <i class="fa-solid fa-arrow-right text-2xl group-hover:translate-x-2 transition-transform"></i>
+                    </button>
+                    <button class="flex-1 sm:flex-none bg-white hover:bg-retro-gray text-retro-ink border-[4px] border-retro-ink rounded-2xl py-6 px-8 font-black text-2xl uppercase tracking-wider shadow-neubrutalism-lg transition-all hover:shadow-neubrutalism active:translate-y-1 active:shadow-none flex items-center justify-center gap-3">
+                        <i class="fa-solid fa-door-open text-xl"></i>
+                        <span>Quit</span>
+                    </button>
+                </div>
+
+                <!-- Next Level Preview -->
+                <div class="mt-10 pt-8 border-t-[3px] border-retro-ink border-dashed slide-up" style="animation-delay: 1.6s;">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="font-mono text-sm text-retro-muted uppercase tracking-wider mb-1">Coming Up Next</div>
+                            <div class="font-black text-xl text-retro-ink">Level 2: International Snacks</div>
+                        </div>
+                        <div class="flex gap-2">
+                            <div class="w-12 h-12 bg-retro-blue border-[3px] border-retro-ink rounded-lg flex items-center justify-center shadow-neubrutalism-sm">
+                                <i class="fa-solid fa-globe text-white text-xl"></i>
+                            </div>
+                            <div class="w-12 h-12 bg-green-500 border-[3px] border-retro-ink rounded-lg flex items-center justify-center shadow-neubrutalism-sm">
+                                <i class="fa-solid fa-utensils text-white text-xl"></i>
+                            </div>
+                            <div class="w-12 h-12 bg-orange-500 border-[3px] border-retro-ink rounded-lg flex items-center justify-center shadow-neubrutalism-sm">
+                                <i class="fa-solid fa-pizza-slice text-white text-xl"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Brand Footer -->
+            <div class="flex justify-center mt-8 slide-up" style="animation-delay: 1.8s;">
+                <div class="flex items-center gap-3 opacity-60">
+                    <div class="w-10 h-10 bg-retro-accent border-[3px] border-retro-ink rounded-lg shadow-neubrutalism-sm flex items-center justify-center">
+                        <i class="fa-solid fa-cookie-bite text-white text-xl"></i>
+                    </div>
+                    <span class="font-mono font-bold text-xl tracking-tight">SNACK IQ 2</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.addEventListener('load', function() {
+            createConfetti();
+        });
+
+        function createConfetti() {
+            const colors = ['#FF4B3E', '#2563EB', '#F59E0B', '#10B981', '#8B5CF6'];
+            const container = document.getElementById('level-up-screen');
+            
+            for (let i = 0; i < 50; i++) {
+                setTimeout(() => {
+                    const confetti = document.createElement('div');
+                    confetti.className = 'confetti-piece';
+                    confetti.style.left = Math.random() * 100 + '%';
+                    confetti.style.background = colors[Math.floor(Math.random() * colors.length)];
+                    confetti.style.animationDelay = Math.random() * 0.5 + 's';
+                    confetti.style.animationDuration = (Math.random() * 2 + 2) + 's';
+                    confetti.style.width = (Math.random() * 8 + 6) + 'px';
+                    confetti.style.height = (Math.random() * 8 + 6) + 'px';
+                    
+                    if (Math.random() > 0.5) {
+                        confetti.style.borderRadius = '50%';
+                    }
+                    
+                    container.appendChild(confetti);
+                    
+                    setTimeout(() => confetti.remove(), 3500);
+                }, i * 50);
+            }
+        }
+    </script>
+</body>
+</html>
