@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Docker Compose support** — deploy multi-service apps directly from a `docker-compose.yml`. New `compose-bollard` crate parses and validates Compose YAML, converting it to bollard Docker API configs. Compose deploy runs each service as its own container on a per-project Docker network.
+- **Multi-service architecture** — projects can now run multiple containers (e.g. frontend + API + DB). New `project_services` and `project_volumes` database tables, per-project Docker networks, and full lifecycle management (start/stop/delete/recreate individual services).
+- **Volume persistence** — containers can persist data across recreations and redeployments. Supports named volumes and bind mounts scoped to `projects/{id}/data/`. Managed via API, CLI, and dashboard.
+- **Custom route proxy** — define custom routing rules (path-based, subdomain-based) via dashboard or CLI. Routes are applied through Caddy on the agent.
+- **Waker returns 503 during wake** — waking containers now return `503 Service Unavailable` with JSON for API clients instead of a 200 spinner page, preventing SEO bots from indexing the loading state.
+- **Compose variable interpolation** — `${VAR}`, `${VAR:-default}`, `${VAR:+alternate}`, `$VAR`, and `$$` syntax in compose files. Variables resolved from compose `environment` section, `.env` files, and system env.
+- **CLI: `--compose` and `--service` flags** — `deploy` command auto-detects compose files and deploys as multi-service. Use `--service api --service worker` to selectively build specific services (CI-friendly, no interactive prompts).
+- **CLI: object-form `build:` support** — `build: { context: ./api, dockerfile: Dockerfile.dev }` in compose files now correctly uses the specified context and Dockerfile.
+- **Dashboard: service management** — view and manage individual services within a project. New modular ProjectCard components (service settings, sleep controls, redeploy, service selection).
+- **Dashboard: log viewer** — improved log viewer component with better streaming and display.
+- **Dashboard: volume management** — view and manage project volumes from the dashboard.
+- **New documentation** — [multi-service.md](docs/multi-service.md), [volumes.md](docs/volumes.md), [waker.md](docs/waker.md), [user-flows.md](docs/user-flows.md)
+
+### Fixed
+- Fix multi-service remote routing using node UUID as hostname instead of the actual node host address — remote multi-service and degraded projects now correctly resolve the node's `host` from the database.
+
+### Changed
+- Refactored dashboard ProjectCard into modular sub-components for better maintainability
+- Improved agent container management for multi-service projects (waker, janitor support)
+- Streamlined volume handling across orchestrator and agent
+- Improved routing helpers for custom routes and multi-service networks
+
 ## [0.1.25] - 2026-04-13
 
 ### Fixed

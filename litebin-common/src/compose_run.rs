@@ -76,7 +76,7 @@ impl ComposeRunPlan {
 }
 
 /// Build a `ComposeRunPlan` from compose YAML string.
-/// Parses, validates, and builds configs in one step.
+/// Parses with variable interpolation, validates, and builds configs in one step.
 /// Use this when you just need the plan (e.g. agent wake, batch-run).
 pub fn build_compose_run_plan(
     compose_yaml: &str,
@@ -84,7 +84,7 @@ pub fn build_compose_run_plan(
     extra_env: &[String],
     instance_id: Option<&str>,
 ) -> anyhow::Result<ComposeRunPlan> {
-    let compose = ComposeParser::parse(compose_yaml)
+    let compose = ComposeParser::parse_with_interpolation(compose_yaml, extra_env)
         .map_err(|e| anyhow::anyhow!("invalid compose: {}", e))?;
 
     ComposeRunPlan::from_compose(&compose, project_id, extra_env, instance_id)

@@ -135,8 +135,10 @@ pub async fn deploy_compose(
         ).into_response();
     }
 
-    // Parse compose file
-    let compose = match compose_bollard::ComposeParser::parse(&compose_yaml) {
+    // Parse compose file with variable interpolation for validation.
+    // The original YAML (with ${VAR} references) is stored to disk so env changes
+    // take effect on restart; interpolation happens again at container start time.
+    let compose = match compose_bollard::ComposeParser::parse_with_interpolation(&compose_yaml, &[]) {
         Ok(c) => c,
         Err(e) => return (
             StatusCode::BAD_REQUEST,

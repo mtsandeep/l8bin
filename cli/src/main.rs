@@ -73,6 +73,14 @@ enum Commands {
         /// Pass a local file (e.g. .env) as a Docker build secret (id=l8b_env)
         #[arg(long)]
         secret: Vec<std::path::PathBuf>,
+
+        /// Force compose mode (auto-detected if a compose file exists)
+        #[arg(long)]
+        compose: bool,
+
+        /// Deploy only specific services (repeatable, compose mode only)
+        #[arg(long)]
+        service: Vec<String>,
     },
     /// Interactive deploy — guided flow for new or existing projects
     Ship {
@@ -153,6 +161,8 @@ async fn main() -> Result<()> {
             cpu,
             no_auto_stop,
             secret,
+            compose,
+            service,
         } => {
             if !project
                 .chars()
@@ -166,40 +176,68 @@ async fn main() -> Result<()> {
             let client = auth::authenticated_client(&cfg)?;
             let server = auth::resolve_server(&cfg)?;
 
-            let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
-            let image = build::build_project(&path, dockerfile.as_deref(), &image_tag, secret, ci_mode.enabled).await?;
+            // Check for compose file (auto-detect or forced via --compose)
+            let compose_file = ship::detect_compose_file(&path);
+            if compose || compose_file.is_some() {
+                let compose_name = compose_file.unwrap_or_else(|| {
+                    if compose {
+                        // Find it now
+                        ship::detect_compose_file(&path).expect("no compose file found")
+                    } else {
+                        unreachable!()
+                    }
+                });
 
-            ci_mode.println("Uploading image...");
-            let image_id = upload::upload_tar(
-                &client,
-                &server,
-                &project,
-                std::path::Path::new(&image.path),
-                &image.image_id,
-                node.as_deref(),
-                ci_mode.enabled,
-            )
-            .await?;
+                if compose {
+                    if compose_file.is_none() {
+                        bail!("--compose flag specified but no compose file found in {}", path.display());
+                    }
+                }
 
-            ci_mode.println("Deploying...");
-            let response = deploy::deploy(
-                &client,
-                &server,
-                &project,
-                &image_id,
-                port,
-                node.as_deref(),
-                cmd.as_deref(),
-                memory,
-                cpu,
-                !no_auto_stop,
-            )
-            .await?;
+                let target_services = if service.is_empty() { None } else { Some(service) };
 
-            println!("Deployed! {}", response.url);
+                let url = ship::deploy_compose_noninteractive(
+                    &client, &server, &project, &path, compose_name, true,
+                    ship::ComposeDeployOpts { target_services },
+                ).await?;
 
-            // Clean up
-            let _ = std::fs::remove_file(&image.path);
+                println!("Deployed! {}", url);
+            } else {
+                let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
+                let image = build::build_project(&path, dockerfile.as_deref(), &image_tag, secret, ci_mode.enabled).await?;
+
+                ci_mode.println("Uploading image...");
+                let image_id = upload::upload_tar(
+                    &client,
+                    &server,
+                    &project,
+                    std::path::Path::new(&image.path),
+                    &image.image_id,
+                    node.as_deref(),
+                    ci_mode.enabled,
+                )
+                .await?;
+
+                ci_mode.println("Deploying...");
+                let response = deploy::deploy(
+                    &client,
+                    &server,
+                    &project,
+                    &image_id,
+                    port,
+                    node.as_deref(),
+                    cmd.as_deref(),
+                    memory,
+                    cpu,
+                    !no_auto_stop,
+                )
+                .await?;
+
+                println!("Deployed! {}", response.url);
+
+                // Clean up
+                let _ = std::fs::remove_file(&image.path);
+            }
         }
         Commands::Ship { path, port, secret } => {
             if ci_mode.enabled {

@@ -29,6 +29,9 @@ pub enum ComposeError {
         field: String,
         reason: String,
     },
+
+    #[error("variable interpolation error: {0}")]
+    InterpolationError(String),
 }
 
 pub type Result<T> = std::result::Result<T, ComposeError>;

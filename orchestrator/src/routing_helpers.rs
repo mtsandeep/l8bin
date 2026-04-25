@@ -8,6 +8,21 @@ use crate::config::Config;
 use litebin_common::routing::{ProjectCustomRoute, ProjectRoute, RoutingProvider};
 use litebin_common::types::{container_name, Project, ProjectService};
 
+/// Look up a node's host address and public_ip by node_id.
+/// Returns None if the node doesn't exist in the database.
+async fn lookup_node_host(
+    db: &SqlitePool,
+    node_id: &str,
+) -> anyhow::Result<Option<(String, Option<String>)>> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT host, public_ip FROM nodes WHERE id = ?",
+    )
+    .bind(node_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row)
+}
+
 /// Bulk-load custom routes for a set of project IDs. Returns a map of project_id -> Vec<ProjectCustomRoute>.
 async fn resolve_custom_routes(
     db: &SqlitePool,
@@ -99,14 +114,7 @@ pub async fn resolve_routes(
 
         let (upstream, node_public_ip) = match project.node_id.as_deref() {
             Some(node_id) if node_id != "local" => {
-                let row: Option<(String, Option<String>)> = sqlx::query_as(
-                    "SELECT host, public_ip FROM nodes WHERE id = ?",
-                )
-                .bind(node_id)
-                .fetch_optional(db)
-                .await?;
-
-                match row {
+                match lookup_node_host(db, node_id).await? {
                     Some((host, public_ip)) => (format!("{}:443", host), public_ip),
                     None => {
                         tracing::warn!(
@@ -227,24 +235,29 @@ pub async fn resolve_all_routes(
 
     for project in &multi_running {
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
-        let node_public_ip = if is_local {
-            sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM nodes WHERE id = 'local'")
-                .fetch_optional(db)
-                .await?
-                .flatten()
+        let (upstream, node_public_ip) = if is_local {
+            let local_ip: Option<String> = sqlx::query_scalar(
+                "SELECT public_ip FROM nodes WHERE id = 'local'",
+            )
+            .fetch_optional(db)
+            .await?
+            .flatten();
+            (orchestrator_upstream.to_string(), local_ip)
         } else {
             let node_id = project.node_id.as_deref().unwrap_or("local");
-            sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM nodes WHERE id = ?")
-                .bind(node_id)
-                .fetch_optional(db)
-                .await?
-                .flatten()
+            match lookup_node_host(db, node_id).await? {
+                Some((host, public_ip)) => (format!("{}:443", host), public_ip),
+                None => {
+                    tracing::warn!(project_id = %project.id, node_id = %node_id, "node not found, skipping multi-service route");
+                    continue;
+                }
+            }
         };
 
         routes.push(ProjectRoute {
             project_id: project.id.clone(),
             subdomain_host: format!("{}.{}", project.id, domain),
-            upstream: if is_local { orchestrator_upstream.to_string() } else { format!("{}:443", project.node_id.as_deref().unwrap_or("localhost")) },
+            upstream,
             custom_domain: project.custom_domain.clone(),
             node_id: project.node_id.clone(),
             node_public_ip,
@@ -264,24 +277,29 @@ pub async fn resolve_all_routes(
 
     for project in &degraded {
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
-        let node_public_ip = if is_local {
-            sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM nodes WHERE id = 'local'")
-                .fetch_optional(db)
-                .await?
-                .flatten()
+        let (upstream, node_public_ip) = if is_local {
+            let local_ip: Option<String> = sqlx::query_scalar(
+                "SELECT public_ip FROM nodes WHERE id = 'local'",
+            )
+            .fetch_optional(db)
+            .await?
+            .flatten();
+            (orchestrator_upstream.to_string(), local_ip)
         } else {
             let node_id = project.node_id.as_deref().unwrap_or("local");
-            sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM nodes WHERE id = ?")
-                .bind(node_id)
-                .fetch_optional(db)
-                .await?
-                .flatten()
+            match lookup_node_host(db, node_id).await? {
+                Some((host, public_ip)) => (format!("{}:443", host), public_ip),
+                None => {
+                    tracing::warn!(project_id = %project.id, node_id = %node_id, "node not found, skipping degraded route");
+                    continue;
+                }
+            }
         };
 
         routes.push(ProjectRoute {
             project_id: project.id.clone(),
             subdomain_host: format!("{}.{}", project.id, domain),
-            upstream: if is_local { orchestrator_upstream.to_string() } else { format!("{}:443", project.node_id.as_deref().unwrap_or("localhost")) },
+            upstream,
             custom_domain: project.custom_domain.clone(),
             node_id: project.node_id.clone(),
             node_public_ip,

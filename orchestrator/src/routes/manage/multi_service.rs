@@ -61,11 +61,12 @@ pub async fn start_services(
 ) -> Result<(), (StatusCode, String)> {
     let project_id = &project.id;
 
-    // 1. Read + parse compose.yaml
+    // 1. Read + parse compose.yaml with variable interpolation
     let compose_yaml = litebin_common::docker::DockerManager::read_compose(project_id)
         .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "compose.yaml not found".to_string()))?;
 
-    let compose = compose_bollard::ComposeParser::parse(&compose_yaml)
+    let extra_env = read_local_project_env(project_id);
+    let compose = compose_bollard::ComposeParser::parse_with_interpolation(&compose_yaml, &extra_env)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yaml: {e}")))?;
 
     // 2. Ensure per-project network + connect Caddy + optionally orchestrator
@@ -88,7 +89,6 @@ pub async fn start_services(
     }
 
     // 3. Build plan + lookup maps
-    let extra_env = read_local_project_env(project_id);
     let plan = litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose error: {e}")))?;
 

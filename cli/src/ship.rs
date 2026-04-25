@@ -596,6 +596,7 @@ async fn deploy_compose(
     struct BuildInfo {
         svc_name: String,
         build_context: String,
+        dockerfile: Option<String>,
     }
     let mut build_infos = Vec::new();
     let total_services = compose.get("services").and_then(|s| s.as_mapping()).map(|m| m.len()).unwrap_or(0);
@@ -603,11 +604,29 @@ async fn deploy_compose(
         for (svc_name, svc_config) in services {
             if svc_config.get("build").is_some() && svc_config.get("image").is_none() {
                 let name = svc_name.as_str().unwrap_or_default().to_string();
-                let ctx = svc_config.get("build")
-                    .and_then(|b| b.as_str())
-                    .unwrap_or(&name)
-                    .to_string();
-                build_infos.push(BuildInfo { svc_name: name, build_context: ctx });
+
+                // Support both string and object forms of build:
+                //   String: build: ./api
+                //   Object: build: { context: ./api, dockerfile: Dockerfile.dev }
+                let (ctx, dockerfile) = match svc_config.get("build") {
+                    Some(b) if b.as_str().is_some() => {
+                        (b.as_str().unwrap_or(&name).to_string(), None)
+                    }
+                    Some(b) if b.as_mapping().is_some() => {
+                        let build_map = b.as_mapping().unwrap();
+                        let context = build_map.get("context")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or(&name)
+                            .to_string();
+                        let df = build_map.get("dockerfile")
+                            .and_then(|d| d.as_str())
+                            .map(|s| s.to_string());
+                        (context, df)
+                    }
+                    _ => (name.clone(), None),
+                };
+
+                build_infos.push(BuildInfo { svc_name: name, build_context: ctx, dockerfile });
             }
         }
     }
@@ -758,7 +777,7 @@ async fn deploy_compose(
         println!("    {} {} ({})", "→".dimmed(), info.svc_name.cyan(), svc_dir.display());
 
         // Build with Railpack (uses Dockerfile if present, otherwise auto-detects)
-        let saved_image = crate::build::build_project(&svc_dir, None, &image_tag, secret, false).await?;
+        let saved_image = crate::build::build_project(&svc_dir, info.dockerfile.as_deref(), &image_tag, secret, false).await?;
         println!("    {} {} — {}", "  ✓".green(), info.svc_name, HumanBytes(saved_image.compressed_size));
 
         // Upload tar to orchestrator
@@ -832,4 +851,192 @@ async fn deploy_compose(
     let fallback_url = format!("{}.{}", project_id, server);
     let url = resp["url"].as_str().unwrap_or(&fallback_url);
     Ok(url.to_string())
+}
+
+/// Options for non-interactive compose deploy (used by `deploy` command).
+pub struct ComposeDeployOpts {
+    /// If Some, only build these services (no interactive prompt).
+    pub target_services: Option<Vec<String>>,
+}
+
+/// Non-interactive compose deploy for CI/`deploy` command usage.
+/// Builds all (or selected) services, uploads images, and sends resolved compose to orchestrator.
+pub async fn deploy_compose_noninteractive(
+    client: &reqwest::Client,
+    server: &str,
+    project_id: &str,
+    project_dir: &Path,
+    compose_name: &str,
+    _is_new_project: bool,
+    opts: ComposeDeployOpts,
+) -> Result<String> {
+    let compose_path = project_dir.join(compose_name);
+    println!("  {} Found {} — deploying as multi-service", "🐳".dimmed(), compose_name.cyan());
+
+    let compose_yaml = std::fs::read_to_string(&compose_path)
+        .with_context(|| format!("failed to read {}", compose_name))?;
+
+    let compose: serde_yaml::Value = serde_yaml::from_str(&compose_yaml)
+        .with_context(|| "failed to parse compose YAML")?;
+
+    // Collect build info
+    #[derive(Clone)]
+    struct BuildInfo {
+        svc_name: String,
+        build_context: String,
+        dockerfile: Option<String>,
+    }
+    let mut build_infos = Vec::new();
+    if let Some(services) = compose.get("services").and_then(|s| s.as_mapping()) {
+        for (svc_name, svc_config) in services {
+            if svc_config.get("build").is_some() && svc_config.get("image").is_none() {
+                let name = svc_name.as_str().unwrap_or_default().to_string();
+                let (ctx, dockerfile) = match svc_config.get("build") {
+                    Some(b) if b.as_str().is_some() => {
+                        (b.as_str().unwrap_or(&name).to_string(), None)
+                    }
+                    Some(b) if b.as_mapping().is_some() => {
+                        let build_map = b.as_mapping().unwrap();
+                        let context = build_map.get("context")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or(&name)
+                            .to_string();
+                        let df = build_map.get("dockerfile")
+                            .and_then(|d| d.as_str())
+                            .map(|s| s.to_string());
+                        (context, df)
+                    }
+                    _ => (name.clone(), None),
+                };
+                build_infos.push(BuildInfo { svc_name: name, build_context: ctx, dockerfile });
+            }
+        }
+    }
+
+    // Filter to target services if specified
+    let is_partial_build = if let Some(ref targets) = opts.target_services {
+        if !targets.is_empty() {
+            build_infos.retain(|b| targets.iter().any(|t| t == &b.svc_name));
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    let total_services = compose.get("services").and_then(|s| s.as_mapping()).map(|m| m.len()).unwrap_or(0);
+    if !build_infos.is_empty() {
+        let pull_count = total_services - build_infos.len();
+        let pull_info = if pull_count > 0 {
+            format!(" ({} pre-built will be pulled by orchestrator)", pull_count)
+        } else {
+            String::new()
+        };
+        println!("  {} Found {} services — building {}{}", "🐳".dimmed(), total_services, build_infos.len(), pull_info);
+        println!("  {} Building {} service(s)...", "🔨".dimmed(), build_infos.len());
+    }
+
+    let mut resolved_images: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    // Auto-select all .env files (non-interactive)
+    let mut root_env_paths: Vec<std::path::PathBuf> = Vec::new();
+    let mut root_env_files: Vec<String> = std::fs::read_dir(project_dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with(".env") && name != ".env.example")
+        .collect();
+    root_env_files.sort();
+    for name in &root_env_files {
+        root_env_paths.push(project_dir.join(name));
+    }
+    if !root_env_paths.is_empty() {
+        println!("  {} Using .env files: {}", "::".dimmed(), root_env_files.join(", ").dimmed());
+    }
+
+    for info in &build_infos {
+        let svc_dir = project_dir.join(&info.build_context).canonicalize()
+            .with_context(|| format!("build context '{}' does not exist for service '{}'", info.build_context, info.svc_name))?;
+        let svc_dir = Path::new(svc_dir.to_str().unwrap().trim_start_matches(r"\\?\"));
+
+        let mut secret = root_env_paths.clone();
+        if let Ok(entries) = std::fs::read_dir(&svc_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(".env") && !secret.iter().any(|p| p.file_name() == Some(entry.file_name().as_os_str())) {
+                    secret.push(entry.path());
+                }
+            }
+        }
+
+        let image_tag = format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, info.svc_name);
+        println!("    {} {} ({})", "→".dimmed(), info.svc_name.cyan(), svc_dir.display());
+
+        let saved_image = crate::build::build_project(&svc_dir, info.dockerfile.as_deref(), &image_tag, secret, true).await?;
+        println!("    {} {} — {}", "  ✓".green(), info.svc_name, HumanBytes(saved_image.compressed_size));
+
+        let image_id = crate::upload::upload_tar(
+            client, server, project_id,
+            Path::new(&saved_image.path), &saved_image.image_id,
+            None, true,
+        ).await?;
+
+        resolved_images.insert(info.svc_name.clone(), image_id);
+        let _ = std::fs::remove_file(&saved_image.path);
+    }
+
+    // Build resolved compose YAML
+    let mut resolved_compose = compose.clone();
+    if let Some(services_map) = resolved_compose.get_mut("services").and_then(|s| s.as_mapping_mut()) {
+        for entry in services_map.iter_mut() {
+            let svc_name = entry.0.as_str().unwrap_or_default().to_string();
+            if let Some(image_id) = resolved_images.get(&svc_name) {
+                if let Some(svc_map) = entry.1.as_mapping_mut() {
+                    svc_map.remove("build");
+                    svc_map.insert(
+                        serde_yaml::Value::String("image".to_string()),
+                        serde_yaml::Value::String(image_id.clone()),
+                    );
+                }
+            }
+        }
+    }
+
+    let resolved_yaml = serde_yaml::to_string(&resolved_compose)?;
+
+    println!("  {} Deploying compose...", "🚢".dimmed());
+
+    let mut form = reqwest::multipart::Form::new()
+        .text("project_id", project_id.to_string())
+        .part("compose", reqwest::multipart::Part::bytes(resolved_yaml.into_bytes())
+            .file_name(compose_name.to_string())
+            .mime_str("text/yaml")?);
+    if is_partial_build {
+        let target_list: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
+        form = form.text("target_services", target_list.join(","));
+    }
+
+    let resp = auth::session_post_multipart(client, server, "/deploy/compose", form).await?;
+
+    println!("  {} Compose deploy successful!", "✔".green());
+    show_env_path(server, project_id);
+    println!();
+
+    // Stop BuildKit container
+    println!("  🧹 Stopping BuildKit...");
+    let _ = std::process::Command::new("docker")
+        .args(["stop", "buildkit"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let fallback_url = format!("{}.{}", project_id, server);
+    let url = resp["url"].as_str().unwrap_or(&fallback_url);
+    Ok(url.to_string())
+}
+
+/// Detect compose file in the given directory. Returns the filename or None.
+pub fn detect_compose_file(project_dir: &Path) -> Option<&'static str> {
+    const COMPOSE_FILES: [&str; 4] = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
+    COMPOSE_FILES.iter().find(|p| project_dir.join(p).exists()).copied()
 }

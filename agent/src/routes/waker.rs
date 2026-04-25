@@ -72,13 +72,26 @@ async fn proxy_request(
     }
 }
 
-/// Check if the client wants JSON (not HTML). Used to return 503+JSON for API clients.
+/// Check if the client should get 503+JSON instead of the HTML loading page.
+/// Returns true for API clients (no Accept: text/html) and known bots (Googlebot, etc.)
+/// so they don't index the loading spinner or retry endlessly.
 fn wants_json(headers: &HeaderMap) -> bool {
-    !headers
+    if !headers
         .get("accept")
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_lowercase().contains("text/html"))
         .unwrap_or(false)
+    {
+        return true;
+    }
+    // Known bots/crawlers send Accept: text/html but should get 503, not the spinner
+    if let Some(ua) = headers.get("user-agent").and_then(|v| v.to_str().ok()) {
+        let ua = ua.to_lowercase();
+        if ua.contains("bot") || ua.contains("crawler") || ua.contains("spider") {
+            return true;
+        }
+    }
+    false
 }
 
 /// 503 JSON response for API clients while a container is starting.
