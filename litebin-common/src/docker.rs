@@ -930,7 +930,7 @@ impl DockerManager {
 
         while let Some(result) = import_stream.next().await {
             if let Err(e) = result {
-                return Err(anyhow::anyhow!("docker image import failed: {e}"));
+                return Err(anyhow::anyhow!("docker image load failed: {e}"));
             }
         }
 

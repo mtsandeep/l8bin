@@ -827,6 +827,7 @@ pub async fn batch_run(
     let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
 
     // Pull images in parallel (only for target services on partial redeploy)
+    // Skip sha256: images — they were pre-loaded via /images/upload, not from a registry.
     let images_to_pull: Vec<String> = if let Some(ref targets) = target_set {
         plan.configs.iter()
             .filter(|c| targets.contains(&c.service_name))
@@ -835,6 +836,10 @@ pub async fn batch_run(
     } else {
         plan.configs.iter().map(|c| c.image.clone()).collect()
     };
+    let images_to_pull: Vec<String> = images_to_pull
+        .into_iter()
+        .filter(|img| !img.starts_with("sha256:"))
+        .collect();
     let pull_handles: Vec<_> = images_to_pull.into_iter().map(|image| {
         let docker = state.docker.clone();
         tokio::spawn(async move {

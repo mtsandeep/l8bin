@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix compose deploy "No such image" error — agent's `batch_run` was pulling all images (including pre-loaded `sha256:` ones) from a registry before creating containers. The failed registry pull caused Docker to remove the local copy. Now skips `sha256:` images during pull (matching orchestrator's local compose path).
+
 ## [0.2.3] - 2026-04-25
 
 ### Added
