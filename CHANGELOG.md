@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-25
+
 ### Changed
 - Consolidate Caddy API path matchers into `ORCHESTRATOR_API_PATHS` constant in `litebin-common/src/caddy.rs` — single source of truth used by all three config builders (master_proxy, cloudflare_dns, CaddyRouter). Install script Caddyfile templates updated to match.
 
