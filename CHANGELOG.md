@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-25
+
 ### Added
 - **Docker Compose support** — deploy multi-service apps directly from a `docker-compose.yml`. New `compose-bollard` crate parses and validates Compose YAML, converting it to bollard Docker API configs. Compose deploy runs each service as its own container on a per-project Docker network.
 - **Multi-service architecture** — projects can now run multiple containers (e.g. frontend + API + DB). New `project_services` and `project_volumes` database tables, per-project Docker networks, and full lifecycle management (start/stop/delete/recreate individual services).
