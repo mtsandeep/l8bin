@@ -62,7 +62,7 @@ You can manually edit the `.env` file inside the project directory on the machin
 - **Auto-Injection**: Every time the container starts (on deploy, recreate, or resume), the Master or Agent reads this file and injects its contents directly into the container's environment.
 - **Auto-Detection of Changes**: LiteBin automatically detects when your `.env` has changed since the last container start. If the file has been modified, the container is recreated with the new values on the next wake-up — no manual recreate needed.
 
-### 3. The `.env.l8bin` Snapshot File
+### 4. The `.env.l8bin` Snapshot File
 
 Whenever LiteBin injects environment variables into a container, it saves a snapshot of the `.env` file as `.env.l8bin` in the same directory:
 
@@ -86,7 +86,7 @@ litebin/
 - If the files match, your changes are already running. If they differ, they'll be picked up on next start.
 - **Do not edit `.env.l8bin`** — it is auto-generated and will be overwritten.
 
-### 4. Usage via CLI
+### 5. Usage via CLI
 After a successful `ship`, the CLI will display the absolute path to this runtime secret file for easy local management.
 
 ---

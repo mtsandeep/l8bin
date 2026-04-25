@@ -73,6 +73,9 @@ l8b deploy --project <PROJECT_ID> [options]
 | `--memory` | server default | Memory limit in MB |
 | `--cpu` | server default | CPU limit (e.g. `0.5` for half a core) |
 | `--no-auto-stop` | *off* | Disable idle auto-stop |
+| `--secret` | *(none)* | Pass a local file (e.g. .env) as a Docker build secret (repeatable) |
+| `--compose` | auto-detect | Force compose mode (deploy as multi-service) |
+| `--service` | *(none)* | Deploy only specific services (repeatable, compose mode only) |
 
 Global flags (available on all commands):
 
@@ -80,6 +83,7 @@ Global flags (available on all commands):
 |------|-----|-------------|
 | `--server` | `L8B_SERVER` | Orchestrator dashboard URL (e.g. `https://l8bin.example.com`) |
 | `--token` | `L8B_TOKEN` | Deploy token |
+| `--ci` | `L8B_CI` | CI mode: suppress verbose output and hide secrets |
 
 ### Build strategy
 
@@ -130,6 +134,19 @@ l8b deploy --project myapp --cmd "node server.js --production"
 
 ```bash
 l8b deploy --project myapp --no-auto-stop
+```
+
+**Compose deploy** (multi-service with docker-compose.yml):
+
+```bash
+# Auto-detected when compose file exists
+l8b deploy --project myapp
+
+# Selective service rebuild
+l8b deploy --project myapp --service api --service worker
+
+# Force compose mode explicitly
+l8b deploy --project myapp --compose
 ```
 
 ### `l8b ship`
@@ -237,6 +254,15 @@ Display the current configuration.
 
 ```bash
 l8b config show
+```
+
+### `l8b cleanup`
+
+Clean up leftover build artifacts (.env backups, temp dockerignore files).
+
+```bash
+l8b cleanup
+l8b cleanup --path ./services/frontend
 ```
 
 ## Configuration priority

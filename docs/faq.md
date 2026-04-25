@@ -7,6 +7,10 @@
 - [Dashboard is Slow / Endpoints Timing Out](#dashboard-is-slow--endpoints-timing-out)
 - [Docker Logs](#docker-logs)
 - [Networking & Firewalls](#networking--firewalls)
+- [Environment Variables (.env)](#environment-variables-env)
+- [Docker Compose / Multi-Service](#docker-compose--multi-service)
+- [Volumes & Persistent Data](#volumes--persistent-data)
+- [Custom Routes Not Working](#custom-routes-not-working)
 
 For a comprehensive view of how LiteBin handles failures at every layer, see [Failure Model](failure-model.md). For why these architectural choices were made, see [Design Decisions](decisions.md).
 
@@ -236,4 +240,136 @@ UFW only controls the OS-level firewall. Most cloud providers (DigitalOcean, Vul
 nc -zv AGENT_IP 5083 -w 5
 # Success: "Connection to AGENT_IP 5083 port [tcp/*] succeeded!"
 # Failure: "timed out" or "Connection refused"
+```
+
+---
+
+## Environment Variables (.env)
+
+### Where do I put runtime environment variables?
+
+Runtime env vars go in `projects/<project_id>/.env` on the machine that runs your container. On a single-node setup, that's the master. On multi-node, it's on the agent where the project is deployed.
+
+```bash
+# SSH into your server, then:
+echo "DATABASE_URL=postgres://user:pass@db:5432/mydb" >> litebin/projects/myapp/.env
+echo "SESSION_SECRET=abc123" >> litebin/projects/myapp/.env
+```
+
+LiteBin auto-detects changes to `.env` and recreates the container on the next wake-up with the new values. See [env-secrets.md](env-secrets.md) for the full guide.
+
+### My app doesn't see the env vars I set
+
+1. Make sure you edited `.env` on the correct machine (the one running the container, not the orchestrator for multi-node setups).
+2. Check that the file is at `litebin/projects/<project_id>/.env` (not inside the Docker container).
+3. The container is recreated automatically on the next wake-up. If it's currently running, trigger a recreate from the dashboard or stop/start the project.
+4. Build-time env vars (from `l8b ship --secret .env`) are baked into the image and separate from runtime vars.
+
+### Can I use `${VAR}` in my docker-compose.yml?
+
+Yes. LiteBin supports Docker Compose variable interpolation: `${VAR}`, `${VAR:-default}`, `${VAR:+alternate}`, `$VAR`, and `$$` (escaped literal). Variables are resolved from the compose `environment` section first, then `.env` files, then system environment.
+
+```yaml
+services:
+  api:
+    image: myapp-api
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://localhost:5432/mydb}
+      - PORT=${APP_PORT:-3000}
+```
+
+---
+
+## Docker Compose / Multi-Service
+
+### How do I deploy a multi-service app?
+
+If a `compose.yaml`, `compose.yml`, `docker-compose.yaml`, or `docker-compose.yml` exists in your project, LiteBin auto-detects it and deploys as multi-service:
+
+```bash
+# Interactive (guided)
+l8b ship
+
+# Non-interactive (CI/CD)
+l8b deploy --project myapp
+
+# Rebuild only specific services
+l8b deploy --project myapp --service api --service worker
+```
+
+### Only one port is accessible for my service
+
+LiteBin routes traffic to one port per project (the public service's port). Other ports are exposed on the container and accessible for inter-service communication via the Docker network. To expose additional ports externally, create a custom route with the container name and port as the upstream.
+
+### My compose build context isn't found
+
+Make sure your `build:` directive uses the correct path relative to the compose file. Both forms are supported:
+
+```yaml
+# String form
+api:
+  build: ./api
+
+# Object form (with custom Dockerfile)
+api:
+  build:
+    context: ./api
+    dockerfile: Dockerfile.dev
+```
+
+---
+
+## Volumes & Persistent Data
+
+### My data disappears when I redeploy
+
+By default, container data is ephemeral. To persist data across recreations and redeployments, add volumes to your compose file:
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+LiteBin scopes named volumes to `litebin_<project_id>_<name>`. Bind mounts using relative paths (`./data`) are stored under `projects/<project_id>/data/`. See [volumes.md](volumes.md) for details.
+
+### How do I delete project volumes?
+
+Volumes can be deleted from the dashboard or via the API:
+
+```bash
+# Delete a specific volume
+curl -X DELETE https://l8bin.example.com/projects/myapp/volumes/pgdata \
+  -H "Authorization: Bearer <token>"
+
+# Delete all volumes for a project
+curl -X DELETE https://l8bin.example.com/projects/myapp/volumes \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Custom Routes Not Working
+
+### My custom route returns 404
+
+1. Ensure the project is running — custom routes are only active for running projects.
+2. For path routes: the path is matched on the project's host (subdomain). E.g., `/api` on `myapp.example.com` matches `https://myapp.example.com/api`.
+3. For alias routes: the alias must not conflict with other project IDs or existing aliases.
+4. After creating a route, Caddy resyncs automatically within ~500ms.
+
+### How do I route to a specific service port?
+
+Set the upstream to the container name and port. For a multi-service project `myapp` with a backend service on port 9090:
+
+```bash
+curl -X POST https://l8bin.example.com/projects/myapp/routes \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"route_type": "path", "path": "/api", "upstream": "litebin-myapp.backend:9090"}'
 ```

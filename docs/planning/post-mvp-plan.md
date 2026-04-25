@@ -2,7 +2,7 @@
 
 Incremental enhancements after the core multi-service MVP ships. These add polish and convenience but are not required for multi-service to work.
 
-**Prerequisite:** [MVP Plan](mvp-plan.md) (Phases 1-6)
+**Prerequisite:** Multi-service MVP (v0.2) — completed
 
 ---
 

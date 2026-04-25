@@ -4,13 +4,15 @@
 >
 > → [l8bin.com](https://l8bin.com) for the full picture.
 
-Self-hosted App Manager. Deploy apps from your dashboard, CLI, or GitHub Actions.
+Self-hosted App Manager. Deploy single or multi-service apps from your dashboard, CLI, or GitHub Actions — with volume persistence, custom routing, and automatic HTTPS.
 
 ## Why LiteBin
 
 Cloud hosting platforms are great until you check the bill for side projects you built months ago. Self-hosted PaaS platforms are built for production workloads — customer-facing apps that need uptime guarantees, multi-tenant isolation, and rollback safety. Your weekend demo doesn't need that overhead.
 
 LiteBin runs on **one cheap VPS** ($5-10/mo) and sleeps apps when nobody's looking. No per-app fees, no credit card on file, no vendor lock-in. Deploy from your laptop or GitHub Actions — your Docker image runs as-is, behind your own domain, with automatic HTTPS.
+
+v0.2 adds **multi-service deploy** (bring your own `docker-compose.yml`), **volume persistence** (named volumes and bind mounts), **custom route proxy** (path-based and subdomain alias routing), and **compose variable interpolation** (`${VAR}`, `${VAR:-default}`).
 
 It's built for engineers who want their side projects, demos, and portfolio apps **actually running** — not just committed to a repo or sitting in a local Docker container.
 
@@ -22,6 +24,7 @@ It's built for engineers who want their side projects, demos, and portfolio apps
 | **Caddy** (reverse proxy) | Dynamic config via admin API, automatic HTTPS, JSON config pushed programmatically |
 | **SQLite** (WAL mode) | Zero ops, single-file, fast enough for this scale — no Postgres to manage |
 | **Docker** (runtime) | Standard container format, works with any registry, familiar tooling |
+| **Docker Compose** (multi-service) | Deploy multi-container apps from `docker-compose.yml` — per-project networks, dependency-ordered startup, selective service rebuilds |
 | **No Kubernetes** | LiteBin manages 1-50 apps on 1-5 servers. K8s adds complexity with no benefit at this scale |
 | **Scale-to-zero by default** | Side projects sit idle 99% of the time. Sleeping containers saves resources without losing the ability to serve traffic on demand |
 
@@ -145,6 +148,8 @@ node:20
 ghcr.io/org/app:latest
 ```
 
+Or upload a `docker-compose.yml` for multi-service apps (e.g. frontend + API + database). The dashboard will parse the compose file, detect the public service, and start all containers on a per-project Docker network with dependency-ordered startup.
+
 Dashboard deploys only support pre-built images from public registries. Private registry support is coming soon.
 
 ### Option 2: CLI
@@ -171,6 +176,19 @@ Or deploy non-interactively:
 
 ```bash
 l8b deploy --project myapp --port 3000
+```
+
+For multi-service (compose) projects:
+
+```bash
+# Auto-detected when docker-compose.yml exists
+l8b deploy --project myapp
+
+# Selective service rebuild (CI-friendly)
+l8b deploy --project myapp --service api --service worker
+
+# Force compose mode explicitly
+l8b deploy --project myapp --compose
 ```
 
 For CI/CD, use a deploy token (created from the dashboard):
@@ -201,6 +219,23 @@ jobs:
           server: ${{ secrets.L8B_SERVER }}
           token: ${{ secrets.L8B_TOKEN }}
           project_id: myapp
+```
+
+For multi-service (compose) projects:
+
+```yaml
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mtsandeep/l8bin-action@v1
+        with:
+          server: ${{ secrets.L8B_SERVER }}
+          token: ${{ secrets.L8B_TOKEN }}
+          project_id: myapp
+          compose: true
+          services: api,worker    # optional: rebuild only specific services
 ```
 
 ---
@@ -261,9 +296,9 @@ Caddy generates a self-signed TLS certificate for `*.localhost`. Your browser wi
                      └───────────────┘
 ```
 
-- **Orchestrator** — API server, container lifecycle, route management, auth, heartbeat, janitor (Rust, axum)
-- **Dashboard** — React UI for deploying apps, managing nodes, and configuring settings
-- **Caddy** — reverse proxy with automatic TLS termination and dynamic routing via admin API
+- **Orchestrator** — API server, container lifecycle, route management, compose parsing, volume scoping, auth, heartbeat, janitor (Rust, axum)
+- **Dashboard** — React UI for deploying apps, managing nodes, configuring settings, and managing services and volumes
+- **Caddy** — reverse proxy with automatic TLS termination, dynamic routing via admin API, and custom route proxy support (path-based and subdomain alias)
 - **Agent** — runs on remote servers, manages containers locally, handles wake requests autonomously via mTLS
 
 See [Architecture](docs/architecture.md) for detailed component breakdown, routing modes, and links to all technical docs. See [Design Decisions](docs/decisions.md) for why these technologies were chosen. See [Troubleshooting FAQ](docs/faq.md) for common issues.
@@ -279,7 +314,7 @@ All config is in `.env` after install. Key variables:
 | `DOMAIN` | Your server domain | *(required on Linux)* |
 | `DASHBOARD_SUBDOMAIN` | Dashboard subdomain | `l8bin` |
 | `ROUTING_MODE` | `master_proxy` or `cloudflare_dns` | `master_proxy` |
-| `DEFAULT_AUTO_STOP_MINS` | Mins before idle apps sleep | `900` (15 min) |
+| `DEFAULT_AUTO_STOP_MINS` | Mins before idle apps sleep | `15` |
 | `JANITOR_INTERVAL_SECS` | Janitor check interval | `300` (5 min) |
 
 See [`.env.example`](.env.example) for the full list.

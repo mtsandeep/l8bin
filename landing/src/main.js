@@ -263,8 +263,8 @@ if (glitchEl) {
   let retryCount = 0;
   const MAX_RETRIES = 3;
 
-  const STATIC_VALS = { 'mv-0': 9.4, 'mv-1': 13.2, 'mv-2': 20.8, 'mv-total': 43.4 };
-  const STATIC_WIDTHS = { 'mv-0': '16%', 'mv-1': '23%', 'mv-2': '36%' };
+  const STATIC_VALS = { 'mv-0': 9.4, 'mv-1': 1.5, 'mv-2': 32.8, 'mv-total': 43.7 };
+  const STATIC_WIDTHS = { 'mv-0': '16%', 'mv-1': '3%', 'mv-2': '57%' };
 
   function updateUI(data) {
     if (!data || !data.containers) return;
@@ -298,8 +298,8 @@ if (glitchEl) {
       
       const bar = document.querySelector(`.bar-fill[data-count-id="${t.id}"]`);
       if (bar) {
-        // Simple scaling: 50MB = 100% for individual bars for visual impact
-        const w = Math.min((val / 50) * 100, 100);
+        // Simple scaling: 58MB = 100% for individual bars for visual impact
+        const w = Math.min((val / 58) * 100, 100);
         bar.style.width = w + '%';
       }
     });
@@ -309,7 +309,7 @@ if (glitchEl) {
     if (totalEl) totalEl.textContent = totalMem.toFixed(1);
 
     // RAM threshold logic
-    const isOver = totalMem > 50;
+    const isOver = totalMem > 58;
     if (compLabel) compLabel.style.display = isOver ? 'none' : 'inline';
     
     const loadNote = document.getElementById('under-load-note');

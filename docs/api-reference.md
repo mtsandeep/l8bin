@@ -18,7 +18,7 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 | `POST` | `/auth/logout` | Clear session |
 | `POST` | `/auth/register` | Create first admin (only when no users exist) |
 | `GET` | `/auth/me` | Get current user info |
-| `GET` | `/auth/setup-check` | Check if initial admin setup is needed |
+| `GET` | `/auth/setup` | Check if initial admin setup is needed |
 | `POST` | `/auth/change-password` | Change current user's password |
 
 ### Deploy
@@ -27,6 +27,12 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 |---|---|---|---|
 | `POST` | `/deploy` | Session or token | Create a new project deployment. Fails with 409 if project already exists. Body: `{project_id, image, port, name, description, node_id, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain}`. Returns `{status, project_id, url, custom_domain, mapped_port}` |
 | `PUT` | `/deploy` | Session or token | Redeploy an existing project (upsert). Body: same as POST. Returns same as POST. |
+
+### Compose Deploy
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/deploy/compose` | Session or token | Deploy a multi-service compose project. Multipart: `project_id` (text), `compose` (YAML file), `target_services` (optional, comma-separated). Returns `{status, project_id, url}` |
 
 ### Projects
 
@@ -44,6 +50,30 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 | `POST` | `/projects/:id/start` | Session | Start a stopped container |
 | `DELETE` | `/projects/:id` | Session | Delete project + container + cleanup |
 | `POST` | `/projects/:id/recreate` | Session | Remove and recreate container (picks up updated .env) |
+
+### Service Management (multi-service)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/projects/:id/services/:name/start` | Session | Start a specific service |
+| `POST` | `/projects/:id/services/:name/stop` | Session | Stop a specific service |
+| `POST` | `/projects/:id/services/:name/restart` | Session | Restart a specific service |
+| `PATCH` | `/projects/:id/services/:name/settings` | Session | Update service settings: `{memory_limit_mb, cpu_limit}` |
+
+### Volume Management
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `DELETE` | `/projects/:id/volumes/:name` | Session | Delete a specific volume |
+| `DELETE` | `/projects/:id/volumes` | Session | Delete all volumes for a project |
+
+### Custom Routes
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/projects/:id/routes` | Session | List custom routes for a project |
+| `POST` | `/projects/:id/routes` | Session | Create a custom route: `{route_type, path, subdomain, upstream, priority}` |
+| `DELETE` | `/projects/:id/routes/:route_id` | Session | Delete a custom route |
 
 ### Project Settings
 
@@ -90,15 +120,16 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/settings` | Session | Get global settings |
-| `PUT` | `/settings` | Session | Update global settings (hot-swaps router if routing_mode changes) |
+| `PATCH` | `/settings` | Session | Update global settings (hot-swaps router if routing_mode changes) |
 | `POST` | `/settings/cleanup-dns` | Session | Delete all Cloudflare A records for the domain |
+| `POST` | `/settings/sync-dns` | Session | Sync Cloudflare DNS records |
 
 ### Health
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/health` | Public | Orchestrator health (Docker ping + version) |
-| `GET` | `/system-stats` | Session | System stats for stack services (memory, CPU, disk) |
+| `GET` | `/system/stats` | Session | System stats for stack services (memory, CPU, disk) |
 
 ### Caddy
 
@@ -137,6 +168,8 @@ All agent endpoints are mTLS-protected (no application-level auth). The orchestr
 | `GET` | `/containers/:id/logs?tail=100` | Stream container logs |
 | `GET` | `/containers/:id/disk-usage` | Disk usage for a container |
 | `POST` | `/containers/stats` | Batch stats. Body: `{container_ids: [...]}` |
+| `POST` | `/containers/batch-run` | Deploy multi-service compose. Body: `{project_id, compose_yaml, service_order, target_services?}` |
+| `POST` | `/containers/cleanup` | Full project cleanup: stop containers, remove volumes, remove network |
 
 ### Images
 

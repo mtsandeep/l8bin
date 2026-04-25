@@ -239,6 +239,10 @@ Denormalized fields on `projects` for the fast health-check path (no JOINs neede
 
 Unknown fields are silently captured (`#[serde(flatten)]`) for forward compatibility.
 
+### Variable interpolation
+
+Variable interpolation is supported: `${VAR}`, `${VAR:-default}`, `${VAR:+alternate}`, `$VAR`, and `$$` (escaped). Variables are resolved from the compose `environment` section, `.env` files, and system environment variables.
+
 ### Validation pipeline
 
 Four checks run in order on deploy:

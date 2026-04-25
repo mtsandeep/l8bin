@@ -15,7 +15,7 @@
 
   <!-- WIP Banner -->
   <div class="bg-violet-500/10 border-b border-violet-500/20 px-4 py-2 text-center">
-    <p class="text-xs text-violet-300 font-mono">✨ New — Try it out for demos & testing. Expect some rough edges.</p>
+    <p class="text-xs text-violet-300 font-mono">Early release — expect some rough edges. Feedback welcome.</p>
   </div>
 
   <!-- Nav -->
@@ -47,7 +47,7 @@
         <a href="#howto" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">How to Use</a>
         <a href="#compare" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Compare</a>
         <a href="quickstart" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Docs</a>
-        <a href="#start" class="mt-4 sm:hidden text-xs font-mono px-3 py-2.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Get Started</a>
+        <a href="#start" class="mt-4 sm:hidden text-xs font-mono px-3 py-2.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Install on your VPS</a>
       </div>
     </div>
   </nav>
@@ -63,28 +63,23 @@
           <div class="flex flex-wrap gap-2 justify-center lg:justify-start mb-5">
             <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-violet-500/25 bg-violet-500/8 text-violet-400 text-xs font-mono">
               <span class="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse"></span>
-              THE 58MB APP MANAGER
+              RUNNING ON 512MB
             </span>
             <span class="inline-flex items-center px-3 py-1 rounded-full border border-emerald-500/25 bg-emerald-500/8 text-emerald-400 text-xs font-mono">#selfHosted</span>
             <span class="inline-flex items-center px-3 py-1 rounded-full border border-cyan-500/25 bg-cyan-500/8 text-cyan-400 text-xs font-mono">Open Source</span>
           </div>
           <h1 id="glitch-title" data-variants="LITEBIN|L8BIN|L8B.IN|L8=50+8|L8BIN"
             class="text-6xl lg:text-8xl font-black text-white tracking-tighter leading-none mb-5"></h1>
-          <p class="text-lg text-zinc-400 leading-relaxed mb-8">
-            Your server, your rules — <span class="text-white font-semibold">no per-app fees</span>, no deleting projects to save RAM.<br/>
-            Deploy as many apps as your disk holds. They sleep to zero when idle, wake on the first request. <span class="text-white font-semibold">Perfect for demos, previews, and side projects.</span><br/>
-            <span class="text-violet-400 font-semibold">LiteBin overhead: under 58MB.</span>
+          <p class="text-lg text-zinc-400 leading-relaxed mb-4">
+            Every time I wanted to show someone a demo, it was already gone — killed to free up RAM for the next one. One cheap VPS meant one app. Cloud free tiers work until you hit their framework limits or your app gets purged for inactivity. Existing self-hosted platforms are built for always-on production workloads. Nothing fit what I needed.
           </p>
-          <div class="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-            <a href="#start" class="px-7 py-3.5 bg-white text-night-950 font-bold rounded-xl hover:bg-violet-200 transition text-sm text-center">Get Started Free</a>
+          <p class="text-lg text-zinc-400 leading-relaxed mb-8">
+            <span class="text-white font-semibold">So I built LiteBin</span> — entire stack under 58MB. Push from your laptop, no building on the VPS. Apps sleep to zero when idle, wake on the first request. Deploy as many as your disk holds.
+          </p>
+          <div class="flex flex-col sm:flex-row gap-3 justify-center">
+            <a href="#start" class="px-7 py-3.5 bg-white text-night-950 font-bold rounded-xl hover:bg-violet-200 transition text-sm text-center">Install on your VPS</a>
             <a href="https://react-demo.l8b.in" target="_blank" class="px-7 py-3.5 glass rounded-xl text-sm font-semibold hover:bg-white/5 transition flex items-center justify-center gap-2">
               <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>See Live Demo
-            </a>
-          </div>
-          <div class="mt-4 flex justify-center lg:justify-start">
-            <a href="/live/" class="text-xs font-mono text-zinc-500 hover:text-violet-400 transition flex items-center gap-2">
-              <span class="w-1.5 h-1.5 rounded-full bg-violet-500/50"></span>
-              Watch LiteBin manage this tiny 512MB VPS in real-time →
             </a>
           </div>
         </div>
@@ -100,25 +95,31 @@
               <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-cyan-500 rounded-full bar-fill" style="width:0%" data-w="16%" data-count-id="mv-0" data-count-val="9.4"></div></div>
             </div>
             <div>
-              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Dashboard (React)</span><span class="font-bold text-white"><span id="mv-1">13.2</span> MB</span></div>
-              <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-fuchsia-500 rounded-full bar-fill" style="width:0%" data-w="23%" data-count-id="mv-1" data-count-val="13.2"></div></div>
+              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Dashboard (React)</span><span class="font-bold text-white"><span id="mv-1">1.5</span> MB</span></div>
+              <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-fuchsia-500 rounded-full bar-fill" style="width:0%" data-w="3%" data-count-id="mv-1" data-count-val="1.5"></div></div>
             </div>
             <div>
-              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Caddy Proxy</span><span class="font-bold text-white"><span id="mv-2">20.8</span> MB</span></div>
-              <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-amber-500 rounded-full bar-fill" style="width:0%" data-w="36%" data-count-id="mv-2" data-count-val="20.8"></div></div>
+              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Caddy Proxy</span><span class="font-bold text-white"><span id="mv-2">32.8</span> MB</span></div>
+              <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-amber-500 rounded-full bar-fill" style="width:0%" data-w="57%" data-count-id="mv-2" data-count-val="32.8"></div></div>
             </div>
             <div class="pt-4 border-t border-white/10 flex justify-between items-center">
               <span id="stack-total-label" class="text-sm font-mono text-zinc-400">Total Resting Stack</span>
-              <span class="text-2xl font-black text-violet-400"><span id="mv-total">43.4</span> <span id="mv-comparison" class="text-base text-zinc-500 font-normal"> &lt; 58 MB</span></span>
+              <span class="text-2xl font-black text-violet-400"><span id="mv-total">43.7</span> <span id="mv-comparison" class="text-base text-zinc-500 font-normal"> &lt; 58 MB</span></span>
             </div>
           </div>
           <p id="under-load-note" class="text-[10px] text-zinc-500 uppercase font-mono mb-1" style="display: none;">litebin under load</p>
           <p id="sleep-state-note" class="text-xs text-zinc-600 mt-3 italic">* Sleep-state RAM only.</p>
+          <div class="mt-4 pt-3 border-t border-white/5">
+            <a href="/live/" class="text-xs font-mono text-zinc-500 hover:text-violet-400 transition flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-violet-500/50"></span>
+              See full live stats of this VPS →
+            </a>
+          </div>
         </div>
       </div>
       <div class="mt-16 text-center">
         <span class="inline-block py-4 px-8 rounded-xl bg-violet-500/10 border border-violet-500/20">
-          <span class="text-lg text-zinc-300">You don't have to worry about your apps — just leave them running. <span class="text-violet-400 font-semibold">Litebin handles the rest.</span></span>
+          <span class="text-lg text-zinc-300">All your demos. One VPS. <span class="text-violet-400 font-semibold">Set it up once, forget about it.</span></span>
         </span>
       </div>
     </div>
@@ -569,8 +570,8 @@
   <!-- CTA -->
   <section id="start" class="py-24 border-t border-white/5">
     <div class="max-w-2xl mx-auto px-6 text-center fade-in">
-      <h2 class="text-4xl font-black text-white tracking-tighter mb-3 uppercase italic">Ship <span class="text-violet-500">Everything.</span></h2>
-      <p class="text-zinc-500 mb-10">Stop deleting your work to save $5. Just bin it.</p>
+      <h2 class="text-4xl font-black text-white tracking-tighter mb-3">Deploy your <span class="text-violet-500">first app.</span></h2>
+      <p class="text-zinc-500 mb-10">All your demos, one VPS, sleep to zero. No per-app cost.</p>
       <div class="inline-block p-px bg-gradient-to-r from-violet-500 to-fuchsia-600 rounded-xl mb-4">
         <div class="bg-night-900 px-6 py-4 rounded-[11px] flex items-center gap-4">
           <code class="text-white font-mono text-sm">curl -fsSL l8b.in | bash</code>

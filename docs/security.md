@@ -31,15 +31,14 @@ The deploy endpoint supports two-tier auth: session cookie checked first, then `
 
 ## Network Isolation
 
-All app containers join a dedicated Docker bridge network (`litebin-apps`), separate from the management network.
+All app containers join `litebin-network` for single-service, or per-project `litebin-{project_id}` networks for multi-service.
 
 ```
 Host
-├── litebin-network (management)
+├── litebin-network (management + tenant workloads; per-project litebin-{project_id} for multi-service)
 │   ├── orchestrator (5080)
 │   ├── dashboard (internal only)
-│   └── caddy (80/443)
-├── litebin-apps (tenant workloads)
+│   ├── caddy (80/443)
 │   ├── app-1 (port 50001)
 │   └── app-2 (port 50002)
 └── agent (5083 → 8443 internal)
@@ -54,10 +53,10 @@ Mutual TLS using `rustls` + `WebPkiClientVerifier`. No HTTP fallback — mTLS is
 - Master holds a server cert signed by the Root CA
 - Each agent holds a client cert signed by the same Root CA
 - Both sides verify the other's certificate chain
-- Certs are 4096-bit RSA, valid for 10 years
+- Certs are ECDSA P-256 (production installer), valid for 10 years
 
 ```
-Root CA (self-signed, 4096-bit RSA)
+Root CA (self-signed, ECDSA P-256)
 ├── Master server cert (SAN: hostname + IP)
 └── Node client cert (CN: <node-name>, one per agent)
 ```
@@ -75,7 +74,7 @@ Root CA (self-signed, 4096-bit RSA)
 | `log_config` | max-size 10m, max-file 3 |
 | `memory` | 256 MiB default, per-project override |
 | `nano_cpus` | 0.5 cores default, per-project override |
-| `network_mode` | `litebin-apps` (isolated bridge) |
+| `network_mode` | `litebin-network` (or per-project `litebin-{project_id}` for multi-service) |
 | `restart_policy` | `no` (orchestrator manages lifecycle) |
 
 ### Capability strategy

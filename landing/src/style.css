@@ -138,6 +138,18 @@ html {
   border-color: rgba(255, 255, 255, 0.09) !important;
 }
 
+.ws-row.active .text-zinc-500 {
+  color: #d4d4d8 !important;
+}
+
+.ws-row:not(.active) .text-zinc-300 {
+  color: #71717a !important;
+}
+
+.ws-row.active .text-zinc-600 {
+  color: #71717a !important;
+}
+
 @keyframes wake-fill {
   0% { width: 5%; }
   80% { width: 88%; }

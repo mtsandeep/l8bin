@@ -47,7 +47,7 @@ LiteBin manages containers directly via the Docker API using the `bollard` crate
 - **Right-sized complexity** — LiteBin manages 1-50 apps on 1-5 servers. Kubernetes is designed for 1000+ containers across dozens of nodes with rolling deployments, autoscaling, and service mesh. That's 100x more complexity than needed.
 - **Docker is universal** — Every developer knows Docker. Every CI/CD pipeline can build a Docker image. Every registry (Docker Hub, GHCR, ECR) serves Docker images. No vendor lock-in.
 - **No agent daemon** — Docker is already running on the server. No additional system services, no kubelet, no containerd shim.
-- **Simple networking** — One bridge network, DNS-based service discovery. No CNI plugins, no overlay networks, no network policies.
+- **Simple networking** — One bridge network (plus per-project networks for multi-service), DNS-based service discovery. No CNI plugins, no overlay networks, no network policies.
 - **Container lifecycle is simple** — `docker run`, `docker stop`, `docker rm`. The orchestrator handles scheduling. No pods, no ReplicaSets, no StatefulSets.
 
 Kubernetes would add: etcd, kube-apiserver, kube-scheduler, kube-controller-manager, kubelet, containerd, CNI — six additional system services, each consuming memory and requiring maintenance. For LiteBin's use case, this is pure overhead.

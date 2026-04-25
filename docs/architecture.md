@@ -112,7 +112,7 @@ All waker responses use consistent HTML templates (same in both modes):
 
 | Page | Status | Shown when |
 |---|---|---|
-| Loading | 200 | Container is being started |
+| Loading | 200 (HTML) / 503 (JSON) | Container is being started |
 | Error | 503 | Container failed to start (30s auto-retry) |
 | Offline | 503 | `auto_start_enabled` is disabled |
 | Not Found | 404 | Project doesn't exist or was removed |
@@ -162,16 +162,19 @@ The orchestrator pushes `auto_start_enabled` flags to agents via `POST /internal
 
 ```
 Host
-+-- litebin-network (shared)
++-- litebin-network (shared management + single-service apps)
 |   +-- orchestrator (5080, internal only)
 |   +-- dashboard (internal only)
 |   +-- caddy (80/443)
 |   +-- app-1 (internal only)
 |   +-- app-2 (internal only)
 |   +-- agent (5083)
++-- litebin-{project_id} (per-project, multi-service)
+    +-- service-a (internal only)
+    +-- service-b (internal only)
 ```
 
-All services and app containers share a single Docker bridge network. Caddy routes traffic internally — no ports are exposed on the host except 80/443.
+All management services share a single Docker bridge network (`litebin-network`). Single-service app containers also join this network. Multi-service projects get their own per-project bridge network (`litebin-{project_id}`).
 
 ## mTLS (Master <-> Agent)
 
@@ -181,7 +184,7 @@ All services and app containers share a single Docker bridge network. Caddy rout
 - No HTTP fallback — mTLS is mandatory
 
 ```
-Root CA (self-signed, 4096-bit RSA)
+Root CA (self-signed, ECDSA P-256)
 +-- Master server cert
 +-- Node client cert (one per agent)
 ```
@@ -208,11 +211,18 @@ Root CA (self-signed, 4096-bit RSA)
 | id | TEXT PK | e.g. `local`, `node-eu-1` |
 | name | TEXT | Human-friendly label |
 | host | TEXT | IP or hostname |
+| public_ip | TEXT | Public IP address |
 | agent_port | INTEGER | Default 8443 |
+| agent_secret | TEXT | Agent authentication secret |
 | region | TEXT | Optional metadata |
 | status | TEXT | `online`, `offline`, `draining`, `pending_setup` |
 | total_memory | INTEGER | Bytes, reported by agent |
 | total_cpu | REAL | Cores, reported by agent |
+| memory_used | INTEGER | Bytes currently used |
+| memory_total | INTEGER | Bytes total |
+| cpu_percent | REAL | CPU usage percentage |
+| container_count | INTEGER | Number of containers running |
+| disk_total | INTEGER | Disk space in bytes |
 | last_seen_at | INTEGER | Unix timestamp of last heartbeat |
 | fail_count | INTEGER | Consecutive missed heartbeats (>= 3 -> offline) |
 | created_at | INTEGER | |
@@ -224,12 +234,17 @@ Root CA (self-signed, 4096-bit RSA)
 |---|---|---|
 | id | TEXT PK | Project ID, used as subdomain |
 | user_id | TEXT FK | Owner |
-| image | TEXT | Container image reference |
-| internal_port | INTEGER | App's listening port |
+| name | TEXT | Human-readable project name |
+| description | TEXT | Project description |
+| image | TEXT | Container image reference (nullable) |
+| internal_port | INTEGER | App's listening port (nullable) |
 | mapped_port | INTEGER | Host-mapped port (assigned at runtime) |
 | container_id | TEXT | Docker container ID |
 | node_id | TEXT FK | Which node this runs on |
-| status | TEXT | `running`, `stopped`, `deploying`, `migrating` |
+| status | TEXT | `running`, `stopped`, `deploying`, `migrating`, `degraded` |
+| volumes | TEXT | Volume configuration |
+| service_count | INTEGER DEFAULT 1 | Number of services (multi-service) |
+| service_summary | TEXT | Summary of services |
 | last_active_at | INTEGER | Unix timestamp of last request |
 | auto_stop_enabled | INTEGER | Janitor may stop when idle |
 | auto_stop_timeout_mins | INTEGER | Idle threshold (default: 15) |
@@ -241,7 +256,7 @@ Root CA (self-signed, 4096-bit RSA)
 | created_at | INTEGER | |
 | updated_at | INTEGER | |
 
-Additional tables: `users`, `deploy_tokens`, `settings`.
+Additional tables: `users`, `deploy_tokens`, `settings`, `project_services`, `project_volumes`, `project_routes`.
 
 See [security.md](security.md) for the full security architecture and threat model.
 

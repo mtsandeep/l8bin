@@ -100,7 +100,7 @@ SQLite WAL mode is resilient to crashes — uncommitted transactions are rolled 
 ```
 Background wake fails (Docker error, timeout, image gone)
   │
-  ├─ Lock stays in wake_locks (NOT removed)
+  ├─ Lock stays in project_locks (NOT removed)
   ├─ Auto-cleanup spawned: remove after 60s
   │
   Next browser refresh → completed=true, success=false
@@ -148,11 +148,11 @@ When Docker restarts, ephemeral port bindings (`host_port=0`) may change. This i
 
 ### Concurrent Requests During Wake
 
-Single-flight dedup via `wake_locks` (Rust `DashMap`). All concurrent visitors get the instant loading page. Only one background wake task runs per project.
+Single-flight dedup via `project_locks` (Rust `DashMap`). All concurrent visitors get the instant loading page. Only one background wake task runs per project.
 
 ### Concurrent Deploys to Same Project
 
-Per-project mutex (`deploy_locks`). Second deploy waits for the first to complete. No race conditions on container creation or route updates.
+Per-project mutex (`project_locks`). Second deploy waits for the first to complete. No race conditions on container creation or route updates.
 
 ### Janitor vs Wake Race
 

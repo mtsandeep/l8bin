@@ -11,6 +11,7 @@
 
 ```
 litebin/
+├── compose-bollard/      # Docker Compose YAML parser, validator, variable interpolation
 ├── litebin-common/       # Shared library (Docker, types, DB models, routing)
 ├── orchestrator/         # Master server binary (axum, SQLite, Caddy management)
 ├── agent/                # Worker node binary (axum, Docker, mTLS)
@@ -261,7 +262,8 @@ See [Configuration](configuration.md) for the full reference.
 
 | Crate | Binary | Description |
 |---|---|---|
-| `litebin-common` | — | Shared types, Docker client, routing, heartbeat |
+| `compose-bollard` | — | Docker Compose YAML parser, validator, and variable interpolation |
+| `litebin-common` | — | Shared types, Docker client, routing, compose run planning |
 | `orchestrator` | `litebin-orchestrator` | Master server: API, Caddy, DB, auth, deploy |
 | `agent` | `litebin-agent` | Worker node: container lifecycle, local Caddy, mTLS |
 | `cli` | `l8b` | CLI: build, ship, deploy, login, project management |

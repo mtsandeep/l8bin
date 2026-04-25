@@ -69,12 +69,12 @@ wake() receives request with Host: myapp.l8b.in
   │
   ├─ auto_start_enabled? NO → return 503
   │
-  └─ Single-flight dedup (wake_locks)
+  └─ Single-flight dedup (project_locks)
       ├─ Vacant (first request) → spawn background wake, return loading page immediately
       └─ Occupied (concurrent request) → completed+failed? return error page : return loading page
 ```
 
-The first request returns the loading page **instantly**. The Docker wake happens in a background task. The loading page has `<meta http-equiv="refresh" content="1">` so the browser re-requests every second.
+The first request returns the loading page **instantly** (503 with `Retry-After` header for API clients; HTML loading page for browsers). The Docker wake happens in a background task. The loading page has `<meta http-equiv="refresh" content="1">` so the browser re-requests every second.
 
 ### Background Wake — Local Project
 
@@ -179,7 +179,7 @@ wake() receives request with Host: myapp.l8b.in
   ├─ Container is running?
   │   └─ YES → rebuild local Caddy, return loading page
   │
-  └─ Single-flight dedup (wake_locks)
+  └─ Single-flight dedup (project_locks)
       ├─ Vacant (first request) → spawn background wake, return loading page
       └─ Occupied → completed+failed? error page : loading page
 ```
@@ -345,7 +345,7 @@ The switch from sleeping → running route happens automatically when `sync_rout
 Background wake fails (Docker error, timeout, image gone)
   │
   ├─ guard.completed = true, guard.success = false
-  ├─ Lock stays in wake_locks (NOT removed)
+  ├─ Lock stays in project_locks (NOT removed)
   ├─ Auto-cleanup spawned: remove after 60s
   │
   Next browser refresh → Occupied entry
