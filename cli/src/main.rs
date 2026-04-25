@@ -198,7 +198,7 @@ async fn main() -> Result<()> {
 
                 let url = ship::deploy_compose_noninteractive(
                     &client, &server, &project, &path, compose_name, true,
-                    ship::ComposeDeployOpts { target_services },
+                    ship::ComposeDeployOpts { target_services, node_id: node.clone() },
                 ).await?;
 
                 println!("Deployed! {}", url);

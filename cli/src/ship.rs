@@ -126,7 +126,7 @@ async fn new_project_flow(
     };
 
     // Build & deploy
-    let url = build_and_deploy(client, server, &name, project_dir, port, secret_override, true).await?;
+    let url = build_and_deploy(client, server, &name, project_dir, port, secret_override, true, None).await?;
 
     // Success
     println!("  {} Live at: {}", "🌐".dimmed(), url.green().bold());
@@ -211,11 +211,11 @@ async fn existing_project_flow(
 
             let url = if compose_file.is_some() {
                 // Multi-service: compose handles ports
-                build_and_deploy(client, server, project_id, project_dir, 0, secret_override, false).await?
+                build_and_deploy(client, server, project_id, project_dir, 0, secret_override, false, None).await?
             } else if detect_port_80(project_dir) {
                 // Single-service with EXPOSE 80 in Dockerfile
                 println!("  {} Detected exposed port 80", "::".dimmed());
-                build_and_deploy(client, server, project_id, project_dir, 80, secret_override, false).await?
+                build_and_deploy(client, server, project_id, project_dir, 80, secret_override, false, None).await?
             } else {
                 // Single-service: ask for port
                 let port: u16 = if let Some(p) = port_override {
@@ -229,7 +229,7 @@ async fn existing_project_flow(
                         .parse::<u16>()
                         .context("Port must be a number (1-65535)")?
                 };
-                build_and_deploy(client, server, project_id, project_dir, port, secret_override, false).await?
+                build_and_deploy(client, server, project_id, project_dir, port, secret_override, false, None).await?
             };
             println!();
             println!();
@@ -359,7 +359,36 @@ async fn build_and_deploy(
     port: u16,
     mut secret: Vec<std::path::PathBuf>,
     is_new_project: bool,
+    node_id: Option<&str>,
 ) -> Result<String> {
+    // Resolve target node: auto-pick single node, prompt for multiple
+    let selected_node = if node_id.is_some() {
+        node_id.map(|s| s.to_string())
+    } else {
+        let nodes = auth::fetch_online_nodes(client, server).await;
+        match nodes.len() {
+            0 => None,
+            1 => Some(nodes[0].id.clone()),
+            _ => {
+                let mut items: Vec<String> = nodes
+                    .iter()
+                    .map(|n| format!("  {} ({})", n.name, n.id))
+                    .collect();
+                items.insert(0, "  Auto (least loaded)".to_string());
+                let idx = Select::new()
+                    .with_prompt("Select target node")
+                    .items(&items)
+                    .default(0)
+                    .interact()?;
+                if idx == 0 {
+                    None // Auto — let server decide
+                } else {
+                    Some(nodes[idx - 1].id.clone())
+                }
+            }
+        }
+    };
+
     // Check for docker-compose.yaml → use compose deploy endpoint
     let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
     let compose_file = compose_paths
@@ -367,7 +396,7 @@ async fn build_and_deploy(
         .find(|p| project_dir.join(p).exists());
 
     if let Some(compose_name) = compose_file {
-        return deploy_compose(client, server, project_id, project_dir, compose_name, is_new_project).await;
+        return deploy_compose(client, server, project_id, project_dir, compose_name, is_new_project, selected_node.as_deref()).await;
     }
 
     // Detect project type
@@ -522,7 +551,7 @@ async fn build_and_deploy(
         project_id,
         Path::new(&image.path),
         &image.image_id,
-        None,
+        selected_node.as_deref(),
         false,
     )
     .await?;
@@ -537,7 +566,7 @@ async fn build_and_deploy(
     deploy_spinner.enable_steady_tick(std::time::Duration::from_millis(100));
     deploy_spinner.set_message("Deploying...");
     let deploy_resp = crate::deploy::redeploy(
-        client, server, project_id, &image_id, port, None, None, None, None, true,
+        client, server, project_id, &image_id, port, selected_node.as_deref(), None, None, None, true,
     )
     .await?;
     deploy_spinner.finish_and_clear();
@@ -579,6 +608,7 @@ async fn deploy_compose(
     project_dir: &Path,
     compose_name: &str,
     is_new_project: bool,
+    node_id: Option<&str>,
 ) -> Result<String> {
     let compose_path = project_dir.join(compose_name);
     println!("  {} Found {} — deploying as multi-service", "🐳".dimmed(), compose_name.cyan());
@@ -784,7 +814,7 @@ async fn deploy_compose(
         let image_id = crate::upload::upload_tar(
             client, server, project_id,
             Path::new(&saved_image.path), &saved_image.image_id,
-            None, false,
+            node_id, false,
         ).await?;
 
         resolved_images.insert(info.svc_name.clone(), image_id);
@@ -832,6 +862,9 @@ async fn deploy_compose(
         let target_list: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
         form = form.text("target_services", target_list.join(","));
     }
+    if let Some(nid) = node_id {
+        form = form.text("node_id", nid.to_string());
+    }
 
     let resp = auth::session_post_multipart(client, server, "/deploy/compose", form).await?;
     deploy_spinner.finish_and_clear();
@@ -857,6 +890,8 @@ async fn deploy_compose(
 pub struct ComposeDeployOpts {
     /// If Some, only build these services (no interactive prompt).
     pub target_services: Option<Vec<String>>,
+    /// Target node ID (optional).
+    pub node_id: Option<String>,
 }
 
 /// Non-interactive compose deploy for CI/`deploy` command usage.
@@ -978,7 +1013,7 @@ pub async fn deploy_compose_noninteractive(
         let image_id = crate::upload::upload_tar(
             client, server, project_id,
             Path::new(&saved_image.path), &saved_image.image_id,
-            None, true,
+            opts.node_id.as_deref(), true,
         ).await?;
 
         resolved_images.insert(info.svc_name.clone(), image_id);
@@ -1014,6 +1049,9 @@ pub async fn deploy_compose_noninteractive(
     if is_partial_build {
         let target_list: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
         form = form.text("target_services", target_list.join(","));
+    }
+    if let Some(ref nid) = opts.node_id {
+        form = form.text("node_id", nid.clone());
     }
 
     let resp = auth::session_post_multipart(client, server, "/deploy/compose", form).await?;

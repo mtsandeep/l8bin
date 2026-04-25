@@ -501,10 +501,11 @@ pub async fn deploy_compose(
                 let cid = pub_svc["container_id"].as_str().unwrap_or("").to_string();
                 let port = pub_svc["mapped_port"].as_u64().map(|p| p as i64);
                 let _ = sqlx::query(
-                    "UPDATE projects SET container_id = ?, mapped_port = ?, status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?"
+                    "UPDATE projects SET container_id = ?, mapped_port = ?, node_id = ?, status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?"
                 )
                 .bind(&cid)
                 .bind(port)
+                .bind(&target_node_id)
                 .bind(now)
                 .bind(now)
                 .bind(&project_id)
@@ -619,6 +620,16 @@ pub async fn deploy_compose(
             return (status, Json(json!({"error": msg}))).into_response();
         }
     }
+
+    // Persist node_id for sticky scheduling on redeploys
+    let _ = sqlx::query(
+        "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
+    )
+    .bind(&target_node_id)
+    .bind(now)
+    .bind(&project_id)
+    .execute(&state.db)
+    .await;
 
     // Full route sync after deploy
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Node selection for compose deploys** — `l8b ship` now shows an interactive node picker when multiple nodes are online (default: "Auto" lets the server pick least-loaded). `l8b deploy --compose --node <id>` for non-interactive CI usage. Images and deploy requests now always go to the same node, fixing a mismatch that caused "project not found" errors on remote agents.
+
+### Fixed
+- Compose deploy now persists `node_id` to the projects table, making redeploys sticky to the original node (matching single-service deploy behavior)
+
 ## [0.2.2] - 2026-04-25
 
 ### Changed

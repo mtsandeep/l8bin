@@ -259,3 +259,24 @@ pub async fn session_delete(
 
     Ok(json)
 }
+
+#[derive(Debug, Deserialize)]
+pub struct NodeInfo {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+}
+
+/// Fetch online nodes from the server. Returns empty vec on failure.
+pub async fn fetch_online_nodes(
+    client: &reqwest::Client,
+    server: &str,
+) -> Vec<NodeInfo> {
+    match session_get(client, server, "/nodes").await {
+        Ok(resp) => {
+            let nodes: Vec<NodeInfo> = serde_json::from_value(resp).unwrap_or_default();
+            nodes.into_iter().filter(|n| n.status == "online").collect()
+        }
+        Err(_) => Vec::new(),
+    }
+}
