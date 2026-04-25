@@ -6,13 +6,13 @@ use crate::nodes;
 use crate::AppState;
 use super::manage::{agent_base_url, get_node_from_db, sync_caddy};
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ServiceVolumeInfo {
     pub volume_name: Option<String>,
     pub container_path: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ServiceInfo {
     pub service_name: String,
     pub image: String,
@@ -21,11 +21,15 @@ pub struct ServiceInfo {
     pub is_public: bool,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cmd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_usage: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub memory_limit: Option<u64>,
+    pub memory_limit_mb: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_limit: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,6 +42,8 @@ pub struct ServiceInfo {
 pub struct StatsResponse {
     pub project_id: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_active_at: Option<i64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub services: Vec<ServiceInfo>,
 }
@@ -67,7 +73,7 @@ pub struct LogsResponse {
 }
 
 /// Per-container live stats collected from Docker.
-/// (cpu_percent, memory_usage, memory_limit, disk_gb, cpu_limit)
+/// (cpu_percent, memory_usage_bytes, memory_limit_bytes, disk_gb, cpu_limit)
 type LiveStats = (f64, u64, u64, f64, Option<f64>);
 
 /// Given a map of container_id -> live stats,
@@ -96,7 +102,7 @@ fn enrich_services(
             if let Some(&(cpu, mem_usage, mem_limit, disk, cpu_limit)) = stats_map.get(container_id) {
                 enriched.cpu_percent = Some(cpu);
                 enriched.memory_usage = Some(mem_usage);
-                enriched.memory_limit = Some(mem_limit);
+                enriched.memory_limit_mb = Some((mem_limit / (1024 * 1024)) as i64);
                 enriched.disk_gb = Some(disk);
                 if enriched.cpu_limit.is_none() {
                     enriched.cpu_limit = cpu_limit;
@@ -147,11 +153,11 @@ async fn batch_load_services(
     // Load from project_services table
     let placeholders = project_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let query = format!(
-        "SELECT project_id, service_name, image, port, mapped_port, is_public, status, container_id, memory_limit_mb, cpu_limit FROM project_services WHERE project_id IN ({}) ORDER BY service_name",
+        "SELECT project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit FROM project_services WHERE project_id IN ({}) ORDER BY service_name",
         placeholders
     );
 
-    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, Option<i64>, bool, String, Option<String>, Option<i64>, Option<f64>)>(&query);
+    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, Option<i64>, bool, String, Option<String>, Option<String>, Option<i64>, Option<f64>)>(&query);
     for pid in project_ids {
         builder = builder.bind(pid);
     }
@@ -160,8 +166,7 @@ async fn batch_load_services(
 
     // Group by project_id
     let mut map: std::collections::HashMap<String, Vec<(ServiceInfo, Option<String>)>> = std::collections::HashMap::new();
-    for (project_id, service_name, image, port, mapped_port, is_public, status, container_id, memory_limit_mb, cpu_limit) in rows {
-        let memory_limit = memory_limit_mb.map(|mb| (mb as u64) * 1024 * 1024);
+    for (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit) in rows {
         map.entry(project_id).or_default().push((
             ServiceInfo {
                 service_name,
@@ -170,9 +175,11 @@ async fn batch_load_services(
                 mapped_port,
                 is_public,
                 status,
+                container_id: container_id.clone(),
+                cmd,
                 cpu_percent: None,
                 memory_usage: None,
-                memory_limit,
+                memory_limit_mb,
                 cpu_limit,
                 disk_gb: None,
                 volumes: vec![],
@@ -226,18 +233,18 @@ async fn batch_load_services(
         if let Some((image, port, mapped_port, status, container_id)) = row {
             if !image.is_empty() {
                 // Fetch limits from projects table for single-service fallback
-                let limits: Option<(Option<i64>, Option<f64>)> = sqlx::query_as(
-                    "SELECT memory_limit_mb, cpu_limit FROM projects WHERE id = ?"
+                let limits: Option<(Option<String>, Option<i64>, Option<f64>)> = sqlx::query_as(
+                    "SELECT cmd, memory_limit_mb, cpu_limit FROM projects WHERE id = ?"
                 )
                 .bind(pid)
                 .fetch_optional(db)
                 .await
                 .unwrap_or(None)
-                .and_then(|r: (Option<i64>, Option<f64>)| Some(r));
+                .and_then(|r: (Option<String>, Option<i64>, Option<f64>)| Some(r));
 
-                let (memory_limit, cpu_limit) = limits
-                    .map(|(mb, cpu)| (mb.map(|m| (m as u64) * 1024 * 1024), cpu))
-                    .unwrap_or((None, None));
+                let (cmd, cpu_limit, memory_limit_mb) = limits
+                    .map(|(c, _mb, cpu)| (c, cpu, _mb))
+                    .unwrap_or((None, None, None));
 
                 map.entry(pid.clone()).or_default().push((
                     ServiceInfo {
@@ -247,9 +254,11 @@ async fn batch_load_services(
                         mapped_port,
                         is_public: true,
                         status,
+                        container_id: container_id.clone(),
+                        cmd,
                         cpu_percent: None,
                         memory_usage: None,
-                        memory_limit,
+                        memory_limit_mb,
                         cpu_limit,
                         disk_gb: None,
                         volumes: vec![],
@@ -263,7 +272,7 @@ async fn batch_load_services(
     map
 }
 
-fn make_stats_response(project_id: String, status: String, services: Vec<ServiceInfo>) -> StatsResponse {
+fn make_stats_response(project_id: String, status: String, last_active_at: Option<i64>, services: Vec<ServiceInfo>) -> StatsResponse {
     // Compute effective status: if DB says "running" but not all services are up, mark as "degraded"
     let effective_status = if status == "running"
         && !services.is_empty()
@@ -273,7 +282,7 @@ fn make_stats_response(project_id: String, status: String, services: Vec<Service
     } else {
         status
     };
-    StatsResponse { project_id, status: effective_status, services }
+    StatsResponse { project_id, status: effective_status, last_active_at, services }
 }
 
 /// GET /projects/stats — returns stats + disk + services for all projects in one call
@@ -290,6 +299,10 @@ pub async fn all_project_stats(
     // Batch-load services for ALL projects upfront
     let all_ids: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
     let services_map = batch_load_services(&state.db, &all_ids).await;
+
+    // Map project_id -> last_active_at for stats response
+    let last_active_map: std::collections::HashMap<String, Option<i64>> =
+        projects.iter().map(|p| (p.id.clone(), p.last_active_at)).collect();
 
     let mut results: Vec<StatsResponse> = Vec::with_capacity(projects.len());
     let mut caddy_dirty = false;
@@ -311,6 +324,7 @@ pub async fn all_project_stats(
                 results.push(make_stats_response(
                     project.id.clone(),
                     project.status.clone(),
+                    project.last_active_at,
                     services_raw.into_iter().map(|(s, _)| s).collect(),
                 ));
                 continue;
@@ -323,6 +337,7 @@ pub async fn all_project_stats(
                 results.push(make_stats_response(
                     project.id.clone(),
                     project.status.clone(),
+                    project.last_active_at,
                     services_raw.into_iter().map(|(s, _)| s).collect(),
                 ));
             }
@@ -337,6 +352,7 @@ pub async fn all_project_stats(
             results.push(make_stats_response(
                 project.id.clone(),
                 project.status.clone(),
+                project.last_active_at,
                 services_raw.into_iter().map(|(s, _)| s).collect(),
             ));
             continue;
@@ -378,8 +394,9 @@ pub async fn all_project_stats(
         let any_running = services.iter().any(|s| s.status == "running");
         let status = if any_running { "degraded".to_string() } else { "stopped".to_string() };
         results.push(make_stats_response(
-            project_id,
+            project_id.clone(),
             status,
+            last_active_map.get(&project_id).copied().flatten(),
             services,
         ));
     }
@@ -454,6 +471,7 @@ pub async fn all_project_stats(
             results.push(make_stats_response(
                 project_id.clone(),
                 "stopped".to_string(),
+                last_active_map.get(project_id).copied().flatten(),
                 services,
             ));
             continue;
@@ -463,6 +481,7 @@ pub async fn all_project_stats(
         results.push(make_stats_response(
             project_id.clone(),
             "running".to_string(),
+            last_active_map.get(project_id).copied().flatten(),
             services,
         ));
 
@@ -502,6 +521,7 @@ pub async fn all_project_stats(
                     results.push(make_stats_response(
                         project_id.clone(),
                         "running".to_string(),
+                        last_active_map.get(project_id).copied().flatten(),
                         services_raw.into_iter().map(|(s, _)| s).collect(),
                     ));
                 }
@@ -518,6 +538,7 @@ pub async fn all_project_stats(
                     results.push(make_stats_response(
                         project_id.clone(),
                         "running".to_string(),
+                        last_active_map.get(project_id).copied().flatten(),
                         services_raw.into_iter().map(|(s, _)| s).collect(),
                     ));
                 }
@@ -541,6 +562,7 @@ pub async fn all_project_stats(
                     results.push(make_stats_response(
                         project_id.clone(),
                         "running".to_string(),
+                        last_active_map.get(project_id).copied().flatten(),
                         services_raw.into_iter().map(|(s, _)| s).collect(),
                     ));
                 }
@@ -556,6 +578,7 @@ pub async fn all_project_stats(
                 results.push(make_stats_response(
                     project_id.clone(),
                     "running".to_string(),
+                    last_active_map.get(project_id).copied().flatten(),
                     services_raw.into_iter().map(|(s, _)| s).collect(),
                 ));
             }
@@ -618,6 +641,7 @@ pub async fn all_project_stats(
                 results.push(make_stats_response(
                     project_id.clone(),
                     "running".to_string(),
+                    last_active_map.get(project_id).copied().flatten(),
                     services,
                 ));
                 // Mark degraded if some services stopped
@@ -649,6 +673,7 @@ pub async fn all_project_stats(
                 results.push(make_stats_response(
                     project_id.clone(),
                     "stopped".to_string(),
+                    last_active_map.get(project_id).copied().flatten(),
                     services,
                 ));
             }
@@ -686,6 +711,7 @@ pub async fn project_stats(
         return Ok(Json(make_stats_response(
             project_id,
             project.status,
+            project.last_active_at,
             services_raw.into_iter().map(|(s, _)| s).collect(),
         )));
     }
@@ -696,6 +722,7 @@ pub async fn project_stats(
         return Ok(Json(make_stats_response(
             project_id,
             project.status,
+            project.last_active_at,
             services_raw.into_iter().map(|(s, _)| s).collect(),
         )));
     }
@@ -748,6 +775,7 @@ pub async fn project_stats(
         return Ok(Json(make_stats_response(
             project_id,
             "stopped".to_string(),
+            project.last_active_at,
             services_raw.into_iter().map(|(s, _)| s).collect(),
         )));
     }
@@ -756,6 +784,7 @@ pub async fn project_stats(
     Ok(Json(make_stats_response(
         project_id,
         project.status,
+        project.last_active_at,
         services,
     )))
 }

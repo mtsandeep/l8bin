@@ -12,7 +12,7 @@ function aggregateFromServices(services: ServiceInfo[]) {
   const running = services.filter((s) => s.status === "running");
   const totalCpu = running.reduce((sum, s) => sum + (s.cpu_percent ?? 0), 0);
   const totalMem = running.reduce((sum, s) => sum + (s.memory_usage ?? 0), 0);
-  const totalLimit = running.reduce((sum, s) => sum + (s.memory_limit ?? 0), 0);
+  const totalLimit = running.reduce((sum, s) => sum + ((s.memory_limit_mb ?? 0) * 1024 * 1024), 0);
   const totalDisk = services.reduce((sum, s) => sum + (s.disk_gb ?? 0), 0);
   return { totalCpu, totalMem, totalLimit, totalDisk };
 }

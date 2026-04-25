@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Project, VolumeMount } from "../../api";
+import type { Project } from "../../api";
 
 interface RedeployModalProps {
   project: Project;
@@ -25,13 +25,7 @@ export default function RedeployModal({
 }: RedeployModalProps) {
   const [cleanup, setCleanup] = useState(false);
 
-  const parsedVolumes: VolumeMount[] = (() => {
-    try {
-      return project.volumes ? JSON.parse(project.volumes) : [];
-    } catch {
-      return [];
-    }
-  })();
+  const volumes = project.public_stats?.volumes ?? [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -43,7 +37,7 @@ export default function RedeployModal({
           <div className="text-xs text-slate-400">
             Pull latest <span className="text-slate-300 font-mono">{shortImage(appImage)}</span> and restart on port <span className="text-slate-300">{appPort}</span>
           </div>
-          {parsedVolumes.length > 0 && (
+          {volumes.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"

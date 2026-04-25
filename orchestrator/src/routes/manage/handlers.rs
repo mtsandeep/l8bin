@@ -25,18 +25,25 @@ pub async fn stop_project(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    if project.status != "running" {
+    if project.status != "running" && project.status != "degraded" {
         return Err((
             StatusCode::BAD_REQUEST,
             format!("project is not running (status: {})", project.status),
         ));
     }
 
-    let container_id = project
-        .container_id
-        .as_deref()
-        .ok_or((StatusCode::BAD_REQUEST, "no container id".to_string()))?
-        .to_string();
+    let service_count = project.service_count.unwrap_or(1);
+    let container_id = if service_count > 1 {
+        None
+    } else {
+        Some(
+            project
+                .container_id
+                .as_deref()
+                .ok_or((StatusCode::BAD_REQUEST, "no container id".to_string()))?
+                .to_string(),
+        )
+    };
 
     // Branch: remote vs local
     let is_remote = project
@@ -61,13 +68,12 @@ pub async fn stop_project(
 
     // Spawn background task to do the actual Docker stop
     let project_id_bg = project_id.clone();
-    let service_count = project.service_count.unwrap_or(1);
     tokio::spawn(async move {
         let project_id = project_id_bg;
 
         if service_count > 1 {
             super::multi_service::stop_all_services(&state, &project_id).await;
-        } else {
+        } else if let Some(container_id) = container_id {
             // Single-service: stop the one container
             if is_remote {
                 let node_id = project.node_id.as_deref().unwrap().to_string();

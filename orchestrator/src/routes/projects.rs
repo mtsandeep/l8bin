@@ -12,6 +12,9 @@ use crate::auth::backend::PasswordBackend;
 use crate::db::models::Project;
 use crate::AppState;
 
+use super::stats::{ServiceInfo, ServiceVolumeInfo};
+use litebin_common::types::{VolumeMount, scope_volume_source};
+
 #[derive(Deserialize)]
 pub struct CreateProjectRequest {
     pub id: String,
@@ -19,11 +22,151 @@ pub struct CreateProjectRequest {
     pub description: Option<String>,
 }
 
+// ── Public Stats (service-level data for the public service) ──────────────────
+// Reuses ServiceInfo from stats.rs — public_stats is just one service's info.
+
+/// Project response for the API — project metadata + public_stats.
+/// The internal `Project` struct (with all DB columns) is used by backend code;
+/// this struct is the API-facing shape.
+#[derive(Debug, Serialize)]
+pub struct ProjectResponse {
+    pub id: String,
+    pub user_id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub node_id: Option<String>,
+    pub status: String,
+    pub last_active_at: Option<i64>,
+    pub auto_stop_enabled: bool,
+    pub auto_stop_timeout_mins: i64,
+    pub auto_start_enabled: bool,
+    pub custom_domain: Option<String>,
+    pub service_count: Option<i64>,
+    pub service_summary: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub public_stats: Option<ServiceInfo>,
+}
+
+/// Build PublicStats for a single-service project (no project_services row).
+fn public_stats_from_project(project: &Project) -> Option<ServiceInfo> {
+    let image = project.image.as_deref()?.to_string();
+    if image.is_empty() {
+        return None;
+    }
+
+    // Parse volumes JSON and convert to ServiceVolumeInfo
+    let volumes: Vec<ServiceVolumeInfo> = match &project.volumes {
+        Some(json) => serde_json::from_str::<Vec<VolumeMount>>(json)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| ServiceVolumeInfo {
+                volume_name: v.name.map(|name| scope_volume_source(&name, &project.id)),
+                container_path: v.path,
+            })
+            .collect(),
+        None => vec![],
+    };
+
+    Some(ServiceInfo {
+        service_name: "web".to_string(),
+        image,
+        port: project.internal_port,
+        mapped_port: project.mapped_port,
+        is_public: true,
+        status: project.status.clone(),
+        container_id: project.container_id.clone(),
+        cmd: project.cmd.clone(),
+        cpu_percent: None,
+        memory_usage: None,
+        memory_limit_mb: project.memory_limit_mb,
+        cpu_limit: project.cpu_limit,
+        disk_gb: None,
+        volumes,
+    })
+}
+
+/// Build ProjectResponse from a Project row.
+async fn to_project_response(
+    project: &Project,
+    db: &sqlx::SqlitePool,
+) -> ProjectResponse {
+    let public_stats = if project.service_count.unwrap_or(1) > 1 {
+        // Multi-service: look up the public service from project_services
+        let row: Option<(String, String, Option<i64>, Option<i64>, bool, String, Option<String>, Option<String>, Option<i64>, Option<f64>)> = sqlx::query_as(
+            "SELECT service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ? AND is_public = 1 LIMIT 1"
+        )
+        .bind(&project.id)
+        .fetch_optional(db)
+        .await
+        .unwrap_or(None);
+
+        match row {
+            Some((service_name, image, port, mapped_port, is_public, status, container_id, _cmd, memory_limit_mb, cpu_limit)) => {
+                // Load volumes for this service from project_volumes
+                let vol_rows: Vec<(Option<String>, String)> = sqlx::query_as(
+                    "SELECT volume_name, container_path FROM project_volumes WHERE project_id = ? AND service_name = ?"
+                )
+                .bind(&project.id)
+                .bind(&service_name)
+                .fetch_all(db)
+                .await
+                .unwrap_or_default();
+
+                let volumes: Vec<ServiceVolumeInfo> = vol_rows
+                    .into_iter()
+                    .map(|(volume_name, container_path)| ServiceVolumeInfo { volume_name, container_path })
+                    .collect();
+
+                Some(ServiceInfo {
+                    service_name,
+                    image,
+                    port,
+                    mapped_port,
+                    is_public,
+                    status,
+                    container_id,
+                    cmd: None, // multi-service uses compose for commands
+                    cpu_percent: None,
+                    memory_usage: None,
+                    memory_limit_mb,
+                    cpu_limit,
+                    disk_gb: None,
+                    volumes,
+                })
+            }
+            None => None,
+        }
+    } else {
+        // Single-service: build from project row
+        public_stats_from_project(project)
+    };
+
+    ProjectResponse {
+        id: project.id.clone(),
+        user_id: project.user_id.clone(),
+        name: project.name.clone(),
+        description: project.description.clone(),
+        node_id: project.node_id.clone(),
+        status: project.status.clone(),
+        last_active_at: project.last_active_at,
+        auto_stop_enabled: project.auto_stop_enabled,
+        auto_stop_timeout_mins: project.auto_stop_timeout_mins,
+        auto_start_enabled: project.auto_start_enabled,
+        custom_domain: project.custom_domain.clone(),
+        service_count: project.service_count,
+        service_summary: project.service_summary.clone(),
+        created_at: project.created_at,
+        updated_at: project.updated_at,
+        public_stats,
+    }
+}
+
 pub async fn create_project(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
     Json(payload): Json<CreateProjectRequest>,
-) -> Result<(StatusCode, Json<Project>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<ProjectResponse>), (StatusCode, Json<serde_json::Value>)> {
     let user_id = match auth_session.user {
         Some(u) => u.id,
         None => {
@@ -95,7 +238,8 @@ pub async fn create_project(
                 .fetch_one(&state.db)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("{e}")}))))?;
-            Ok((StatusCode::CREATED, Json(project)))
+            let response = to_project_response(&project, &state.db).await;
+            Ok((StatusCode::CREATED, Json(response)))
         }
         Err(e) => {
             let msg = e.to_string();
@@ -111,7 +255,7 @@ pub async fn create_project(
 pub async fn get_project(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Project>, (StatusCode, String)> {
+) -> Result<Json<ProjectResponse>, (StatusCode, String)> {
     let project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
         .bind(&id)
         .fetch_optional(&state.db)
@@ -124,14 +268,17 @@ pub async fn get_project(
         })?;
 
     match project {
-        Some(p) => Ok(Json(p)),
+        Some(p) => {
+            let response = to_project_response(&p, &state.db).await;
+            Ok(Json(response))
+        }
         None => Err((StatusCode::NOT_FOUND, format!("project '{id}' not found"))),
     }
 }
 
 pub async fn list_projects(
     State(state): State<AppState>,
-) -> Result<Json<Vec<Project>>, (StatusCode, String)> {
+) -> Result<Json<Vec<ProjectResponse>>, (StatusCode, String)> {
     let projects = sqlx::query_as::<_, Project>("SELECT * FROM projects ORDER BY updated_at DESC")
         .fetch_all(&state.db)
         .await
@@ -142,7 +289,13 @@ pub async fn list_projects(
             )
         })?;
 
-    Ok(Json(projects))
+    let mut responses = Vec::with_capacity(projects.len());
+    for project in &projects {
+        let response = to_project_response(project, &state.db).await;
+        responses.push(response);
+    }
+
+    Ok(Json(responses))
 }
 
 // ── Custom Routes ──────────────────────────────────────────────────────────

@@ -9,9 +9,11 @@ import {
   MemoryStick,
   HardDrive,
   Database,
+  Terminal,
 } from "lucide-react";
 import type { Project, ServiceInfo } from "../../api";
 import { formatBytes, startService, stopService, restartService } from "../../api";
+import ServiceSettingsPopover from "./ServiceSettingsPopover";
 
 interface ServicesModalProps {
   project: Project;
@@ -34,6 +36,7 @@ export default function ServicesModal({
 }: ServicesModalProps) {
   const [loadingService, setLoadingService] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [openSettingsService, setOpenSettingsService] = useState<string | null>(null);
 
   const handleAction = (name: string, fn: () => Promise<void>) => {
     setLoadingService(name);
@@ -81,14 +84,14 @@ export default function ServicesModal({
             const isLoading = loadingService === svc.service_name;
             const isRunning = svc.status === "running";
             const memPercent =
-              svc.memory_limit && svc.memory_usage
-                ? (svc.memory_usage / svc.memory_limit) * 100
+              svc.memory_limit_mb && svc.memory_usage
+                ? (svc.memory_usage / (svc.memory_limit_mb * 1024 * 1024)) * 100
                 : 0;
 
             return (
-              <div
-                key={svc.service_name}
-                className="bg-slate-900/60 border border-slate-700/40 rounded-lg p-3">
+              <div key={svc.service_name} className="relative">
+                <div
+                  className="bg-slate-900/60 border border-slate-700/40 rounded-lg p-3">
                 {/* Service header */}
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 min-w-0">
@@ -110,6 +113,19 @@ export default function ServicesModal({
                     </span>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => setOpenSettingsService(
+                        openSettingsService === svc.service_name ? null : svc.service_name,
+                      )}
+                      disabled={isLoading}
+                      className={`transition-colors disabled:opacity-50 cursor-pointer p-1 ${
+                        openSettingsService === svc.service_name
+                          ? "text-violet-400 bg-violet-500/20"
+                          : "text-slate-500 hover:text-slate-300 hover:bg-slate-700/50"
+                      }`}
+                      title="Settings">
+                      <Terminal size={12} />
+                    </button>
                     {isRunning ? (
                       <>
                         <button
@@ -174,7 +190,7 @@ export default function ServicesModal({
                 {/* Stats grid */}
                 {(isRunning ||
                   svc.cpu_limit !== undefined ||
-                  svc.memory_limit !== undefined ||
+                  svc.memory_limit_mb !== undefined ||
                   svc.disk_gb !== undefined) && (
                   <div className="grid grid-cols-3 gap-2 mt-2">
                     {/* CPU */}
@@ -189,13 +205,17 @@ export default function ServicesModal({
                         <p className="text-[11px] font-medium text-slate-300">
                           {svc.cpu_percent.toFixed(1)}
                           <span className="text-slate-500">%</span>
+                          {svc.cpu_limit !== undefined && (
+                            <span className="text-slate-600 ml-1">
+                              / {svc.cpu_limit.toFixed(1)}
+                            </span>
+                          )}
                         </p>
                       ) : (
-                        <p className="text-[11px] text-slate-600">—</p>
-                      )}
-                      {svc.cpu_limit !== undefined && (
-                        <p className="text-[9px] text-slate-600">
-                          limit {svc.cpu_limit.toFixed(1)}
+                        <p className="text-[11px] text-slate-600">
+                          {svc.cpu_limit !== undefined
+                            ? `— / ${svc.cpu_limit.toFixed(1)}`
+                            : "—"}
                         </p>
                       )}
                     </div>
@@ -211,16 +231,20 @@ export default function ServicesModal({
                       {isRunning && svc.memory_usage !== undefined ? (
                         <p className="text-[11px] font-medium text-slate-300">
                           {formatBytes(svc.memory_usage)}
+                          {svc.memory_limit_mb != null && (
+                            <span className="text-slate-600 ml-1">
+                              / {formatBytes(svc.memory_limit_mb * 1024 * 1024)}
+                            </span>
+                          )}
                         </p>
                       ) : (
-                        <p className="text-[11px] text-slate-600">—</p>
-                      )}
-                      {svc.memory_limit !== undefined && (
-                        <p className="text-[9px] text-slate-600">
-                          / {formatBytes(svc.memory_limit)}
+                        <p className="text-[11px] text-slate-600">
+                          {svc.memory_limit_mb != null
+                            ? `— / ${formatBytes(svc.memory_limit_mb * 1024 * 1024)}`
+                            : "—"}
                         </p>
                       )}
-                      {isRunning && svc.memory_limit && memPercent > 0 && (
+                      {isRunning && svc.memory_limit_mb && memPercent > 0 && (
                         <div className="mt-1 h-0.5 bg-slate-700 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-violet-500 rounded-full"
@@ -278,6 +302,15 @@ export default function ServicesModal({
                     </div>
                   </div>
                 )}
+                {openSettingsService === svc.service_name && (
+                  <ServiceSettingsPopover
+                    projectId={project.id}
+                    service={svc}
+                    onRefresh={onRefresh}
+                    onClose={() => setOpenSettingsService(null)}
+                  />
+                )}
+                </div>
               </div>
             );
           })}

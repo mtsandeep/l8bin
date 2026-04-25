@@ -1,19 +1,19 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Terminal } from "lucide-react";
+import { ChevronDown, Terminal, Layers, ChevronRight, Info } from "lucide-react";
 import ResourceLimitInput from "../ResourceLimitInput";
 import { useToast } from "../ToastContext";
 import {
   type Project,
   updateProjectSettings,
-  redeployProject,
+  recreateProject,
 } from "../../api";
-import RedeployModal from "./RedeployModal";
 
 interface AppSettingsPopoverProps {
   project: Project;
   isStopping: boolean;
   onRefresh: () => void;
   onClose: () => void;
+  onViewServices?: () => void;
 }
 
 export default function AppSettingsPopover({
@@ -21,29 +21,30 @@ export default function AppSettingsPopover({
   isStopping,
   onRefresh,
   onClose,
+  onViewServices,
 }: AppSettingsPopoverProps) {
-  const [appImage, setAppImage] = useState(project.image ?? "");
-  const [appPort, setAppPort] = useState(project.internal_port ?? 3000);
-  const [cmd, setCmd] = useState(project.cmd ?? "");
-  const [memMb, setMemMb] = useState(project.memory_limit_mb ?? 256);
-  const [cpuLimit, setCpuLimit] = useState(project.cpu_limit ?? 0.5);
+  const ps = project.public_stats;
+  const isMultiService = (project.service_count ?? 0) > 1;
+
+  const [appImage, setAppImage] = useState(ps?.image ?? "");
+  const [appPort, setAppPort] = useState(ps?.port ?? 3000);
+  const [cmd, setCmd] = useState(ps?.cmd ?? "");
+  const [memMb, setMemMb] = useState(ps?.memory_limit_mb ?? 256);
+  const [cpuLimit, setCpuLimit] = useState(ps?.cpu_limit ?? 0.5);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  // Redeploy modal
-  const [showRedeployModal, setShowRedeployModal] = useState(false);
 
   const ref = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
 
   // Sync from project prop (e.g. after refresh)
   useEffect(() => {
-    setAppImage(project.image ?? "");
-    setAppPort(project.internal_port ?? 3000);
-    setCmd(project.cmd ?? "");
-    setMemMb(project.memory_limit_mb ?? 256);
-    setCpuLimit(project.cpu_limit ?? 0.5);
-  }, [project.image, project.internal_port, project.cmd, project.memory_limit_mb, project.cpu_limit]);
+    setAppImage(ps?.image ?? "");
+    setAppPort(ps?.port ?? 3000);
+    setCmd(ps?.cmd ?? "");
+    setMemMb(ps?.memory_limit_mb ?? 256);
+    setCpuLimit(ps?.cpu_limit ?? 0.5);
+  }, [ps?.image, ps?.port, ps?.cmd, ps?.memory_limit_mb, ps?.cpu_limit]);
 
   // Close on outside click
   useEffect(() => {
@@ -73,35 +74,23 @@ export default function AppSettingsPopover({
     }
   };
 
-  const handleSaveAndRedeploy = async () => {
-    // Save settings first
+  const handleSaveAndRecreate = async () => {
     setSettingsError(null);
-    try {
-      await updateProjectSettings(project.id, { cmd, memory_limit_mb: memMb, cpu_limit: cpuLimit });
-      // Open redeploy modal with current (edited) values
-      setShowRedeployModal(true);
-    } catch (e) {
-      setSettingsError(e instanceof Error ? e.message : "Failed to update settings");
-      showToast(e instanceof Error ? e.message : "Failed to update settings");
-    }
-  };
-
-  const handleRedeploy = async (cleanupVolumes: boolean) => {
-    setShowRedeployModal(false);
     setLoading(true);
     try {
-      await redeployProject(project.id, appImage, appPort, cmd, memMb, cpuLimit, cleanupVolumes);
+      await updateProjectSettings(project.id, { cmd, memory_limit_mb: memMb, cpu_limit: cpuLimit });
+      await recreateProject(project.id);
       onClose();
       onRefresh();
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Redeploy failed");
+      setSettingsError(e instanceof Error ? e.message : "Failed to save and recreate");
+      showToast(e instanceof Error ? e.message : "Failed to save and recreate");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <>
     <div ref={ref}>
       <button
         onClick={(e) => e.stopPropagation()}
@@ -114,7 +103,7 @@ export default function AppSettingsPopover({
           <span className="text-[10px] uppercase tracking-wider">App</span>
         </div>
         {loading ? (
-          <span className="text-[10px] text-violet-400 animate-pulse">deploying...</span>
+          <span className="text-[10px] text-violet-400 animate-pulse">recreating...</span>
         ) : (
           <ChevronDown size={12} className="text-slate-500" />
         )}
@@ -127,35 +116,55 @@ export default function AppSettingsPopover({
         )}
         <div>
           <span className="text-xs text-slate-400 block mb-1.5">Docker image</span>
-          <input
-            type="text"
-            value={appImage}
-            onChange={(e) => setAppImage(e.target.value)}
-            placeholder="nginx:alpine"
-            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
-          />
+          {isMultiService ? (
+            <input
+              type="text"
+              value={appImage}
+              readOnly
+              className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1.5 text-xs text-slate-500 font-mono cursor-default"
+            />
+          ) : (
+            <input
+              type="text"
+              value={appImage}
+              onChange={(e) => setAppImage(e.target.value)}
+              placeholder="nginx:alpine"
+              className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
+            />
+          )}
         </div>
         <div>
           <span className="text-xs text-slate-400 block mb-1.5">App port</span>
-          <input
-            type="number"
-            min={1}
-            max={65535}
-            value={appPort}
-            onChange={(e) => setAppPort(Number(e.target.value))}
-            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
-          />
+          {isMultiService ? (
+            <input
+              type="number"
+              value={appPort}
+              readOnly
+              className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1.5 text-xs text-slate-500 font-mono cursor-default"
+            />
+          ) : (
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={appPort}
+              onChange={(e) => setAppPort(Number(e.target.value))}
+              className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+            />
+          )}
         </div>
-        <div>
-          <span className="text-xs text-slate-400 block mb-1.5">Command override</span>
-          <input
-            type="text"
-            value={cmd}
-            onChange={(e) => setCmd(e.target.value)}
-            placeholder="default (image entrypoint)"
-            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
-          />
-        </div>
+        {!isMultiService && (
+          <div>
+            <span className="text-xs text-slate-400 block mb-1.5">Command override</span>
+            <input
+              type="text"
+              value={cmd}
+              onChange={(e) => setCmd(e.target.value)}
+              placeholder="default (image entrypoint)"
+              className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
+            />
+          </div>
+        )}
         <ResourceLimitInput
           label="Memory limit"
           value={memMb}
@@ -195,26 +204,38 @@ export default function AppSettingsPopover({
             Save
           </button>
           <button
-            onClick={handleSaveAndRedeploy}
-            disabled={loading || isStopping || !appImage.trim()}
+            onClick={handleSaveAndRecreate}
+            disabled={loading || isStopping}
             className="flex-1 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
           >
-            Save & Redeploy
+            Save & Recreate
           </button>
         </div>
+        {isMultiService && (
+          <div className="flex items-start gap-1.5 text-[10px] text-slate-500">
+            <Info size={10} className="mt-0.5 shrink-0" />
+            <span>
+              Image and port are managed via compose.yaml. Update it and use Redeploy to apply changes.
+            </span>
+          </div>
+        )}
+        {isMultiService && onViewServices && (
+          <>
+            <div className="border-t border-slate-700/50" />
+            <button
+              onClick={() => {
+                onClose();
+                onViewServices();
+              }}
+              className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-violet-300 hover:bg-violet-500/10 rounded transition-colors cursor-pointer"
+            >
+              <Layers size={12} />
+              View all services
+              <ChevronRight size={12} />
+            </button>
+          </>
+        )}
       </div>
     </div>
-
-      {showRedeployModal && (
-        <RedeployModal
-          project={project}
-          appImage={appImage}
-          appPort={appPort}
-          isStopping={isStopping}
-          onRedeploy={handleRedeploy}
-          onCancel={() => setShowRedeployModal(false)}
-        />
-      )}
-    </>
   );
 }

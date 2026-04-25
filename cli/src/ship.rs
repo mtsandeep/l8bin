@@ -9,13 +9,18 @@ use serde_json::json;
 use crate::auth;
 
 #[derive(serde::Deserialize)]
-struct ProjectInfo {
-    id: String,
+struct PublicStats {
     image: Option<String>,
     #[allow(dead_code)]
-    internal_port: Option<u16>,
+    port: Option<u16>,
     mapped_port: Option<u16>,
+}
+
+#[derive(serde::Deserialize)]
+struct ProjectInfo {
+    id: String,
     status: String,
+    public_stats: Option<PublicStats>,
 }
 
 pub async fn run(
@@ -164,12 +169,15 @@ async fn existing_project_flow(
                 _ => p.status.clone(),
             };
             let image = p
-                .image
-                .as_deref()
+                .public_stats
+                .as_ref()
+                .and_then(|ps| ps.image.as_deref())
                 .map(short_image)
                 .unwrap_or_else(|| "—".to_string());
             let port = p
-                .mapped_port
+                .public_stats
+                .as_ref()
+                .and_then(|ps| ps.mapped_port)
                 .map(|p| format!("port {}", p))
                 .unwrap_or("—".to_string());
             format!("  {:<20} {:<12} {:<25} {}", p.id, status, image, port)

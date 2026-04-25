@@ -292,6 +292,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/{id}/services/{name}/start", post(routes::manage::start_service))
         .route("/projects/{id}/services/{name}/stop", post(routes::manage::stop_service))
         .route("/projects/{id}/services/{name}/restart", post(routes::manage::restart_service))
+        .route("/projects/{id}/services/{name}/settings", patch(routes::settings::update_service_settings))
         .route("/projects/{id}/volumes/{name}", delete(routes::volumes::delete_volume))
         .route("/projects/{id}/volumes", delete(routes::volumes::delete_all_volumes))
         .route("/projects/{id}/routes", get(routes::projects::list_routes))

@@ -38,6 +38,7 @@ import SettingsPopover from "./SettingsPopover";
 import RedeployModal from "./RedeployModal";
 import ServiceSelectModal from "./ServiceSelectModal";
 import ServicesModal from "./ServicesModal";
+import DeleteConfirmModal from "./DeleteConfirmModal";
 
 interface ProjectCardProps {
   project: Project;
@@ -175,11 +176,11 @@ export default function ProjectCard({
     handleAction("redeploy", () =>
       redeployProject(
         project.id,
-        project.image ?? "",
-        project.internal_port ?? 3000,
-        project.cmd,
-        project.memory_limit_mb,
-        project.cpu_limit,
+        project.public_stats?.image ?? "",
+        project.public_stats?.port ?? 3000,
+        project.public_stats?.cmd,
+        project.public_stats?.memory_limit_mb,
+        project.public_stats?.cpu_limit,
         cleanupVolumes,
       ),
     );
@@ -192,7 +193,7 @@ export default function ProjectCard({
   const isDegraded = effectiveStatus === "degraded";
   const isUnconfigured =
     project.status === "unconfigured" ||
-    (project.status === "stopped" && !project.image);
+    (project.status === "stopped" && !project.public_stats?.image);
   return (
     <div className="relative bg-slate-800/50 border border-slate-700/50 rounded-lg p-5 hover:border-slate-600/50 transition-colors">
       {/* Header */}
@@ -266,11 +267,16 @@ export default function ProjectCard({
                             </span>
                           )}
                         </div>
-                        {svc.cpu_percent !== undefined && (
-                          <span className="text-[10px] text-slate-500 font-mono shrink-0">
-                            {svc.cpu_percent.toFixed(1)}%
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-[10px] ${svc.status === "running" ? "text-emerald-400" : "text-slate-500"}`}>
+                            {svc.status}
                           </span>
-                        )}
+                          {svc.cpu_percent !== undefined && (
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              {svc.cpu_percent.toFixed(1)}%
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ))}
                     <button
@@ -291,16 +297,16 @@ export default function ProjectCard({
           </div>
           <p
             className="text-xs text-slate-500 truncate font-mono"
-            title={project.image ?? ""}>
+            title={project.public_stats?.image ?? ""}>
             {isMultiService
-              ? `${shortImage(project.image)} +${services.length - 1}`
-              : shortImage(project.image)}
+              ? `${shortImage(project.public_stats?.image ?? null)} +${services.length - 1}`
+              : shortImage(project.public_stats?.image ?? null)}
             {isMultiService
               ? services.filter(s => s.mapped_port && s.mapped_port > 0).length > 0
                 ? ` | ports: ${services.filter(s => s.mapped_port && s.mapped_port > 0).map(s => s.mapped_port).join(", ")}`
                 : ""
-              : project.mapped_port
-                ? ` | port: ${project.mapped_port}`
+              : project.public_stats?.mapped_port
+                ? ` | port: ${project.public_stats.mapped_port}`
                 : ""}
           </p>
           <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
@@ -391,6 +397,7 @@ export default function ProjectCard({
                 isStopping={isStopping}
                 onRefresh={onRefresh}
                 onClose={() => setOpenPopover(null)}
+                onViewServices={() => setShowServicesModal(true)}
               />
             ) : (
               <button
@@ -609,47 +616,39 @@ export default function ProjectCard({
             </span>
           )}
 
-          {showDeleteConfirm ? (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() =>
-                  handleAction("delete", () => deleteProject(project.id))
-                }
-                disabled={loading !== null}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors disabled:opacity-50 cursor-pointer">
-                {loading === "delete" ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  "Confirm"
-                )}
-              </button>
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="px-2 py-1.5 rounded-md text-xs text-slate-400 hover:text-slate-300 transition-colors cursor-pointer">
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={loading !== null}
-              className="inline-flex items-center gap-1 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer"
-              title="Delete">
-              <Trash2 size={13} />
-            </button>
-          )}
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            disabled={loading !== null}
+            className="inline-flex items-center gap-1 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer"
+            title="Delete">
+            <Trash2 size={13} />
+          </button>
         </div>
       </div>
       {showLogs && (
         <LogViewer projectId={project.id} services={services} onClose={() => setShowLogs(false)} />
       )}
 
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && (
+        <DeleteConfirmModal
+          project={project}
+          isDeleting={loading === "delete"}
+          onConfirm={() =>
+            handleAction("delete", () => deleteProject(project.id)).then(() =>
+              setShowDeleteConfirm(false),
+            )
+          }
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
       {/* Redeploy modal from actions dropdown (uses project values) */}
       {showRedeployModal && (
         <RedeployModal
           project={project}
-          appImage={project.image ?? ""}
-          appPort={project.internal_port ?? 3000}
+          appImage={project.public_stats?.image ?? ""}
+          appPort={project.public_stats?.port ?? 3000}
           isStopping={isStopping}
           onRedeploy={handleActionsRedeploy}
           onCancel={() => setShowRedeployModal(false)}

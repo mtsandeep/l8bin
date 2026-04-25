@@ -8,37 +8,6 @@ function parseErrorMessage(text: string, fallback: string): string {
   return text || fallback;
 }
 
-export interface Project {
-  id: string;
-  name: string | null;
-  description: string | null;
-  image: string | null;
-  internal_port: number | null;
-  mapped_port: number | null;
-  container_id: string | null;
-  node_id: string | null;
-  status: string;
-  last_active_at: number | null;
-  auto_stop_enabled: boolean;
-  auto_stop_timeout_mins: number;
-  auto_start_enabled: boolean;
-  cmd: string | null;
-  memory_limit_mb: number | null;
-  cpu_limit: number | null;
-  custom_domain: string | null;
-  volumes: string | null; // JSON-encoded array of VolumeMount
-  service_count: number | null;
-  service_summary: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface ProjectStats {
-  project_id: string;
-  status: string;
-  services: ServiceInfo[];
-}
-
 export interface ServiceVolumeInfo {
   volume_name?: string;
   container_path: string;
@@ -51,12 +20,39 @@ export interface ServiceInfo {
   mapped_port?: number | null;
   is_public: boolean;
   status: string;
+  container_id?: string | null;
+  cmd?: string | null;
   cpu_percent?: number;
   memory_usage?: number;
-  memory_limit?: number;
+  memory_limit_mb?: number | null;
   cpu_limit?: number;
   disk_gb?: number;
   volumes?: ServiceVolumeInfo[];
+}
+
+export interface Project {
+  id: string;
+  name: string | null;
+  description: string | null;
+  node_id: string | null;
+  status: string;
+  last_active_at: number | null;
+  auto_stop_enabled: boolean;
+  auto_stop_timeout_mins: number;
+  auto_start_enabled: boolean;
+  custom_domain: string | null;
+  service_count: number | null;
+  service_summary: string | null;
+  created_at: number;
+  updated_at: number;
+  public_stats: ServiceInfo | null;
+}
+
+export interface ProjectStats {
+  project_id: string;
+  status: string;
+  last_active_at?: number | null;
+  services: ServiceInfo[];
 }
 
 export async function fetchProjects(): Promise<Project[]> {
@@ -285,6 +281,23 @@ export async function restartService(projectId: string, serviceName: string): Pr
   if (!res.ok) {
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Restart service failed'));
+  }
+}
+
+export async function updateServiceSettings(
+  projectId: string,
+  serviceName: string,
+  settings: { memory_limit_mb?: number | null; cpu_limit?: number | null },
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/services/${encodeURIComponent(serviceName)}/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Failed to update service settings'));
   }
 }
 

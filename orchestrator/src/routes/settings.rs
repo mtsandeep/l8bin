@@ -1,10 +1,13 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::IntoResponse,
     Json,
 };
+use axum_login::AuthSession;
 use serde::Deserialize;
 
+use crate::auth::backend::PasswordBackend;
 use crate::db::models::Project;
 use crate::AppState;
 
@@ -213,4 +216,98 @@ pub async fn update_project_settings(
     }
 
     Ok(Json(updated))
+}
+
+// ── Per-Service Settings ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct UpdateServiceSettingsRequest {
+    pub memory_limit_mb: Option<Option<i64>>,
+    pub cpu_limit: Option<Option<f64>>,
+}
+
+/// PATCH /projects/:id/services/:name/settings
+pub async fn update_service_settings(
+    auth_session: AuthSession<PasswordBackend>,
+    State(state): State<AppState>,
+    Path((project_id, service_name)): Path<(String, String)>,
+    Json(payload): Json<UpdateServiceSettingsRequest>,
+) -> impl IntoResponse {
+    if auth_session.user.is_none() {
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"}))).into_response();
+    }
+
+    // Verify project exists
+    let project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": format!("{e}")})))
+        .unwrap_or(None);
+
+    if project.is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("project '{}' not found", project_id)}))).into_response();
+    }
+
+    // Verify service exists in project_services
+    let existing: Option<(i64,)> = sqlx::query_as(
+        "SELECT id FROM project_services WHERE project_id = ? AND service_name = ? LIMIT 1"
+    )
+    .bind(&project_id)
+    .bind(&service_name)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": format!("{e}")})))
+    .unwrap_or(None);
+
+    if existing.is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("service '{}' not found in project '{}'", service_name, project_id)}))).into_response();
+    }
+
+    let mut set_clauses: Vec<String> = Vec::new();
+    let mut has_memory = false;
+    let mut has_cpu = false;
+
+    if payload.memory_limit_mb.is_some() {
+        set_clauses.push("memory_limit_mb = ?".to_string());
+        has_memory = true;
+    }
+    if payload.cpu_limit.is_some() {
+        set_clauses.push("cpu_limit = ?".to_string());
+        has_cpu = true;
+    }
+
+    if !has_memory && !has_cpu {
+        return (StatusCode::OK, Json(serde_json::json!({"updated": true}))).into_response();
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    set_clauses.push("updated_at = ?".to_string());
+
+    let sql = format!(
+        "UPDATE project_services SET {} WHERE project_id = ? AND service_name = ?",
+        set_clauses.join(", ")
+    );
+    let mut query = sqlx::query(&sql);
+
+    if has_memory {
+        query = query.bind(payload.memory_limit_mb.unwrap());
+    }
+    if has_cpu {
+        query = query.bind(payload.cpu_limit.unwrap());
+    }
+    query = query.bind(now).bind(&project_id).bind(&service_name);
+
+    if let Err(e) = query.execute(&state.db).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("database error: {e}")}))).into_response();
+    }
+
+    // Update project's updated_at timestamp too
+    let _ = sqlx::query("UPDATE projects SET updated_at = ? WHERE id = ?")
+        .bind(now)
+        .bind(&project_id)
+        .execute(&state.db)
+        .await;
+
+    (StatusCode::OK, Json(serde_json::json!({"updated": true}))).into_response()
 }
