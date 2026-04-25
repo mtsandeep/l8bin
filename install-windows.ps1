@@ -1,6 +1,7 @@
 # install-windows.ps1
 # Native PowerShell installer for LiteBin on Windows.
-# Run: iex (irm https://l8b.in/windows.ps1)
+# Run (master): iex (irm https://l8b.in/windows.ps1)
+# Run (CLI):    iex "& { $(irm https://l8b.in/windows.ps1) } -Cli"
 #
 # Flags:
 #   -Cli                     Install the l8b CLI tool ONLY

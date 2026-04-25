@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix `/deploy/compose` returning 404 — Caddyfile and dynamic Caddy config were missing the `/deploy/*` path matcher, so compose deploy requests fell through to the dashboard instead of the orchestrator
+
 ## [0.2.0] - 2026-04-25
 
 ### Added

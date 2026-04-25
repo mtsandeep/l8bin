@@ -259,13 +259,19 @@ Downloads release binaries from GitHub, generates Dockerfiles + docker-compose, 
 Optional flags:
 
 ```powershell
-iex (irm https://l8b.in/windows.ps1) -Domain example.com -DashboardSub l8bin
+iex "& { $(irm https://l8b.in/windows.ps1) } -Domain example.com -DashboardSub l8bin"
+```
+
+Install CLI only:
+
+```powershell
+iex "& { $(irm https://l8b.in/windows.ps1) } -Cli"
 ```
 
 To clean up:
 
 ```powershell
-iex (irm https://l8b.in/windows.ps1) -Clean
+iex "& { $(irm https://l8b.in/windows.ps1) } -Clean"
 ```
 
 ### What you get

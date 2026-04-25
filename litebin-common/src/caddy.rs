@@ -85,7 +85,7 @@ impl CaddyClient {
                 "handler": "subroute",
                 "routes": [
                     {
-                        "match": [{ "path": ["/auth/*", "/projects", "/projects/*", "/deploy", "/deploy-tokens", "/deploy-tokens/*", "/images", "/images/*", "/health", "/nodes", "/nodes/*", "/settings", "/settings/*", "/system/*", "/caddy/*"] }],
+                        "match": [{ "path": ["/auth/*", "/projects", "/projects/*", "/deploy", "/deploy/*", "/deploy-tokens", "/deploy-tokens/*", "/images", "/images/*", "/health", "/nodes", "/nodes/*", "/settings", "/settings/*", "/system/*", "/caddy/*"] }],
                         "handle": [{
                             "handler": "reverse_proxy",
                             "upstreams": [{ "dial": orchestrator_upstream }],
