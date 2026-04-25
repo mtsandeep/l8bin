@@ -289,92 +289,75 @@ ROUTING_MODE=master_proxy
     }
 
     # -- Generate Caddyfile (conditional on local vs live) ----------------------
+    $caddyRoutes = @'
+	handle /auth/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /projects {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /projects/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /deploy {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /deploy/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /deploy-tokens {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /deploy-tokens/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /images/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /nodes {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /nodes/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /settings {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /settings/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /health {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /caddy/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle {
+		reverse_proxy litebin-dashboard:80
+	}
+'@
     if ($isLocal) {
         # Local: listen on localhost + subdomain.localhost (no TLS)
-        $caddyfile = @'
+        $caddyfile = @"
 {
 	admin 0.0.0.0:2019
 }
 
-http://{$DASHBOARD_SUBDOMAIN}.{$DOMAIN}, http://localhost, http://127.0.0.1 {
-	handle /auth/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy-tokens* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /images/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /nodes* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /settings* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /health {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /caddy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle {
-		reverse_proxy litebin-dashboard:80
-	}
+http://`{$DASHBOARD_SUBDOMAIN}.`{$DOMAIN}, http://localhost, http://127.0.0.1 {
+$caddyRoutes
 }
-'@
+"@
     } else {
         # Live: Caddy auto-provisions HTTPS via Let's Encrypt
-        $caddyfile = @'
+        $caddyfile = @"
 {
 	admin 0.0.0.0:2019
 }
 
-{$DASHBOARD_SUBDOMAIN}.{$DOMAIN} {
-	handle /auth/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy-tokens* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /images/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /nodes* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /settings* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /health {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /caddy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle {
-		reverse_proxy litebin-dashboard:80
-	}
+`{$DASHBOARD_SUBDOMAIN}.`{$DOMAIN} {
+$caddyRoutes
 }
-'@
+"@
     }
     Set-Content -Path (Join-Path $TargetDir "Caddyfile") -Value $caddyfile
 

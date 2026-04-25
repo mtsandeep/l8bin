@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::caddy::CaddyClient;
+use crate::caddy::{CaddyClient, ORCHESTRATOR_API_PATHS};
 
 /// Pre-resolved routing info for a single project.
 /// The orchestrator builds these by joining project data with node data.
@@ -297,7 +297,7 @@ impl MasterProxyRouter {
                 "handler": "subroute",
                 "routes": [
                     {
-                        "match": [{ "path": ["/auth/*", "/projects", "/projects/*", "/deploy", "/deploy-tokens", "/deploy-tokens/*", "/images", "/images/*", "/health", "/nodes", "/nodes/*", "/settings", "/settings/*", "/system/*", "/caddy/*"] }],
+                        "match": [{ "path": ORCHESTRATOR_API_PATHS }],
                         "handle": [{
                             "handler": "reverse_proxy",
                             "upstreams": [{ "dial": orchestrator_upstream }]

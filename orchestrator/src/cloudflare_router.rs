@@ -7,7 +7,7 @@ use litebin_common::routing::RoutingProvider;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-use litebin_common::caddy::CaddyClient;
+use litebin_common::caddy::{CaddyClient, ORCHESTRATOR_API_PATHS};
 use litebin_common::cloudflare::CloudflareClient;
 use litebin_common::routing::ProjectRoute;
 
@@ -199,7 +199,7 @@ impl CloudflareDnsRouter {
                 "handler": "subroute",
                 "routes": [
                     {
-                        "match": [{ "path": ["/auth/*", "/projects", "/projects/*", "/deploy", "/deploy/*", "/deploy-tokens", "/deploy-tokens/*", "/images", "/images/*", "/health", "/nodes", "/nodes/*", "/settings", "/settings/*", "/system/*", "/caddy/*"] }],
+                        "match": [{ "path": ORCHESTRATOR_API_PATHS }],
                         "handle": [{
                             "handler": "reverse_proxy",
                             "upstreams": [{ "dial": orchestrator_upstream }]

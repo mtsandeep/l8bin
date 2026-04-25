@@ -2,6 +2,26 @@ use serde_json::{json, Value};
 
 use crate::types::Project;
 
+/// API path prefixes that should be proxied to the orchestrator (not the dashboard).
+pub const ORCHESTRATOR_API_PATHS: &[&str] = &[
+    "/auth/*",
+    "/projects",
+    "/projects/*",
+    "/deploy",
+    "/deploy/*",
+    "/deploy-tokens",
+    "/deploy-tokens/*",
+    "/images",
+    "/images/*",
+    "/health",
+    "/nodes",
+    "/nodes/*",
+    "/settings",
+    "/settings/*",
+    "/system/*",
+    "/caddy/*",
+];
+
 pub struct CaddyClient {
     admin_url: String,
     client: reqwest::Client,
@@ -85,7 +105,7 @@ impl CaddyClient {
                 "handler": "subroute",
                 "routes": [
                     {
-                        "match": [{ "path": ["/auth/*", "/projects", "/projects/*", "/deploy", "/deploy/*", "/deploy-tokens", "/deploy-tokens/*", "/images", "/images/*", "/health", "/nodes", "/nodes/*", "/settings", "/settings/*", "/system/*", "/caddy/*"] }],
+                        "match": [{ "path": ORCHESTRATOR_API_PATHS }],
                         "handle": [{
                             "handler": "reverse_proxy",
                             "upstreams": [{ "dial": orchestrator_upstream }],

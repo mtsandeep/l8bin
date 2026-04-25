@@ -547,16 +547,28 @@ EOF
 	handle /deploy {
 		reverse_proxy litebin-orchestrator:5080
 	}
-	handle /deploy-tokens* {
+	handle /deploy/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /deploy-tokens {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /deploy-tokens/* {
 		reverse_proxy litebin-orchestrator:5080
 	}
 	handle /images/* {
 		reverse_proxy litebin-orchestrator:5080
 	}
-	handle /nodes* {
+	handle /nodes {
 		reverse_proxy litebin-orchestrator:5080
 	}
-	handle /settings* {
+	handle /nodes/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /settings {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /settings/* {
 		reverse_proxy litebin-orchestrator:5080
 	}
 	handle /health {

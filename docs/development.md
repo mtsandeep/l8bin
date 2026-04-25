@@ -270,6 +270,18 @@ See [Configuration](configuration.md) for the full reference.
 
 ---
 
+## Adding a New API Endpoint
+
+When adding a new orchestrator API endpoint, update the Caddy path matcher so the request reaches the orchestrator instead of falling through to the dashboard:
+
+1. Add the path to `ORCHESTRATOR_API_PATHS` in `litebin-common/src/caddy.rs` — this is the single source of truth used by all Caddy config builders (master_proxy, cloudflare_dns, and CaddyRouter).
+
+2. No other files need updating — `routing.rs`, `cloudflare_router.rs`, and `caddy.rs` all reference the same constant.
+
+3. The install scripts (`install.sh`, `install-windows.ps1`) have their own Caddyfile templates as a static fallback (used only before the orchestrator first pushes dynamic config). Update those too for consistency.
+
+---
+
 ## Common Tasks
 
 ```bash
