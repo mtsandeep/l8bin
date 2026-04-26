@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-04-26
+
 ### Changed
 - Unified single-service and multi-service code paths — `start_services()` / `stop_services()` now handle both, eliminating ~500 lines of duplicated branching. Waker uses one running path for all local projects.
 - Stats endpoint performance — removed per-poll Docker sync (relies on 60s periodic sync), parallelized container stats queries, added disk cache for stopped containers.
