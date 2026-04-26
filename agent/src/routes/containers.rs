@@ -244,15 +244,17 @@ pub async fn run_container(
     // Remove existing container for this project if present (handles redeploy)
     let _ = state.docker.remove_by_name(&req.project_id).await;
 
-    // Pull image before running
-    if let Err(e) = state.docker.pull_image(&req.image).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("failed to pull image: {e}"),
-            }),
-        )
-            .into_response();
+    // Pull image before running (skip sha256: — pre-loaded via /images/upload, not from a registry)
+    if !req.image.starts_with("sha256:") {
+        if let Err(e) = state.docker.pull_image(&req.image).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("failed to pull image: {e}"),
+                }),
+            )
+                .into_response();
+        }
     }
 
     ensure_project_dir_and_env(&req.project_id);

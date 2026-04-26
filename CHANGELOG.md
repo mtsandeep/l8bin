@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix image load silently failing on server — switched from `import_image_stream` (sends wrong `Content-Type: application/json`) to `import_image` (correct `Content-Type: application/x-tar`). Docker on some versions rejects the wrong content type silently, reporting success without actually loading the image.
+- Fix single-service redeploy on remote agent pulling `sha256:` images from registry — `run_container` now skips registry pull for pre-loaded images (matching the existing fix in `batch_run` for compose).
+
 ## [0.2.4] - 2026-04-26
 
 ### Fixed
