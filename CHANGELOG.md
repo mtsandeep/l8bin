@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-04-26
+
 ### Fixed
 - Fix image upload falsely failing — `docker save` produces OCI format tars where the image config digest differs from the manifest digest. The upload verification was inspecting by config digest (from `docker inspect {{.Id}}`) but Docker loads OCI images using the manifest digest. Removed the faulty verification since `import_image_stream` already reports errors on actual load failures.
 - Fix single-service status sync — stop/start endpoints now update `project_services.status` in addition to `projects.status`, preventing stale "running" entries after stop and dashboard showing "degraded" incorrectly.
