@@ -970,11 +970,14 @@ pub async fn waker_intercept(
     let dashboard_host = format!("{}.{}", config.dashboard_subdomain, config.domain);
     let poke_host = format!("{}.{}", config.poke_subdomain, config.domain);
     let host_without_port = host.split(':').next().unwrap_or(&host);
+    let orchestrator_name = std::env::var("ORCHESTRATOR_CONTAINER_NAME")
+        .unwrap_or_else(|_| "litebin-orchestrator".into());
 
-    // Let dashboard, poke, and bare domain requests pass through to the router
+    // Let dashboard, poke, bare domain, and internal container requests pass through
     if host_without_port == config.domain
         || host_without_port == dashboard_host
         || host_without_port == poke_host
+        || host_without_port == orchestrator_name
     {
         return next.run(req).await;
     }

@@ -383,6 +383,18 @@ install_master() {
     fi
   fi
 
+  # Check for agent installation on this server
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^litebin-agent$"; then
+    echo ""
+    warn "LiteBin agent is already running on this server."
+    echo -e "  Agent and master typically run on separate servers."
+    echo ""
+    if ! prompt_yes "Continue with master setup anyway?"; then
+      info "Cancelled."
+      exit 0
+    fi
+  fi
+
   # Get release
   local release_url
   release_url=$(get_latest_release)
@@ -597,7 +609,7 @@ CADDYFILE
   # -- Start ------------------------------------------------------------
   echo ""
   info "Starting LiteBin..."
-  (cd "$install_dir" && docker compose up -d --build 2>&1 | tail -5)
+  (cd "$install_dir" && docker compose up -d --build 2>&1 | grep -E 'Container|Started|Stopped|Recreated|Creating|Removing|Warning|Error')
   echo ""
 
   # -- Done -------------------------------------------------------------
@@ -912,6 +924,30 @@ install_agent() {
 
   ensure_docker
 
+  # Check for existing agent installation → redirect to update
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^litebin-agent$"; then
+    update_agent
+    exit $?
+  fi
+
+  # Check for master installation on this server
+  local master_dir=""
+  if [ "$(id -u)" -eq 0 ] && [ -f "/opt/litebin/docker-compose.yml" ]; then
+    master_dir="/opt/litebin"
+  elif [ -f "${HOME}/litebin/docker-compose.yml" ]; then
+    master_dir="${HOME}/litebin"
+  fi
+  if [ -n "$master_dir" ]; then
+    echo ""
+    warn "LiteBin master is already installed at ${master_dir}."
+    echo -e "  Agent and master typically run on separate servers."
+    echo ""
+    if ! prompt_yes "Continue with agent setup anyway?"; then
+      info "Cancelled."
+      exit 0
+    fi
+  fi
+
   # Get release
   local release_url
   release_url=$(get_latest_release)
@@ -1198,7 +1234,7 @@ update_master() {
 
   # Restart
   info "Restarting LiteBin..."
-  (cd "$install_dir" && docker compose up -d --build 2>&1 | tail -5)
+  (cd "$install_dir" && docker compose up -d --build 2>&1 | grep -E 'Container|Started|Stopped|Recreated|Creating|Removing|Warning|Error')
 
   # Verify
   echo ""
@@ -1274,6 +1310,8 @@ update_agent() {
   install_dir=$(find_install_dir)
   [ -d "${install_dir}/agent" ] || die "Agent installation not found at ${install_dir}/agent"
 
+  ensure_docker
+
   # Get current version
   local current_version="unknown"
   if [ -f "${install_dir}/.version" ]; then
@@ -1290,20 +1328,53 @@ update_agent() {
   echo -e "  Current version:  ${CYAN}${current_version}${NC}"
   echo -e "  Latest version:   ${CYAN}${latest_release}${NC}"
   echo ""
+  echo -e "  Changelog: ${DIM}${CHANGELOG_URL}${NC}"
+  echo ""
+
+  local target_release
 
   if [ "$current_version" = "$latest_release" ]; then
     if ! prompt_yes "Already up to date. Reinstall?"; then
       info "Cancelled."
       exit 0
     fi
+    target_release="$latest_release"
   else
-    if ! prompt_yes "Update agent from ${current_version} to ${latest_release}?"; then
+    echo "  Options:"
+    echo -e "    1) Update to ${CYAN}${latest_release}${NC} (latest)"
+    echo "    2) Enter a specific version"
+    echo ""
+    local choice
+    echo -ne "  ${CYAN}Choose [1]:${NC} "
+    _tty_read choice
+    case "${choice:-1}" in
+      2)
+        prompt "Enter version (e.g. v0.1.2)" target_release ""
+        [ -z "$target_release" ] && die "Version is required"
+        # Verify release exists on GitHub
+        if [ -z "${L8B_RELEASE_DIR:-}" ]; then
+          if ! curl -sf "https://api.github.com/repos/${REPO}/releases/tags/${target_release}" 2>/dev/null | grep -q '"tag_name"'; then
+            die "Release ${target_release} not found. Check available releases at ${CHANGELOG_URL}"
+          fi
+        fi
+        ;;
+      *)
+        target_release="$latest_release"
+        ;;
+    esac
+  fi
+
+  # Confirm
+  echo ""
+  if [ "$current_version" = "$target_release" ]; then
+    if ! prompt_yes "Reinstall ${current_version}?"; then
       info "Cancelled."
       exit 0
     fi
+  elif ! prompt_yes "Update agent from ${current_version} to ${target_release}?"; then
+    info "Cancelled."
+    exit 0
   fi
-
-  ensure_docker
 
   # Detect port from previous container, fallback to 5083
   local agent_port="5083"
@@ -1313,10 +1384,21 @@ update_agent() {
 
   # Download new agent binary
   download_and_verify \
-    "https://github.com/${REPO}/releases/download/${latest_release}/litebin-agent-${arch}-linux" \
+    "https://github.com/${REPO}/releases/download/${target_release}/litebin-agent-${arch}-linux" \
     "${install_dir}/agent/litebin-agent" \
-    "agent ${latest_release} (${arch})"
+    "agent ${target_release} (${arch})"
   chmod +x "${install_dir}/agent/litebin-agent"
+
+  # Save installed version
+  echo "$target_release" > "${install_dir}/.version"
+
+  # Confirm restart
+  echo ""
+  if ! prompt_yes "Restart agent now?"; then
+    info "Update ready. Restart manually when ready:"
+    echo -e "  ${DIM}curl -fsSL ${L8B_IN} | bash -s update${NC}"
+    exit 0
+  fi
 
   # Rebuild and restart
   info "Rebuilding agent image..."
@@ -1334,13 +1416,20 @@ update_agent() {
   docker rm litebin-agent 2>/dev/null || true
   run_agent_container "$install_dir" "$certs_dir" "$agent_port"
 
-  # Save installed version
-  echo "$latest_release" > "${install_dir}/.version"
+  # Verify
+  echo ""
+  info "Waiting for agent to start..."
+  sleep 3
 
-  echo ""
-  echo -e "${GREEN}${BOLD}  Agent ${latest_release} is running!${NC}"
-  echo ""
-  echo -e "  View logs: ${DIM}docker logs -f litebin-agent${NC}"
+  if [ "$(docker inspect -f '{{.State.Running}}' litebin-agent 2>/dev/null)" = "true" ]; then
+    echo ""
+    echo -e "${GREEN}${BOLD}  Agent ${target_release} is running!${NC}"
+    echo ""
+    echo -e "  View logs: ${DIM}docker logs -f litebin-agent${NC}"
+  else
+    warn "Agent may not have started successfully."
+    echo -e "  Check logs: ${DIM}docker logs -f litebin-agent${NC}"
+  fi
 }
 
 # -- Interactive Menu --------------------------------------------------------

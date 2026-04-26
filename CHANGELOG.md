@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix on-demand TLS certificate issuance failing — `waker_intercept` middleware was intercepting Caddy's internal permission check (`/caddy/ask`) because the request came from the orchestrator's Docker hostname, which wasn't in the middleware's allowlist. Internal container requests now pass through to route handlers.
+
+### Changed
+- Align agent update flow with master — agent update now shows changelog link, version selection (latest or specific), restart confirmation prompt, and post-restart container health verification.
+- Installing agent when agent is already running now redirects to the update flow (same as master already did).
+- `install.sh` warns when installing agent on a server that already has master installed (or vice versa), since they typically run on separate servers.
+- Filter `docker compose` output during master start/restart to show only container lifecycle events, hiding verbose build steps.
+
 ## [0.2.7] - 2026-04-26
 
 ### Fixed
