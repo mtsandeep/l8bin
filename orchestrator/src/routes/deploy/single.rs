@@ -9,6 +9,7 @@ use crate::auth::backend::PasswordBackend;
 use litebin_common::types::{Node, VolumeMount};
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
+use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
 #[derive(Deserialize)]
@@ -295,11 +296,7 @@ async fn execute_deploy(
     let node_id = match nodes::selector::select_node(&state.db, &project, payload.node_id.clone()).await {
         Ok(id) => id,
         Err(e) => {
-            let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-                .bind(now)
-                .bind(&payload.project_id)
-                .execute(&state.db)
-                .await;
+            let _ = status::transition(&state.db, &payload.project_id, "stopped", &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": e.to_string()})),
@@ -326,11 +323,7 @@ async fn execute_deploy(
                 .await
             {
                 tracing::error!(error = %e, "failed to pull image");
-            let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                .bind(now)
-                .bind(&payload.project_id)
-                .execute(&state.db)
-                .await;
+            let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": format!("failed to pull image: {e}")})),
@@ -349,11 +342,7 @@ async fn execute_deploy(
             },
             Err(e) => {
                 tracing::error!(error = %e, "failed to start container");
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(&payload.project_id)
-                    .execute(&state.db)
-                    .await;
+                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": format!("failed to start container: {e}")})),
@@ -372,11 +361,7 @@ async fn execute_deploy(
         {
             Ok(Some(n)) => n,
             Ok(None) => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(&payload.project_id)
-                    .execute(&state.db)
-                    .await;
+                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("node '{}' not found", node_id)})),
@@ -384,11 +369,7 @@ async fn execute_deploy(
                     .into_response();
             }
             Err(e) => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(&payload.project_id)
-                    .execute(&state.db)
-                    .await;
+                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": format!("database error: {e}")})),
@@ -401,11 +382,7 @@ async fn execute_deploy(
         let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
             Ok(c) => c,
             Err(e) => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(&payload.project_id)
-                    .execute(&state.db)
-                    .await;
+                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("node client not available: {e}")})),
@@ -434,11 +411,7 @@ async fn execute_deploy(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, node_id = %node_id, "failed to run container on agent");
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(&payload.project_id)
-                    .execute(&state.db)
-                    .await;
+                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("agent unreachable during container run: {e}")})),
@@ -451,11 +424,7 @@ async fn execute_deploy(
             let status_code = run_resp.status();
             let body = run_resp.text().await.unwrap_or_default();
             tracing::error!(node_id = %node_id, status = %status_code, "container run failed");
-            let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                .bind(now)
-                .bind(&payload.project_id)
-                .execute(&state.db)
-                .await;
+            let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": format!("container run failed: {body}")})),
@@ -466,11 +435,7 @@ async fn execute_deploy(
         let run_json: serde_json::Value = match run_resp.json().await {
             Ok(v) => v,
             Err(e) => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(&payload.project_id)
-                    .execute(&state.db)
-                    .await;
+                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": format!("invalid container run response: {e}")})),
@@ -482,11 +447,7 @@ async fn execute_deploy(
         let container_id = match run_json["container_id"].as_str() {
             Some(id) => id.to_string(),
             None => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(&payload.project_id)
-                    .execute(&state.db)
-                    .await;
+                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": "missing container_id in run response"})),
@@ -498,11 +459,7 @@ async fn execute_deploy(
         let mapped_port = match run_json["mapped_port"].as_u64() {
             Some(p) => p as u16,
             None => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(&payload.project_id)
-                    .execute(&state.db)
-                    .await;
+                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": "missing mapped_port in run response"})),
@@ -514,30 +471,41 @@ async fn execute_deploy(
         (container_id, mapped_port)
     };
 
-    // 6. Update DB with container info and node_id
-    if let Err(e) = sqlx::query(
-        r#"
-        UPDATE projects
-        SET container_id = ?, mapped_port = ?, node_id = ?, status = 'running',
-            last_active_at = ?, updated_at = ?
-        WHERE id = ?
-        "#,
-    )
-    .bind(&container_id)
-    .bind(mapped_port as i64)
-    .bind(&node_id)
-    .bind(now)
-    .bind(now)
-    .bind(&payload.project_id)
-    .execute(&state.db)
-    .await
-    {
+    // 6. Update DB with container info, node_id, and project_services row
+    if let Err(e) = status::transition(
+        &state.db,
+        &payload.project_id,
+        "running",
+        &ProjectUpdateFields {
+            container_id: Some(Some(container_id.clone())),
+            mapped_port: Some(Some(mapped_port as i64)),
+            node_id: Some(node_id.clone()),
+            last_active_at: Some(now),
+        },
+        None,
+    ).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("database error: {e}")})),
         )
             .into_response();
     }
+
+    // Create project_services row for single-service deploy
+    let _ = sqlx::query(
+        "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit)
+         VALUES (?, 'web', ?, ?, ?, 1, 'running', ?, ?, ?, ?)",
+    )
+    .bind(&payload.project_id)
+    .bind(&payload.image)
+    .bind(payload.port)
+    .bind(mapped_port as i64)
+    .bind(&container_id)
+    .bind(&project.cmd)
+    .bind(project.memory_limit_mb)
+    .bind(project.cpu_limit)
+    .execute(&state.db)
+    .await;
 
     // 7. Sync Caddy routes
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
@@ -583,11 +551,7 @@ async fn execute_deploy(
                 }
             }
         }
-        let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-            .bind(now)
-            .bind(&payload.project_id)
-            .execute(&state.db)
-            .await;
+        let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
 
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

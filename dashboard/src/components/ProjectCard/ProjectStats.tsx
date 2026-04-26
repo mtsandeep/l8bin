@@ -19,6 +19,7 @@ function aggregateFromServices(services: ServiceInfo[]) {
 
 export default function ProjectStats({
   stats,
+  isRunning,
   isUnconfigured,
 }: ProjectStatsProps) {
   if (isUnconfigured) {
@@ -45,7 +46,7 @@ export default function ProjectStats({
           <span className="text-[10px] uppercase tracking-wider">CPU</span>
         </div>
         <p className="text-sm font-medium text-slate-200">
-          {totalCpu > 0 ? `${totalCpu.toFixed(1)}%` : "—"}
+          {!isRunning ? "—" : `${totalCpu.toFixed(1)}%`}
         </p>
       </div>
       <div className="bg-slate-900/50 rounded-md px-3 py-2" title={totalLimit > 0 ? `${formatBytes(totalMem)}/${formatBytes(totalLimit)}` : undefined}>

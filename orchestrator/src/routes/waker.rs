@@ -8,6 +8,7 @@ use tokio::sync::Semaphore;
 use litebin_common::types::Node;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
+use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
 /// Hop-by-hop headers that must not be forwarded when proxying.
@@ -167,28 +168,12 @@ async fn remote_recreate(
     let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
     let now = chrono::Utc::now().timestamp();
-    if let Some(port) = mapped_port {
-        let _ = sqlx::query(
-            "UPDATE projects SET status = 'running', container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(&new_container_id)
-        .bind(port as i64)
-        .bind(now)
-        .bind(now)
-        .bind(&project.id)
-        .execute(&state.db)
-        .await;
-    } else {
-        let _ = sqlx::query(
-            "UPDATE projects SET status = 'running', container_id = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(&new_container_id)
-        .bind(now)
-        .bind(now)
-        .bind(&project.id)
-        .execute(&state.db)
-        .await;
-    }
+    let _ = status::transition(&state.db, &project.id, "running", &ProjectUpdateFields {
+        container_id: Some(Some(new_container_id.clone())),
+        mapped_port: Some(mapped_port.map(|p| p as i64)),
+        last_active_at: Some(now),
+        ..Default::default()
+    }, None).await;
 
     Ok(())
 }
@@ -263,26 +248,11 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
             let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
             let now = chrono::Utc::now().timestamp();
-            if let Some(port) = mapped_port {
-                let _ = sqlx::query(
-                    "UPDATE projects SET status = 'running', mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
-                )
-                .bind(port as i64)
-                .bind(now)
-                .bind(now)
-                .bind(&subdomain)
-                .execute(&state.db)
-                .await;
-            } else {
-                let _ = sqlx::query(
-                    "UPDATE projects SET status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?",
-                )
-                .bind(now)
-                .bind(now)
-                .bind(&subdomain)
-                .execute(&state.db)
-                .await;
-            }
+            let _ = status::transition(&state.db, &subdomain, "running", &ProjectUpdateFields {
+                mapped_port: Some(mapped_port.map(|p| p as i64)),
+                last_active_at: Some(now),
+                ..Default::default()
+            }, None).await;
             return Ok(());
         }
 
@@ -308,14 +278,10 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
                 match state.docker.start_existing_container(container_id).await {
                     Ok(()) => {
                         let now = chrono::Utc::now().timestamp();
-                        let _ = sqlx::query(
-                            "UPDATE projects SET status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?",
-                        )
-                        .bind(now)
-                        .bind(now)
-                        .bind(&subdomain)
-                        .execute(&state.db)
-                        .await;
+                        let _ = status::transition(&state.db, &subdomain, "running", &ProjectUpdateFields {
+                            last_active_at: Some(now),
+                            ..Default::default()
+                        }, None).await;
                         tracing::info!(project = %subdomain, "waker: started existing container (env unchanged)");
                         return Ok(());
                     }
@@ -355,16 +321,12 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
         crate::routes::manage::write_local_env_snapshot(&subdomain);
 
         let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query(
-            "UPDATE projects SET status = 'running', container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(&new_container_id)
-        .bind(new_mapped_port as i64)
-        .bind(now)
-        .bind(now)
-        .bind(&subdomain)
-        .execute(&state.db)
-        .await;
+        let _ = status::transition(&state.db, &subdomain, "running", &ProjectUpdateFields {
+            container_id: Some(Some(new_container_id.clone())),
+            mapped_port: Some(Some(new_mapped_port as i64)),
+            last_active_at: Some(now),
+            ..Default::default()
+        }, None).await;
     }
 
     Ok(())
@@ -457,16 +419,12 @@ async fn restart_crashed_container(
     crate::routes::manage::write_local_env_snapshot(&subdomain);
 
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query(
-        "UPDATE projects SET status = 'running', container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(&new_container_id)
-    .bind(new_mapped_port as i64)
-    .bind(now)
-    .bind(now)
-    .bind(&subdomain)
-    .execute(&state.db)
-    .await;
+    let _ = status::transition(&state.db, &subdomain, "running", &ProjectUpdateFields {
+        container_id: Some(Some(new_container_id.clone())),
+        mapped_port: Some(Some(new_mapped_port as i64)),
+        last_active_at: Some(now),
+        ..Default::default()
+    }, None).await;
 
     Ok(())
 }
@@ -672,15 +630,8 @@ pub async fn wake_for_host(
             if !stopped_services.is_empty() {
                 tracing::info!(project = %project_id, stopped = ?stopped_services, "waker: multi-service has crashed services");
 
-                let now = chrono::Utc::now().timestamp();
                 for service_name in &stopped_services {
-                    let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND service_name = ?",
-                    )
-                    .bind(&project_id)
-                    .bind(service_name)
-                    .execute(&state.db)
-                    .await;
+                    let _ = status::set_service_stopped(&state.db, &project_id, service_name).await;
                 }
 
                 // Check if the public service is among the crashed ones
@@ -695,19 +646,11 @@ pub async fn wake_for_host(
                 if public_down {
                     // Public service is down — fall through to wake lock (loading page)
                     public_service_up = false;
-                    let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-                        .bind(now)
-                        .bind(&project_id)
-                        .execute(&state.db)
-                        .await;
+                    let _ = status::transition(&state.db, &project_id, "stopped", &ProjectUpdateFields::default(), None).await;
                     tracing::info!(project = %project_id, "waker: public service down, marking stopped");
                 } else {
                     // Non-public services down but public service up — silently recover in background
-                    let _ = sqlx::query("UPDATE projects SET status = 'degraded', updated_at = ? WHERE id = ? AND status != 'degraded'")
-                        .bind(now)
-                        .bind(&project_id)
-                        .execute(&state.db)
-                        .await;
+                    let _ = status::transition(&state.db, &project_id, "degraded", &ProjectUpdateFields::default(), None).await;
                     let _ = state.route_sync_tx.send(());
 
                     // Spawn background recovery (start_multi_service is idempotent — skips running services)
@@ -776,17 +719,7 @@ pub async fn wake_for_host(
                     if state.docker.is_container_running(cid).await.unwrap_or(false) {
                         // Container is actually running — sync DB and proxy
                         tracing::info!(project = %project_id, service = %svc_name, "waker: public service running but DB stale, syncing status");
-                        let now = chrono::Utc::now().timestamp();
-                        let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ? AND service_name = ?")
-                            .bind(&project_id)
-                            .bind(&svc_name)
-                            .execute(&state.db)
-                            .await;
-                        let _ = sqlx::query("UPDATE projects SET status = 'running', updated_at = ? WHERE id = ?")
-                            .bind(now)
-                            .bind(&project_id)
-                            .execute(&state.db)
-                            .await;
+                        let _ = status::transition(&state.db, &project_id, "running", &ProjectUpdateFields::default(), Some(&[svc_name.clone()])).await;
 
                         let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
                         let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);

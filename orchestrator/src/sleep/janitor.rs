@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use litebin_common::types::Node;
 
+use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
 /// Background task that periodically stops idle containers.
@@ -52,11 +53,17 @@ async fn sweep(
 
     // 1. Mark all idle projects as stopped in DB first
     for project in &idle_projects {
-        sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-            .bind(now)
-            .bind(&project.id)
-            .execute(&state.db)
-            .await?;
+        status::transition(
+            &state.db,
+            &project.id,
+            "stopped",
+            &ProjectUpdateFields {
+                mapped_port: Some(None),
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
     }
 
     // 2. Resync routes — stopped projects are now excluded, so requests hit the
@@ -92,23 +99,9 @@ async fn sweep(
             for (svc_name, cid, _) in services.iter().rev() {
                 if let Some(container_id) = cid {
                     stop_local_container(state, &project.id, container_id).await;
-                    let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND service_name = ?"
-                    )
-                    .bind(&project.id)
-                    .bind(svc_name)
-                    .execute(&state.db)
-                    .await;
+                    let _ = status::set_service_stopped(&state.db, &project.id, svc_name).await;
                 }
             }
-
-            // Clear project's denormalized mapped_port
-            let _ = sqlx::query(
-                "UPDATE projects SET mapped_port = NULL WHERE id = ?"
-            )
-            .bind(&project.id)
-            .execute(&state.db)
-            .await;
         } else if project.service_count.unwrap_or(1) > 1 && !is_local {
             // Multi-service remote: stop all service containers via agent
             let node_id = match project.node_id.as_deref() {
@@ -134,23 +127,9 @@ async fn sweep(
             for (svc_name, cid, _) in services.iter().rev() {
                 if let Some(container_id) = cid {
                     stop_remote_container(state, &project.id, &node_id, container_id).await;
-                    let _ = sqlx::query(
-                        "UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND service_name = ?"
-                    )
-                    .bind(&project.id)
-                    .bind(svc_name)
-                    .execute(&state.db)
-                    .await;
+                    let _ = status::set_service_stopped(&state.db, &project.id, svc_name).await;
                 }
             }
-
-            // Clear project's denormalized mapped_port
-            let _ = sqlx::query(
-                "UPDATE projects SET mapped_port = NULL WHERE id = ?"
-            )
-            .bind(&project.id)
-            .execute(&state.db)
-            .await;
         } else if let Some(ref container_id) = project.container_id {
             let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 

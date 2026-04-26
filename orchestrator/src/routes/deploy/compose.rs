@@ -9,6 +9,7 @@ use crate::auth::backend::PasswordBackend;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::AppState;
+use crate::status::{self, ProjectUpdateFields};
 
 /// POST /deploy/compose — Deploy a multi-service project via compose file.
 ///
@@ -386,8 +387,7 @@ pub async fn deploy_compose(
     let target_node_id = match nodes::selector::select_node(&state.db, &project, node_id.clone()).await {
         Ok(id) => id,
         Err(e) => {
-            let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                .bind(now).bind(&project_id).execute(&state.db).await;
+            let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": format!("{:?}", e)})),
@@ -401,8 +401,7 @@ pub async fn deploy_compose(
         let node = match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
             Ok(n) => n,
             Err(e) => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now).bind(&project_id).execute(&state.db).await;
+                let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("{:?}", e)})),
@@ -413,8 +412,7 @@ pub async fn deploy_compose(
         let client = match nodes::client::get_node_client(&state.node_clients, &target_node_id) {
             Ok(c) => c,
             Err(e) => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now).bind(&project_id).execute(&state.db).await;
+                let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("node client unavailable: {:?}", e)})),
@@ -438,8 +436,7 @@ pub async fn deploy_compose(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "remote batch-run request failed");
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now).bind(&project_id).execute(&state.db).await;
+                let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("agent unreachable: {e}")})),
@@ -451,8 +448,7 @@ pub async fn deploy_compose(
             let status_code = batch_resp.status();
             let body = batch_resp.text().await.unwrap_or_default();
             tracing::error!(status = %status_code, body = %body, "remote batch-run failed");
-            let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                .bind(now).bind(&project_id).execute(&state.db).await;
+            let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": format!("remote batch-run failed: {body}")})),
@@ -462,8 +458,7 @@ pub async fn deploy_compose(
         let batch_result: serde_json::Value = match batch_resp.json().await {
             Ok(v) => v,
             Err(e) => {
-                let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                    .bind(now).bind(&project_id).execute(&state.db).await;
+                let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": format!("failed to parse batch-run response: {e}")})),
@@ -478,17 +473,11 @@ pub async fn deploy_compose(
                 let container_id = svc["container_id"].as_str();
                 let mapped_port = svc["mapped_port"].as_u64().map(|p| p as i64);
 
-                let status = if container_id.is_some() { "running" } else { "error" };
-                let _ = sqlx::query(
-                    "UPDATE project_services SET container_id = ?, mapped_port = ?, status = ? WHERE project_id = ? AND service_name = ?"
-                )
-                .bind(container_id)
-                .bind(mapped_port)
-                .bind(status)
-                .bind(&project_id)
-                .bind(svc_name)
-                .execute(&state.db)
-                .await;
+                if let Some(cid) = container_id {
+                    let _ = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await;
+                } else {
+                    let _ = status::set_service_stopped(&state.db, &project_id, svc_name).await;
+                }
             }
 
             // Set project's denormalized container_id to the public service
@@ -500,17 +489,18 @@ pub async fn deploy_compose(
             if let Some(pub_svc) = public_service {
                 let cid = pub_svc["container_id"].as_str().unwrap_or("").to_string();
                 let port = pub_svc["mapped_port"].as_u64().map(|p| p as i64);
-                let _ = sqlx::query(
-                    "UPDATE projects SET container_id = ?, mapped_port = ?, node_id = ?, status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?"
-                )
-                .bind(&cid)
-                .bind(port)
-                .bind(&target_node_id)
-                .bind(now)
-                .bind(now)
-                .bind(&project_id)
-                .execute(&state.db)
-                .await;
+                let _ = status::transition(
+                    &state.db,
+                    &project_id,
+                    "running",
+                    &ProjectUpdateFields {
+                        container_id: Some(Some(cid)),
+                        mapped_port: Some(Some(port.unwrap_or(0))),
+                        node_id: Some(target_node_id.clone()),
+                        last_active_at: Some(now),
+                    },
+                    None,
+                ).await;
             }
         }
 
@@ -540,13 +530,7 @@ pub async fn deploy_compose(
                             if target_set.contains(svc_name) {
                                 let _ = state.docker.stop_container(cid).await;
                                 let _ = state.docker.remove_container(cid).await;
-                                let _ = sqlx::query(
-                                    "UPDATE project_services SET container_id = NULL, mapped_port = NULL, status = 'stopped' WHERE project_id = ? AND service_name = ?"
-                                )
-                                .bind(&project_id)
-                                .bind(svc_name)
-                                .execute(&state.db)
-                                .await;
+                                let _ = status::set_service_stopped(&state.db, &project_id, svc_name).await;
                             }
                         }
                     }
@@ -595,8 +579,7 @@ pub async fn deploy_compose(
         if !pull_errors.is_empty() {
             let msg = pull_errors.join("; ");
             tracing::error!(errors = %msg, "failed to pull images");
-            let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-                .bind(now).bind(&project_id).execute(&state.db).await;
+            let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": format!("failed to pull images: {msg}")})),

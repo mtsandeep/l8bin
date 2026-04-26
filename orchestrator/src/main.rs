@@ -7,6 +7,7 @@ mod nodes;
 mod routing_helpers;
 mod routes;
 mod sleep;
+mod status;
 mod validation;
 
 #[cfg(test)]
@@ -258,6 +259,9 @@ async fn main() -> anyhow::Result<()> {
         state.router.clone(),
         state.config.clone(),
     ));
+
+    // Spawn periodic status reconciliation background task
+    tokio::spawn(status::run_periodic_sync(state.clone()));
 
     // Run startup reconciliation pass
     nodes::reconciliation::run_reconciliation(state.clone(), None).await;

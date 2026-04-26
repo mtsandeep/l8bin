@@ -12,7 +12,12 @@ import {
   Terminal,
 } from "lucide-react";
 import type { Project, ServiceInfo } from "../../api";
-import { formatBytes, startService, stopService, restartService } from "../../api";
+import {
+  formatBytes,
+  startService,
+  stopService,
+  restartService,
+} from "../../api";
 import ServiceSettingsPopover from "./ServiceSettingsPopover";
 
 interface ServicesModalProps {
@@ -36,7 +41,9 @@ export default function ServicesModal({
 }: ServicesModalProps) {
   const [loadingService, setLoadingService] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openSettingsService, setOpenSettingsService] = useState<string | null>(null);
+  const [openSettingsService, setOpenSettingsService] = useState<string | null>(
+    null,
+  );
 
   const handleAction = (name: string, fn: () => Promise<void>) => {
     setLoadingService(name);
@@ -66,8 +73,7 @@ export default function ServicesModal({
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 transition-colors p-1 cursor-pointer"
-          >
+            className="text-slate-400 hover:text-slate-200 transition-colors p-1 cursor-pointer">
             <X size={16} />
           </button>
         </div>
@@ -90,108 +96,115 @@ export default function ServicesModal({
 
             return (
               <div key={svc.service_name} className="relative">
-                <div
-                  className="bg-slate-900/60 border border-slate-700/40 rounded-lg p-3">
-                {/* Service header */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="text-xs font-medium text-slate-200 truncate">
-                      {svc.service_name}
-                    </span>
-                    {svc.is_public && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400">
-                        public
+                <div className="bg-slate-900/60 border border-slate-700/40 rounded-lg p-3">
+                  {/* Service header */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-xs font-medium text-slate-200 truncate">
+                        {svc.service_name}
                       </span>
-                    )}
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded ${
-                        isRunning
-                          ? "bg-emerald-500/20 text-emerald-400"
-                          : "bg-slate-700/60 text-slate-500"
-                      }`}>
-                      {svc.status}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => setOpenSettingsService(
-                        openSettingsService === svc.service_name ? null : svc.service_name,
+                      {svc.is_public && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400">
+                          public
+                        </span>
                       )}
-                      disabled={isLoading}
-                      className={`transition-colors disabled:opacity-50 cursor-pointer p-1 ${
-                        openSettingsService === svc.service_name
-                          ? "text-violet-400 bg-violet-500/20"
-                          : "text-slate-500 hover:text-slate-300 hover:bg-slate-700/50"
-                      }`}
-                      title="Settings">
-                      <Terminal size={12} />
-                    </button>
-                    {isRunning ? (
-                      <>
-                        <button
-                          onClick={() =>
-                            handleAction(svc.service_name, () =>
-                              stopService(project.id, svc.service_name),
-                            )
-                          }
-                          disabled={isLoading}
-                          className="text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
-                          title="Stop">
-                          {isLoading ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <Square size={12} />
-                          )}
-                        </button>
-                        <button
-                          onClick={() =>
-                            handleAction(svc.service_name, () =>
-                              restartService(project.id, svc.service_name),
-                            )
-                          }
-                          disabled={isLoading}
-                          className="text-slate-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
-                          title="Restart">
-                          <RotateCcw size={12} />
-                        </button>
-                      </>
-                    ) : (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          isRunning
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-slate-700/60 text-slate-500"
+                        }`}>
+                        {svc.status}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() =>
-                          handleAction(svc.service_name, () =>
-                            startService(project.id, svc.service_name),
+                          setOpenSettingsService(
+                            openSettingsService === svc.service_name
+                              ? null
+                              : svc.service_name,
                           )
                         }
                         disabled={isLoading}
-                        className="text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
-                        title="Start">
-                        {isLoading ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : (
-                          <Play size={12} />
-                        )}
+                        className={`transition-colors disabled:opacity-50 cursor-pointer p-1 ${
+                          openSettingsService === svc.service_name
+                            ? "text-violet-400 bg-violet-500/20"
+                            : "text-slate-500 hover:text-slate-300 hover:bg-slate-700/50"
+                        }`}
+                        title="Settings">
+                        <Terminal size={12} />
                       </button>
+                      {isRunning ? (
+                        <>
+                          <button
+                            onClick={() =>
+                              handleAction(svc.service_name, () =>
+                                stopService(project.id, svc.service_name),
+                              )
+                            }
+                            disabled={isLoading}
+                            className="text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
+                            title="Stop">
+                            {isLoading ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Square size={12} />
+                            )}
+                          </button>
+                          <button
+                            onClick={() =>
+                              handleAction(svc.service_name, () =>
+                                restartService(project.id, svc.service_name),
+                              )
+                            }
+                            disabled={isLoading}
+                            className="text-slate-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
+                            title="Restart">
+                            <RotateCcw size={12} />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() =>
+                            handleAction(svc.service_name, () =>
+                              startService(project.id, svc.service_name),
+                            )
+                          }
+                          disabled={isLoading}
+                          className="text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
+                          title="Start">
+                          {isLoading ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Play size={12} />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                    {openSettingsService === svc.service_name && (
+                      <ServiceSettingsPopover
+                        projectId={project.id}
+                        service={svc}
+                        onRefresh={onRefresh}
+                        onClose={() => setOpenSettingsService(null)}
+                      />
                     )}
                   </div>
-                </div>
 
-                {/* Image + port */}
-                <p
-                  className="text-[10px] text-slate-500 truncate font-mono mt-1.5"
-                  title={svc.image}>
-                  {shortImage(svc.image)}
-                  {svc.port
-                    ? svc.mapped_port && svc.mapped_port > 0
-                      ? ` | ${svc.mapped_port}:${svc.port}`
-                      : ` | :${svc.port}`
-                    : ""}
-                </p>
+                  {/* Image + port */}
+                  <p
+                    className="text-[10px] text-slate-500 truncate font-mono mt-1.5"
+                    title={svc.image}>
+                    {shortImage(svc.image)}
+                    {svc.port
+                      ? svc.mapped_port && svc.mapped_port > 0
+                        ? ` | ${svc.mapped_port}:${svc.port}`
+                        : ` | :${svc.port}`
+                      : ""}
+                  </p>
 
-                {/* Stats grid */}
-                {(isRunning ||
-                  svc.cpu_limit !== undefined ||
-                  svc.memory_limit_mb !== undefined ||
-                  svc.disk_gb !== undefined) && (
+                  {/* Stats grid */}
                   <div className="grid grid-cols-3 gap-2 mt-2">
                     {/* CPU */}
                     <div className="bg-slate-800/60 rounded px-2 py-1.5">
@@ -274,42 +287,31 @@ export default function ServicesModal({
                       )}
                     </div>
                   </div>
-                )}
 
-                {/* Volumes */}
-                {svc.volumes && svc.volumes.length > 0 && (
-                  <div className="mt-2 flex items-start gap-1.5">
-                    <Database
-                      size={10}
-                      className="text-slate-600 mt-0.5 shrink-0"
-                    />
-                    <div className="text-[10px] font-mono">
-                      {svc.volumes.map((v, i) => (
-                        <span
-                          key={i}
-                          className="inline-block mr-3 last:mr-0">
-                          <span className="text-slate-500">
-                            {v.container_path}
-                          </span>
-                          {v.volume_name && (
-                            <span className="text-slate-600">
-                              {" "}
-                              &larr; {v.volume_name}
+                  {/* Volumes */}
+                  {svc.volumes && svc.volumes.length > 0 && (
+                    <div className="mt-2 flex items-start gap-1.5">
+                      <Database
+                        size={10}
+                        className="text-slate-600 mt-0.5 shrink-0"
+                      />
+                      <div className="text-[10px] font-mono">
+                        {svc.volumes.map((v, i) => (
+                          <span key={i} className="inline-block mr-3 last:mr-0">
+                            <span className="text-slate-500">
+                              {v.container_path}
                             </span>
-                          )}
-                        </span>
-                      ))}
+                            {v.volume_name && (
+                              <span className="text-slate-600">
+                                {" "}
+                                &larr; {v.volume_name}
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-                {openSettingsService === svc.service_name && (
-                  <ServiceSettingsPopover
-                    projectId={project.id}
-                    service={svc}
-                    onRefresh={onRefresh}
-                    onClose={() => setOpenSettingsService(null)}
-                  />
-                )}
+                  )}
                 </div>
               </div>
             );

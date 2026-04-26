@@ -3,6 +3,7 @@ use tracing::{info, warn};
 
 use crate::AppState;
 use crate::nodes::client::get_node_client;
+use crate::status::{self, ProjectUpdateFields};
 use litebin_common::types::{ContainerStatus, Project};
 
 pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
@@ -212,22 +213,26 @@ async fn reconcile_project(state: &AppState, project: &Project, corrections: &mu
 }
 
 async fn set_project_error(state: &AppState, project_id: &str) {
-    let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query("UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?")
-        .bind(now)
-        .bind(project_id)
-        .execute(&state.db)
-        .await;
+    let _ = status::transition(
+        &state.db,
+        project_id,
+        "error",
+        &ProjectUpdateFields::default(),
+        None,
+    )
+    .await;
     warn!(project_id, "reconciliation: project set to error");
 }
 
 async fn set_project_running(state: &AppState, project: &Project) {
-    let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query("UPDATE projects SET status = 'running', updated_at = ? WHERE id = ?")
-        .bind(now)
-        .bind(&project.id)
-        .execute(&state.db)
-        .await;
+    let _ = status::transition(
+        &state.db,
+        &project.id,
+        "running",
+        &ProjectUpdateFields::default(),
+        None,
+    )
+    .await;
 
     // Sync routes
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);

@@ -81,7 +81,9 @@ export default function ServiceSettingsPopover({
   };
 
   return (
-    <div ref={ref} className="absolute left-0 right-0 top-full mt-1 z-30 bg-slate-800 border border-slate-700/70 rounded-md shadow-xl max-w-sm px-3 py-3 space-y-3">
+    <div
+      ref={ref}
+      className="absolute top-[30px] right-0 w-full mt-1 z-30 w-full bg-slate-800 border border-slate-700/70 rounded-md shadow-xl px-3 py-3 space-y-3">
       {error && (
         <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1.5">
           {error}
@@ -92,7 +94,7 @@ export default function ServiceSettingsPopover({
         <span className="text-[10px] text-slate-500 block mb-1">Image</span>
         <input
           type="text"
-          value={service.image ? (service.image.length > 20 ? service.image.slice(0, 20) + "..." : service.image) : "—"}
+          value={service.image ? service.image : "—"}
           readOnly
           className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1 text-[11px] text-slate-500 font-mono cursor-default"
           title={service.image}
@@ -103,7 +105,9 @@ export default function ServiceSettingsPopover({
         <span className="text-[10px] text-slate-500 block mb-1">Port</span>
         <input
           type="text"
-          value={service.port ? `${service.mapped_port ?? ""}:${service.port}` : "—"}
+          value={
+            service.port ? `${service.mapped_port ?? ""}:${service.port}` : "—"
+          }
           readOnly
           className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1 text-[11px] text-slate-500 font-mono cursor-default"
         />
@@ -145,24 +149,20 @@ export default function ServiceSettingsPopover({
         <button
           onClick={handleSave}
           disabled={loading}
-          className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-50 cursor-pointer"
-        >
+          className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-50 cursor-pointer">
           Save
         </button>
         <button
           onClick={handleSaveAndRecreate}
           disabled={loading}
-          className="flex-1 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
-        >
+          className="flex-1 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer">
           {loading ? "Recreating..." : "Save & Recreate"}
         </button>
       </div>
 
       <div className="flex items-start gap-1.5 text-[10px] text-slate-500">
         <Info size={10} className="mt-0.5 shrink-0" />
-        <span>
-          Image and port are managed via compose.yaml
-        </span>
+        <span>Image and port are managed via compose.yaml</span>
       </div>
     </div>
   );

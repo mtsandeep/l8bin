@@ -7,6 +7,7 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 
+use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -117,48 +118,32 @@ pub async fn wake_report(
         "received wake report from agent"
     );
 
-    let result = sqlx::query(
-        "UPDATE projects SET status = 'running', container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
+    // Transition project (and all services) to running via centralized status module
+    let result = status::transition(
+        &state.db,
+        &report.project_id,
+        "running",
+        &ProjectUpdateFields {
+            container_id: Some(Some(report.container_id.clone())),
+            mapped_port: Some(Some(report.mapped_port as i64)),
+            last_active_at: Some(now),
+            ..Default::default()
+        },
+        None,
     )
-    .bind(&report.container_id)
-    .bind(report.mapped_port as i64)
-    .bind(now)
-    .bind(now)
-    .bind(&report.project_id)
-    .execute(&state.db)
     .await;
 
     match result {
-        Ok(r) => {
-            if r.rows_affected() == 0 {
+        Ok(()) => {}
+        Err(e) => {
+            if e.to_string().contains("no rows") {
                 tracing::warn!(project_id = %report.project_id, "wake report: project not found in DB");
                 return StatusCode::NOT_FOUND;
             }
-        }
-        Err(e) => {
             tracing::error!(error = %e, "wake report: DB update failed");
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
     }
-
-    // Also update the public service's row in project_services
-    let _ = sqlx::query(
-        "UPDATE project_services SET status = 'running', container_id = ?, mapped_port = ? WHERE project_id = ? AND is_public = 1",
-    )
-    .bind(&report.container_id)
-    .bind(report.mapped_port as i64)
-    .bind(&report.project_id)
-    .execute(&state.db)
-    .await;
-
-    // For multi-service projects, update remaining non-public services to running
-    // (the agent started them all, but we only have the public service's container_id)
-    let _ = sqlx::query(
-        "UPDATE project_services SET status = 'running' WHERE project_id = ? AND status = 'stopped'",
-    )
-    .bind(&report.project_id)
-    .execute(&state.db)
-    .await;
 
     // Trigger debounced route sync
     let _ = state.route_sync_tx.send(());

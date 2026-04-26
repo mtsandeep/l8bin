@@ -5,6 +5,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::AppState;
+use crate::status::{self, ProjectUpdateFields};
 
 use super::helpers::{MessageResponse, read_local_project_env, sync_caddy, write_local_env_snapshot};
 
@@ -178,13 +179,7 @@ pub async fn start_services(
                         if docker.is_container_running(existing_cid).await.unwrap_or(false) {
                             // Already running — fix stale DB status (e.g. stats polling
                             // may have marked it 'stopped' after a transient check failure)
-                            let _ = sqlx::query(
-                                "UPDATE project_services SET status = 'running' WHERE project_id = ? AND service_name = ? AND status != 'running'"
-                            )
-                            .bind(&run_config.project_id)
-                            .bind(&svc)
-                            .execute(&db)
-                            .await;
+                            let _ = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(existing_port as i64)).await;
                             return Ok(StartedService {
                                 container_id: existing_cid.clone(),
                                 mapped_port: existing_port,
@@ -202,14 +197,7 @@ pub async fn start_services(
                                     existing_port
                                 };
                                 // Update service status and mapped port
-                                let _ = sqlx::query(
-                                    "UPDATE project_services SET status = 'running', mapped_port = ? WHERE project_id = ? AND service_name = ?"
-                                )
-                                .bind(actual_port as i64)
-                                .bind(&run_config.project_id)
-                                .bind(&svc)
-                                .execute(&db)
-                                .await;
+                                let _ = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(actual_port as i64)).await;
                                 tracing::info!(service = %svc, container_id = %existing_cid, "started existing stopped container");
                                 return Ok(StartedService {
                                     container_id: existing_cid.clone(),
@@ -246,15 +234,7 @@ pub async fn start_services(
                 }
 
                 // Update project_services row
-                let _ = sqlx::query(
-                    "UPDATE project_services SET container_id = ?, mapped_port = ?, status = 'running' WHERE project_id = ? AND service_name = ?"
-                )
-                .bind(&container_id)
-                .bind(mapped_port as i64)
-                .bind(&run_config.project_id)
-                .bind(&svc)
-                .execute(&db)
-                .await;
+                let _ = status::set_service_running(&db, &run_config.project_id, &svc, &container_id, Some(mapped_port as i64)).await;
 
                 // Track for rollback
                 if let Ok(mut started) = started_containers.lock() {
@@ -291,20 +271,13 @@ pub async fn start_services(
                             tracing::warn!(cid = %cid, "rollback: stopped after failure");
                         }
                         // Reset all service statuses
-                        let _ = sqlx::query(
-                            "UPDATE project_services SET status = 'stopped', container_id = NULL, mapped_port = NULL WHERE project_id = ?"
-                        )
-                        .bind(project_id)
-                        .execute(&state.db)
-                        .await;
-                        let now = chrono::Utc::now().timestamp();
-                        let _ = sqlx::query(
-                            "UPDATE projects SET status = 'error', updated_at = ? WHERE id = ?"
-                        )
-                        .bind(now)
-                        .bind(project_id)
-                        .execute(&state.db)
-                        .await;
+                        let svc_names: Vec<String> = started_containers.lock()
+                            .map(|s| s.iter().map(|(name, _)| name.clone()).collect())
+                            .unwrap_or_default();
+                        for svc_name in &svc_names {
+                            let _ = status::set_service_stopped(&state.db, project_id, svc_name).await;
+                        }
+                        let _ = status::transition(&state.db, project_id, "error", &ProjectUpdateFields::default(), None).await;
                         return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
                     }
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
@@ -333,26 +306,18 @@ pub async fn start_services(
     // Only update projects row if we started a public service or all services.
     // When starting a specific non-public service, preserve the existing public container info.
     if !public_container_id.is_empty() || opts.services.is_none() {
-        let _ = sqlx::query(
-            "UPDATE projects SET status = 'running', container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(if public_container_id.is_empty() { None } else { Some(public_container_id) })
-        .bind(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) })
-        .bind(now)
-        .bind(now)
-        .bind(project_id)
-        .execute(&state.db)
-        .await;
+        let _ = status::transition(&state.db, project_id, "running", &ProjectUpdateFields {
+            container_id: Some(if public_container_id.is_empty() { None } else { Some(public_container_id) }),
+            mapped_port: Some(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) }),
+            last_active_at: Some(now),
+            ..Default::default()
+        }, None).await;
     } else {
         // Just update status and timestamp, preserve existing container info
-        let _ = sqlx::query(
-            "UPDATE projects SET status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(now)
-        .bind(now)
-        .bind(project_id)
-        .execute(&state.db)
-        .await;
+        let _ = status::transition(&state.db, project_id, "running", &ProjectUpdateFields {
+            last_active_at: Some(now),
+            ..Default::default()
+        }, None).await;
     }
 
     sync_caddy(state).await;
@@ -378,7 +343,7 @@ pub async fn stop_services(
     services: Option<&HashSet<String>>,
 ) {
     let rows: Vec<(String, Option<String>)> = match sqlx::query_as(
-        "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status = 'running'",
+        "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status IN ('running', 'stopping')",
     )
     .bind(project_id)
     .fetch_all(&state.db)
@@ -399,13 +364,7 @@ pub async fn stop_services(
         }
         if let Some(container_id) = cid {
             let _ = state.docker.stop_container(container_id).await;
-            let _ = sqlx::query(
-                "UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND service_name = ?"
-            )
-            .bind(project_id)
-            .bind(svc_name)
-            .execute(&state.db)
-            .await;
+            let _ = status::set_service_stopped(&state.db, project_id, svc_name).await;
             tracing::info!(project = %project_id, service = %svc_name, "service stopped");
         }
     }
@@ -485,13 +444,7 @@ pub async fn recreate_services(
             let _ = state.docker.remove_container(cid).await;
             tracing::info!(project = %project_id, service = %svc.service_name, "recreate: service container removed");
         }
-        let _ = sqlx::query(
-            "UPDATE project_services SET container_id = NULL, mapped_port = NULL, status = 'stopped' WHERE project_id = ? AND service_name = ?"
-        )
-        .bind(project_id)
-        .bind(&svc.service_name)
-        .execute(&state.db)
-        .await;
+        let _ = status::set_service_stopped(&state.db, project_id, &svc.service_name).await;
     }
 
     // Re-deploy targeted services

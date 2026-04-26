@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::nodes;
+use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
 use super::helpers::{MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, read_local_project_env, sync_caddy, write_local_env_snapshot};
@@ -53,11 +54,7 @@ pub async fn stop_project(
         .unwrap_or(false);
 
     // Set status to 'stopping' immediately and return — actual stop happens in background
-    let now = chrono::Utc::now().timestamp();
-    sqlx::query("UPDATE projects SET status = 'stopping', updated_at = ? WHERE id = ?")
-        .bind(now)
-        .bind(&project_id)
-        .execute(&state.db)
+    status::transition(&state.db, &project_id, "stopping", &ProjectUpdateFields::default(), None)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
@@ -102,20 +99,7 @@ pub async fn stop_project(
             }
         }
 
-        let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-        .bind(now)
-        .bind(&project_id)
-        .execute(&state.db)
-        .await;
-
-        // Also update project_services status for single-service projects
-        if service_count <= 1 {
-            let _ = sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ?")
-                .bind(&project_id)
-                .execute(&state.db)
-                .await;
-        }
+        let _ = status::transition(&state.db, &project_id, "stopped", &ProjectUpdateFields::default(), None).await;
 
         sync_caddy(&state).await;
         tracing::info!(project = %project_id, "project stopped via API");
@@ -219,37 +203,25 @@ pub async fn start_project(
         };
 
         if let Some(port) = actual_port {
-            sqlx::query(
-                "UPDATE projects SET status = 'running', mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
-            )
-            .bind(port as i64)
-            .bind(now)
-            .bind(now)
-            .bind(&project_id)
-            .execute(&state.db)
+            status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+                mapped_port: Some(Some(port as i64)),
+                last_active_at: Some(now),
+                ..Default::default()
+            }, None)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
             tracing::info!(project = %project_id, port = %port, "project started (fast path, port synced)");
         } else {
-            sqlx::query(
-                "UPDATE projects SET status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?",
-            )
-            .bind(now)
-            .bind(now)
-            .bind(&project_id)
-            .execute(&state.db)
+            status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+                last_active_at: Some(now),
+                ..Default::default()
+            }, None)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
             tracing::warn!(project = %project_id, "project started but could not read mapped port");
         }
 
         sync_caddy(&state).await;
-
-        // Sync project_services status for single-service projects
-        let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ?")
-            .bind(&project_id)
-            .execute(&state.db)
-            .await;
 
         return Ok(Json(MessageResponse {
             message: format!("project '{}' started", project_id),
@@ -306,13 +278,12 @@ pub async fn start_project(
         let mapped_port = result["mapped_port"].as_u64()
             .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port in response".to_string()))? as u16;
 
-        sqlx::query("UPDATE projects SET container_id = ?, mapped_port = ?, status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?")
-            .bind(&new_container_id)
-            .bind(mapped_port as i64)
-            .bind(now)
-            .bind(now)
-            .bind(&project_id)
-            .execute(&state.db)
+        status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+                container_id: Some(Some(new_container_id)),
+                mapped_port: Some(Some(mapped_port as i64)),
+                last_active_at: Some(now),
+                ..Default::default()
+            }, None)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
     } else {
@@ -334,25 +305,18 @@ pub async fn start_project(
 
         write_local_env_snapshot(&project_id);
 
-        sqlx::query("UPDATE projects SET container_id = ?, mapped_port = ?, status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?")
-            .bind(&new_container_id)
-            .bind(mapped_port as i64)
-            .bind(now)
-            .bind(now)
-            .bind(&project_id)
-            .execute(&state.db)
+        status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+                container_id: Some(Some(new_container_id)),
+                mapped_port: Some(Some(mapped_port as i64)),
+                last_active_at: Some(now),
+                ..Default::default()
+            }, None)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
     }
 
     sync_caddy(&state).await;
     tracing::info!(project = %project_id, "project started via API (recreate fallback)");
-
-    // Sync project_services status for single-service projects
-    let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ?")
-        .bind(&project_id)
-        .execute(&state.db)
-        .await;
 
     Ok(Json(MessageResponse {
         message: format!("project '{}' started", project_id),
@@ -556,17 +520,11 @@ pub async fn recreate_project(
                     let svc_name = svc["service_name"].as_str().unwrap_or("");
                     let container_id = svc["container_id"].as_str();
                     let mapped_port = svc["mapped_port"].as_u64().map(|p| p as i64);
-                    let status = if container_id.is_some() { "running" } else { "error" };
-                    let _ = sqlx::query(
-                        "UPDATE project_services SET container_id = ?, mapped_port = ?, status = ? WHERE project_id = ? AND service_name = ?"
-                    )
-                    .bind(container_id)
-                    .bind(mapped_port)
-                    .bind(status)
-                    .bind(&project_id)
-                    .bind(svc_name)
-                    .execute(&state.db)
-                    .await;
+                    if let Some(cid) = container_id {
+                        let _ = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await;
+                    } else {
+                        let _ = status::set_service_stopped(&state.db, &project_id, svc_name).await;
+                    }
                 }
             }
 
@@ -645,13 +603,12 @@ pub async fn recreate_project(
             .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port in response".to_string()))? as u16;
 
         // Update DB
-        sqlx::query("UPDATE projects SET container_id = ?, mapped_port = ?, status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?")
-            .bind(&container_id)
-            .bind(port as i64)
-            .bind(now)
-            .bind(now)
-            .bind(&project_id)
-            .execute(&state.db)
+        status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+                container_id: Some(Some(container_id)),
+                mapped_port: Some(Some(port as i64)),
+                last_active_at: Some(now),
+                ..Default::default()
+            }, None)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
@@ -666,13 +623,12 @@ pub async fn recreate_project(
         let (container_id, mapped_port) = state.docker.run_service_container(&config).await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to recreate: {e}")))?;
 
-        sqlx::query("UPDATE projects SET container_id = ?, mapped_port = ?, status = 'running', last_active_at = ?, updated_at = ? WHERE id = ?")
-            .bind(&container_id)
-            .bind(mapped_port as i64)
-            .bind(now)
-            .bind(now)
-            .bind(&project_id)
-            .execute(&state.db)
+        status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+                container_id: Some(Some(container_id)),
+                mapped_port: Some(Some(mapped_port as i64)),
+                last_active_at: Some(now),
+                ..Default::default()
+            }, None)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 

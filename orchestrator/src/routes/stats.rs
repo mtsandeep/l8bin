@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::nodes;
+use crate::status;
 use crate::AppState;
 use super::manage::{agent_base_url, get_node_from_db, sync_caddy};
 
@@ -215,60 +216,6 @@ async fn batch_load_services(
         }
     }
 
-    // For single-service projects that have no project_services row, synthesize one from the projects table
-    let ids_with_services: std::collections::HashSet<String> = map.keys().cloned().collect();
-    for pid in project_ids {
-        if ids_with_services.contains(pid) {
-            continue;
-        }
-        // Check if this project has an image (deployed)
-        let row: Option<(String, Option<i64>, Option<i64>, String, Option<String>)> = sqlx::query_as(
-            "SELECT image, internal_port, mapped_port, status, container_id FROM projects WHERE id = ?"
-        )
-        .bind(pid)
-        .fetch_optional(db)
-        .await
-        .unwrap_or(None);
-
-        if let Some((image, port, mapped_port, status, container_id)) = row {
-            if !image.is_empty() {
-                // Fetch limits from projects table for single-service fallback
-                let limits: Option<(Option<String>, Option<i64>, Option<f64>)> = sqlx::query_as(
-                    "SELECT cmd, memory_limit_mb, cpu_limit FROM projects WHERE id = ?"
-                )
-                .bind(pid)
-                .fetch_optional(db)
-                .await
-                .unwrap_or(None)
-                .and_then(|r: (Option<String>, Option<i64>, Option<f64>)| Some(r));
-
-                let (cmd, cpu_limit, memory_limit_mb) = limits
-                    .map(|(c, _mb, cpu)| (c, cpu, _mb))
-                    .unwrap_or((None, None, None));
-
-                map.entry(pid.clone()).or_default().push((
-                    ServiceInfo {
-                        service_name: "web".to_string(),
-                        image,
-                        port,
-                        mapped_port,
-                        is_public: true,
-                        status,
-                        container_id: container_id.clone(),
-                        cmd,
-                        cpu_percent: None,
-                        memory_usage: None,
-                        memory_limit_mb,
-                        cpu_limit,
-                        disk_gb: None,
-                        volumes: vec![],
-                    },
-                    container_id,
-                ));
-            }
-        }
-    }
-
     map
 }
 
@@ -289,6 +236,10 @@ fn make_stats_response(project_id: String, status: String, last_active_at: Optio
 pub async fn all_project_stats(
     State(state): State<AppState>,
 ) -> Result<Json<BatchStatsResponse>, (StatusCode, String)> {
+    // Sync local project statuses from actual Docker state before reading DB
+    let sync_results = status::sync_all_local_from_docker(&state.db, &state.docker).await;
+    let mut caddy_dirty = sync_results.iter().any(|r| r.caddy_dirty);
+
     let projects = sqlx::query_as::<_, crate::db::models::Project>(
         "SELECT * FROM projects",
     )
@@ -296,7 +247,7 @@ pub async fn all_project_stats(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
-    // Batch-load services for ALL projects upfront
+    // Batch-load services for ALL projects upfront (after sync so services are fresh)
     let all_ids: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
     let services_map = batch_load_services(&state.db, &all_ids).await;
 
@@ -305,7 +256,6 @@ pub async fn all_project_stats(
         projects.iter().map(|p| (p.id.clone(), p.last_active_at)).collect();
 
     let mut results: Vec<StatsResponse> = Vec::with_capacity(projects.len());
-    let mut caddy_dirty = false;
 
     // For local projects: (project_id, Vec<container_id>)
     let mut local_projects: Vec<(String, Vec<String>)> = Vec::new();
@@ -414,27 +364,13 @@ pub async fn all_project_stats(
             let actually_running = state.docker.is_container_running(cid).await.unwrap_or(false);
             if !actually_running {
                 stopped_cids.insert(cid.clone());
-                // Try to cache disk before marking stopped
+                // Cache disk before moving on
                 if let Ok(d) = state.docker.disk_usage(cid).await {
                     state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
                 }
-                // Update this specific service to stopped in DB
-                let _ = sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND container_id = ?")
-                    .bind(project_id)
-                    .bind(cid)
-                    .execute(&state.db)
-                    .await;
-                caddy_dirty = true;
                 continue;
             }
             any_running = true;
-
-            // Update service status back to "running" if it was stale
-            let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ? AND container_id = ? AND status != 'running'")
-                .bind(project_id)
-                .bind(cid)
-                .execute(&state.db)
-                .await;
 
             let stats_fut = state.docker.container_stats(cid);
             let disk_fut = state.docker.disk_usage(cid);
@@ -460,13 +396,6 @@ pub async fn all_project_stats(
         }
 
         if !any_running {
-            // All containers stopped — mark project as stopped
-            let now = chrono::Utc::now().timestamp();
-            let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-                .bind(now)
-                .bind(project_id)
-                .execute(&state.db)
-                .await;
             let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(mut svc, cid)| {
                 if let Some(container_id) = cid {
                     if let Some(bytes) = state.disk_cache.get(&container_id) {
@@ -492,19 +421,6 @@ pub async fn all_project_stats(
             services,
         ));
 
-        // If some services are stopped but not all, mark project as "degraded" in DB
-        // so the route resolver points traffic to the orchestrator waker
-        if !stopped_cids.is_empty() && any_running {
-            let now = chrono::Utc::now().timestamp();
-            let _ = sqlx::query("UPDATE projects SET status = 'degraded', updated_at = ? WHERE id = ? AND status != 'degraded'")
-                .bind(now)
-                .bind(project_id)
-                .execute(&state.db)
-                .await;
-            if !caddy_dirty {
-                caddy_dirty = true;
-            }
-        }
     }
 
     // Fetch remote stats — one POST per node with all container IDs
@@ -599,24 +515,27 @@ pub async fn all_project_stats(
 
         match resp.json::<Vec<serde_json::Value>>().await {
             Ok(items) => {
+                // Collect container states per project for DB sync
+                let mut container_states_by_project: std::collections::HashMap<String, Vec<(String, bool)>> = std::collections::HashMap::new();
+
                 for item in &items {
                     let cid = item["container_id"].as_str().unwrap_or("");
                     let project_id = cid_to_pid.get(cid).cloned().unwrap_or_default();
                     let state_str = item["state"].as_str().unwrap_or("running");
+                    let is_running = state_str != "stopped";
                     let disk_gb = item["disk_gb"].as_f64().unwrap_or(0.0);
+
+                    container_states_by_project
+                        .entry(project_id.clone())
+                        .or_default()
+                        .push((cid.to_string(), is_running));
 
                     if disk_gb > 0.0 {
                         state.disk_cache.insert(cid.to_string(), (disk_gb * 1024.0 * 1024.0 * 1024.0) as i64);
                     }
 
-                    if state_str == "stopped" {
+                    if !is_running {
                         stopped_cids.insert(cid.to_string());
-                        // Update this specific service to stopped in DB
-                        let _ = sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND container_id = ?")
-                            .bind(&project_id)
-                            .bind(cid)
-                            .execute(&state.db)
-                            .await;
                         caddy_dirty = true;
                         continue;
                     }
@@ -633,6 +552,14 @@ pub async fn all_project_stats(
                     entry.1 += mem_usage;
                     entry.2 += mem_limit;
                     entry.3 += disk_gb;
+                }
+
+                // Sync remote project statuses from agent-reported container states
+                for (pid, states) in &container_states_by_project {
+                    let result = status::update_status_from_container_states(&state.db, pid, states).await;
+                    if result.caddy_dirty {
+                        caddy_dirty = true;
+                    }
                 }
             }
             Err(e) => {
@@ -651,24 +578,7 @@ pub async fn all_project_stats(
                     last_active_map.get(project_id).copied().flatten(),
                     services,
                 ));
-                // Mark degraded if some services stopped
-                if !stopped_cids.is_empty() {
-                    let now = chrono::Utc::now().timestamp();
-                    let _ = sqlx::query("UPDATE projects SET status = 'degraded', updated_at = ? WHERE id = ? AND status != 'degraded'")
-                        .bind(now)
-                        .bind(project_id)
-                        .execute(&state.db)
-                        .await;
-                    if !caddy_dirty { caddy_dirty = true; }
-                }
             } else {
-                // All containers were stopped — mark project as stopped
-                let now = chrono::Utc::now().timestamp();
-                let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(project_id)
-                    .execute(&state.db)
-                    .await;
                 let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(mut svc, cid)| {
                     if let Some(container_id) = cid {
                         if let Some(bytes) = state.disk_cache.get(&container_id) {
@@ -699,7 +609,7 @@ pub async fn project_stats(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
-    let project = sqlx::query_as::<_, crate::db::models::Project>(
+    let mut project = sqlx::query_as::<_, crate::db::models::Project>(
         "SELECT * FROM projects WHERE id = ?",
     )
     .bind(&project_id)
@@ -708,7 +618,24 @@ pub async fn project_stats(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    // Load services for this project
+    // Sync status from Docker for local projects
+    let node_id = project.node_id.as_deref().unwrap_or("local");
+    if node_id == "local" {
+        let sync_result = status::sync_project_from_docker(&state.db, &state.docker, &project_id).await;
+        if sync_result.caddy_dirty {
+            sync_caddy(&state).await;
+        }
+        // Re-read project to get updated status
+        project = sqlx::query_as::<_, crate::db::models::Project>(
+            "SELECT * FROM projects WHERE id = ?",
+        )
+        .bind(&project_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+    }
+
+    // Load services for this project (after sync so services are fresh)
     let services_raw = batch_load_services(&state.db, &[project_id.clone()])
         .await
         .remove(&project_id)
@@ -743,22 +670,9 @@ pub async fn project_stats(
         let actually_running = state.docker.is_container_running(cid).await.unwrap_or(false);
         if !actually_running {
             stopped_cids.insert(cid.clone());
-            // Update this specific service to stopped in DB
-            let _ = sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND container_id = ?")
-                .bind(&project_id)
-                .bind(cid)
-                .execute(&state.db)
-                .await;
             continue;
         }
         any_running = true;
-
-        // Update service status back to "running" if it was stale
-        let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ? AND container_id = ? AND status != 'running'")
-            .bind(&project_id)
-            .bind(cid)
-            .execute(&state.db)
-            .await;
 
         let stats_fut = state.docker.container_stats(cid);
         let disk_fut = state.docker.disk_usage(cid);
@@ -778,14 +692,6 @@ pub async fn project_stats(
     }
 
     if !any_running {
-        let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
-            .bind(now)
-            .bind(&project_id)
-            .execute(&state.db)
-            .await;
-        sync_caddy(&state).await;
-
         return Ok(Json(make_stats_response(
             project_id,
             "stopped".to_string(),
