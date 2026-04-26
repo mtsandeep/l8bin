@@ -20,6 +20,7 @@ struct PublicStats {
 struct ProjectInfo {
     id: String,
     status: String,
+    node_id: Option<String>,
     public_stats: Option<PublicStats>,
 }
 
@@ -203,6 +204,8 @@ async fn existing_project_flow(
     match action_idx {
         0 => {
             // Redeploy — build, upload, deploy
+            // Use existing node_id if set, otherwise show picker
+            let existing_node = project.node_id.as_deref();
             // Check for compose file — if found, ports come from compose, no prompt needed
             let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
             let compose_file = compose_paths
@@ -211,11 +214,11 @@ async fn existing_project_flow(
 
             let url = if compose_file.is_some() {
                 // Multi-service: compose handles ports
-                build_and_deploy(client, server, project_id, project_dir, 0, secret_override, false, None).await?
+                build_and_deploy(client, server, project_id, project_dir, 0, secret_override, false, existing_node).await?
             } else if detect_port_80(project_dir) {
                 // Single-service with EXPOSE 80 in Dockerfile
                 println!("  {} Detected exposed port 80", "::".dimmed());
-                build_and_deploy(client, server, project_id, project_dir, 80, secret_override, false, None).await?
+                build_and_deploy(client, server, project_id, project_dir, 80, secret_override, false, existing_node).await?
             } else {
                 // Single-service: ask for port
                 let port: u16 = if let Some(p) = port_override {
@@ -229,7 +232,7 @@ async fn existing_project_flow(
                         .parse::<u16>()
                         .context("Port must be a number (1-65535)")?
                 };
-                build_and_deploy(client, server, project_id, project_dir, port, secret_override, false, None).await?
+                build_and_deploy(client, server, project_id, project_dir, port, secret_override, false, existing_node).await?
             };
             println!();
             println!();
@@ -361,7 +364,8 @@ async fn build_and_deploy(
     is_new_project: bool,
     node_id: Option<&str>,
 ) -> Result<String> {
-    // Resolve target node: auto-pick single node, prompt for multiple
+    // Node selection: if project already has a node_id, reuse it (sticky).
+    // Otherwise, show picker if multiple nodes are online.
     let selected_node = if node_id.is_some() {
         node_id.map(|s| s.to_string())
     } else {

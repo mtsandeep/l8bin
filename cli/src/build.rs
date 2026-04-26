@@ -823,12 +823,9 @@ fn save_tar(image_tag: &str) -> Result<SavedImage> {
     let gz_path = std::env::temp_dir().join(format!("l8b-{}.tar.gz", safe_name));
     let tar_path_str = tar_path.to_string_lossy().to_string();
 
-    // Get image ID from local Docker (authoritative source)
-    let inspect = Command::new("docker")
-        .args(["inspect", "--format", "{{.Id}}", image_tag])
-        .output()
-        .context("failed to inspect image")?;
-    let image_id = String::from_utf8_lossy(&inspect.stdout).trim().to_string();
+    // Use the tag as the image reference — docker save/load preserves tags,
+    // and OCI format tars may have a different manifest digest than the local config digest.
+    let image_id = image_tag.to_string();
 
     // docker save → uncompressed tar
     let output = Command::new("docker")

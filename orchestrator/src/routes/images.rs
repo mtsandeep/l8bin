@@ -62,14 +62,30 @@ pub async fn upload_image(
                 Json(serde_json::json!({"error": format!("failed to load image: {e}")})),
             ).into_response();
         }
+        // Resolve the tag to the actual image ID Docker assigned.
+        // OCI format tars may have a different manifest digest than the local config digest,
+        // so we inspect by the tag to get the server-side image ID.
+        let resolved_id = match state.docker.inspect_image_id(&image_id).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!(error = %e, image_id = %image_id, project = %params.project_id, "image loaded but inspect failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("image loaded but inspect failed: {e}")})),
+                ).into_response();
+            }
+        };
+        return (StatusCode::OK, Json(UploadResponse { image_id: resolved_id })).into_response();
     } else {
         // Remote path: stream body to agent via channel bridge
-        if let Err((status, error)) = stream_to_agent(&state, node_id, body, &image_id).await {
-            return (status, Json(serde_json::json!({"error": error}))).into_response();
-        }
+        let resolved_id = match stream_to_agent(&state, node_id, body, &image_id).await {
+            Ok(id) => id,
+            Err((status, error)) => {
+                return (status, Json(serde_json::json!({"error": error}))).into_response();
+            }
+        };
+        return (StatusCode::OK, Json(UploadResponse { image_id: resolved_id })).into_response();
     }
-
-    (StatusCode::OK, Json(UploadResponse { image_id })).into_response()
 }
 
 async fn stream_to_agent(
@@ -77,7 +93,7 @@ async fn stream_to_agent(
     node_id: &str,
     body: Body,
     image_id: &str,
-) -> Result<(), (StatusCode, String)> {
+) -> Result<String, (StatusCode, String)> {
     use litebin_common::types::Node;
 
     let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
@@ -121,5 +137,12 @@ async fn stream_to_agent(
         return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent image load failed: {body_text}")));
     }
 
-    Ok(())
+    // Agent returns the resolved image ID (tag → actual Docker-assigned sha256)
+    let agent_resp: serde_json::Value = resp.json().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse agent response: {e}")))?;
+    let resolved_id = agent_resp["image_id"].as_str()
+        .unwrap_or(image_id)
+        .to_string();
+
+    Ok(resolved_id)
 }

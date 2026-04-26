@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix image upload failing with "No such image" — `docker save` produces OCI format tars where the config digest (`docker inspect {{.Id}}`) differs from the manifest digest (assigned by `docker load`). CLI now sends the image tag instead of the config digest. The upload endpoint (orchestrator and agent) resolves the tag to the actual Docker-assigned image ID after loading and returns it, so the deploy step uses the correct reference.
+- Fix `--node` flag overriding project's sticky node on redeploy — `deploy` command now checks if the project already has a `node_id` and ignores `--node` if they differ, keeping projects on their original node.
+
+### Changed
+- Node selection prompt no longer shows on redeploy when project has a `node_id` set — `ship` reuses the existing node automatically, only prompting for new projects or projects without a pinned node.
+
 ## [0.2.6] - 2026-04-26
 
 ### Fixed

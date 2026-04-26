@@ -937,13 +937,16 @@ impl DockerManager {
         Ok(())
     }
 
-    /// Check if an image exists in Docker by inspecting it.
-    pub async fn inspect_image(&self, image_id: &str) -> anyhow::Result<()> {
-        self.docker
-            .inspect_image(image_id)
+    /// Inspect an image and return its actual image ID as known by Docker.
+    /// Use a tag (e.g. "l8b/app:latest") to resolve to the correct ID,
+    /// which may differ from the local config digest for OCI format images.
+    pub async fn inspect_image_id(&self, image_ref: &str) -> anyhow::Result<String> {
+        let info = self.docker
+            .inspect_image(image_ref)
             .await
-            .map(|_| ())
-            .map_err(|e| anyhow::anyhow!("image inspect failed: {e}"))
+            .map_err(|e| anyhow::anyhow!("image inspect failed: {e}"))?;
+        info.id
+            .ok_or_else(|| anyhow::anyhow!("image inspect returned no id"))
     }
 
     /// Compute image statistics: dangling count/size, in-use count/size, total.

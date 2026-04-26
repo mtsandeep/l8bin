@@ -176,6 +176,17 @@ async fn main() -> Result<()> {
             let client = auth::authenticated_client(&cfg)?;
             let server = auth::resolve_server(&cfg)?;
 
+            // Resolve effective node: project's sticky node_id takes precedence over --node flag
+            let effective_node = if let Ok(proj_json) = auth::session_get(&client, &server, &format!("/projects/{}", project)).await {
+                let existing = proj_json.get("node_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                if existing.is_some() && node.is_some() && existing != node.as_deref() {
+                    eprintln!("  Note: --node ignored, project is pinned to node '{}'", existing.unwrap());
+                }
+                existing.or(node.as_deref()).map(|s| s.to_string())
+            } else {
+                node.clone()
+            };
+
             // Check for compose file (auto-detect or forced via --compose)
             let compose_file = ship::detect_compose_file(&path);
             if compose || compose_file.is_some() {
@@ -198,7 +209,7 @@ async fn main() -> Result<()> {
 
                 let url = ship::deploy_compose_noninteractive(
                     &client, &server, &project, &path, compose_name, true,
-                    ship::ComposeDeployOpts { target_services, node_id: node.clone() },
+                    ship::ComposeDeployOpts { target_services, node_id: effective_node.clone() },
                 ).await?;
 
                 println!("Deployed! {}", url);
@@ -213,7 +224,7 @@ async fn main() -> Result<()> {
                     &project,
                     std::path::Path::new(&image.path),
                     &image.image_id,
-                    node.as_deref(),
+                    effective_node.as_deref(),
                     ci_mode.enabled,
                 )
                 .await?;
@@ -225,7 +236,7 @@ async fn main() -> Result<()> {
                     &project,
                     &image_id,
                     port,
-                    node.as_deref(),
+                    effective_node.as_deref(),
                     cmd.as_deref(),
                     memory,
                     cpu,
