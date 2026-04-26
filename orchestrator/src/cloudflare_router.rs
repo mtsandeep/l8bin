@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use litebin_common::routing::RoutingProvider;
+use litebin_common::routing::{wake_fallback_handle, RoutingProvider};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
@@ -64,11 +64,15 @@ impl CloudflareDnsRouter {
                             hosts.push(cd.clone());
                         }
                         let path = cr.path.as_deref().unwrap_or("/");
+                        // Use handle_response to catch 502/503/504 and proxy
+                        // to orchestrator for auto-wake
+                        let fallback = wake_fallback_handle(orchestrator_upstream);
                         routes.push(json!({
                             "match": [{ "host": hosts, "path": [path] }],
                             "handle": [{
                                 "handler": "reverse_proxy",
-                                "upstreams": [{ "dial": &cr.upstream }]
+                                "upstreams": [{ "dial": &cr.upstream }],
+                                "handle_response": fallback
                             }]
                         }));
                     }
@@ -81,11 +85,14 @@ impl CloudflareDnsRouter {
                         if cr.route_type == "alias" {
                             hosts.push(format!("{}.{}", alias, domain));
                         }
+                        // Add handle_response for auto-wake when upstream is down
+                        let fallback = wake_fallback_handle(orchestrator_upstream);
                         routes.push(json!({
                             "match": [{ "host": hosts }],
                             "handle": [{
                                 "handler": "reverse_proxy",
-                                "upstreams": [{ "dial": &cr.upstream }]
+                                "upstreams": [{ "dial": &cr.upstream }],
+                                "handle_response": fallback
                             }]
                         }));
                     }
@@ -94,20 +101,13 @@ impl CloudflareDnsRouter {
             }
 
             // Catch-all subdomain route
+            let subdomain_fallback = wake_fallback_handle(orchestrator_upstream);
             routes.push(json!({
                 "match": [{ "host": [p.subdomain_host] }],
                 "handle": [{
                     "handler": "reverse_proxy",
                     "upstreams": [{ "dial": p.upstream }],
-                    "handle_response": [{
-                        "match": { "status_code": [502, 503, 504] },
-                        "routes": [{
-                            "handle": [{
-                                "handler": "reverse_proxy",
-                                "upstreams": [{ "dial": orchestrator_upstream }]
-                            }]
-                        }]
-                    }]
+                    "handle_response": subdomain_fallback
                 }]
             }));
 
@@ -148,20 +148,13 @@ impl CloudflareDnsRouter {
                     }));
                 } else {
                     // Running custom domain: proxy to container with 502 fallback
+                    let cd_fallback = wake_fallback_handle(orchestrator_upstream);
                     routes.push(json!({
                         "match": [{ "host": [cd] }],
                         "handle": [{
                             "handler": "reverse_proxy",
                             "upstreams": [{ "dial": p.upstream }],
-                            "handle_response": [{
-                                "match": { "status_code": [502, 503, 504] },
-                                "routes": [{
-                                    "handle": [{
-                                        "handler": "reverse_proxy",
-                                        "upstreams": [{ "dial": orchestrator_upstream }]
-                                    }]
-                                }]
-                            }]
+                            "handle_response": cd_fallback
                         }]
                     }));
 
@@ -373,11 +366,15 @@ impl CloudflareDnsRouter {
                                 hosts.push(cd.clone());
                             }
                             let path = cr.path.as_deref().unwrap_or("/");
+                            // Use handle_response to catch 502/503/504 and proxy
+                            // to agent wake server for auto-wake
+                            let agent_fallback = wake_fallback_handle("litebin-agent:8444");
                             routes.push(json!({
                                 "match": [{ "host": hosts, "path": [path] }],
                                 "handle": [{
                                     "handler": "reverse_proxy",
-                                    "upstreams": [{ "dial": &cr.upstream }]
+                                    "upstreams": [{ "dial": &cr.upstream }],
+                                    "handle_response": agent_fallback
                                 }]
                             }));
                         }
@@ -390,11 +387,14 @@ impl CloudflareDnsRouter {
                             if cr.route_type == "alias" {
                                 hosts.push(format!("{}.{}", alias, domain));
                             }
+                            // Add handle_response for auto-wake when upstream is down
+                            let agent_fallback = wake_fallback_handle("litebin-agent:8444");
                             routes.push(json!({
                                 "match": [{ "host": hosts }],
                                 "handle": [{
                                     "handler": "reverse_proxy",
-                                    "upstreams": [{ "dial": &cr.upstream }]
+                                    "upstreams": [{ "dial": &cr.upstream }],
+                                    "handle_response": agent_fallback
                                 }]
                             }));
                         }

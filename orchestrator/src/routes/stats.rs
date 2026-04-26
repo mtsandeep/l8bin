@@ -236,9 +236,11 @@ fn make_stats_response(project_id: String, status: String, last_active_at: Optio
 pub async fn all_project_stats(
     State(state): State<AppState>,
 ) -> Result<Json<BatchStatsResponse>, (StatusCode, String)> {
-    // Sync local project statuses from actual Docker state before reading DB
-    let sync_results = status::sync_all_local_from_docker(&state.db, &state.docker).await;
-    let mut caddy_dirty = sync_results.iter().any(|r| r.caddy_dirty);
+    let t_total = std::time::Instant::now();
+
+    // Periodic background sync (60s) handles Docker reconciliation.
+    // Stats endpoint just reads DB — no need to sync on every poll.
+    let mut caddy_dirty = false;
 
     let projects = sqlx::query_as::<_, crate::db::models::Project>(
         "SELECT * FROM projects",
@@ -247,7 +249,7 @@ pub async fn all_project_stats(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
-    // Batch-load services for ALL projects upfront (after sync so services are fresh)
+    // Batch-load services for ALL projects upfront
     let all_ids: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
     let services_map = batch_load_services(&state.db, &all_ids).await;
 
@@ -320,29 +322,38 @@ pub async fn all_project_stats(
     }
 
     // Handle per-service disk lookups for stopped local containers
+    let stopped_count = disk_lookups.len();
     for (project_id, services_raw) in disk_lookups {
         let mut services: Vec<ServiceInfo> = Vec::with_capacity(services_raw.len());
         for (mut svc, cid) in services_raw {
             if let Some(ref container_id) = cid {
-                match state.docker.disk_usage(container_id).await {
-                    Ok(d) => {
-                        let disk_gb = d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0);
-                        svc.disk_gb = Some(disk_gb);
-                        state.disk_cache.insert(container_id.clone(), d.size_root_fs as i64);
-                    }
-                    Err(_) => {
-                        // Container removed or unreachable — fall back to cached value
-                        if let Some(bytes) = state.disk_cache.get(container_id) {
-                            svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                // Use cached disk value for stopped containers — disk doesn't change
+                // when container isn't running. Only call Docker if we have no cached value.
+                if let Some(bytes) = state.disk_cache.get(container_id) {
+                    svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                } else {
+                    match state.docker.disk_usage(container_id).await {
+                        Ok(d) => {
+                            let disk_gb = d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0);
+                            svc.disk_gb = Some(disk_gb);
+                            state.disk_cache.insert(container_id.clone(), d.size_root_fs as i64);
                         }
+                        Err(_) => {} // Container gone, no cache to fall back to
                     }
                 }
             }
             services.push(svc);
         }
-        // Derive status from actual service states instead of hardcoding "stopped"
-        let any_running = services.iter().any(|s| s.status == "running");
-        let status = if any_running { "degraded".to_string() } else { "stopped".to_string() };
+        // Use the actual project status — preserve transient states (stopping, deploying, error, unconfigured)
+        // and only derive stopped/degraded when the project is in a stable terminal state
+        let project_status = projects.iter().find(|p| p.id == project_id).map(|p| p.status.as_str()).unwrap_or("stopped");
+        let status = match project_status {
+            "stopping" | "deploying" | "error" | "unconfigured" => project_status.to_string(),
+            _ => {
+                let any_running = services.iter().any(|s| s.status == "running");
+                if any_running { "degraded".to_string() } else { "stopped".to_string() }
+            }
+        };
         results.push(make_stats_response(
             project_id.clone(),
             status,
@@ -351,48 +362,79 @@ pub async fn all_project_stats(
         ));
     }
 
-    // Fetch local stats — per-container for per-service breakdown
+    // Fetch local stats — parallelize all Docker API calls across all containers
+    let t2 = std::time::Instant::now();
+
+    // Flatten all container IDs with their project context
+    let mut all_local_containers: Vec<(String, String)> = Vec::new(); // (project_id, container_id)
+    for (project_id, container_ids) in &local_projects {
+        for cid in container_ids {
+            all_local_containers.push((project_id.clone(), cid.clone()));
+        }
+    }
+
+    // Parallel Docker calls for all containers at once
+    let mut handles = Vec::with_capacity(all_local_containers.len());
+    for (_project_id, cid) in &all_local_containers {
+        let docker = state.docker.clone();
+        let cid = cid.clone();
+        handles.push(async move {
+            let stats_res = docker.container_stats(&cid).await;
+            (cid, stats_res)
+        });
+    }
+    let mut container_results: Vec<(String, Option<(f64, u64, u64)>)> = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let (cid, stats_res) = handle.await;
+        match stats_res {
+            Ok(s) => container_results.push((cid, Some((s.cpu_percent, s.memory_usage, s.memory_limit)))),
+            Err(_) => container_results.push((cid, None)),
+        }
+    }
+
+    // Build per-project results from container data
+    let container_running: std::collections::HashSet<String> = container_results.iter()
+        .filter(|(_, r)| r.is_some())
+        .map(|(cid, _)| cid.clone())
+        .collect();
+
     for (project_id, container_ids) in &local_projects {
         let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-
-        // Collect stats for each container
         let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
-        let mut any_running = false;
         let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut any_running = false;
 
         for cid in container_ids {
-            let actually_running = state.docker.is_container_running(cid).await.unwrap_or(false);
-            if !actually_running {
+            if container_running.contains(cid) {
+                any_running = true;
+                // Disk cache: use cached value or fetch in background
+                let (disk, cpu_limit) = if let Some(bytes) = state.disk_cache.get(cid) {
+                    (*bytes as f64 / (1024.0 * 1024.0 * 1024.0), None)
+                } else {
+                    // No cached disk — fetch (only on first encounter per container)
+                    match state.docker.disk_usage(cid).await {
+                        Ok(d) => {
+                            state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
+                            (d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0), d.cpu_limit)
+                        }
+                        Err(_) => (0.0, None),
+                    }
+                };
+                // Find matching stats result
+                let (cpu, mem_usage, mem_limit) = container_results.iter()
+                    .find(|(c, _)| c == cid)
+                    .and_then(|(_, r)| *r)
+                    .unwrap_or((0.0, 0, 0));
+                per_container.insert(cid.clone(), (cpu, mem_usage, mem_limit, disk, cpu_limit));
+            } else {
                 stopped_cids.insert(cid.clone());
-                // Cache disk before moving on
-                if let Ok(d) = state.docker.disk_usage(cid).await {
-                    state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
+                // Cache disk for stopped containers
+                if !state.disk_cache.contains_key(cid) {
+                    if let Ok(d) = state.docker.disk_usage(cid).await {
+                        state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
+                    }
                 }
-                continue;
             }
-            any_running = true;
-
-            let stats_fut = state.docker.container_stats(cid);
-            let disk_fut = state.docker.disk_usage(cid);
-            let (stats_res, disk_res) = tokio::join!(stats_fut, disk_fut);
-
-            let (cpu, mem_usage, mem_limit) = match stats_res {
-                Ok(s) => (s.cpu_percent, s.memory_usage, s.memory_limit),
-                Err(e) => {
-                    tracing::warn!(project = %project_id, container = %cid, error = %e, "batch stats: failed to fetch local stats");
-                    (0.0, 0, 0)
-                }
-            };
-
-            let (disk, cpu_limit) = match disk_res {
-                Ok(d) => {
-                    state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
-                    (d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0), d.cpu_limit)
-                }
-                Err(_) => (0.0, None),
-            };
-
-            per_container.insert(cid.clone(), (cpu, mem_usage, mem_limit, disk, cpu_limit));
         }
 
         if !any_running {
@@ -423,7 +465,10 @@ pub async fn all_project_stats(
 
     }
 
+    tracing::info!(elapsed_ms = t2.elapsed().as_millis(), "stats: local docker stats");
+
     // Fetch remote stats — one POST per node with all container IDs
+    let t3 = std::time::Instant::now();
     for (node_id, projects_containers) in &remote_by_node {
         // Flatten all container IDs for the batch request
         let all_container_ids: Vec<String> = projects_containers.iter()
@@ -596,10 +641,20 @@ pub async fn all_project_stats(
             }
         }
     }
+    tracing::info!(elapsed_ms = t3.elapsed().as_millis(), "stats: remote node stats");
 
     if caddy_dirty {
         sync_caddy(&state).await;
     }
+
+    tracing::info!(
+        elapsed_ms = t_total.elapsed().as_millis(),
+        projects = results.len(),
+        local = local_projects.len(),
+        remote = remote_by_node.len(),
+        stopped = stopped_count,
+        "stats: total"
+    );
 
     Ok(Json(BatchStatsResponse { stats: results }))
 }

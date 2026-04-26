@@ -178,15 +178,73 @@ async fn remote_recreate(
     Ok(())
 }
 
-/// Start all services of a multi-service project. Delegates to the unified `start_services`.
-async fn start_multi_service(state: &AppState, project: &crate::db::models::Project) -> Result<(), Response> {
-    crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
+/// Start only the stopped services of a project (targeted recovery).
+/// Used by the waker when non-public services are down but the public service is up.
+async fn start_stopped_services(state: &AppState, project: &crate::db::models::Project) {
+    let stopped: Vec<String> = sqlx::query_scalar(
+        "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped'"
+    )
+    .bind(&project.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    if stopped.is_empty() {
+        return;
+    }
+
+    let filter: std::collections::HashSet<String> = stopped.into_iter().collect();
+    match crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
         force_recreate: false,
         pull_images: true,
-        services: None,
+        services: Some(filter),
         connect_orchestrator: true,
         rollback_on_failure: false,
-    }).await.map_err(|(s, e)| (s, e).into_response())
+    }).await {
+        Ok(_) => {
+            status::derive_and_set_project_status(&state.db, &project.id).await;
+            let _ = state.route_sync_tx.send(());
+            tracing::info!(project = %project.id, "waker: background recovery succeeded");
+        }
+        Err((s, e)) => tracing::warn!(project = %project.id, status = %s, error = %e, "waker: background recovery failed"),
+    }
+}
+
+/// Handle detected down services: transition project status and spawn recovery.
+/// If the public service is down, mark project "stopped" (fall through to wake lock).
+/// If only non-public services are down, mark "degraded" and recover in background.
+async fn handle_down_services(
+    state: &AppState,
+    project: &crate::db::models::Project,
+    project_id: &str,
+    public_service_up: &mut bool,
+) {
+    // After marking crashed services as stopped, check if public is among them
+    let public_down: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'stopped'",
+    )
+    .bind(project_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0) > 0;
+
+    if public_down {
+        *public_service_up = false;
+        let _ = status::transition(&state.db, project_id, "stopped", &ProjectUpdateFields::default(), None).await;
+    } else {
+        let _ = status::transition(&state.db, project_id, "degraded", &ProjectUpdateFields::default(), None).await;
+        let _ = state.route_sync_tx.send(());
+        let state_clone = state.clone();
+        let project_clone = project.clone();
+        let project_id_bg = project_id.to_string();
+        tokio::spawn(async move {
+            let _permit = try_acquire_project_lock(&state_clone, &project_id_bg);
+            if _permit.is_none() {
+                return;
+            }
+            start_stopped_services(&state_clone, &project_clone).await;
+        });
+    }
 }
 
 async fn start_stopped_container(state: &AppState, project: &crate::db::models::Project) -> Result<(), Response> {
@@ -260,83 +318,22 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
         let body = resp.text().await.unwrap_or_default();
         tracing::warn!(project = %subdomain, body = %body, "waker: agent start failed, trying recreate");
         return remote_recreate(state, project, &client, &base_url).await;
-    } else {
-        // Local path
-        let is_multi = project.service_count.unwrap_or(1) > 1;
-
-        if is_multi {
-            // Multi-service: start all services from compose.yaml
-            return start_multi_service(state, project).await;
-        }
-
-        // Single-service: check if env changed to decide start vs recreate
-        let env_changed = crate::routes::manage::local_env_has_changed(&subdomain);
-
-        if !env_changed {
-            // Fast path: env unchanged, try docker start on existing container
-            if let Some(ref container_id) = project.container_id {
-                match state.docker.start_existing_container(container_id).await {
-                    Ok(()) => {
-                        let now = chrono::Utc::now().timestamp();
-                        let _ = status::transition(&state.db, &subdomain, "running", &ProjectUpdateFields {
-                            last_active_at: Some(now),
-                            ..Default::default()
-                        }, None).await;
-                        tracing::info!(project = %subdomain, "waker: started existing container (env unchanged)");
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        tracing::warn!(project = %subdomain, error = %e, "waker: docker start failed, falling back to recreate");
-                    }
-                }
-            }
-        }
-
-        // Recreate: env changed or docker start failed
-        let project_clone = {
-            let mut p = project.clone();
-            p.container_id = None;
-            p.mapped_port = None;
-            p
-        };
-
-        if let Some(ref old_cid) = project.container_id {
-            let _ = state.docker.remove_container(old_cid).await;
-        }
-
-        let extra_env = crate::routes::manage::read_local_project_env(&subdomain);
-        let config = litebin_common::types::RunServiceConfig::from_project(&project_clone, extra_env);
-        let (new_container_id, new_mapped_port) = match state.docker.run_service_container(&config).await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!(error = %e, project = %subdomain, "waker: failed to create container");
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to create container: {e}"),
-                )
-                    .into_response());
-            }
-        };
-
-        crate::routes::manage::write_local_env_snapshot(&subdomain);
-
-        let now = chrono::Utc::now().timestamp();
-        let _ = status::transition(&state.db, &subdomain, "running", &ProjectUpdateFields {
-            container_id: Some(Some(new_container_id.clone())),
-            mapped_port: Some(Some(new_mapped_port as i64)),
-            last_active_at: Some(now),
-            ..Default::default()
-        }, None).await;
     }
 
-    Ok(())
+    // Local: use unified start_services
+    crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
+        force_recreate: false,
+        pull_images: true,
+        services: None,
+        connect_orchestrator: true,
+        rollback_on_failure: false,
+    }).await.map_err(|(s, e)| (s, e).into_response())
 }
 
 async fn restart_crashed_container(
     state: &AppState,
     project: &crate::db::models::Project,
 ) -> Result<(), Response> {
-    let subdomain = &project.id;
     let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 
     if is_remote {
@@ -364,69 +361,18 @@ async fn restart_crashed_container(
         };
 
         let base_url = agent_base_url(&state.config, &node);
-        tracing::info!(project = %subdomain, "waker: remote container down despite DB=running, recreating");
+        tracing::info!(project = %project.id, "waker: remote container down despite DB=running, recreating");
         return remote_recreate(state, project, &client, &base_url).await;
     }
 
-    // Local path
-    let is_multi = project.service_count.unwrap_or(1) > 1;
-
-    if is_multi {
-        // Multi-service: start all services from compose.yaml
-        // run_service_container handles idempotent cleanup internally
-        return start_multi_service(state, project).await;
-    }
-
-    let Some(ref container_id) = project.container_id else {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "no container to restart").into_response());
-    };
-
-    let actually_running = state
-        .docker
-        .is_container_running(container_id)
-        .await
-        .unwrap_or(false);
-
-    if actually_running {
-        return Ok(());
-    }
-
-    tracing::info!(project = %subdomain, "waker: container down despite DB=running, recreating");
-
-    let _ = state.docker.remove_container(container_id).await;
-
-    let project_clone = {
-        let mut p = project.clone();
-        p.container_id = None;
-        p.mapped_port = None;
-        p
-    };
-
-    let extra_env = crate::routes::manage::read_local_project_env(&subdomain);
-    let config = litebin_common::types::RunServiceConfig::from_project(&project_clone, extra_env);
-    let (new_container_id, new_mapped_port) = match state.docker.run_service_container(&config).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, project = %subdomain, "waker: failed to recreate container");
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to recreate container: {e}"),
-            )
-                .into_response());
-        }
-    };
-
-    crate::routes::manage::write_local_env_snapshot(&subdomain);
-
-    let now = chrono::Utc::now().timestamp();
-    let _ = status::transition(&state.db, &subdomain, "running", &ProjectUpdateFields {
-        container_id: Some(Some(new_container_id.clone())),
-        mapped_port: Some(Some(new_mapped_port as i64)),
-        last_active_at: Some(now),
-        ..Default::default()
-    }, None).await;
-
-    Ok(())
+    // Local: use unified start_services (force_recreate since container is dead)
+    crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
+        force_recreate: true,
+        pull_images: false,
+        services: None,
+        connect_orchestrator: true,
+        rollback_on_failure: false,
+    }).await.map_err(|(s, e)| (s, e).into_response())
 }
 
 /// Look up a project by alias route. Handles both:
@@ -546,49 +492,14 @@ pub async fn wake_for_host(
     let project_id = project.id.clone();
     let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 
-    // Fast path: already running with a port — just resync Caddy and return loading page
-    // For multi-service projects, check if any service container is running
+    // Unified running/degraded path for ALL projects
     let is_multi = project.service_count.unwrap_or(1) > 1;
-    if project.status == "running" && project.mapped_port.is_some() && !is_multi {
-        if !is_remote {
-            if let Some(ref container_id) = project.container_id {
-                let actually_running = state
-                    .docker
-                    .is_container_running(container_id)
-                    .await
-                    .unwrap_or(true);
-
-                if !actually_running {
-                    tracing::info!(project = %project_id, "waker: container down despite DB=running");
-                } else {
-                    // Port may have drifted (e.g. Docker daemon restarted) — verify and fix
-                    if let Ok(actual_port) = state.docker.inspect_mapped_port(container_id).await {
-                        let db_port = project.mapped_port.unwrap() as u16;
-                        if actual_port != db_port {
-                            let now = chrono::Utc::now().timestamp();
-                            let _ = sqlx::query(
-                                "UPDATE projects SET mapped_port = ?, updated_at = ? WHERE id = ?",
-                            )
-                            .bind(actual_port as i64)
-                            .bind(now)
-                            .bind(&project_id)
-                            .execute(&state.db)
-                            .await;
-                            tracing::info!(project = %project_id, old = %db_port, new = %actual_port, "waker: port drifted, updated DB");
-                        }
-                    }
-                    let _ = state.route_sync_tx.send(());
-                    return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
-                }
-            } else {
-                let _ = state.route_sync_tx.send(());
-                return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
-            }
-        } else {
-            let _ = state.route_sync_tx.send(());
+    if project.status == "running" || project.status == "degraded" {
+        // Remote: no Docker checks possible, return loading page
+        if is_remote {
             return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
         }
-    } else if project.status == "running" && is_multi {
+
         // If an operation (deploy, recreate, wake) is in progress, show loading page
         let lock_held = state.project_locks.get(&project_id)
             .map(|s| s.available_permits() == 0)
@@ -597,87 +508,90 @@ pub async fn wake_for_host(
             return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
         }
 
-        // Multi-service running: health-check all services (throttled) and proxy to container.
-        // This path is hit because multi-service projects always route through the orchestrator.
-        let should_check = state
-            .multi_svc_health_check
-            .get(&project_id)
-            .map(|t| t.elapsed() >= std::time::Duration::from_secs(5))
-            .unwrap_or(true);
-
         let mut public_service_up = true;
 
-        if should_check && !is_remote {
-            state.multi_svc_health_check.insert(project_id.clone(), std::time::Instant::now());
+        // Fast DB-only check: are any services already marked "stopped"?
+        let db_stopped: Vec<String> = sqlx::query_scalar(
+            "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped'",
+        )
+        .bind(&project_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
 
-            let services: Vec<(String, Option<String>)> = sqlx::query_as(
-                "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status = 'running' AND container_id IS NOT NULL",
-            )
-            .bind(&project_id)
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default();
+        if !db_stopped.is_empty() {
+            tracing::info!(project = %project_id, stopped = ?db_stopped, "waker: has DB-stopped services");
+            handle_down_services(&state, &project, &project_id, &mut public_service_up).await;
+        }
 
-            let mut stopped_services = Vec::new();
-            for (service_name, container_id) in &services {
-                if let Some(cid) = container_id {
-                    if !state.docker.is_container_running(cid).await.unwrap_or(false) {
-                        stopped_services.push(service_name.clone());
-                    }
-                }
-            }
+        // Throttled Docker health check: detect crashed containers
+        if public_service_up {
+            let should_check = state
+                .multi_svc_health_check
+                .get(&project_id)
+                .map(|t| t.elapsed() >= std::time::Duration::from_secs(5))
+                .unwrap_or(true);
 
-            if !stopped_services.is_empty() {
-                tracing::info!(project = %project_id, stopped = ?stopped_services, "waker: multi-service has crashed services");
+            if should_check {
+                state.multi_svc_health_check.insert(project_id.clone(), std::time::Instant::now());
 
-                for service_name in &stopped_services {
-                    let _ = status::set_service_stopped(&state.db, &project_id, service_name).await;
-                }
-
-                // Check if the public service is among the crashed ones
-                let public_down: bool = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'stopped'",
+                let services: Vec<(String, Option<String>)> = sqlx::query_as(
+                    "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status = 'running' AND container_id IS NOT NULL",
                 )
                 .bind(&project_id)
-                .fetch_one(&state.db)
+                .fetch_all(&state.db)
                 .await
-                .unwrap_or(0) > 0;
+                .unwrap_or_default();
 
-                if public_down {
-                    // Public service is down — fall through to wake lock (loading page)
-                    public_service_up = false;
-                    let _ = status::transition(&state.db, &project_id, "stopped", &ProjectUpdateFields::default(), None).await;
-                    tracing::info!(project = %project_id, "waker: public service down, marking stopped");
-                } else {
-                    // Non-public services down but public service up — silently recover in background
-                    let _ = status::transition(&state.db, &project_id, "degraded", &ProjectUpdateFields::default(), None).await;
-                    let _ = state.route_sync_tx.send(());
+                let mut crashed_services = Vec::new();
+                for (service_name, container_id) in &services {
+                    if let Some(cid) = container_id {
+                        if !state.docker.is_container_running(cid).await.unwrap_or(false) {
+                            crashed_services.push(service_name.clone());
+                        }
+                    }
+                }
 
-                    // Spawn background recovery (start_multi_service is idempotent — skips running services)
-                    let state_clone = state.clone();
-                    let project_clone = project.clone();
-                    let project_id_bg = project_id.clone();
-                    tokio::spawn(async move {
-                        let _permit = try_acquire_project_lock(&state_clone, &project_id_bg);
-                        if _permit.is_none() {
-                            tracing::info!(project = %project_id_bg, "waker: skipping recovery, another operation in progress");
-                            return;
-                        }
-                        tracing::info!(project = %project_id_bg, "waker: background recovery of degraded services");
-                        match start_multi_service(&state_clone, &project_clone).await {
-                            Ok(_) => {
-                                let _ = state_clone.route_sync_tx.send(());
-                                tracing::info!(project = %project_id_bg, "waker: background recovery succeeded");
-                            }
-                            Err(resp) => tracing::warn!(project = %project_id_bg, status = %resp.status(), "waker: background recovery failed"),
-                        }
-                    });
+                if !crashed_services.is_empty() {
+                    tracing::info!(project = %project_id, crashed = ?crashed_services, "waker: has crashed containers");
+
+                    for service_name in &crashed_services {
+                        let _ = status::set_service_stopped(&state.db, &project_id, service_name).await;
+                    }
+
+                    handle_down_services(&state, &project, &project_id, &mut public_service_up).await;
                 }
             }
         }
 
         if public_service_up {
-            // Public service is healthy — proxy the request to the container
+            // Single-service: fix port drift on projects table, return loading page
+            if !is_multi {
+                if let Some(ref container_id) = project.container_id {
+                    if state.docker.is_container_running(container_id).await.unwrap_or(true) {
+                        if let Ok(actual_port) = state.docker.inspect_mapped_port(container_id).await {
+                            let db_port = project.mapped_port.unwrap_or(0) as u16;
+                            if actual_port != db_port {
+                                let now = chrono::Utc::now().timestamp();
+                                let _ = sqlx::query(
+                                    "UPDATE projects SET mapped_port = ?, updated_at = ? WHERE id = ?",
+                                )
+                                .bind(actual_port as i64)
+                                .bind(now)
+                                .bind(&project_id)
+                                .execute(&state.db)
+                                .await;
+                                status::sync_single_service_row(&state.db, &project_id, container_id, actual_port as i64).await;
+                                tracing::info!(project = %project_id, old = %db_port, new = %actual_port, "waker: port drifted, updated DB");
+                            }
+                        }
+                        let _ = state.route_sync_tx.send(());
+                        return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+                    }
+                }
+            }
+
+            // Multi-service: proxy to public service container
             let public_svc: Option<(String, Option<i64>)> = sqlx::query_as::<_, (String, Option<i64>)>(
                 "SELECT service_name, port FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'running' LIMIT 1",
             )
@@ -689,7 +603,6 @@ pub async fn wake_for_host(
             if let Some((svc_name, port)) = public_svc {
                 let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
                 let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
-                // Retry proxy up to 3 times with short delay — handles Docker DNS propagation
                 let mut last_resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;
                 for _ in 0..2 {
                     if last_resp.status() != StatusCode::BAD_GATEWAY {
@@ -704,8 +617,7 @@ pub async fn wake_for_host(
                 return last_resp;
             }
 
-            // No public service found with status='running' in DB — check if it's actually running in docker
-            // (DB may be stale, e.g. status is "error" or "stopped" but container was restarted externally)
+            // No public service found with status='running' in DB — check Docker (stale DB)
             let public_svc_any: Option<(String, Option<i64>, Option<String>)> = sqlx::query_as::<_, (String, Option<i64>, Option<String>)>(
                 "SELECT service_name, port, container_id FROM project_services WHERE project_id = ? AND is_public = 1 LIMIT 1",
             )
@@ -717,10 +629,8 @@ pub async fn wake_for_host(
             if let Some((svc_name, port, container_id)) = public_svc_any {
                 if let Some(ref cid) = container_id {
                     if state.docker.is_container_running(cid).await.unwrap_or(false) {
-                        // Container is actually running — sync DB and proxy
                         tracing::info!(project = %project_id, service = %svc_name, "waker: public service running but DB stale, syncing status");
                         let _ = status::transition(&state.db, &project_id, "running", &ProjectUpdateFields::default(), Some(&[svc_name.clone()])).await;
-
                         let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
                         let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
                         let resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;
@@ -730,64 +640,9 @@ pub async fn wake_for_host(
             }
 
             // Public service truly not running — fall through to wake lock
-            tracing::warn!(project = %project_id, "waker: multi-service public service not running, falling through");
+            tracing::warn!(project = %project_id, "waker: public service not running, falling through");
         }
-        // If public service is down, fall through to wake lock below (loading page + start all)
-    } else if project.status == "degraded" {
-        // Degraded: some services stopped, some running. Proxy to public service if it's up,
-        // recover remaining in background.
-        tracing::info!(project = %project_id, "waker: degraded project, starting remaining services");
-
-        // Proxy to public service if it's running — don't fall through to wake lock
-        let public_svc: Option<(String, Option<i64>)> = sqlx::query_as::<_, (String, Option<i64>)>(
-            "SELECT service_name, port FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'running' LIMIT 1",
-        )
-        .bind(&project_id)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-        if let Some((svc_name, port)) = public_svc {
-            let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
-            let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
-
-            // Spawn background recovery (idempotent — skips already-running services)
-            let state_clone = state.clone();
-            let project_clone = project.clone();
-            let project_id_bg = project_id.clone();
-            tokio::spawn(async move {
-                let _permit = try_acquire_project_lock(&state_clone, &project_id_bg);
-                if _permit.is_none() {
-                    tracing::info!(project = %project_id_bg, "waker: skipping recovery, another operation in progress");
-                    return;
-                }
-                tracing::info!(project = %project_id_bg, "waker: background recovery of degraded services");
-                match start_multi_service(&state_clone, &project_clone).await {
-                    Ok(_) => {
-                        let _ = state_clone.route_sync_tx.send(());
-                        tracing::info!(project = %project_id_bg, "waker: background recovery succeeded");
-                    }
-                    Err(resp) => tracing::warn!(project = %project_id_bg, status = %resp.status(), "waker: background recovery failed"),
-                }
-            });
-
-            // Retry proxy up to 3 times with short delay — handles Docker DNS propagation
-            let mut last_resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;
-            for _ in 0..2 {
-                if last_resp.status() != StatusCode::BAD_GATEWAY {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                last_resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;
-            }
-            if last_resp.status() == StatusCode::BAD_GATEWAY {
-                return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
-            }
-            return last_resp;
-        }
-        // Public service is down — fall through to wake lock + start_multi_service below
-    } else if project.status == "running" && project.mapped_port.is_none() {
-        tracing::info!(project = %project_id, "waker: running but mapped_port is null, recreating");
+        // If public down, fall through to wake lock below
     }
 
     if !project.auto_start_enabled {
@@ -828,12 +683,23 @@ pub async fn wake_for_host(
     tracing::info!(project = %project_id, host = %host, "waker: spawning background wake");
 
     tokio::spawn(async move {
-        let wake_fut = if is_multi {
-            start_multi_service(&state_clone, &project_clone).boxed()
-        } else if is_stopped {
-            start_stopped_container(&state_clone, &project_clone).boxed()
+        let wake_fut = if is_remote {
+            if is_stopped {
+                start_stopped_container(&state_clone, &project_clone).boxed()
+            } else {
+                restart_crashed_container(&state_clone, &project_clone).boxed()
+            }
         } else {
-            restart_crashed_container(&state_clone, &project_clone).boxed()
+            let state_for_start = state_clone.clone();
+            async move {
+                crate::routes::manage::start_services(&state_for_start, &project_clone, crate::routes::manage::StartServicesOpts {
+                    force_recreate: false,
+                    pull_images: true,
+                    services: None,
+                    connect_orchestrator: true,
+                    rollback_on_failure: false,
+                }).await.map_err(|(s, e)| (s, e).into_response())
+            }.boxed()
         };
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(60), wake_fut).await;

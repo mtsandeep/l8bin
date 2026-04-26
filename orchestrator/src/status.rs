@@ -155,6 +155,65 @@ pub async fn set_service_stopped(
     Ok(())
 }
 
+/// Update the single-service "web" row in project_services to match projects table.
+/// Single-service projects have a "web" row that must track container_id/mapped_port.
+/// Called by waker and handlers after creating or starting a single-service container.
+pub async fn sync_single_service_row(
+    db: &SqlitePool,
+    project_id: &str,
+    container_id: &str,
+    mapped_port: i64,
+) {
+    let _ = sqlx::query(
+        "UPDATE project_services SET status = 'running', container_id = ?, mapped_port = ? WHERE project_id = ? AND service_name = 'web'",
+    )
+    .bind(container_id)
+    .bind(mapped_port)
+    .bind(project_id)
+    .execute(db)
+    .await;
+}
+
+/// Derive project status from aggregated service states and update projects table.
+/// Returns the derived status string.
+///
+/// - All services running → "running"
+/// - Some services running → "degraded"
+/// - No services running → "stopped"
+pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) -> String {
+    let statuses: Vec<(String,)> = sqlx::query_as(
+        "SELECT status FROM project_services WHERE project_id = ?",
+    )
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    if statuses.is_empty() {
+        return "stopped".to_string();
+    }
+
+    let total = statuses.len();
+    let running = statuses.iter().filter(|(s,)| s == "running").count();
+    let new_status = if running == total {
+        "running"
+    } else if running > 0 {
+        "degraded"
+    } else {
+        "stopped"
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let _ = sqlx::query("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
+        .bind(new_status)
+        .bind(now)
+        .bind(project_id)
+        .execute(db)
+        .await;
+
+    new_status.to_string()
+}
+
 // ---------------------------------------------------------------------------
 // sync_from_docker() — reconciliation with actual Docker state
 // ---------------------------------------------------------------------------
@@ -238,30 +297,41 @@ pub async fn sync_project_from_docker(
         .await;
     }
 
-    // Derive project status from aggregated service states
-    let new_status = if running_count == services.len() as i32 {
-        "running"
-    } else if running_count > 0 {
-        "degraded"
-    } else {
-        "stopped"
-    };
+    // Fallback for single-service projects: the waker may have created a new container
+    // and updated projects.container_id but not project_services.container_id.
+    // If all services appear stopped but projects.container_id is running, fix the row.
+    if running_count == 0 && services.len() == 1 {
+        let projects_cid: Option<String> = sqlx::query_scalar(
+            "SELECT container_id FROM projects WHERE id = ?",
+        )
+        .bind(project_id)
+        .fetch_one(db)
+        .await
+        .ok()
+        .flatten();
 
-    let caddy_dirty = new_status != current_status;
+        if let Some(ref cid) = projects_cid {
+            if !cid.is_empty() && docker.is_container_running(cid).await.unwrap_or(false) {
+                let port: Option<i64> = sqlx::query_scalar(
+                    "SELECT mapped_port FROM projects WHERE id = ?",
+                )
+                .bind(project_id)
+                .fetch_one(db)
+                .await
+                .unwrap_or(None);
 
-    if caddy_dirty {
-        let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(new_status)
-            .bind(now)
-            .bind(project_id)
-            .execute(db)
-            .await;
+                sync_single_service_row(db, project_id, cid, port.unwrap_or(0)).await;
+            }
+        }
     }
+
+    // Derive project status from aggregated service states
+    let new_status = derive_and_set_project_status(db, project_id).await;
+    let caddy_dirty = new_status != current_status;
 
     SyncResult {
         old_status: current_status,
-        new_status: new_status.to_string(),
+        new_status,
         caddy_dirty,
     }
 }
@@ -322,14 +392,8 @@ pub async fn update_status_from_container_states(
         };
     }
 
-    let mut running_count = 0i32;
-
     for (container_id, is_running) in container_states {
         let new_svc_status = if *is_running { "running" } else { "stopped" };
-
-        if *is_running {
-            running_count += 1;
-        }
 
         let _ = sqlx::query(
             "UPDATE project_services SET status = ? WHERE project_id = ? AND container_id = ? AND status != ?",
@@ -342,38 +406,13 @@ pub async fn update_status_from_container_states(
         .await;
     }
 
-    // Count total services for this project
-    let total_services: i32 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM project_services WHERE project_id = ? AND container_id IS NOT NULL AND container_id != ''",
-    )
-    .bind(project_id)
-    .fetch_one(db)
-    .await
-    .unwrap_or(0);
-
-    let new_status = if total_services > 0 && running_count == total_services {
-        "running"
-    } else if running_count > 0 {
-        "degraded"
-    } else {
-        "stopped"
-    };
-
+    // Derive project status from aggregated service states
+    let new_status = derive_and_set_project_status(db, project_id).await;
     let caddy_dirty = new_status != current_status;
-
-    if caddy_dirty {
-        let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(new_status)
-            .bind(now)
-            .bind(project_id)
-            .execute(db)
-            .await;
-    }
 
     SyncResult {
         old_status: current_status,
-        new_status: new_status.to_string(),
+        new_status,
         caddy_dirty,
     }
 }

@@ -118,8 +118,30 @@ pub async fn wake_report(
         "received wake report from agent"
     );
 
-    // Transition project (and all services) to running via centralized status module
-    let result = status::transition(
+    // Update the specific service that was woken (matched by container_id)
+    let svc_name: Option<String> = sqlx::query_scalar(
+        "SELECT service_name FROM project_services WHERE project_id = ? AND container_id = ?",
+    )
+    .bind(&report.project_id)
+    .bind(&report.container_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    let now = chrono::Utc::now().timestamp();
+
+    if let Some(ref svc_name) = svc_name {
+        let _ = status::set_service_running(
+            &state.db,
+            &report.project_id,
+            &svc_name,
+            &report.container_id,
+            Some(report.mapped_port as i64),
+        ).await;
+    }
+
+    // Update projects table with container info
+    let _ = status::transition(
         &state.db,
         &report.project_id,
         "running",
@@ -129,19 +151,27 @@ pub async fn wake_report(
             last_active_at: Some(now),
             ..Default::default()
         },
-        None,
+        svc_name.as_ref().map(|s| std::slice::from_ref(s)),
     )
     .await;
 
-    match result {
-        Ok(()) => {}
-        Err(e) => {
-            if e.to_string().contains("no rows") {
+    // Derive correct project status from all service states
+    status::derive_and_set_project_status(&state.db, &report.project_id).await;
+
+    match svc_name {
+        Some(_) => {}
+        None => {
+            if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
+                .bind(&report.project_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(0)
+                == 0
+            {
                 tracing::warn!(project_id = %report.project_id, "wake report: project not found in DB");
                 return StatusCode::NOT_FOUND;
             }
-            tracing::error!(error = %e, "wake report: DB update failed");
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            tracing::warn!(project_id = %report.project_id, "wake report: no matching service found for container");
         }
     }
 

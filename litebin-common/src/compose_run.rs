@@ -73,6 +73,20 @@ impl ComposeRunPlan {
         }
         false
     }
+
+    /// Build a minimal `ComposeRunPlan` for a single-service project.
+    /// Used when no compose.yaml exists (single-service projects use
+    /// `RunServiceConfig::from_project()` to build the config).
+    pub fn single_service(config: RunServiceConfig) -> Self {
+        let name = config.service_name.clone();
+        Self {
+            service_order: vec![name.clone()],
+            service_levels: vec![vec![name.clone()]],
+            dependency_conditions: HashMap::new(),
+            pub_service_name: Some(name),
+            configs: vec![config],
+        }
+    }
 }
 
 /// Build a `ComposeRunPlan` from compose YAML string.

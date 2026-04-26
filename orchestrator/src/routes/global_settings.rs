@@ -18,9 +18,7 @@ pub struct GlobalSettings {
 }
 
 pub fn resolve_projects_dir() -> String {
-    std::fs::canonicalize("projects")
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "projects".to_string())
+    "projects".to_string()
 }
 
 #[derive(Deserialize)]

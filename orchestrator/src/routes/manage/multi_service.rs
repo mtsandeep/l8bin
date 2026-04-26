@@ -7,7 +7,7 @@ use tokio::task::JoinSet;
 use crate::AppState;
 use crate::status::{self, ProjectUpdateFields};
 
-use super::helpers::{MessageResponse, read_local_project_env, sync_caddy, write_local_env_snapshot};
+use super::helpers::{MessageResponse, local_env_has_changed, read_local_project_env, sync_caddy, write_local_env_snapshot};
 
 // ── Options ──────────────────────────────────────────────────────────────────
 
@@ -62,13 +62,20 @@ pub async fn start_services(
 ) -> Result<(), (StatusCode, String)> {
     let project_id = &project.id;
 
-    // 1. Read + parse compose.yaml with variable interpolation
-    let compose_yaml = litebin_common::docker::DockerManager::read_compose(project_id)
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "compose.yaml not found".to_string()))?;
-
+    // 1. Read + parse compose.yaml, or build single-service plan from projects row
     let extra_env = read_local_project_env(project_id);
-    let compose = compose_bollard::ComposeParser::parse_with_interpolation(&compose_yaml, &extra_env)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yaml: {e}")))?;
+    let compose_yaml = litebin_common::docker::DockerManager::read_compose(project_id);
+
+    let plan = if let Some(yaml) = compose_yaml {
+        let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yaml: {e}")))?;
+        litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose error: {e}")))?
+    } else {
+        // Single-service fallback: build from projects row (no compose.yaml)
+        let config = litebin_common::types::RunServiceConfig::from_project(project, extra_env);
+        litebin_common::compose_run::ComposeRunPlan::single_service(config)
+    };
 
     // 2. Ensure per-project network + connect Caddy + optionally orchestrator
     state.docker.ensure_project_network(project_id, None).await
@@ -89,10 +96,7 @@ pub async fn start_services(
         }
     }
 
-    // 3. Build plan + lookup maps
-    let plan = litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose error: {e}")))?;
-
+    // 3. Build lookup maps from plan
     let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
     let healthy_wait_set: HashSet<String> = plan.service_order.iter()
@@ -100,7 +104,13 @@ pub async fn start_services(
         .cloned()
         .collect();
     let has_healthcheck: HashSet<String> = plan.service_order.iter()
-        .filter(|s| compose.services.get(s.as_str()).and_then(|svc| svc.healthcheck.as_ref()).is_some())
+        .filter(|s| {
+            plan.configs.iter()
+                .find(|c| c.service_name == **s)
+                .and_then(|c| c.bollard_create_body.as_ref())
+                .map(|body| body.healthcheck.is_some())
+                .unwrap_or(false)
+        })
         .cloned()
         .collect();
 
@@ -176,7 +186,13 @@ pub async fn start_services(
                 } else {
                     // Smart path: try to reuse existing containers
                     if let Some((ref existing_cid, existing_port)) = existing {
-                        if docker.is_container_running(existing_cid).await.unwrap_or(false) {
+                        // Skip reuse if env changed — need recreate to pick up new vars
+                        let env_changed = local_env_has_changed(&run_config.project_id);
+                        if env_changed {
+                            tracing::info!(service = %svc, "env changed, recreating container");
+                            let _ = docker.remove_container(existing_cid).await;
+                            // fall through to run_service_container below
+                        } else if docker.is_container_running(existing_cid).await.unwrap_or(false) {
                             // Already running — fix stale DB status (e.g. stats polling
                             // may have marked it 'stopped' after a transient check failure)
                             let _ = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(existing_port as i64)).await;
@@ -185,30 +201,31 @@ pub async fn start_services(
                                 mapped_port: existing_port,
                                 is_public,
                             });
-                        }
-                        // Stopped — try docker start (fast path)
-                        match docker.start_existing_container(existing_cid).await {
-                            Ok(()) => {
-                                any_started.store(true, std::sync::atomic::Ordering::Relaxed);
-                                // Re-resolve mapped port from Docker (may have been cleared on previous stop)
-                                let actual_port = if existing_port == 0 && run_config.is_public {
-                                    docker.inspect_mapped_port(existing_cid).await.unwrap_or(0)
-                                } else {
-                                    existing_port
-                                };
-                                // Update service status and mapped port
-                                let _ = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(actual_port as i64)).await;
-                                tracing::info!(service = %svc, container_id = %existing_cid, "started existing stopped container");
-                                return Ok(StartedService {
-                                    container_id: existing_cid.clone(),
-                                    mapped_port: actual_port,
-                                    is_public,
-                                });
-                            }
-                            Err(e) => {
-                                tracing::warn!(service = %svc, error = %e, "docker start failed (stale?), recreating");
-                                // Container is gone or broken — remove stale reference and fall through
-                                let _ = docker.remove_container(existing_cid).await;
+                        } else {
+                            // Stopped — try docker start (fast path)
+                            match docker.start_existing_container(existing_cid).await {
+                                Ok(()) => {
+                                    any_started.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    // Re-resolve mapped port from Docker (may have been cleared on previous stop)
+                                    let actual_port = if existing_port == 0 && run_config.is_public {
+                                        docker.inspect_mapped_port(existing_cid).await.unwrap_or(0)
+                                    } else {
+                                        existing_port
+                                    };
+                                    // Update service status and mapped port
+                                    let _ = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(actual_port as i64)).await;
+                                    tracing::info!(service = %svc, container_id = %existing_cid, "started existing stopped container");
+                                    return Ok(StartedService {
+                                        container_id: existing_cid.clone(),
+                                        mapped_port: actual_port,
+                                        is_public,
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::warn!(service = %svc, error = %e, "docker start failed (stale?), recreating");
+                                    // Container is gone or broken — remove stale reference and fall through
+                                    let _ = docker.remove_container(existing_cid).await;
+                                }
                             }
                         }
                     }
@@ -303,9 +320,8 @@ pub async fn start_services(
     write_local_env_snapshot(project_id);
     let now = chrono::Utc::now().timestamp();
 
-    // Only update projects row if we started a public service or all services.
-    // When starting a specific non-public service, preserve the existing public container info.
-    if !public_container_id.is_empty() || opts.services.is_none() {
+    if opts.services.is_none() {
+        // Full start: all services started, set project to "running"
         let _ = status::transition(&state.db, project_id, "running", &ProjectUpdateFields {
             container_id: Some(if public_container_id.is_empty() { None } else { Some(public_container_id) }),
             mapped_port: Some(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) }),
@@ -313,11 +329,19 @@ pub async fn start_services(
             ..Default::default()
         }, None).await;
     } else {
-        // Just update status and timestamp, preserve existing container info
-        let _ = status::transition(&state.db, project_id, "running", &ProjectUpdateFields {
-            last_active_at: Some(now),
-            ..Default::default()
-        }, None).await;
+        // Partial start: derive project status from aggregate service states
+        if !public_container_id.is_empty() {
+            // Update public container info on projects row
+            let _ = sqlx::query("UPDATE projects SET container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?")
+                .bind(&public_container_id)
+                .bind(public_mapped_port as i64)
+                .bind(now)
+                .bind(now)
+                .bind(project_id)
+                .execute(&state.db)
+                .await;
+        }
+        status::derive_and_set_project_status(&state.db, project_id).await;
     }
 
     sync_caddy(state).await;
@@ -368,12 +392,6 @@ pub async fn stop_services(
             tracing::info!(project = %project_id, service = %svc_name, "service stopped");
         }
     }
-}
-
-/// Stop all service containers for a multi-service project.
-/// Thin wrapper around `stop_services` for backward compatibility.
-pub async fn stop_all_services(state: &AppState, project_id: &str) {
-    stop_services(state, project_id, None).await;
 }
 
 // ── Delete services ──────────────────────────────────────────────────────────

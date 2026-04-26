@@ -51,6 +51,27 @@ async fn sweep(
 
     tracing::info!(count = idle_projects.len(), "janitor: found idle projects");
 
+    // Pre-load service containers BEFORE marking as stopped (transition cascades
+    // service status, so we need the container_ids while services still show 'running').
+    let mut service_containers: std::collections::HashMap<String, Vec<(String, Option<String>)>> = std::collections::HashMap::new();
+    for project in &idle_projects {
+        let rows: Vec<(String, Option<String>)> = if project.service_count.unwrap_or(1) > 1 {
+            sqlx::query_as(
+                "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL AND container_id != ''",
+            )
+            .bind(&project.id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+        } else {
+            // Single-service: use projects.container_id
+            project.container_id.as_ref().map(|cid| vec![("web".to_string(), Some(cid.clone()))]).unwrap_or_default()
+        };
+        if !rows.is_empty() {
+            service_containers.insert(project.id.clone(), rows);
+        }
+    }
+
     // 1. Mark all idle projects as stopped in DB first
     for project in &idle_projects {
         status::transition(
@@ -76,68 +97,40 @@ async fn sweep(
         .await?;
 
     // 3. Now safe to stop containers — routes already removed
+    // Use pre-loaded container_ids (transition already set services to 'stopped',
+    // so querying status='running' would return nothing).
     for project in &idle_projects {
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
+        let containers = service_containers.get(&project.id).cloned().unwrap_or_default();
 
-        if project.service_count.unwrap_or(1) > 1 && is_local {
-            // Multi-service local: stop all service containers in reverse dependency order
-            let services: Vec<(String, Option<String>, Option<String>)> = match sqlx::query_as(
-                "SELECT service_name, container_id, depends_on FROM project_services WHERE project_id = ? AND status = 'running'",
-            )
-            .bind(&project.id)
-            .fetch_all(&state.db)
-            .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(project = %project.id, error = %e, "janitor: failed to fetch services");
-                    continue;
+        if project.service_count.unwrap_or(1) > 1 {
+            // Multi-service: stop all service containers
+            if is_local {
+                for (_svc_name, cid) in containers.iter().rev() {
+                    if let Some(container_id) = cid {
+                        stop_local_container(state, &project.id, container_id).await;
+                    }
                 }
-            };
-
-            // Stop in reverse of the fetched order (dependencies first, dependents last)
-            for (svc_name, cid, _) in services.iter().rev() {
-                if let Some(container_id) = cid {
-                    stop_local_container(state, &project.id, container_id).await;
-                    let _ = status::set_service_stopped(&state.db, &project.id, svc_name).await;
-                }
-            }
-        } else if project.service_count.unwrap_or(1) > 1 && !is_local {
-            // Multi-service remote: stop all service containers via agent
-            let node_id = match project.node_id.as_deref() {
-                Some(n) if n != "local" => n.to_string(),
-                _ => continue,
-            };
-
-            let services: Vec<(String, Option<String>, Option<String>)> = match sqlx::query_as(
-                "SELECT service_name, container_id, depends_on FROM project_services WHERE project_id = ? AND status = 'running'",
-            )
-            .bind(&project.id)
-            .fetch_all(&state.db)
-            .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(project = %project.id, error = %e, "janitor: failed to fetch remote services");
-                    continue;
-                }
-            };
-
-            // Stop in reverse dependency order
-            for (svc_name, cid, _) in services.iter().rev() {
-                if let Some(container_id) = cid {
-                    stop_remote_container(state, &project.id, &node_id, container_id).await;
-                    let _ = status::set_service_stopped(&state.db, &project.id, svc_name).await;
-                }
-            }
-        } else if let Some(ref container_id) = project.container_id {
-            let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
-
-            if is_remote {
-                let node_id = project.node_id.as_deref().unwrap();
-                stop_remote_container(state, &project.id, node_id, container_id).await;
             } else {
-                stop_local_container(state, &project.id, container_id).await;
+                let node_id = match project.node_id.as_deref() {
+                    Some(n) if n != "local" => n.to_string(),
+                    _ => continue,
+                };
+                for (_svc_name, cid) in containers.iter().rev() {
+                    if let Some(container_id) = cid {
+                        stop_remote_container(state, &project.id, &node_id, container_id).await;
+                    }
+                }
+            }
+        } else if let Some((_svc_name, cid)) = containers.first() {
+            // Single-service: stop the one container
+            if let Some(container_id) = cid {
+                if is_local {
+                    stop_local_container(state, &project.id, container_id).await;
+                } else {
+                    let node_id = project.node_id.as_deref().unwrap();
+                    stop_remote_container(state, &project.id, node_id, container_id).await;
+                }
             }
         }
     }

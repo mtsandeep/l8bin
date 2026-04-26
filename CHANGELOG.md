@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Unified single-service and multi-service code paths — `start_services()` / `stop_services()` now handle both, eliminating ~500 lines of duplicated branching. Waker uses one running path for all local projects.
+- Stats endpoint performance — removed per-poll Docker sync (relies on 60s periodic sync), parallelized container stats queries, added disk cache for stopped containers.
+- Custom routes auto-wake — added `handle_response` to catch 502/503/504 on custom path/subdomain routes and proxy to orchestrator for wake.
+
+### Fixed
+- Fix partial service start setting project to "running" when other services are still stopped — now correctly derives status from aggregate service states.
+- Fix remote multi-service stop/start only operating on one container — now stops all service containers and uses batch-run for start.
+- Fix waker marking all services "running" on agent wake report — now updates only the specific service and derives project status.
+- Fix janitor failing to stop containers — pre-loads container IDs before status transition (which was clearing them).
+
 ## [0.2.8] - 2026-04-26
 
 ### Fixed

@@ -3,6 +3,20 @@ use serde_json::{json, Value};
 
 use crate::caddy::{CaddyClient, ORCHESTRATOR_API_PATHS};
 
+/// Build the `handle_response` block that catches 502/503/504 from upstream
+/// and proxies the request to the orchestrator for auto-wake.
+pub fn wake_fallback_handle(upstream: &str) -> Value {
+    json!([{
+        "match": { "status_code": [502, 503, 504] },
+        "routes": [{
+            "handle": [{
+                "handler": "reverse_proxy",
+                "upstreams": [{ "dial": upstream }]
+            }]
+        }]
+    }])
+}
+
 /// Pre-resolved routing info for a single project.
 /// The orchestrator builds these by joining project data with node data.
 #[derive(Debug, Clone)]
@@ -119,11 +133,15 @@ impl MasterProxyRouter {
                             hosts.push(cd.clone());
                         }
                         let path = cr.path.as_deref().unwrap_or("/");
+                        // No subroute wrapper — use handle_response to catch 502/503/504
+                        // and proxy to the orchestrator for auto-wake
+                        let fallback = wake_fallback_handle(orchestrator_upstream);
                         routes.push(json!({
                             "match": [{ "host": hosts, "path": [path] }],
                             "handle": [{
                                 "handler": "reverse_proxy",
-                                "upstreams": [{ "dial": &cr.upstream }]
+                                "upstreams": [{ "dial": &cr.upstream }],
+                                "handle_response": fallback
                             }]
                         }));
                     }
@@ -136,11 +154,14 @@ impl MasterProxyRouter {
                         if cr.route_type == "alias" {
                             hosts.push(format!("{}.{}", alias, domain));
                         }
+                        // Add handle_response for auto-wake when upstream is down
+                        let fallback = wake_fallback_handle(orchestrator_upstream);
                         routes.push(json!({
                             "match": [{ "host": hosts }],
                             "handle": [{
                                 "handler": "reverse_proxy",
-                                "upstreams": [{ "dial": &cr.upstream }]
+                                "upstreams": [{ "dial": &cr.upstream }],
+                                "handle_response": fallback
                             }]
                         }));
                     }
@@ -149,18 +170,11 @@ impl MasterProxyRouter {
             }
 
             // 1. Subdomain route: {project_id}.{domain} → upstream
+            let fallback = wake_fallback_handle(orchestrator_upstream);
             let mut handle = json!({
                 "handler": "reverse_proxy",
                 "upstreams": [{ "dial": dial }],
-                "handle_response": [{
-                    "match": { "status_code": [502, 503, 504] },
-                    "routes": [{
-                        "handle": [{
-                            "handler": "reverse_proxy",
-                            "upstreams": [{ "dial": orchestrator_upstream }]
-                        }]
-                    }]
-                }]
+                "handle_response": fallback
             });
             if p.upstream_tls && !self.ca_cert_path.is_empty() {
                 handle["transport"] = json!({
@@ -221,18 +235,11 @@ impl MasterProxyRouter {
                     }));
                 } else {
                     // Running custom domain: proxy to container with 502 fallback
+                    let cd_fallback = wake_fallback_handle(orchestrator_upstream);
                     let mut cd_handle = json!({
                         "handler": "reverse_proxy",
                         "upstreams": [{ "dial": dial }],
-                        "handle_response": [{
-                            "match": { "status_code": [502, 503, 504] },
-                            "routes": [{
-                                "handle": [{
-                                    "handler": "reverse_proxy",
-                                    "upstreams": [{ "dial": orchestrator_upstream }]
-                                }]
-                            }]
-                        }]
+                        "handle_response": cd_fallback
                     });
                     if p.upstream_tls && !self.ca_cert_path.is_empty() {
                         cd_handle["transport"] = json!({

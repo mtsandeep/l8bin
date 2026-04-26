@@ -74,7 +74,23 @@ pub fn read_local_project_env(project_id: &str) -> Vec<String> {
     }
 }
 
-/// Hash a file's raw content. Returns 0 if the file doesn't exist.
+/// Check if the project .env has changed since the last container creation.
+/// Compares current .env hash against the .env.l8bin snapshot.
+pub fn local_env_has_changed(project_id: &str) -> bool {
+    let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
+    let snapshot_path = std::path::PathBuf::from("projects").join(project_id).join(".env.l8bin");
+
+    let env_hash = file_hash(&env_path);
+    // .env.l8bin has a 5-line header (4 comments + blank line) — strip it before hashing
+    let snapshot_hash = snapshot_content_hash(&snapshot_path);
+
+    let changed = env_hash != snapshot_hash;
+    if changed {
+        tracing::info!(project = project_id, env_hash = env_hash, snapshot_hash = snapshot_hash, "env has changed since last container creation");
+    }
+    changed
+}
+
 fn file_hash(path: &std::path::Path) -> u64 {
     match std::fs::read(path) {
         Ok(bytes) => {
@@ -86,8 +102,6 @@ fn file_hash(path: &std::path::Path) -> u64 {
     }
 }
 
-/// Hash the content portion of a .env.l8bin snapshot (strips the 5-line header).
-/// Returns 0 if the file doesn't exist.
 fn snapshot_content_hash(path: &std::path::Path) -> u64 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -98,20 +112,6 @@ fn snapshot_content_hash(path: &std::path::Path) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(&payload, &mut hasher);
     hasher.finish()
-}
-
-/// Check if the project .env has changed since the last container creation.
-pub fn local_env_has_changed(project_id: &str) -> bool {
-    let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
-    let snapshot_path = std::path::PathBuf::from("projects").join(project_id).join(".env.l8bin");
-
-    let env_hash = file_hash(&env_path);
-    // .env.l8bin has a 5-line header (4 comments + blank line) — strip it before hashing
-    let snapshot_hash = snapshot_content_hash(&snapshot_path);
-
-    let changed = env_hash != snapshot_hash;
-    tracing::info!(project = project_id, env_hash = env_hash, snapshot_hash = snapshot_hash, changed = changed, "env change check");
-    changed
 }
 
 /// Write .env.l8bin snapshot — a copy of the current .env with a header.
