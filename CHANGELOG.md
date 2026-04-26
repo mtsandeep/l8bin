@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-04-26
+
 ### Fixed
 - Fix "degraded" status showing for running projects — service status wasn't synced back to "running" after a container recovered. Stats endpoint now updates `project_services.status` to "running" when a container is detected as running.
 - Fix compose deploy — agent's `batch_run` was pulling pre-loaded `sha256:` images from a registry before creating containers. Now skips them during pull (matching orchestrator's local compose path).
