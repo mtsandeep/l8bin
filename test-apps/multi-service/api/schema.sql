@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS quiz_answers (
 
 CREATE TABLE IF NOT EXISTS leaderboard (
   id SERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
+  name TEXT UNIQUE NOT NULL,
   score INT NOT NULL,
   title TEXT,
   levels_completed INT DEFAULT 1,

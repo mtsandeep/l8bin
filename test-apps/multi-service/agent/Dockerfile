@@ -9,4 +9,4 @@ COPY agent.py .
 
 EXPOSE 5000
 
-CMD ["python", "-u", "agent.py"]
+CMD ["python", "agent.py"]

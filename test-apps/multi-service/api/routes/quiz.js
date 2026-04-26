@@ -107,7 +107,10 @@ export async function registerQuizRoutes(fastify) {
         name: f.name,
         cuisine: f.cuisine,
         servingSize: f.serving_size,
-        topIngredients: f.top_ingredients || [],
+        topIngredients: (f.top_ingredients || []).map((ing) => ({
+          name: ing.name,
+          weight: ing.weight || Math.round((ing.percentage / 100) * f.serving_size),
+        })),
         sliderRange: { min: 0, max: sliderMax, step: 10 },
       }));
 
@@ -118,15 +121,11 @@ export async function registerQuizRoutes(fastify) {
     const servingSize = parsedLevel === 3 ? 500 : 250;
     const foods = await callAgentGenerateFood(agentUrl, cuisine.name, [], parsedLevel, servingSize);
 
-    // Insert into DB synchronously to get real IDs (batch insert)
+    // Insert into DB (store raw AI data with percentage)
     const foodValues = foods.map((food) => {
       const name = food.name.trim();
       const items = food.items || [];
-      const topIngredients = (food.top_ingredients || []).map((ing) => ({
-        name: ing.name,
-        weight: Math.round((ing.percentage / 100) * servingSize),
-      }));
-      return `('${name.replace(/'/g, "''")}', ${cuisine.id}, '${JSON.stringify(items).replace(/'/g, "''")}'::jsonb, ${parsedLevel}, ${servingSize}, '${JSON.stringify(topIngredients).replace(/'/g, "''")}'::jsonb)`;
+      return `('${name.replace(/'/g, "''")}', ${cuisine.id}, '${JSON.stringify(items).replace(/'/g, "''")}'::jsonb, ${parsedLevel}, ${servingSize}, '${JSON.stringify(food.top_ingredients).replace(/'/g, "''")}'::jsonb)`;
     }).join(', ');
 
     const { rows: inserted } = await db.query(
@@ -196,7 +195,10 @@ export async function registerQuizRoutes(fastify) {
       name: f.name,
       cuisine: cuisine.name,
       servingSize: servingSize,
-      topIngredients: f.top_ingredients || [],
+      topIngredients: (f.top_ingredients || []).map((ing) => ({
+        name: ing.name,
+        weight: ing.weight || Math.round((ing.percentage / 100) * servingSize),
+      })),
       sliderRange: { min: 0, max: sliderMax, step: 10 },
     }));
 

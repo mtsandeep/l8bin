@@ -1402,7 +1402,7 @@ update_agent() {
 
   # Rebuild and restart
   info "Rebuilding agent image..."
-  (cd "${install_dir}/agent" && docker build -t litebin-agent .)
+  (cd "${install_dir}/agent" && docker build -t litebin-agent . 2>&1 | grep -E 'Successfully|Warning|Error|naming to')
 
   local certs_dir
   certs_dir=$(find_certs_dir "$install_dir")

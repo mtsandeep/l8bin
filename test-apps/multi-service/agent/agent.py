@@ -1,10 +1,10 @@
 import json
 import os
 
-from flask import Flask, jsonify, request
+from bottle import Bottle, request, response
 from openai import OpenAI
 
-app = Flask(__name__)
+app = Bottle()
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
@@ -31,17 +31,25 @@ def _call(messages):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"})
+    response.content_type = "application/json"
+    return json.dumps({"status": "ok"})
 
 
-@app.errorhandler(RuntimeError)
-def handle_runtime_error(e):
-    return jsonify({"error": str(e)}), 502
+@app.error(502)
+def error502(error):
+    response.content_type = "application/json"
+    return json.dumps({"error": str(error)})
 
 
-@app.route("/generate-food", methods=["POST"])
+def _json_response(data, status=200):
+    response.content_type = "application/json"
+    response.status = status
+    return json.dumps(data)
+
+
+@app.post("/generate-food")
 def generate_food():
-    body = request.get_json()
+    body = request.json
     cuisine = body["cuisine"]
     existing = body.get("existing", [])
     level = body.get("level", 2)
@@ -87,11 +95,11 @@ def generate_food():
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
         foods = json.loads(raw)
     except json.JSONDecodeError:
-        return jsonify({"foods": []}), 200
+        return _json_response({"foods": []})
 
     # Validate response structure
     if not isinstance(foods, list):
-        return jsonify({"foods": []}), 200
+        return _json_response({"foods": []})
 
     validated_foods = []
     for food in foods:
@@ -140,12 +148,12 @@ def generate_food():
             "fat": int(food["fat"]),
         })
 
-    return jsonify({"foods": validated_foods})
+    return _json_response({"foods": validated_foods})
 
 
-@app.route("/roast", methods=["POST"])
+@app.post("/roast")
 def roast():
-    body = request.get_json()
+    body = request.json
     score = body["score"]
 
     messages = [
@@ -161,7 +169,7 @@ def roast():
     ]
 
     raw = _call(messages)
-    return jsonify({"roast": raw})
+    return _json_response({"roast": raw})
 
 
 if __name__ == "__main__":

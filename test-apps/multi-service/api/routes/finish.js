@@ -52,7 +52,13 @@ export async function registerFinishRoutes(fastify) {
 
     const { rows: lb } = await db.query(
       `INSERT INTO leaderboard (name, score, title, levels_completed, level_scores)
-       VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       ON CONFLICT (name) DO UPDATE SET
+         score = EXCLUDED.score,
+         title = EXCLUDED.title,
+         levels_completed = EXCLUDED.levels_completed,
+         level_scores = EXCLUDED.level_scores
+       RETURNING id`,
       [name, totalScore, title, levels_completed, JSON.stringify(level_scores)],
     );
 
