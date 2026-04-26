@@ -938,6 +938,15 @@ impl DockerManager {
         Ok(())
     }
 
+    /// Check if an image exists in Docker by inspecting it.
+    pub async fn inspect_image(&self, image_id: &str) -> anyhow::Result<()> {
+        self.docker
+            .inspect_image(image_id)
+            .await
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!("image inspect failed: {e}"))
+    }
+
     /// Compute image statistics: dangling count/size, in-use count/size, total.
     /// A "dangling" image is one with no repo tags (untagged).
     pub async fn image_stats(&self) -> crate::types::ImageStats {

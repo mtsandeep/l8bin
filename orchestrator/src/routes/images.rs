@@ -62,6 +62,17 @@ pub async fn upload_image(
                 Json(serde_json::json!({"error": format!("failed to load image: {e}")})),
             ).into_response();
         }
+        // Verify the image actually exists in Docker after loading
+        match state.docker.inspect_image(&image_id).await {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::error!(error = %e, image_id = %image_id, project = %params.project_id, "image load reported success but image not found in Docker");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("image loaded but not found in Docker: {e}")})),
+                ).into_response();
+            }
+        }
     } else {
         // Remote path: stream body to agent via channel bridge
         if let Err((status, error)) = stream_to_agent(&state, node_id, body, &image_id).await {

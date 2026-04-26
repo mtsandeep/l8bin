@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
-- Fix compose deploy "No such image" error — agent's `batch_run` was pulling all images (including pre-loaded `sha256:` ones) from a registry before creating containers. The failed registry pull caused Docker to remove the local copy. Now skips `sha256:` images during pull (matching orchestrator's local compose path).
+- Fix "degraded" status showing for running projects — service status wasn't synced back to "running" after a container recovered. Stats endpoint now updates `project_services.status` to "running" when a container is detected as running.
+- Fix compose deploy — agent's `batch_run` was pulling pre-loaded `sha256:` images from a registry before creating containers. Now skips them during pull (matching orchestrator's local compose path).
+- Added image verification after upload — `POST /images/upload` now confirms the image exists in Docker after loading, returning an immediate error if the load silently failed.
 
 ## [0.2.3] - 2026-04-25
 

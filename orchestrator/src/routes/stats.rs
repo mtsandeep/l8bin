@@ -429,6 +429,13 @@ pub async fn all_project_stats(
             }
             any_running = true;
 
+            // Update service status back to "running" if it was stale
+            let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ? AND container_id = ? AND status != 'running'")
+                .bind(project_id)
+                .bind(cid)
+                .execute(&state.db)
+                .await;
+
             let stats_fut = state.docker.container_stats(cid);
             let disk_fut = state.docker.disk_usage(cid);
             let (stats_res, disk_res) = tokio::join!(stats_fut, disk_fut);
@@ -745,6 +752,13 @@ pub async fn project_stats(
             continue;
         }
         any_running = true;
+
+        // Update service status back to "running" if it was stale
+        let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ? AND container_id = ? AND status != 'running'")
+            .bind(&project_id)
+            .bind(cid)
+            .execute(&state.db)
+            .await;
 
         let stats_fut = state.docker.container_stats(cid);
         let disk_fut = state.docker.disk_usage(cid);
