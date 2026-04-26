@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-04-26
+
 ### Fixed
 - Fix on-demand TLS certificate issuance failing — `waker_intercept` middleware was intercepting Caddy's internal permission check (`/caddy/ask`) because the request came from the orchestrator's Docker hostname, which wasn't in the middleware's allowlist. Internal container requests now pass through to route handlers.
 
