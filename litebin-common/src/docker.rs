@@ -913,9 +913,6 @@ impl DockerManager {
     }
 
     /// Load a Docker image from a tar stream (output of `docker save`).
-    /// Uses `import_image` (not `import_image_stream`) because the streaming
-    /// variant sends `Content-Type: application/json` to Docker's `/images/load`,
-    /// which causes Docker to silently skip the tar body on some versions.
     pub async fn load_image<S, E>(&self, tar_stream: S) -> anyhow::Result<()>
     where
         S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, E>> + Send + Unpin + 'static,
@@ -924,12 +921,9 @@ impl DockerManager {
         use bollard::query_parameters::ImportImageOptions;
         use futures_util::StreamExt;
 
-        let io_stream = tar_stream.map(|res| res.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
-        let body = bollard::body_try_stream(io_stream);
-
-        let mut import_stream = self.docker.import_image(
+        let mut import_stream = self.docker.import_image_stream(
             ImportImageOptions::default(),
-            body,
+            tar_stream,
             None,
         );
 

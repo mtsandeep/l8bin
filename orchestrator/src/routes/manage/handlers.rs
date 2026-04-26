@@ -109,6 +109,14 @@ pub async fn stop_project(
         .execute(&state.db)
         .await;
 
+        // Also update project_services status for single-service projects
+        if service_count <= 1 {
+            let _ = sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ?")
+                .bind(&project_id)
+                .execute(&state.db)
+                .await;
+        }
+
         sync_caddy(&state).await;
         tracing::info!(project = %project_id, "project stopped via API");
     });
@@ -237,6 +245,12 @@ pub async fn start_project(
 
         sync_caddy(&state).await;
 
+        // Sync project_services status for single-service projects
+        let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ?")
+            .bind(&project_id)
+            .execute(&state.db)
+            .await;
+
         return Ok(Json(MessageResponse {
             message: format!("project '{}' started", project_id),
         }));
@@ -333,6 +347,12 @@ pub async fn start_project(
 
     sync_caddy(&state).await;
     tracing::info!(project = %project_id, "project started via API (recreate fallback)");
+
+    // Sync project_services status for single-service projects
+    let _ = sqlx::query("UPDATE project_services SET status = 'running' WHERE project_id = ?")
+        .bind(&project_id)
+        .execute(&state.db)
+        .await;
 
     Ok(Json(MessageResponse {
         message: format!("project '{}' started", project_id),
