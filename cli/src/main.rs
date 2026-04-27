@@ -207,15 +207,25 @@ async fn main() -> Result<()> {
 
                 let target_services = if service.is_empty() { None } else { Some(service) };
 
+                // Resolve target platform from node architecture
+                let nodes = auth::fetch_online_nodes(&client, &server).await;
+                let platform = ship::resolve_platform(&nodes, effective_node.as_deref());
+
                 let url = ship::deploy_compose_noninteractive(
                     &client, &server, &project, &path, compose_name, true,
                     ship::ComposeDeployOpts { target_services, node_id: effective_node.clone() },
+                    platform.as_deref(),
                 ).await?;
 
                 println!("Deployed! {}", url);
             } else {
                 let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
-                let image = build::build_project(&path, dockerfile.as_deref(), &image_tag, secret, ci_mode.enabled).await?;
+
+                // Resolve target platform from node architecture
+                let nodes = auth::fetch_online_nodes(&client, &server).await;
+                let platform = ship::resolve_platform(&nodes, effective_node.as_deref());
+
+                let image = build::build_project(&path, dockerfile.as_deref(), &image_tag, secret, ci_mode.enabled, platform.as_deref()).await?;
 
                 ci_mode.println("Uploading image...");
                 let image_id = upload::upload_tar(

@@ -123,7 +123,7 @@ async fn handle_success(
     let _ = sqlx::query(
         "UPDATE nodes SET last_seen_at = ?, fail_count = 0, status = 'online',
          total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?,
-         public_ip = ?, updated_at = ? WHERE id = ?",
+         public_ip = ?, architecture = ?, version = ?, updated_at = ? WHERE id = ?",
     )
     .bind(now)
     .bind(health.memory_total as i64)
@@ -133,6 +133,8 @@ async fn handle_success(
     .bind(health.disk_total as i64)
     .bind(health.container_count as i64)
     .bind(&public_ip)
+    .bind(&health.architecture)
+    .bind(&health.version)
     .bind(now)
     .bind(&node.id)
     .execute(&state.db)
@@ -261,7 +263,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
         (_, agent_ip) => agent_ip.clone(),
     };
     let _ = sqlx::query(
-        "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, public_ip = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, public_ip = ?, architecture = ?, version = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
     )
     .bind(health.memory_total as i64)
     .bind(health.cpu_cores as f64)
@@ -270,6 +272,8 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
     .bind(health.disk_total as i64)
     .bind(health.container_count as i64)
     .bind(&public_ip)
+    .bind(&health.architecture)
+    .bind(&health.version)
     .bind(now)
     .bind(now)
     .bind(&node.id)
@@ -293,6 +297,8 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 host TEXT NOT NULL,
+                architecture TEXT,
+                version TEXT,
                 public_ip TEXT,
                 agent_port INTEGER NOT NULL DEFAULT 8443,
                 region TEXT,

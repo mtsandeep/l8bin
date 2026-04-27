@@ -631,13 +631,15 @@ CADDYFILE
     local ip_display="${PUBLIC_IP:-<your server IP>}"
     echo "  DNS setup required:"
     if [ "$routing_mode" = "cloudflare_dns" ]; then
-      echo "    You chose ${BOLD}cloudflare_dns${NC} mode. Create these DNS records (DNS-only, grey cloud):"
+      echo "    You chose ${BOLD}cloudflare_dns${NC} mode."
+      echo ""
+      echo "    DNS records for dashboard and poke have been added automatically."
+      echo "    Please verify in your Cloudflare dashboard that these A records exist:"
       echo ""
       echo -e "      ${YELLOW}A${NC}  ${DASHBOARD_SUBDOMAIN}.${DOMAIN}  →  ${ip_display}"
-      echo -e "      ${YELLOW}A${NC}  ${POKE_SUBDOMAIN}.${DOMAIN}      →  ${ip_display}"
+      echo -e "      ${YELLOW}A${NC}  ${POKE_SUBDOMAIN}.${DOMAIN}  →  ${ip_display}"
       echo ""
       echo "    All app subdomains are managed automatically via the Cloudflare API."
-      echo "    Do NOT use a wildcard (*) record — it is not needed and will cause conflicts."
     else
       echo "    You chose ${BOLD}master_proxy${NC} mode. Create this DNS record (DNS-only, grey cloud):"
       echo ""

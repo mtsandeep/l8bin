@@ -265,6 +265,8 @@ pub struct NodeInfo {
     pub id: String,
     pub name: String,
     pub status: String,
+    pub architecture: Option<String>,
+    pub recommended: Option<bool>,
 }
 
 /// Fetch online nodes from the server. Returns empty vec on failure.

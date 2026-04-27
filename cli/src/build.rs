@@ -121,8 +121,9 @@ pub async fn build_project(
     image_tag: &str,
     secret: Vec<std::path::PathBuf>,
     ci_mode: bool,
+    platform: Option<&str>,
 ) -> Result<SavedImage> {
-    build_project_inner(project_dir, dockerfile, image_tag, secret, true, ci_mode).await
+    build_project_inner(project_dir, dockerfile, image_tag, secret, true, ci_mode, platform).await
 }
 
 async fn build_project_inner(
@@ -132,6 +133,7 @@ async fn build_project_inner(
     secret: Vec<std::path::PathBuf>,
     quiet: bool,
     ci_mode: bool,
+    platform: Option<&str>,
 ) -> Result<SavedImage> {
     let has_dockerfile = if let Some(df) = dockerfile {
         project_dir.join(df).exists()
@@ -143,12 +145,12 @@ async fn build_project_inner(
     let _ctx_guard = BuildContextGuard::new(project_dir, dockerfile.unwrap_or("Dockerfile"), secret)?;
 
     let result = if has_dockerfile {
-        build_with_docker(project_dir, dockerfile, image_tag, Some(&_ctx_guard), quiet, ci_mode).await
+        build_with_docker(project_dir, dockerfile, image_tag, Some(&_ctx_guard), quiet, ci_mode, platform).await
     } else if cfg!(target_os = "windows") {
         check_docker_available()?;
-        build_with_railpack_docker(project_dir, image_tag, Some(&_ctx_guard), quiet, ci_mode).await
+        build_with_railpack_docker(project_dir, image_tag, Some(&_ctx_guard), quiet, ci_mode, platform).await
     } else {
-        build_with_railpack_native(project_dir, image_tag, Some(&_ctx_guard), quiet, ci_mode).await
+        build_with_railpack_native(project_dir, image_tag, Some(&_ctx_guard), quiet, ci_mode, platform).await
     };
 
     // Temp .dockerignore and .env are cleaned up when _ctx_guard drops
@@ -162,6 +164,7 @@ async fn build_with_docker(
     _ctx_guard: Option<&BuildContextGuard>,
     quiet: bool,
     ci_mode: bool,
+    platform: Option<&str>,
 ) -> Result<SavedImage> {
     if !quiet && !ci_mode {
         println!("Building with Docker...");
@@ -169,6 +172,9 @@ async fn build_with_docker(
 
     let mut cmd = Command::new("docker");
     cmd.arg("build");
+    if let Some(p) = platform {
+        cmd.args(["--platform", p]);
+    }
     if let Some(df) = dockerfile {
         cmd.args(["-f", df]);
     }
@@ -303,6 +309,7 @@ async fn build_with_railpack_docker(
     _ctx_guard: Option<&BuildContextGuard>,
     quiet: bool,
     ci_mode: bool,
+    platform: Option<&str>,
 ) -> Result<SavedImage> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -363,6 +370,11 @@ async fn build_with_railpack_docker(
         let args = vec!["build", "--name", image_tag];
         let mut rp_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
 
+        if let Some(p) = platform {
+            rp_args.push("--platform".to_string());
+            rp_args.push(p.to_string());
+        }
+
         rp_args.push("/app".to_string());
         cmd.args(rp_args);
 
@@ -420,6 +432,7 @@ async fn build_with_railpack_native(
     _ctx_guard: Option<&BuildContextGuard>,
     quiet: bool,
     ci_mode: bool,
+    platform: Option<&str>,
 ) -> Result<SavedImage> {
     let (railpack_bin, railpack_tag) = crate::railpack::ensure_railpack(ci_mode).await?;
     crate::mise::ensure_mise_for_railpack(&railpack_tag, ci_mode).await?;
@@ -437,7 +450,11 @@ async fn build_with_railpack_native(
 
     for attempt in 1..=max_retries {
         let mut cmd = Command::new(&railpack_bin);
-        cmd.args(["build", "--name", image_tag, "."]);
+        cmd.args(["build", "--name", image_tag]);
+        if let Some(p) = platform {
+            cmd.args(["--platform", p]);
+        }
+        cmd.arg(".");
         if attempt == max_retries {
             cmd.arg("--verbose");
         }

@@ -32,12 +32,49 @@ pub struct ConflictResponse {
     pub project_ids: Vec<String>,
 }
 
+#[derive(Serialize)]
+pub struct NodeResponse {
+    #[serde(flatten)]
+    pub node: Node,
+    pub recommended: bool,
+}
+
+fn recommended_node_id(nodes: &[Node]) -> Option<String> {
+    let online: Vec<&Node> = nodes.iter().filter(|n| n.status == "online").collect();
+    if online.is_empty() {
+        return None;
+    }
+
+    const MIN_DISK_FREE: i64 = 2 * 1024 * 1024 * 1024; // 2 GB
+
+    let best = online.iter().min_by_key(|n| {
+        let total = n.total_memory.unwrap_or(0).max(1);
+        let available = n.available_memory.unwrap_or(0);
+        let mem_used_pct = ((total.saturating_sub(available)) * 100) / total;
+        let load_score = mem_used_pct + (n.container_count * 10);
+        let disk_penalty = if n.disk_free.unwrap_or(0) < MIN_DISK_FREE { 1000 } else { 0 };
+        load_score + disk_penalty
+    });
+
+    best.map(|n| n.id.clone())
+}
+
 pub async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
     match sqlx::query_as::<_, Node>("SELECT * FROM nodes ORDER BY created_at ASC")
         .fetch_all(&state.db)
         .await
     {
-        Ok(nodes) => (StatusCode::OK, Json(nodes)).into_response(),
+        Ok(nodes) => {
+            let rec_id = recommended_node_id(&nodes);
+            let response: Vec<NodeResponse> = nodes
+                .into_iter()
+                .map(|node| NodeResponse {
+                    recommended: rec_id.as_deref() == Some(&node.id),
+                    node,
+                })
+                .collect();
+            (StatusCode::OK, Json(response)).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -280,11 +317,13 @@ pub async fn connect_node(
     // 5. Update node status to online
     let now = chrono::Utc::now().timestamp();
     let _ = sqlx::query(
-        "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, public_ip = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, public_ip = ?, architecture = ?, version = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
     )
     .bind(health.memory_total as i64)
     .bind(health.cpu_cores as f64)
     .bind(&health.public_ip)
+    .bind(&health.architecture)
+    .bind(&health.version)
     .bind(now)
     .bind(now)
     .bind(&id)

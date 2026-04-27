@@ -10,6 +10,8 @@ pub struct Node {
     pub id: String,
     pub name: String,
     pub host: String,
+    pub architecture: Option<String>,
+    pub version: Option<String>,
     pub public_ip: Option<String>,
     pub agent_port: i64,
     pub region: Option<String>,
@@ -142,6 +144,7 @@ impl Default for ImageStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthReport {
     pub version: String,
+    pub architecture: String,
     pub memory_available: u64,
     pub memory_total: u64,
     pub cpu_cores: u32,

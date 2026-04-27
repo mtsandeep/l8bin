@@ -363,6 +363,9 @@ export interface Node {
   id: string;
   name: string;
   host: string;
+  architecture: string | null;
+  version: string | null;
+  recommended: boolean;
   public_ip: string | null;
   agent_port: number;
   region: string | null;

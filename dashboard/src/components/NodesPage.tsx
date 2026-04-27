@@ -535,6 +535,15 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                       {node.id === 'local' && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400">local</span>
                       )}
+                      {node.recommended && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">recommended</span>
+                      )}
+                      {node.architecture && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">{node.architecture}</span>
+                      )}
+                      {node.version && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-600">v{node.version}</span>
+                      )}
                       {node.region && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">{node.region}</span>
                       )}

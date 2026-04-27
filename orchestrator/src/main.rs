@@ -177,7 +177,7 @@ async fn main() -> anyhow::Result<()> {
     let local_disk_total = local_disk_total as i64;
     let now_mem = chrono::Utc::now().timestamp();
     sqlx::query(
-        "UPDATE nodes SET total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, public_ip = ?, last_seen_at = ?, updated_at = ? WHERE id = 'local'",
+        "UPDATE nodes SET total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, public_ip = ?, architecture = ?, version = ?, last_seen_at = ?, updated_at = ? WHERE id = 'local'",
     )
     .bind(local_memory)
     .bind(local_cpu)
@@ -185,6 +185,8 @@ async fn main() -> anyhow::Result<()> {
     .bind(local_disk_free)
     .bind(local_disk_total)
     .bind(&config.public_ip)
+    .bind(std::env::consts::ARCH)
+    .bind(env!("CARGO_PKG_VERSION"))
     .bind(now_mem)
     .bind(now_mem)
     .execute(&db)

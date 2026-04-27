@@ -79,6 +79,8 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 host TEXT NOT NULL,
+                architecture TEXT,
+                version TEXT,
                 public_ip TEXT,
                 agent_port INTEGER NOT NULL DEFAULT 8443,
                 region TEXT,

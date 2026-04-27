@@ -1,0 +1,2 @@
+ALTER TABLE nodes ADD COLUMN architecture TEXT;
+ALTER TABLE nodes ADD COLUMN version TEXT;

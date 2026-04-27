@@ -369,26 +369,34 @@ async fn build_and_deploy(
     let selected_node = if node_id.is_some() {
         node_id.map(|s| s.to_string())
     } else {
-        let nodes = auth::fetch_online_nodes(client, server).await;
+        let mut nodes = auth::fetch_online_nodes(client, server).await;
         match nodes.len() {
             0 => None,
             1 => Some(nodes[0].id.clone()),
             _ => {
-                let mut items: Vec<String> = nodes
+                // Sort by total memory descending (most capable first)
+                nodes.sort_by(|a, b| {
+                    // Use recommended as primary sort, then name for stability
+                    let a_rec = a.recommended.unwrap_or(false);
+                    let b_rec = b.recommended.unwrap_or(false);
+                    b_rec.cmp(&a_rec)
+                });
+                let items: Vec<String> = nodes
                     .iter()
-                    .map(|n| format!("  {} ({})", n.name, n.id))
+                    .map(|n| {
+                        let arch = n.architecture.as_deref().unwrap_or("unknown");
+                        let rec = if n.recommended == Some(true) { " [recommended]" } else { "" };
+                        format!("  {} ({}){} ", n.name, arch, rec)
+                    })
                     .collect();
-                items.insert(0, "  Auto (least loaded)".to_string());
+                // Default to the recommended node (first after sort)
+                let default_idx = nodes.iter().position(|n| n.recommended == Some(true)).unwrap_or(0);
                 let idx = Select::new()
                     .with_prompt("Select target node")
                     .items(&items)
-                    .default(0)
+                    .default(default_idx)
                     .interact()?;
-                if idx == 0 {
-                    None // Auto — let server decide
-                } else {
-                    Some(nodes[idx - 1].id.clone())
-                }
+                Some(nodes[idx].id.clone())
             }
         }
     };
@@ -400,7 +408,10 @@ async fn build_and_deploy(
         .find(|p| project_dir.join(p).exists());
 
     if let Some(compose_name) = compose_file {
-        return deploy_compose(client, server, project_id, project_dir, compose_name, is_new_project, selected_node.as_deref()).await;
+        // Resolve platform before compose deploy (builds happen locally)
+        let nodes = auth::fetch_online_nodes(client, server).await;
+        let platform = resolve_platform(&nodes, selected_node.as_deref());
+        return deploy_compose(client, server, project_id, project_dir, compose_name, is_new_project, selected_node.as_deref(), platform.as_deref()).await;
     }
 
     // Detect project type
@@ -539,7 +550,18 @@ async fn build_and_deploy(
         }
     }
     let image_tag = format!("{}/{}:latest", crate::config::IMAGE_PREFIX, project_id);
-    let image = crate::build::build_project(project_dir, None, &image_tag, secret, false).await?;
+
+    // Resolve target platform from selected node's architecture
+    let platform = {
+        let nodes = auth::fetch_online_nodes(client, server).await;
+        let p = resolve_platform(&nodes, selected_node.as_deref());
+        if let Some(ref plat) = p {
+            println!("  {} Target platform: {}", "::".dimmed(), plat.cyan());
+        }
+        p
+    };
+
+    let image = crate::build::build_project(project_dir, None, &image_tag, secret, false, platform.as_deref()).await?;
 
     println!("  📦 Image built — {}", HumanBytes(image.image_size));
 
@@ -601,6 +623,25 @@ fn short_image(image: &str) -> String {
     }
 }
 
+/// Resolve the target Docker platform string from a list of nodes.
+/// If a specific node_id is given, uses that node's architecture.
+/// Otherwise, falls back to the recommended node, then the first available.
+pub fn resolve_platform(nodes: &[crate::auth::NodeInfo], node_id: Option<&str>) -> Option<String> {
+    let arch = match node_id {
+        Some(id) => nodes.iter().find(|n| n.id == id).and_then(|n| n.architecture.as_deref()),
+        None => nodes
+            .iter()
+            .find(|n| n.recommended == Some(true))
+            .or_else(|| nodes.first())
+            .and_then(|n| n.architecture.as_deref()),
+    };
+    arch.map(|a| match a {
+        "aarch64" => "linux/arm64".to_string(),
+        "x86_64" => "linux/amd64".to_string(),
+        other => format!("linux/{}", other),
+    })
+}
+
 /// Deploy a multi-service project via docker-compose.yaml.
 /// For services with `build:`, builds each image with Railpack, uploads to orchestrator.
 /// For services with `image:`, the orchestrator pulls from registry.
@@ -613,6 +654,7 @@ async fn deploy_compose(
     compose_name: &str,
     is_new_project: bool,
     node_id: Option<&str>,
+    platform: Option<&str>,
 ) -> Result<String> {
     let compose_path = project_dir.join(compose_name);
     println!("  {} Found {} — deploying as multi-service", "🐳".dimmed(), compose_name.cyan());
@@ -811,7 +853,7 @@ async fn deploy_compose(
         println!("    {} {} ({})", "→".dimmed(), info.svc_name.cyan(), svc_dir.display());
 
         // Build with Railpack (uses Dockerfile if present, otherwise auto-detects)
-        let saved_image = crate::build::build_project(&svc_dir, info.dockerfile.as_deref(), &image_tag, secret, false).await?;
+        let saved_image = crate::build::build_project(&svc_dir, info.dockerfile.as_deref(), &image_tag, secret, false, platform).await?;
         println!("    {} {} — {}", "  ✓".green(), info.svc_name, HumanBytes(saved_image.compressed_size));
 
         // Upload tar to orchestrator
@@ -908,6 +950,7 @@ pub async fn deploy_compose_noninteractive(
     compose_name: &str,
     _is_new_project: bool,
     opts: ComposeDeployOpts,
+    platform: Option<&str>,
 ) -> Result<String> {
     let compose_path = project_dir.join(compose_name);
     println!("  {} Found {} — deploying as multi-service", "🐳".dimmed(), compose_name.cyan());
@@ -1011,7 +1054,7 @@ pub async fn deploy_compose_noninteractive(
         let image_tag = format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, info.svc_name);
         println!("    {} {} ({})", "→".dimmed(), info.svc_name.cyan(), svc_dir.display());
 
-        let saved_image = crate::build::build_project(&svc_dir, info.dockerfile.as_deref(), &image_tag, secret, true).await?;
+        let saved_image = crate::build::build_project(&svc_dir, info.dockerfile.as_deref(), &image_tag, secret, true, platform).await?;
         println!("    {} {} — {}", "  ✓".green(), info.svc_name, HumanBytes(saved_image.compressed_size));
 
         let image_id = crate::upload::upload_tar(
