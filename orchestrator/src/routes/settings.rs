@@ -183,6 +183,19 @@ pub async fn update_project_settings(
         )
     })?;
 
+    // For multi-service projects, also update the public service in project_services
+    if (has_memory_limit_mb || has_cpu_limit) && existing.as_ref().unwrap().service_count.unwrap_or(1) > 1 {
+        let mut set_svc: Vec<&str> = Vec::new();
+        if has_memory_limit_mb { set_svc.push("memory_limit_mb = ?"); }
+        if has_cpu_limit { set_svc.push("cpu_limit = ?"); }
+        let sql = format!("UPDATE project_services SET {} WHERE project_id = ? AND is_public = 1", set_svc.join(", "));
+        let mut svc_query = sqlx::query(&sql);
+        if has_memory_limit_mb { svc_query = svc_query.bind(payload.memory_limit_mb.unwrap()); }
+        if has_cpu_limit { svc_query = svc_query.bind(payload.cpu_limit.unwrap()); }
+        svc_query = svc_query.bind(&id);
+        let _ = svc_query.execute(&state.db).await;
+    }
+
     // Resync Caddy if custom_domain changed
     if domain_changed {
         crate::routes::manage::sync_caddy(&state).await;
@@ -251,7 +264,7 @@ pub async fn update_service_settings(
 
     // Verify service exists in project_services
     let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM project_services WHERE project_id = ? AND service_name = ? LIMIT 1"
+        "SELECT 1 FROM project_services WHERE project_id = ? AND service_name = ? LIMIT 1"
     )
     .bind(&project_id)
     .bind(&service_name)
@@ -281,9 +294,6 @@ pub async fn update_service_settings(
         return (StatusCode::OK, Json(serde_json::json!({"updated": true}))).into_response();
     }
 
-    let now = chrono::Utc::now().timestamp();
-    set_clauses.push("updated_at = ?".to_string());
-
     let sql = format!(
         "UPDATE project_services SET {} WHERE project_id = ? AND service_name = ?",
         set_clauses.join(", ")
@@ -296,12 +306,13 @@ pub async fn update_service_settings(
     if has_cpu {
         query = query.bind(payload.cpu_limit.unwrap());
     }
-    query = query.bind(now).bind(&project_id).bind(&service_name);
+    query = query.bind(&project_id).bind(&service_name);
 
     if let Err(e) = query.execute(&state.db).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("database error: {e}")}))).into_response();
     }
 
+    let now = chrono::Utc::now().timestamp();
     // Update project's updated_at timestamp too
     let _ = sqlx::query("UPDATE projects SET updated_at = ? WHERE id = ?")
         .bind(now)

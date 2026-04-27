@@ -66,7 +66,7 @@ pub async fn start_services(
     let extra_env = read_local_project_env(project_id);
     let compose_yaml = litebin_common::docker::DockerManager::read_compose(project_id);
 
-    let plan = if let Some(yaml) = compose_yaml {
+    let mut plan = if let Some(yaml) = compose_yaml {
         let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yaml: {e}")))?;
         litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
@@ -76,6 +76,26 @@ pub async fn start_services(
         let config = litebin_common::types::RunServiceConfig::from_project(project, extra_env);
         litebin_common::compose_run::ComposeRunPlan::single_service(config)
     };
+
+    // 1b. Apply per-service overrides from project_services (dashboard-set memory/cpu)
+    let db_overrides: Vec<(String, Option<i64>, Option<f64>)> = sqlx::query_as(
+        "SELECT service_name, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ?",
+    )
+    .bind(project_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    for config in &mut plan.configs {
+        if let Some((_, mem, cpu)) = db_overrides.iter().find(|(name, _, _)| name == &config.service_name) {
+            if mem.is_some() {
+                config.memory_limit_mb = *mem;
+            }
+            if cpu.is_some() {
+                config.cpu_limit = *cpu;
+            }
+        }
+    }
 
     // 2. Ensure per-project network + connect Caddy + optionally orchestrator
     state.docker.ensure_project_network(project_id, None).await

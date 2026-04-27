@@ -115,7 +115,7 @@ export default function AppSettingsPopover({
           </div>
         )}
         <div>
-          <span className="text-xs text-slate-400 block mb-1.5">Docker image</span>
+          <span className="text-xs text-slate-400 block mb-1.5">Docker image {isMultiService && ps?.service_name && <span className="text-slate-500">({ps.service_name})</span>}</span>
           {isMultiService ? (
             <input
               type="text"
