@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-04-27
+
 ### Added
 - **Cross-platform builds** — `l8b ship` and `l8b deploy` now automatically detect the target server's architecture and build Docker images for the correct platform (`linux/arm64`, `linux/amd64`, etc.). Fixes `exec format error` when deploying from an x86_64 machine to an ARM VPS (or vice versa). Works for Dockerfile, Railpack, and compose builds.
 - **Node architecture and recommendation** — `/nodes` API now returns each node's `architecture` and a `recommended` flag (least-loaded online node). CLI node picker shows architecture and pre-selects the recommended node. "Auto" option removed — nodes are always explicitly selected.
