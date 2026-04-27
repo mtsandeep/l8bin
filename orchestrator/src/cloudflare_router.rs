@@ -168,7 +168,7 @@ impl CloudflareDnsRouter {
                         "handle": [{
                             "handler": "static_response",
                             "status_code": 301,
-                            "headers": { "Location": [format!("https://{}{{{{uri}}}}", canonical)] }
+                            "headers": { "Location": [format!("https://{}{{uri}}", canonical)] }
                         }]
                     }));
                 }
@@ -348,7 +348,7 @@ impl CloudflareDnsRouter {
                         "handle": [{
                             "handler": "static_response",
                             "status_code": 301,
-                            "headers": { "Location": [format!("https://{}{{{{uri}}}}", canonical)] }
+                            "headers": { "Location": [format!("https://{}{{uri}}", canonical)] }
                         }]
                     }));
                 }

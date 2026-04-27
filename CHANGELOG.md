@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix www→bare domain redirect producing a trailing `}` in the URL. The Caddy placeholder `{uri}` was double-escaped in the Rust format string.
+
 ## [0.2.10] - 2026-04-27
 
 ### Added
