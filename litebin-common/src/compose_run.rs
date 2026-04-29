@@ -244,7 +244,7 @@ fn build_configs(
 ///
 /// - `pgdata:/var/lib/postgresql/data` -> `litebin_myproject_pgdata:/var/lib/postgresql/data`
 /// - `/host/path:/container/path` -> unchanged (absolute bind mount)
-/// - `./data:/container/path` -> `projects/myproject/data:/container/path` (relative to project folder)
+/// - `./data:/container/path` -> `/app/projects/myproject/data:/container/path` (bind mount under project dir)
 fn scope_volume_name(volume_spec: &str, project_id: &str) -> String {
     let (source, rest) = match volume_spec.split_once(':') {
         Some((src, rest)) => (src, format!(":{}", rest)),

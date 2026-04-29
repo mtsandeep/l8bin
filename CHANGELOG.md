@@ -14,7 +14,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Fix raw port binding using ephemeral port (`0`) instead of the compose-declared port. Raw ports now bind to their actual port number (e.g., `19132/udp` binds host port 19132, not a random one).
-- Fix www→bare domain redirect producing a trailing `}` in the URL. The Caddy placeholder `{uri}` was double-escaped in the Rust format string.
+- Fix relative bind mounts (e.g. `./data:/container/path`) in compose failing with "invalid characters for a local volume name". The path was not resolved to an absolute path, so Docker treated it as a named volume.
 
 ### Changed
 - **Multi-service routing now goes directly to containers** — All running projects (single and multi-service) get direct Caddy→container routes. Previously, multi-service projects always proxied through the orchestrator, which broke WebSocket, gRPC, SSE, and other non-HTTP protocols. Caddy's 502/503/504 fallback to the orchestrator handles auto-wake when containers are down. Service health is now handled by Docker's `restart: unless-stopped` policy (recommended in compose files) instead of per-request orchestrator health checks.
