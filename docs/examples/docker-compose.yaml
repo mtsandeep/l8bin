@@ -1,0 +1,68 @@
+# LiteBin-compatible docker-compose.yaml
+# A sample API + Postgres stack showing all supported compose fields.
+#
+# NOTE: LiteBin only handles the `services` section. The following are ignored:
+#   - networks (LiteBin creates one managed network per project)
+#   - configs, secrets, extension fields
+#
+# LiteBin auto-detects the public service using this priority:
+#   1. Service with `litebin.public: "true"` label
+#   2. Service exposing port 80 or 443
+#   3. If only one service declares ports, that service is picked
+# If multiple services have ports and none match, add `litebin.public: "true"`.
+
+services:
+  api:
+    image: node:24-alpine
+    ports:
+      - "3000"              # LiteBin routes HTTP to this port
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:password@db:5432/myapp}
+      - PORT=${APP_PORT:-3000}
+    working_dir: /app
+    volumes:
+      - app-data:/app/data   # Named volume (scoped to litebin_<project-id>_app-data)
+      - ./logs:/app/logs     # Bind mount (stored under projects/<project-id>/logs/)
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    labels:
+      litebin.public: "true" # Optional: explicitly mark as the public service
+
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432"              # Only accessible within the Docker network
+    environment:
+      - POSTGRES_DB=myapp
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+
+volumes:
+  app-data:
+  pgdata:

@@ -47,12 +47,18 @@
       </div>
 
       <!-- Main Tabs -->
-      <div class="flex gap-8 mb-8 border-b border-white/10">
+      <div class="flex flex-wrap gap-2 mb-8 sm:gap-8 sm:border-b sm:border-white/10">
         <button onclick="switchMainTab('setup')" id="tab-setup" class="tab-active pb-4 text-sm font-bold uppercase tracking-wider transition">
           1. Setup Server
         </button>
         <button onclick="switchMainTab('deploy')" id="tab-deploy" class="tab-inactive pb-4 text-sm font-bold uppercase tracking-wider transition">
           2. Deploy Apps
+        </button>
+        <button onclick="switchMainTab('compose')" id="tab-compose" class="tab-inactive pb-4 text-sm font-bold uppercase tracking-wider transition">
+          Docker Compose
+        </button>
+        <button onclick="switchMainTab('dockerfile')" id="tab-dockerfile" class="tab-inactive pb-4 text-sm font-bold uppercase tracking-wider transition">
+          Dockerfile
         </button>
       </div>
 
@@ -378,8 +384,9 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc</code
                 <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <code class="text-sm text-zinc-300">l8b deploy --project myapp --port 3000</code>
+                <code class="text-sm text-zinc-300">l8b deploy --project myapp</code>
               </div>
+              <p class="text-xs text-zinc-500 mt-1">Port is auto-detected from EXPOSE. Use <code class="text-violet-300">--port</code> to override.</p>
             </div>
           </div>
 
@@ -492,6 +499,165 @@ jobs:
               </span>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: Docker Compose -->
+      <div id="content-compose" class="tab-content hidden">
+        <div class="mb-8">
+          <h2 class="text-2xl font-bold text-white mb-2">Docker Compose (Optional)</h2>
+          <p class="text-zinc-400">Deploy multi-service apps with <code class="text-violet-300">docker-compose.yml</code>. LiteBin auto-detects it when you run <code class="text-violet-300">l8b ship</code> or upload it from the dashboard.</p>
+        </div>
+
+        <div class="mb-6">
+          <h3 class="text-lg font-bold text-white mb-4">Sample: API + Postgres</h3>
+          <div class="code-block relative group">
+            <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+            <pre class="text-sm text-zinc-300"><code>services:
+  api:
+    image: node:24-alpine
+    ports:
+      - "3000"              # LiteBin routes HTTP to this port
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:password@db:5432/myapp}
+    working_dir: /app
+    volumes:
+      - app-data:/app/data   # Named volume (scoped to litebin_&lt;project&gt;_app-data)
+      - ./logs:/app/logs     # Bind mount (under projects/&lt;project&gt;/logs/)
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    labels:
+      litebin.public: "true" # Mark as the public service (optional)
+
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432"              # Only accessible within the Docker network
+    environment:
+      - POSTGRES_DB=myapp
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  app-data:
+  pgdata:</code></pre>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6 mb-6">
+          <div class="glass rounded-xl p-6">
+            <h4 class="text-white font-bold mb-3 flex items-center gap-2">
+              <span class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs">&#10003;</span>
+              Supported
+            </h4>
+            <ul class="space-y-1.5 text-sm text-zinc-400">
+              <li><code class="text-violet-300">image</code>, <code class="text-violet-300">build</code> (context + dockerfile)</li>
+              <li><code class="text-violet-300">command</code>, <code class="text-violet-300">entrypoint</code></li>
+              <li><code class="text-violet-300">working_dir</code>, <code class="text-violet-300">user</code></li>
+              <li><code class="text-violet-300">environment</code> (with <code class="text-violet-300">${VAR}</code> interpolation)</li>
+              <li><code class="text-violet-300">ports</code> (TCP + UDP, with protocol)</li>
+              <li><code class="text-violet-300">depends_on</code> (long form with conditions)</li>
+              <li><code class="text-violet-300">volumes</code> (named volumes + bind mounts)</li>
+              <li><code class="text-violet-300">healthcheck</code></li>
+              <li><code class="text-violet-300">restart</code> (no, always, unless-stopped)</li>
+              <li><code class="text-violet-300">stdin_open</code>, <code class="text-violet-300">tty</code></li>
+              <li><code class="text-violet-300">deploy.resources.limits</code> (memory + cpus)</li>
+              <li><code class="text-violet-300">shm_size</code>, <code class="text-violet-300">tmpfs</code>, <code class="text-violet-300">read_only</code></li>
+              <li><code class="text-violet-300">cap_add</code>, <code class="text-violet-300">cap_drop</code>, <code class="text-violet-300">extra_hosts</code></li>
+              <li><code class="text-violet-300">labels</code> (<code class="text-violet-300">litebin.public</code> to pick public service)</li>
+            </ul>
+          </div>
+          <div class="glass rounded-xl p-6">
+            <h4 class="text-white font-bold mb-3 flex items-center gap-2">
+              <span class="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs">!</span>
+              Differences from standard Docker Compose
+            </h4>
+            <ul class="space-y-1.5 text-sm text-zinc-400">
+              <li><strong class="text-amber-400">networks</strong> — Ignored. LiteBin creates one managed network per project and connects all services to it.</li>
+              <li><strong class="text-amber-400">container_name</strong> — Ignored. LiteBin auto-generates container names.</li>
+              <li><strong class="text-amber-400">ports host binding</strong> — Host port and IP are ignored. Only the container port is used. LiteBin binds the public service's port internally and routes via Caddy.</li>
+              <li><strong class="text-amber-400">configs</strong> — Not supported.</li>
+              <li><strong class="text-amber-400">secrets</strong> — Use <code class="text-violet-300">projects/&lt;project&gt;/.env</code> for runtime secrets. LiteBin auto-detects changes and recreates the container on next wake. See <a href="https://github.com/mtsandeep/l8bin/blob/main/docs/env-secrets.md" class="text-violet-400 hover:underline">env-secrets.md</a>.</li>
+              <li><strong class="text-amber-400">Auto-wake</strong> — Only HTTP traffic through Caddy triggers auto-wake. Hitting the public HTTP port wakes <em>all</em> services in the project (including non-HTTP ones). But direct traffic to non-HTTP ports bypasses Caddy and won't trigger a wake.</li>
+              <li><strong class="text-amber-400">Non-HTTP ports</strong> — Enable "Allow raw ports" in dashboard settings to bind all compose ports directly on the host (bypasses Caddy).</li>
+              <li><strong class="text-amber-400">volumes</strong> — Named volumes are scoped with a <code class="text-violet-300">litebin_&lt;project&gt;_</code> prefix. Bind mounts with relative paths are stored under <code class="text-violet-300">projects/&lt;project&gt;/</code>.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="glass rounded-xl p-6">
+          <h4 class="text-white font-bold mb-2">Public Service Detection</h4>
+          <p class="text-sm text-zinc-400">LiteBin picks one service as the public HTTP endpoint (routed through Caddy with TLS). Detection order:</p>
+          <ol class="mt-2 space-y-1 text-sm text-zinc-400 list-decimal list-inside">
+            <li>Service with <code class="text-violet-300">litebin.public: "true"</code> label</li>
+            <li>Service exposing port <code class="text-violet-300">80</code> or <code class="text-violet-300">443</code></li>
+            <li>If only <em>one</em> service declares ports, that service is picked</li>
+          </ol>
+          <p class="text-sm text-zinc-500 mt-2">If multiple services have ports and none match the above, <code class="text-violet-300">l8b ship</code> asks you to pick the public service. For CI (<code class="text-violet-300">l8b deploy</code>), the first service is auto-selected.</p>
+        </div>
+      </div>
+
+      <!-- TAB 4: Dockerfile -->
+      <div id="content-dockerfile" class="tab-content hidden">
+        <div class="mb-8">
+          <h2 class="text-2xl font-bold text-white mb-2">Dockerfile (Optional)</h2>
+          <p class="text-zinc-400">If a <code class="text-violet-300">Dockerfile</code> exists in your project root, <code class="text-violet-300">l8b ship</code> uses it to build your image. Otherwise, Railpack auto-detects your framework.</p>
+        </div>
+
+        <div class="mb-6">
+          <h3 class="text-lg font-bold text-white mb-4">Sample: Node.js App</h3>
+          <div class="code-block relative group">
+            <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+            <pre class="text-sm text-zinc-300"><code>FROM node:24-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+FROM node:24-alpine
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+COPY . .
+EXPOSE 3000
+CMD ["node", "server.js"]</code></pre>
+          </div>
+        </div>
+
+        <div class="glass rounded-xl p-6">
+          <h4 class="text-white font-bold mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-xs">i</span>
+            How it works
+          </h4>
+          <ul class="space-y-1.5 text-sm text-zinc-400">
+            <li><strong class="text-white">Detection:</strong> <code class="text-violet-300">l8b ship</code> checks for <code class="text-violet-300">Dockerfile</code> in your project root. If found, it builds with Docker. Otherwise, it uses Railpack.</li>
+            <li><strong class="text-white">Multi-stage builds:</strong> Fully supported. Use <code class="text-violet-300">FROM ... AS builder</code> pattern as shown above.</li>
+            <li><strong class="text-white">Custom Dockerfile:</strong> Use <code class="text-violet-300">l8b ship --dockerfile Dockerfile.dev</code> to specify a different filename.</li>
+            <li><strong class="text-white">Build secrets:</strong> Use <code class="text-violet-300">l8b ship --secret .env</code> to pass secrets at build time (baked into the image).</li>
+            <li><strong class="text-white">Cross-platform:</strong> The CLI auto-detects the target server's architecture and builds for the correct platform. No manual <code class="text-violet-300">--platform</code> flag needed.</li>
+            <li><strong class="text-white">Port:</strong> <code class="text-violet-300">l8b ship</code> auto-detects the port from <code class="text-violet-300">EXPOSE</code> in your Dockerfile. If multiple ports are exposed, the first one is used. If none, you'll be prompted (default: 3000).</li>
+          </ul>
         </div>
       </div>
     </div>

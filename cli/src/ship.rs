@@ -110,20 +110,35 @@ async fn new_project_flow(
     println!("  {}", format!("L8B_TOKEN={}", token).dimmed());
     println!();
 
-    // Port — auto-detect 80 from Dockerfile/compose, otherwise prompt
+    // Port — auto-detect from EXPOSE, otherwise prompt
     let port: u16 = if let Some(p) = port_override {
         p
-    } else if detect_port_80(project_dir) {
-        println!("  {} Detected exposed port 80", "::".dimmed());
-        80
+    } else if detect_compose_file(project_dir).is_some() {
+        // Compose handles port detection server-side
+        0
     } else {
-        let input: String = Input::new()
-            .with_prompt("App port")
-            .default("3000".to_string())
-            .interact_text()?;
-        input
-            .parse::<u16>()
-            .context("Port must be a number (1-65535)")?
+        let detected = detect_exposed_ports(project_dir);
+        match detected.as_slice() {
+            [single] => {
+                println!("  {} Detected exposed port {}", "::".dimmed(), single);
+                *single
+            }
+            [first, rest @ ..] => {
+                let all: Vec<String> = std::iter::once(first)
+                    .chain(rest.iter())
+                    .map(|p| p.to_string())
+                    .collect();
+                println!("  {} Detected ports: {} — using {}", "::".dimmed(), all.join(", "), first);
+                *first
+            }
+            [] => {
+                let input: String = Input::new()
+                    .with_prompt("App port")
+                    .default("3000".to_string())
+                    .interact_text()?;
+                input.parse::<u16>().context("Port must be a number (1-65535)")?
+            }
+        }
     };
 
     // Build & deploy
@@ -206,31 +221,38 @@ async fn existing_project_flow(
             // Redeploy — build, upload, deploy
             // Use existing node_id if set, otherwise show picker
             let existing_node = project.node_id.as_deref();
-            // Check for compose file — if found, ports come from compose, no prompt needed
-            let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
-            let compose_file = compose_paths
-                .iter()
-                .find(|p| project_dir.join(p).exists());
+            let compose_file = detect_compose_file(project_dir);
 
             let url = if compose_file.is_some() {
                 // Multi-service: compose handles ports
                 build_and_deploy(client, server, project_id, project_dir, 0, secret_override, false, existing_node).await?
-            } else if detect_port_80(project_dir) {
-                // Single-service with EXPOSE 80 in Dockerfile
-                println!("  {} Detected exposed port 80", "::".dimmed());
-                build_and_deploy(client, server, project_id, project_dir, 80, secret_override, false, existing_node).await?
             } else {
-                // Single-service: ask for port
+                // Single-service: auto-detect or prompt
                 let port: u16 = if let Some(p) = port_override {
                     p
                 } else {
-                    let input: String = Input::new()
-                        .with_prompt("App port")
-                        .default("3000".to_string())
-                        .interact_text()?;
-                    input
-                        .parse::<u16>()
-                        .context("Port must be a number (1-65535)")?
+                    let detected = detect_exposed_ports(project_dir);
+                    match detected.as_slice() {
+                        [single] => {
+                            println!("  {} Detected exposed port {}", "::".dimmed(), single);
+                            *single
+                        }
+                        [first, rest @ ..] => {
+                            let all: Vec<String> = std::iter::once(first)
+                                .chain(rest.iter())
+                                .map(|p| p.to_string())
+                                .collect();
+                            println!("  {} Detected ports: {} — using {}", "::".dimmed(), all.join(", "), first);
+                            *first
+                        }
+                        [] => {
+                            let input: String = Input::new()
+                                .with_prompt("App port")
+                                .default("3000".to_string())
+                                .interact_text()?;
+                            input.parse::<u16>().context("Port must be a number (1-65535)")?
+                        }
+                    }
                 };
                 build_and_deploy(client, server, project_id, project_dir, port, secret_override, false, existing_node).await?
             };
@@ -302,20 +324,38 @@ async fn existing_project_flow(
     Ok(())
 }
 
-/// Detect if port 80 is exposed in Dockerfile or compose file.
-fn detect_port_80(project_dir: &Path) -> bool {
+/// Detect exposed ports from Dockerfile or compose file.
+/// Returns all unique ports found (container ports only, host port is ignored).
+/// For compose, returns ports from all services combined.
+fn detect_exposed_ports(project_dir: &Path) -> Vec<u16> {
+    let mut ports = Vec::new();
+
     // Check compose first
-    let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
-    if let Some(name) = compose_paths.iter().find(|p| project_dir.join(p).exists()) {
+    if let Some(name) = detect_compose_file(project_dir) {
         if let Ok(content) = std::fs::read_to_string(project_dir.join(name)) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if (trimmed == "- '80'" || trimmed == "- \"80\"") && !trimmed.starts_with('#') {
-                    return true;
+            if let Ok(compose) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                if let Some(services) = compose.get("services").and_then(|s| s.as_mapping()) {
+                    for (_, svc) in services {
+                        if let Some(port_list) = svc.get("ports").and_then(|p| p.as_sequence()) {
+                            for port_val in port_list {
+                                if let Some(port_str) = port_val.as_str() {
+                                    // Extract container port: take last segment before /protocol
+                                    // e.g. "3000", "3000/tcp", "80:3000/udp" -> 3000
+                                    let port_part = port_str.split('/').next().unwrap_or(port_str);
+                                    let container_port = port_part.rsplit(':').next().unwrap_or(port_part);
+                                    if let Ok(p) = container_port.parse::<u16>() {
+                                        if !ports.contains(&p) {
+                                            ports.push(p);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        return false;
+        return ports;
     }
 
     // Check Dockerfile
@@ -324,15 +364,171 @@ fn detect_port_80(project_dir: &Path) -> bool {
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.to_uppercase().starts_with("EXPOSE") {
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 && parts[1] == "80" {
-                    return true;
+                for part in trimmed.split_whitespace().skip(1) {
+                    // Handle "3000/tcp" format
+                    let port_part = part.split('/').next().unwrap_or(part);
+                    if let Ok(p) = port_part.parse::<u16>() {
+                        if !ports.contains(&p) {
+                            ports.push(p);
+                        }
+                    }
                 }
             }
         }
     }
 
-    false
+    ports
+}
+
+/// Check if compose has an unambiguous public service.
+/// Returns None if auto-detection will handle it (label, port 80/443, single service with ports).
+/// Returns Some(service_name) if user selection is needed — the selected service.
+fn pick_public_service(compose: &serde_yaml::Value) -> Result<Option<String>> {
+    use dialoguer::Select;
+
+    let services = match compose.get("services").and_then(|s| s.as_mapping()) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    // Check if any service has litebin.public label
+    for (_, svc) in services {
+        if let Some(labels) = svc.get("labels") {
+            let has_public = match labels {
+                serde_yaml::Value::Mapping(m) => m.keys().any(|k| {
+                    k.as_str().map(|k| k == "litebin.public" || k.ends_with(".public")).unwrap_or(false)
+                }),
+                serde_yaml::Value::Sequence(seq) => seq.iter().any(|v| {
+                    v.as_str().map(|s| s.contains("litebin.public")).unwrap_or(false)
+                }),
+                _ => false,
+            };
+            if has_public {
+                return Ok(None); // Server will handle it
+            }
+        }
+    }
+
+    // Check if any service exposes port 80 or 443
+    let mut candidates: Vec<(String, u16)> = Vec::new();
+    let mut has_well_known = false;
+
+    for (svc_name, svc) in services {
+        if let Some(port_list) = svc.get("ports").and_then(|p| p.as_sequence()) {
+            for port_val in port_list {
+                if let Some(port_str) = port_val.as_str() {
+                    let port_part = port_str.split('/').next().unwrap_or(port_str);
+                    let container_port = port_part.rsplit(':').next().unwrap_or(port_part);
+                    if let Ok(p) = container_port.parse::<u16>() {
+                        if p == 80 || p == 443 {
+                            has_well_known = true;
+                        }
+                        if !candidates.iter().any(|(_, ep)| *ep == p) {
+                            candidates.push((svc_name.as_str().unwrap_or_default().to_string(), p));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if has_well_known || candidates.len() <= 1 {
+        return Ok(None); // Auto-detection will handle it
+    }
+
+    // Ambiguous — ask user to pick
+    let items: Vec<String> = candidates.iter()
+        .map(|(name, port)| format!("{} (port {})", name, port))
+        .collect();
+
+    println!("  {} Multiple services expose ports — select the public service", "!".yellow());
+    let selection = Select::new()
+        .with_prompt("Public service (main subdomain entry point)")
+        .items(&items)
+        .default(0)
+        .interact()?;
+
+    Ok(Some(candidates[selection].0.clone()))
+}
+
+/// Inject `litebin.public: "true"` label into a service in compose YAML.
+fn inject_public_label(yaml: &str, service_name: &str) -> Result<String> {
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(yaml)
+        .with_context(|| "failed to parse compose YAML for label injection")?;
+
+    if let Some(services) = doc.get_mut("services").and_then(|s| s.as_mapping_mut()) {
+        if let Some(svc) = services.get_mut(&serde_yaml::Value::String(service_name.to_string())) {
+            if let Some(svc_map) = svc.as_mapping_mut() {
+                let labels = svc_map.entry(serde_yaml::Value::String("labels".to_string()))
+                    .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+                if let Some(labels_map) = labels.as_mapping_mut() {
+                    labels_map.insert(
+                        serde_yaml::Value::String("litebin.public".to_string()),
+                        serde_yaml::Value::String("true".to_string()),
+                    );
+                }
+            }
+        }
+    }
+
+    serde_yaml::to_string(&doc)
+        .with_context(|| "failed to serialize compose YAML after label injection")
+}
+
+/// Non-interactive version: auto-pick first service with ports when ambiguous.
+/// Returns Some(service_name) if a label needs to be injected, None if auto-detection handles it.
+fn auto_pick_public_service(compose: &serde_yaml::Value) -> Option<String> {
+    let services = compose.get("services").and_then(|s| s.as_mapping())?;
+
+    // Check for litebin.public label
+    for (_, svc) in services {
+        if let Some(labels) = svc.get("labels") {
+            let has_public = match labels {
+                serde_yaml::Value::Mapping(m) => m.keys().any(|k| {
+                    k.as_str().map(|k| k == "litebin.public" || k.ends_with(".public")).unwrap_or(false)
+                }),
+                serde_yaml::Value::Sequence(seq) => seq.iter().any(|v| {
+                    v.as_str().map(|s| s.contains("litebin.public")).unwrap_or(false)
+                }),
+                _ => false,
+            };
+            if has_public {
+                return None;
+            }
+        }
+    }
+
+    // Check for port 80/443
+    let mut candidates: Vec<(String, u16)> = Vec::new();
+    let mut has_well_known = false;
+
+    for (svc_name, svc) in services {
+        if let Some(port_list) = svc.get("ports").and_then(|p| p.as_sequence()) {
+            for port_val in port_list {
+                if let Some(port_str) = port_val.as_str() {
+                    let port_part = port_str.split('/').next().unwrap_or(port_str);
+                    let container_port = port_part.rsplit(':').next().unwrap_or(port_part);
+                    if let Ok(p) = container_port.parse::<u16>() {
+                        if p == 80 || p == 443 {
+                            has_well_known = true;
+                        }
+                        if !candidates.iter().any(|(_, ep)| *ep == p) {
+                            candidates.push((svc_name.as_str().unwrap_or_default().to_string(), p));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if has_well_known || candidates.len() <= 1 {
+        return None;
+    }
+
+    // Ambiguous — auto-pick first
+    let (name, port) = &candidates[0];
+    println!("  {} Multiple services expose ports — auto-selecting {} (port {}) as public", "::".dimmed(), name.cyan(), port);
+    Some(name.clone())
 }
 
 fn show_env_path(server: &str, project_id: &str) {
@@ -666,6 +862,9 @@ async fn deploy_compose(
     let compose: serde_yaml::Value = serde_yaml::from_str(&compose_yaml)
         .with_context(|| "failed to parse compose YAML")?;
 
+    // Public service picker — only if ambiguous (multiple services with ports, no auto-detect)
+    let selected_public: Option<String> = pick_public_service(&compose)?;
+
     // Phase 1: Build and upload images for services with `build:`
     // Collect build info into owned values so we can drop the borrow on `compose`
     #[derive(Clone)]
@@ -889,6 +1088,13 @@ async fn deploy_compose(
 
     let resolved_yaml = serde_yaml::to_string(&resolved_compose)?;
 
+    // Inject litebin.public label if user picked a public service
+    let resolved_yaml = if let Some(ref svc_name) = selected_public {
+        inject_public_label(&resolved_yaml, svc_name)?
+    } else {
+        resolved_yaml
+    };
+
     // Phase 3: Send resolved compose to orchestrator
     let deploy_spinner = indicatif::ProgressBar::new_spinner();
     deploy_spinner.set_style(
@@ -960,6 +1166,9 @@ pub async fn deploy_compose_noninteractive(
 
     let compose: serde_yaml::Value = serde_yaml::from_str(&compose_yaml)
         .with_context(|| "failed to parse compose YAML")?;
+
+    // Auto-pick public service for non-interactive mode
+    let selected_public = auto_pick_public_service(&compose);
 
     // Collect build info
     #[derive(Clone)]
@@ -1085,6 +1294,13 @@ pub async fn deploy_compose_noninteractive(
     }
 
     let resolved_yaml = serde_yaml::to_string(&resolved_compose)?;
+
+    // Inject litebin.public label if auto-picked
+    let resolved_yaml = if let Some(ref svc_name) = selected_public {
+        inject_public_label(&resolved_yaml, svc_name)?
+    } else {
+        resolved_yaml
+    };
 
     println!("  {} Deploying compose...", "🚢".dimmed());
 

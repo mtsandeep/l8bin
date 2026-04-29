@@ -308,7 +308,7 @@ function GeneralTab() {
                     if (result.created > 0) parts.push(`${result.created} added`);
                     if (result.unchanged > 0) parts.push(`${result.unchanged} already exist`);
                     if (result.deleted > 0) parts.push(`${result.deleted} removed`);
-                    showToast(parts.length > 0 ? `DNS synced: ${parts.join(', ')}` : 'DNS already up to date');
+                    showToast(parts.length > 0 ? `DNS synced: ${parts.join(', ')}` : 'DNS already up to date', 'success');
                   } else {
                     showToast(`DNS sync: ${result.created} added, ${result.errors} failed`);
                   }
@@ -390,7 +390,7 @@ function GeneralTab() {
                           routing_mode: 'master_proxy',
                         });
                         setShowRemoveConfirm(false);
-                        showToast(`Removed Cloudflare: ${result.deleted_count} DNS record(s) deleted`);
+                        showToast(`Removed Cloudflare: ${result.deleted_count} DNS record(s) deleted`, 'success');
                       } catch (e) {
                         const msg = e instanceof Error ? e.message : 'Failed to remove Cloudflare';
                         setError(msg);

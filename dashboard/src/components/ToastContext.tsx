@@ -1,13 +1,14 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
-import { X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle, CheckCircle } from 'lucide-react';
 
 interface Toast {
   id: number;
   message: string;
+  type: 'success' | 'error';
 }
 
 interface ToastContextValue {
-  showToast: (message: string) => void;
+  showToast: (message: string, type?: 'success' | 'error') => void;
 }
 
 const ToastContext = createContext<ToastContextValue>({ showToast: () => {} });
@@ -21,9 +22,9 @@ let nextId = 0;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const showToast = useCallback((message: string) => {
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'error') => {
     const id = ++nextId;
-    setToasts((prev) => [...prev, { id, message }]);
+    setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
@@ -41,9 +42,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className="pointer-events-auto flex items-center gap-2 bg-red-500/90 text-white text-xs font-medium px-4 py-2.5 rounded-lg shadow-lg backdrop-blur-sm animate-[slideUp_0.2s_ease-out]"
+            className={`pointer-events-auto flex items-center gap-2 text-white text-xs font-medium px-4 py-2.5 rounded-lg shadow-lg backdrop-blur-sm animate-[slideUp_0.2s_ease-out] ${
+              toast.type === 'success' ? 'bg-emerald-500/90' : 'bg-red-500/90'
+            }`}
           >
-            <AlertCircle size={14} className="shrink-0" />
+            {toast.type === 'success'
+              ? <CheckCircle size={14} className="shrink-0" />
+              : <AlertCircle size={14} className="shrink-0" />
+            }
             <span>{toast.message}</span>
             <button
               onClick={() => dismiss(toast.id)}

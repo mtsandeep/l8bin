@@ -172,10 +172,10 @@ Deploy from a local project (auto-detects Dockerfile or uses Railpack):
 l8b ship
 ```
 
-Or deploy non-interactively:
+Or deploy non-interactively (port auto-detected from `EXPOSE`):
 
 ```bash
-l8b deploy --project myapp --port 3000
+l8b deploy --project myapp
 ```
 
 For multi-service (compose) projects:

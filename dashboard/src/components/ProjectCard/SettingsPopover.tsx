@@ -147,18 +147,24 @@ export default function SettingsPopover({
     }
   }, [settingsTab]);
 
+  const [saving, setSaving] = useState(false);
+
   const handleSaveNameDesc = async () => {
     onSettingsErrorChange(null);
+    setSaving(true);
     try {
       await updateProjectSettings(project.id, {
         name: projectName,
         description: projectDescription,
         allow_raw_ports: allowRawPorts,
       });
-      onRefresh();
+      showToast("Settings saved", 'success');
+      onClose();
     } catch (e) {
       onSettingsErrorChange(e instanceof Error ? e.message : "Failed to save");
       showToast(e instanceof Error ? e.message : "Failed to save");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -259,11 +265,6 @@ export default function SettingsPopover({
                 className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
               />
             </div>
-            <button
-              onClick={handleSaveNameDesc}
-              className="w-full py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors cursor-pointer">
-              Save
-            </button>
 
             {/* Allow raw ports (compose-only) */}
             {(project.service_count ?? 0) > 1 && (
@@ -272,7 +273,7 @@ export default function SettingsPopover({
                   <div>
                     <span className="text-xs text-slate-300">Allow raw ports</span>
                     <p className="text-[10px] text-slate-500 mt-0.5">
-                      Expose all compose ports directly on host (TCP/UDP). Restart required.
+                      Expose all compose ports directly on host (TCP/UDP)
                     </p>
                   </div>
                   <button
@@ -292,6 +293,14 @@ export default function SettingsPopover({
                 </label>
               </div>
             )}
+
+            <button
+              onClick={handleSaveNameDesc}
+              disabled={saving}
+              className="w-full py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
 
             {/* Custom domain */}
             <div className="border-t border-slate-700/50 pt-3 space-y-2">
