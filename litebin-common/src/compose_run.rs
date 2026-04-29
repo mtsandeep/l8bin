@@ -173,6 +173,7 @@ fn build_configs(
                 is_public,
                 bollard_create_body: Some(bollard_config.create_body),
                 bollard_host_config: Some(bollard_config.host_config),
+                allow_raw_ports: false,
             })
         })
         .collect()

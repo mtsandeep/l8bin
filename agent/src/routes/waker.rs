@@ -272,7 +272,7 @@ pub async fn wake(
         .read()
         .unwrap()
         .get(&subdomain)
-        .copied()
+        .map(|e| e.auto_start_enabled)
         .unwrap_or(true); // default true if not pushed yet (backward compat)
 
     if !auto_start {
@@ -353,6 +353,7 @@ pub async fn wake(
                                         auto_stop_enabled: false,
                                         auto_stop_timeout_mins: 0,
                                         auto_start_enabled: false,
+                                        allow_raw_ports: false,
                                         last_active_at: None,
                                         service_count: None,
                                         service_summary: None,
@@ -951,9 +952,16 @@ async fn wake_multi_service(state: &AgentState, project_id: &str) -> anyhow::Res
 
     let extra_env = super::containers::read_project_env(project_id);
 
-    let plan = litebin_common::compose_run::build_compose_run_plan(
+    let mut plan = litebin_common::compose_run::build_compose_run_plan(
         &compose_yaml, project_id, &extra_env, None,
     )?;
+
+    // Apply allow_raw_ports flag from agent state
+    let allow_raw = state.project_meta.read().unwrap()
+        .get(project_id).map(|e| e.allow_raw_ports).unwrap_or(false);
+    for config in plan.configs.iter_mut() {
+        config.allow_raw_ports = allow_raw;
+    }
 
     tracing::info!(
         project_id = %project_id,

@@ -29,11 +29,13 @@ interface SettingsPopoverProps {
   customDomainInput: string;
   settingsError: string | null;
   customDomainSaving: boolean;
+  allowRawPorts: boolean;
   onProjectNameChange: (v: string) => void;
   onProjectDescriptionChange: (v: string) => void;
   onCustomDomainChange: (v: string) => void;
   onSettingsErrorChange: (v: string | null) => void;
   onCustomDomainSavingChange: (v: boolean) => void;
+  onAllowRawPortsChange: (v: boolean) => void;
   onRefresh: () => void;
   onClose: () => void;
 }
@@ -48,11 +50,13 @@ export default function SettingsPopover({
   customDomainInput,
   settingsError,
   customDomainSaving,
+  allowRawPorts,
   onProjectNameChange,
   onProjectDescriptionChange,
   onCustomDomainChange,
   onSettingsErrorChange,
   onCustomDomainSavingChange,
+  onAllowRawPortsChange,
   onRefresh,
   onClose,
 }: SettingsPopoverProps) {
@@ -149,6 +153,7 @@ export default function SettingsPopover({
       await updateProjectSettings(project.id, {
         name: projectName,
         description: projectDescription,
+        allow_raw_ports: allowRawPorts,
       });
       onRefresh();
     } catch (e) {
@@ -259,6 +264,34 @@ export default function SettingsPopover({
               className="w-full py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors cursor-pointer">
               Save
             </button>
+
+            {/* Allow raw ports (compose-only) */}
+            {(project.service_count ?? 0) > 1 && (
+              <div className="border-t border-slate-700/50 pt-3">
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <div>
+                    <span className="text-xs text-slate-300">Allow raw ports</span>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Expose all compose ports directly on host (TCP/UDP). Restart required.
+                    </p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={allowRawPorts}
+                    onClick={() => onAllowRawPortsChange(!allowRawPorts)}
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
+                      allowRawPorts ? "bg-violet-500" : "bg-slate-600"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                        allowRawPorts ? "translate-x-3.5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </label>
+              </div>
+            )}
 
             {/* Custom domain */}
             <div className="border-t border-slate-700/50 pt-3 space-y-2">

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bollard::models::{ContainerCreateBody, HealthConfig, HostConfig};
+use bollard::models::{ContainerCreateBody, HealthConfig, HostConfig, RestartPolicy, RestartPolicyNameEnum};
 
 use crate::parse::ComposeService;
 
@@ -82,6 +82,21 @@ impl ComposeService {
             }
         }
 
+        // Restart policy
+        if let Some(ref policy) = self.restart {
+            host_config.restart_policy = match policy.as_str() {
+                "no" => Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::NO),
+                    ..Default::default()
+                }),
+                "always" | "unless-stopped" => Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ALWAYS),
+                    ..Default::default()
+                }),
+                _ => None,
+            };
+        }
+
         // Build env list: compose env first, then overrides (compose takes precedence on conflict)
         let mut env = self.env_list();
         // Add overrides that aren't already in the env list
@@ -124,6 +139,8 @@ impl ComposeService {
             } else {
                 Some(exposed_ports)
             },
+            open_stdin: self.stdin_open,
+            tty: self.tty,
             host_config: Some(host_config.clone()),
             healthcheck,
             ..Default::default()

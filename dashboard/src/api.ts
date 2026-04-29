@@ -40,6 +40,7 @@ export interface Project {
   auto_stop_enabled: boolean;
   auto_stop_timeout_mins: number;
   auto_start_enabled: boolean;
+  allow_raw_ports: boolean;
   custom_domain: string | null;
   service_count: number | null;
   service_summary: string | null;
@@ -104,6 +105,7 @@ export interface ProjectSettings {
   auto_stop_enabled?: boolean;
   auto_stop_timeout_mins?: number;
   auto_start_enabled?: boolean;
+  allow_raw_ports?: boolean;
   cmd?: string;
   memory_limit_mb?: number | null;
   cpu_limit?: number | null;

@@ -9,6 +9,7 @@
 - [Networking & Firewalls](#networking--firewalls)
 - [Environment Variables (.env)](#environment-variables-env)
 - [Docker Compose / Multi-Service](#docker-compose--multi-service)
+- [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake)
 - [Volumes & Persistent Data](#volumes--persistent-data)
 - [Custom Routes Not Working](#custom-routes-not-working)
 
@@ -299,7 +300,15 @@ l8b deploy --project myapp --service api --service worker
 
 ### Only one port is accessible for my service
 
-LiteBin routes traffic to one port per project (the public service's port). Other ports are exposed on the container and accessible for inter-service communication via the Docker network. To expose additional ports externally, create a custom route with the container name and port as the upstream.
+LiteBin routes traffic to one port per project (the public service's port). Other ports are exposed on the container and accessible for inter-service communication via the Docker network. To expose additional ports externally, enable **Allow raw ports** in the dashboard (Settings → General) — this binds all compose-declared ports directly on the host, including non-HTTP protocols like UDP. See [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake) for caveats.
+
+### Networks defined in my compose file are ignored
+
+LiteBin creates and manages a single Docker network per project (`litebin_<project_id>`), connects all services and the agent to it, and ignores any `networks` definitions in the compose file. If you have multiple networks for organizing services, they will not be created — all services communicate on the same network.
+
+### Non-HTTP ports and auto-wake
+
+Auto-wake (sleep on idle, start on request) only works for **HTTP traffic** routed through Caddy. Ports bound directly on the host (via "Allow raw ports") bypass Caddy entirely, so services listening on those ports are **always running** — they won't auto-sleep, and incoming TCP/UDP traffic won't wake a stopped container.
 
 ### My compose build context isn't found
 

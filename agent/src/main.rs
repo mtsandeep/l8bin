@@ -34,7 +34,7 @@ pub struct AgentState {
     pub wake_locks: Arc<DashMap<String, Arc<WakeGuard>>>,
     pub registration: Arc<std::sync::RwLock<Option<AgentRegistration>>>,
     pub last_caddy_config: Arc<std::sync::RwLock<Option<serde_json::Value>>>,
-    pub project_meta: Arc<std::sync::RwLock<HashMap<String, bool>>>,  // project_id → auto_start_enabled
+    pub project_meta: Arc<std::sync::RwLock<HashMap<String, ProjectMetaEntry>>>,
     // Reverse proxy client for multi-service projects (always routed through agent waker)
     pub proxy_client: reqwest::Client,
     // Per-project throttle for multi-service health checks (5s cooldown)
@@ -83,14 +83,21 @@ pub(crate) fn save_caddy_config_to_file(config: &serde_json::Value) {
     }
 }
 
-pub(crate) fn load_project_meta_from_file() -> Option<HashMap<String, bool>> {
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+pub struct ProjectMetaEntry {
+    pub auto_start_enabled: bool,
+    #[serde(default)]
+    pub allow_raw_ports: bool,
+}
+
+pub(crate) fn load_project_meta_from_file() -> Option<HashMap<String, ProjectMetaEntry>> {
     let data = std::fs::read_to_string(PROJECT_META_FILE).ok()?;
-    let meta: HashMap<String, bool> = serde_json::from_str(&data).ok()?;
+    let meta: HashMap<String, ProjectMetaEntry> = serde_json::from_str(&data).ok()?;
     tracing::info!("loaded persisted project meta from file");
     Some(meta)
 }
 
-pub(crate) fn save_project_meta_to_file(meta: &HashMap<String, bool>) {
+pub(crate) fn save_project_meta_to_file(meta: &HashMap<String, ProjectMetaEntry>) {
     if let Some(parent) = std::path::Path::new(PROJECT_META_FILE).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -169,8 +176,8 @@ async fn main() -> Result<()> {
             load_caddy_config_from_file(),
         ));
 
-    // Load persisted project meta (project_id → auto_start_enabled)
-    let project_meta: Arc<std::sync::RwLock<HashMap<String, bool>>> =
+    // Load persisted project meta (project_id → auto_start_enabled + allow_raw_ports)
+    let project_meta: Arc<std::sync::RwLock<HashMap<String, ProjectMetaEntry>>> =
         Arc::new(std::sync::RwLock::new(
             load_project_meta_from_file().unwrap_or_default(),
         ));

@@ -1,0 +1,1 @@
+ALTER TABLE projects ADD COLUMN allow_raw_ports INTEGER NOT NULL DEFAULT 0;

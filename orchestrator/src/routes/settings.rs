@@ -19,6 +19,7 @@ pub struct UpdateSettingsRequest {
     pub auto_stop_enabled: Option<bool>,
     pub auto_stop_timeout_mins: Option<i64>,
     pub auto_start_enabled: Option<bool>,
+    pub allow_raw_ports: Option<bool>,
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
@@ -105,6 +106,7 @@ pub async fn update_project_settings(
     let mut has_auto_stop_enabled = false;
     let mut has_auto_stop_timeout_mins = false;
     let mut has_auto_start_enabled = false;
+    let mut has_allow_raw_ports = false;
     let mut has_cmd = false;
     let mut has_memory_limit_mb = false;
     let mut has_cpu_limit = false;
@@ -133,6 +135,10 @@ pub async fn update_project_settings(
         set_clauses.push("auto_start_enabled = ?");
         has_auto_start_enabled = true;
     }
+    if payload.allow_raw_ports.is_some() {
+        set_clauses.push("allow_raw_ports = ?");
+        has_allow_raw_ports = true;
+    }
     if payload.cmd.is_some() {
         set_clauses.push("cmd = ?");
         has_cmd = true;
@@ -146,7 +152,7 @@ pub async fn update_project_settings(
         has_cpu_limit = true;
     }
 
-    if !has_name && !has_description && !has_custom_domain && !has_auto_stop_enabled && !has_auto_stop_timeout_mins && !has_auto_start_enabled && !has_cmd && !has_memory_limit_mb && !has_cpu_limit {
+    if !has_name && !has_description && !has_custom_domain && !has_auto_stop_enabled && !has_auto_stop_timeout_mins && !has_auto_start_enabled && !has_allow_raw_ports && !has_cmd && !has_memory_limit_mb && !has_cpu_limit {
         return Ok(Json(existing.unwrap()));
     }
 
@@ -172,6 +178,7 @@ pub async fn update_project_settings(
     if has_auto_stop_enabled { query = query.bind(payload.auto_stop_enabled.unwrap()); }
     if has_auto_stop_timeout_mins { query = query.bind(payload.auto_stop_timeout_mins.unwrap()); }
     if has_auto_start_enabled { query = query.bind(payload.auto_start_enabled.unwrap()); }
+    if has_allow_raw_ports { query = query.bind(payload.allow_raw_ports.unwrap()); }
     if has_cmd { query = query.bind(payload.cmd.as_deref().filter(|s| !s.is_empty())); }
     if has_memory_limit_mb { query = query.bind(payload.memory_limit_mb.unwrap()); }
     if has_cpu_limit { query = query.bind(payload.cpu_limit.unwrap()); }
@@ -213,8 +220,8 @@ pub async fn update_project_settings(
             )
         })?;
 
-    // Push project meta to agent if auto_start_enabled changed and project is on a remote node
-    if has_auto_start_enabled {
+    // Push project meta to agent if auto_start_enabled or allow_raw_ports changed and project is on a remote node
+    if has_auto_start_enabled || has_allow_raw_ports {
         if let Some(ref node_id) = updated.node_id {
             if node_id != "local" {
                 crate::cloudflare_router::push_project_meta_to_agent(

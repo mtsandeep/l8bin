@@ -88,6 +88,7 @@ export default function ProjectCard({
   const [projectDescription, setProjectDescription] = useState(
     project.description ?? "",
   );
+  const [allowRawPorts, setAllowRawPorts] = useState(project.allow_raw_ports);
   const [customDomainInput, setCustomDomainInput] = useState(
     project.custom_domain ?? "",
   );
@@ -127,6 +128,7 @@ export default function ProjectCard({
     setAutoStop(project.auto_stop_enabled);
     setTimeoutMins(project.auto_stop_timeout_mins);
     setAutoStart(project.auto_start_enabled);
+    setAllowRawPorts(project.allow_raw_ports);
     setProjectName(project.name ?? "");
     setProjectDescription(project.description ?? "");
     setCustomDomainInput(project.custom_domain ?? "");
@@ -134,6 +136,7 @@ export default function ProjectCard({
     project.auto_stop_enabled,
     project.auto_stop_timeout_mins,
     project.auto_start_enabled,
+    project.allow_raw_ports,
     project.name,
     project.description,
     project.custom_domain,
@@ -427,11 +430,13 @@ export default function ProjectCard({
                 customDomainInput={customDomainInput}
                 settingsError={settingsError}
                 customDomainSaving={customDomainSaving}
+                allowRawPorts={allowRawPorts}
                 onProjectNameChange={setProjectName}
                 onProjectDescriptionChange={setProjectDescription}
                 onCustomDomainChange={setCustomDomainInput}
                 onSettingsErrorChange={setSettingsError}
                 onCustomDomainSavingChange={setCustomDomainSaving}
+                onAllowRawPortsChange={setAllowRawPorts}
                 onRefresh={onRefresh}
                 onClose={() => {
                   setOpenPopover(null);

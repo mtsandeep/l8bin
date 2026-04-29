@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_alternate_value() {
-        let env = HashMap::new();
+        let mut env = HashMap::new();
         env.insert("DEBUG".to_string(), "1".to_string());
 
         let mut val = serde_yaml::Value::String("${DEBUG:+verbose}".to_string());

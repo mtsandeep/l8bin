@@ -164,6 +164,7 @@ pub async fn start_project(
                 "project_id": &project_id,
                 "compose_yaml": &compose_yaml,
                 "service_order": &svc_names,
+                "allow_raw_ports": project.allow_raw_ports,
             }))
             .send()
             .await
@@ -457,6 +458,7 @@ pub async fn recreate_project(
                     "project_id": &project_id,
                     "compose_yaml": &compose_yaml,
                     "service_order": &svc_names,
+                    "allow_raw_ports": project.allow_raw_ports,
                 }))
                 .send()
                 .await

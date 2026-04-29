@@ -280,6 +280,7 @@ pub async fn run_container(
         auto_stop_enabled: false,
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
+        allow_raw_ports: false,
         last_active_at: None,
         service_count: None,
         service_summary: None,
@@ -341,6 +342,7 @@ pub async fn recreate_container(
         auto_stop_enabled: false,
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
+        allow_raw_ports: false,
         last_active_at: None,
         service_count: None,
         service_summary: None,
@@ -415,6 +417,7 @@ pub async fn start_container(
                 auto_stop_enabled: false,
                 auto_stop_timeout_mins: 0,
                 auto_start_enabled: false,
+                allow_raw_ports: false,
                 last_active_at: None,
                 service_count: None,
                 service_summary: None,
@@ -734,6 +737,7 @@ pub struct BatchRunRequest {
     pub service_order: Vec<String>,
     /// If Some, only recreate these services (partial redeploy). If None, deploy all.
     pub target_services: Option<Vec<String>>,
+    pub allow_raw_ports: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -776,7 +780,7 @@ pub async fn batch_run(
     let extra_env = read_project_env(&req.project_id);
 
     // Build compose run plan (parse, topo sort, detect public, map configs)
-    let plan = match litebin_common::compose_run::build_compose_run_plan(
+    let mut plan = match litebin_common::compose_run::build_compose_run_plan(
         &req.compose_yaml, &req.project_id, &extra_env, None,
     ) {
         Ok(p) => p,
@@ -785,6 +789,13 @@ pub async fn batch_run(
             Json(ErrorResponse { error: format!("invalid compose: {e}") }),
         ).into_response(),
     };
+
+    // Apply allow_raw_ports flag from orchestrator
+    if req.allow_raw_ports.unwrap_or(false) {
+        for config in plan.configs.iter_mut() {
+            config.allow_raw_ports = true;
+        }
+    }
 
     // Clean up existing containers from a previous deploy (by name prefix)
     // On partial redeploy, only remove targeted service containers

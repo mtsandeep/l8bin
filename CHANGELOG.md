@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Raw port support for compose deployments** — Per-project "Allow raw ports" toggle (dashboard → Settings → General) exposes all compose service ports directly on the host (TCP/UDP), bypassing Caddy. Enables game servers (UDP), databases, and voice servers alongside HTTP apps. Off by default — only affects multi-service compose projects and takes effect on restart.
+- **compose-bollard: `stdin_open`, `tty`, `restart`** — Compose fields now pass through to Docker container config. Supports interactive shells (e.g. sending commands to Minecraft server) and custom restart policies (`always`, `unless-stopped`). LiteBin's default `restart: no` only applies when compose doesn't specify one.
+
 ### Fixed
 - Fix www→bare domain redirect producing a trailing `}` in the URL. The Caddy placeholder `{uri}` was double-escaped in the Rust format string.
 

@@ -97,6 +97,12 @@ pub async fn start_services(
         }
     }
 
+    // 1c. Apply allow_raw_ports flag from project settings
+    let allow_raw = project.allow_raw_ports;
+    for config in &mut plan.configs {
+        config.allow_raw_ports = allow_raw;
+    }
+
     // 2. Ensure per-project network + connect Caddy + optionally orchestrator
     state.docker.ensure_project_network(project_id, None).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("network error: {e}")))?;

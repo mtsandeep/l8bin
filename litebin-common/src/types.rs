@@ -46,6 +46,7 @@ pub struct Project {
     pub auto_stop_enabled: bool,
     pub auto_stop_timeout_mins: i64,
     pub auto_start_enabled: bool,
+    pub allow_raw_ports: bool,
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
@@ -231,6 +232,9 @@ pub struct RunServiceConfig {
     /// When provided, these are used as the base and LiteBin overrides are applied on top.
     pub bollard_create_body: Option<ContainerCreateBody>,
     pub bollard_host_config: Option<HostConfig>,
+    /// When true, all ports from compose are bound directly on the host
+    /// (bypassing Caddy). Only meaningful for compose services.
+    pub allow_raw_ports: bool,
 }
 
 impl RunServiceConfig {
@@ -274,6 +278,7 @@ impl RunServiceConfig {
             is_public: true,
             bollard_create_body: None,
             bollard_host_config: None,
+            allow_raw_ports: false,
         }
     }
 }

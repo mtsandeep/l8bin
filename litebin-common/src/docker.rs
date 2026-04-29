@@ -454,6 +454,28 @@ impl DockerManager {
             }
         }
 
+        // When allow_raw_ports is set, bind all compose-declared ports directly on the host
+        // (including UDP). This bypasses Caddy for non-HTTP protocols.
+        if config.allow_raw_ports {
+            if let Some(ref bollard_body) = config.bollard_create_body {
+                if let Some(ref compose_exposed) = bollard_body.exposed_ports {
+                    for port_spec in compose_exposed {
+                        // Skip ports already bound (e.g. public HTTP port)
+                        if port_bindings.contains_key(port_spec) {
+                            continue;
+                        }
+                        port_bindings.insert(
+                            port_spec.clone(),
+                            Some(vec![PortBinding {
+                                host_ip: Some("0.0.0.0".to_string()),
+                                host_port: Some("0".to_string()),
+                            }]),
+                        );
+                    }
+                }
+            }
+        }
+
         // Per-service resource limits
         let memory = config
             .memory_limit_mb
@@ -471,10 +493,13 @@ impl DockerManager {
             }
             host.memory = Some(memory);
             host.nano_cpus = Some(nano_cpus);
-            host.restart_policy = Some(RestartPolicy {
-                name: Some(RestartPolicyNameEnum::NO),
-                ..Default::default()
-            });
+            // Only override restart policy if compose didn't specify one
+            if host.restart_policy.is_none() {
+                host.restart_policy = Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::NO),
+                    ..Default::default()
+                });
+            }
             host.cap_drop = Some(vec!["ALL".to_string()]);
             host.cap_add = Some(vec![
                 "CHOWN".to_string(),
@@ -518,9 +543,19 @@ impl DockerManager {
                 body.env = Some(existing);
             }
 
-            // Set exposed ports from our port binding (for public services)
+            // Merge exposed ports: keep compose-declared ports, add LiteBin public port
             if !exposed_ports.is_empty() {
-                body.exposed_ports = Some(exposed_ports);
+                if let Some(ref compose_exposed) = body.exposed_ports {
+                    let mut merged = compose_exposed.clone();
+                    for ep in &exposed_ports {
+                        if !merged.contains(ep) {
+                            merged.push(ep.clone());
+                        }
+                    }
+                    body.exposed_ports = Some(merged);
+                } else {
+                    body.exposed_ports = Some(exposed_ports);
+                }
             }
 
             body.host_config = Some(host);

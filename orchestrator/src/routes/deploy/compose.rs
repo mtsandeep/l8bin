@@ -429,6 +429,7 @@ pub async fn deploy_compose(
                 "compose_yaml": compose_yaml,
                 "service_order": start_order,
                 "target_services": target_services,
+                "allow_raw_ports": project.allow_raw_ports,
             }))
             .send()
             .await

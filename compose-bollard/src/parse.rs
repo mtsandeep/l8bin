@@ -58,6 +58,10 @@ pub struct ComposeService {
     pub cap_add: Option<Vec<String>>,
     pub cap_drop: Option<Vec<String>>,
 
+    pub stdin_open: Option<bool>,
+    pub tty: Option<bool>,
+    pub restart: Option<String>,
+
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
 }
