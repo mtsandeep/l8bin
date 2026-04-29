@@ -75,13 +75,13 @@ Offline page shown. No auto-start.
 Direct proxy to container. No loading page.
 
 ### W4. Visit URL of a running multi-service project
-Health check all services (throttled 5s). If all healthy, proxy to public service. If non-public service crashed, silently recover in background while serving the public service.
+Direct proxy to public service container (same as single-service). No loading page. All protocols (HTTP, WebSocket, etc.) work natively.
 
 ### W5. Visit URL when public service crashed (multi-service)
-Loading page shown. All containers restarted in background. Next poll serves the site.
+502 → Caddy falls back to orchestrator. Loading page shown. All containers restarted in background. Next poll serves the site.
 
 ### W6. Visit URL when non-public service crashed (multi-service)
-No loading page. Public service proxied immediately. Crashed service recovered silently in background.
+No impact on routing. Public service still proxied directly. Crashed service recovers via Docker's `restart: unless-stopped` policy (if set).
 
 ### W7. Visit URL during an ongoing wake (concurrent requests)
 All concurrent requests get the loading page. Only one background wake runs (single-flight lock).

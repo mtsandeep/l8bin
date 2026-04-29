@@ -5,11 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Docker socket proxy** — Per-project "Allow Docker access" toggle injects a `docker-socket-proxy` service into multi-service projects, restricted to only the project's own containers via label filtering. Enables inter-service container management (exec, logs, stats, restart) without exposing the Docker socket. Follows the same pattern as "Allow raw ports" — toggle in dashboard, flag in DB, pushed to agent.
+- **Standard Docker Compose labels** — All containers now get `com.docker.compose.service` and `com.docker.compose.project` labels, matching what Docker Compose sets natively. Enables tooling that relies on standard compose labels (e.g., service discovery by label).
 - **Raw port support for compose deployments** — Per-project "Allow raw ports" toggle (dashboard → Settings → General) exposes all compose service ports directly on the host (TCP/UDP), bypassing Caddy. Enables game servers (UDP), databases, and voice servers alongside HTTP apps. Off by default — only affects multi-service compose projects and takes effect on restart.
 - **compose-bollard: `stdin_open`, `tty`, `restart`** — Compose fields now pass through to Docker container config. Supports interactive shells (e.g. sending commands to Minecraft server) and custom restart policies (`always`, `unless-stopped`). LiteBin's default `restart: no` only applies when compose doesn't specify one.
 
 ### Fixed
+- Fix raw port binding using ephemeral port (`0`) instead of the compose-declared port. Raw ports now bind to their actual port number (e.g., `19132/udp` binds host port 19132, not a random one).
 - Fix www→bare domain redirect producing a trailing `}` in the URL. The Caddy placeholder `{uri}` was double-escaped in the Rust format string.
+
+### Changed
+- **Multi-service routing now goes directly to containers** — All running projects (single and multi-service) get direct Caddy→container routes. Previously, multi-service projects always proxied through the orchestrator, which broke WebSocket, gRPC, SSE, and other non-HTTP protocols. Caddy's 502/503/504 fallback to the orchestrator handles auto-wake when containers are down. Service health is now handled by Docker's `restart: unless-stopped` policy (recommended in compose files) instead of per-request orchestrator health checks.
 
 ## [0.2.10] - 2026-04-27
 

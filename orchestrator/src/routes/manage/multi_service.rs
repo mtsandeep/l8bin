@@ -58,7 +58,7 @@ struct StartedService {
 pub async fn start_services(
     state: &AppState,
     project: &crate::db::models::Project,
-    opts: StartServicesOpts,
+    mut opts: StartServicesOpts,
 ) -> Result<(), (StatusCode, String)> {
     let project_id = &project.id;
 
@@ -101,6 +101,24 @@ pub async fn start_services(
     let allow_raw = project.allow_raw_ports;
     for config in &mut plan.configs {
         config.allow_raw_ports = allow_raw;
+    }
+
+    // 1d. Apply allow_docker_access flag and inject docker-socket-proxy if enabled
+    let allow_docker = project.allow_docker_access;
+    for config in &mut plan.configs {
+        config.allow_docker_access = allow_docker;
+    }
+    if allow_docker {
+        plan.inject_docker_proxy(project_id);
+        // Ensure the proxy is always included in the service filter,
+        // even when user selects specific services to recreate.
+        if let Some(ref mut filter) = opts.services {
+            filter.insert("litebin-docker-proxy".to_string());
+        }
+        // Pre-pull the proxy image (it's not in project_services so the normal pull logic skips it)
+        if let Err(e) = state.docker.pull_image("tecnativa/docker-socket-proxy").await {
+            tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
+        }
     }
 
     // 2. Ensure per-project network + connect Caddy + optionally orchestrator

@@ -121,6 +121,7 @@ mod tests {
             auto_stop_timeout_mins: 15,
             auto_start_enabled: true,
             allow_raw_ports: false,
+            allow_docker_access: false,
             cmd: None,
             memory_limit_mb: None,
             cpu_limit: None,

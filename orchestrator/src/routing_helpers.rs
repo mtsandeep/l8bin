@@ -210,63 +210,16 @@ pub async fn resolve_all_routes(
     domain: &str,
     orchestrator_upstream: &str,
 ) -> anyhow::Result<Vec<ProjectRoute>> {
-    // Running single-service projects get direct container routes
+    // All running projects (single and multi-service) get direct container routes.
+    // Caddy's handle_response catches 502/503/504 and falls back to the orchestrator
+    // for auto-wake when the container is down.
     let all_running = sqlx::query_as::<_, Project>(
-        "SELECT * FROM projects WHERE status = 'running' AND (service_count IS NULL OR service_count <= 1)",
+        "SELECT * FROM projects WHERE status = 'running'",
     )
     .fetch_all(db)
     .await?;
 
     let mut routes = resolve_routes(&all_running, db, domain).await?;
-
-    // Multi-service running projects always route through the orchestrator waker,
-    // which health-checks all services on every request (throttled) and proxies to
-    // the container when healthy. This ensures crashed backend services are detected
-    // and recovered without depending on dashboard stats polling.
-    let multi_running = sqlx::query_as::<_, Project>(
-        "SELECT * FROM projects WHERE status = 'running' AND service_count > 1",
-    )
-    .fetch_all(db)
-    .await?;
-
-    // Load custom routes for multi-service projects
-    let multi_ids: Vec<String> = multi_running.iter().map(|p| p.id.clone()).collect();
-    let multi_custom_routes = resolve_custom_routes(db, &multi_ids).await?;
-
-    for project in &multi_running {
-        let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
-        let (upstream, node_public_ip) = if is_local {
-            let local_ip: Option<String> = sqlx::query_scalar(
-                "SELECT public_ip FROM nodes WHERE id = 'local'",
-            )
-            .fetch_optional(db)
-            .await?
-            .flatten();
-            (orchestrator_upstream.to_string(), local_ip)
-        } else {
-            let node_id = project.node_id.as_deref().unwrap_or("local");
-            match lookup_node_host(db, node_id).await? {
-                Some((host, public_ip)) => (format!("{}:443", host), public_ip),
-                None => {
-                    tracing::warn!(project_id = %project.id, node_id = %node_id, "node not found, skipping multi-service route");
-                    continue;
-                }
-            }
-        };
-
-        routes.push(ProjectRoute {
-            project_id: project.id.clone(),
-            subdomain_host: format!("{}.{}", project.id, domain),
-            upstream,
-            custom_domain: project.custom_domain.clone(),
-            node_id: project.node_id.clone(),
-            node_public_ip,
-            host_rewrite: None,
-            upstream_tls: !is_local && project.node_id.is_some(),
-            container_upstream: None,
-            custom_routes: multi_custom_routes.get(&project.id).cloned().unwrap_or_default(),
-        });
-    }
 
     // Degraded projects (some services stopped) — route to orchestrator so waker can recover
     let degraded = sqlx::query_as::<_, Project>(

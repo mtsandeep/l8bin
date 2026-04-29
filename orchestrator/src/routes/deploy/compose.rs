@@ -430,6 +430,7 @@ pub async fn deploy_compose(
                 "service_order": start_order,
                 "target_services": target_services,
                 "allow_raw_ports": project.allow_raw_ports,
+                "allow_docker_access": project.allow_docker_access,
             }))
             .send()
             .await

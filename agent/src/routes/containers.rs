@@ -281,6 +281,7 @@ pub async fn run_container(
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
         allow_raw_ports: false,
+        allow_docker_access: false,
         last_active_at: None,
         service_count: None,
         service_summary: None,
@@ -343,6 +344,7 @@ pub async fn recreate_container(
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
         allow_raw_ports: false,
+        allow_docker_access: false,
         last_active_at: None,
         service_count: None,
         service_summary: None,
@@ -418,6 +420,7 @@ pub async fn start_container(
                 auto_stop_timeout_mins: 0,
                 auto_start_enabled: false,
                 allow_raw_ports: false,
+                allow_docker_access: false,
                 last_active_at: None,
                 service_count: None,
                 service_summary: None,
@@ -738,6 +741,7 @@ pub struct BatchRunRequest {
     /// If Some, only recreate these services (partial redeploy). If None, deploy all.
     pub target_services: Option<Vec<String>>,
     pub allow_raw_ports: Option<bool>,
+    pub allow_docker_access: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -794,6 +798,18 @@ pub async fn batch_run(
     if req.allow_raw_ports.unwrap_or(false) {
         for config in plan.configs.iter_mut() {
             config.allow_raw_ports = true;
+        }
+    }
+
+    // Apply allow_docker_access flag and inject docker-socket-proxy if enabled
+    if req.allow_docker_access.unwrap_or(false) {
+        for config in plan.configs.iter_mut() {
+            config.allow_docker_access = true;
+        }
+        plan.inject_docker_proxy(&req.project_id);
+        // Pre-pull the proxy image
+        if let Err(e) = state.docker.pull_image("tecnativa/docker-socket-proxy").await {
+            tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
         }
     }
 

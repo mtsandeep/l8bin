@@ -8,9 +8,10 @@ use crate::{AgentState, ProjectMetaEntry};
 pub struct ProjectMetaRequest {
     pub projects: HashMap<String, bool>,
     pub allow_raw_ports: Option<HashMap<String, bool>>,
+    pub allow_docker_access: Option<HashMap<String, bool>>,
 }
 
-/// POST /internal/project-meta — called by orchestrator to push auto_start_enabled + allow_raw_ports flags.
+/// POST /internal/project-meta — called by orchestrator to push auto_start_enabled + allow_raw_ports + allow_docker_access flags.
 /// Replaces the full project meta map, persists to disk + memory.
 pub async fn update_project_meta(
     State(state): State<AgentState>,
@@ -18,14 +19,20 @@ pub async fn update_project_meta(
 ) -> StatusCode {
     tracing::info!(count = req.projects.len(), "received project meta from orchestrator");
 
-    // Start from auto_start_enabled, then overlay allow_raw_ports
+    // Start from auto_start_enabled, then overlay allow_raw_ports and allow_docker_access
     let mut meta: HashMap<String, ProjectMetaEntry> = req.projects.into_iter()
-        .map(|(id, auto)| (id, ProjectMetaEntry { auto_start_enabled: auto, allow_raw_ports: false }))
+        .map(|(id, auto)| (id, ProjectMetaEntry { auto_start_enabled: auto, allow_raw_ports: false, allow_docker_access: false }))
         .collect();
 
     if let Some(raw_ports) = req.allow_raw_ports {
         for (id, val) in raw_ports {
             meta.entry(id).or_default().allow_raw_ports = val;
+        }
+    }
+
+    if let Some(docker_access) = req.allow_docker_access {
+        for (id, val) in docker_access {
+            meta.entry(id).or_default().allow_docker_access = val;
         }
     }
 

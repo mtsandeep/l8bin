@@ -165,6 +165,7 @@ pub async fn start_project(
                 "compose_yaml": &compose_yaml,
                 "service_order": &svc_names,
                 "allow_raw_ports": project.allow_raw_ports,
+                "allow_docker_access": project.allow_docker_access,
             }))
             .send()
             .await

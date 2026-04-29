@@ -30,12 +30,14 @@ interface SettingsPopoverProps {
   settingsError: string | null;
   customDomainSaving: boolean;
   allowRawPorts: boolean;
+  allowDockerAccess: boolean;
   onProjectNameChange: (v: string) => void;
   onProjectDescriptionChange: (v: string) => void;
   onCustomDomainChange: (v: string) => void;
   onSettingsErrorChange: (v: string | null) => void;
   onCustomDomainSavingChange: (v: boolean) => void;
   onAllowRawPortsChange: (v: boolean) => void;
+  onAllowDockerAccessChange: (v: boolean) => void;
   onRefresh: () => void;
   onClose: () => void;
 }
@@ -51,12 +53,14 @@ export default function SettingsPopover({
   settingsError,
   customDomainSaving,
   allowRawPorts,
+  allowDockerAccess,
   onProjectNameChange,
   onProjectDescriptionChange,
   onCustomDomainChange,
   onSettingsErrorChange,
   onCustomDomainSavingChange,
   onAllowRawPortsChange,
+  onAllowDockerAccessChange,
   onRefresh,
   onClose,
 }: SettingsPopoverProps) {
@@ -157,6 +161,7 @@ export default function SettingsPopover({
         name: projectName,
         description: projectDescription,
         allow_raw_ports: allowRawPorts,
+        allow_docker_access: allowDockerAccess,
       });
       showToast("Settings saved", 'success');
       onClose();
@@ -287,6 +292,34 @@ export default function SettingsPopover({
                     <span
                       className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
                         allowRawPorts ? "translate-x-3.5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </label>
+              </div>
+            )}
+
+            {/* Allow Docker access (compose-only) */}
+            {(project.service_count ?? 0) > 1 && (
+              <div className="border-t border-slate-700/50 pt-3">
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <div>
+                    <span className="text-xs text-slate-300">Allow Docker access</span>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Inject docker-socket-proxy for inter-service container management
+                    </p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={allowDockerAccess}
+                    onClick={() => onAllowDockerAccessChange(!allowDockerAccess)}
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
+                      allowDockerAccess ? "bg-violet-500" : "bg-slate-600"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                        allowDockerAccess ? "translate-x-3.5" : "translate-x-0.5"
                       }`}
                     />
                   </button>

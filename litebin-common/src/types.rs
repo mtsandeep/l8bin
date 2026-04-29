@@ -47,6 +47,7 @@ pub struct Project {
     pub auto_stop_timeout_mins: i64,
     pub auto_start_enabled: bool,
     pub allow_raw_ports: bool,
+    pub allow_docker_access: bool,
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
@@ -235,6 +236,8 @@ pub struct RunServiceConfig {
     /// When true, all ports from compose are bound directly on the host
     /// (bypassing Caddy). Only meaningful for compose services.
     pub allow_raw_ports: bool,
+    /// When true, Docker socket access is allowed and docker-socket-proxy is injected.
+    pub allow_docker_access: bool,
 }
 
 impl RunServiceConfig {
@@ -279,6 +282,7 @@ impl RunServiceConfig {
             bollard_create_body: None,
             bollard_host_config: None,
             allow_raw_ports: false,
+            allow_docker_access: false,
         }
     }
 }

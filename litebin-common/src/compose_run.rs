@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bollard::models::{ContainerCreateBody, HostConfig};
 use compose_bollard::{BollardMappingOptions, ComposeFile, ComposeParser};
 
 use crate::types::RunServiceConfig;
@@ -72,6 +73,65 @@ impl ComposeRunPlan {
             }
         }
         false
+    }
+
+    /// Inject a docker-socket-proxy service into the plan.
+    /// Called when `allow_docker_access` is enabled for the project.
+    /// The proxy is placed at topological level 0 (no dependencies)
+    /// and restricts Docker API access to only the project's own containers.
+    pub fn inject_docker_proxy(&mut self, project_id: &str) {
+        let proxy_name = "litebin-docker-proxy".to_string();
+
+        // Build a minimal bollard config to trigger the compose path in
+        // run_service_container(), which connects to the per-project network.
+        let create_body = ContainerCreateBody {
+            image: Some("tecnativa/docker-socket-proxy".to_string()),
+            env: Some(vec![
+                "CONTAINERS=1".into(),
+                "LOGS=1".into(),
+                "EXEC=1".into(),
+                "POST=1".into(),
+                "ALLOW_RESTARTS=1".into(),
+                "ALLOW_STOP=1".into(),
+                "STATS=1".into(),
+                format!("CONTAINER_LABEL_FILTER=litebin.project_id={}", project_id),
+            ]),
+            ..Default::default()
+        };
+        let host_config = HostConfig {
+            ..Default::default()
+        };
+
+        let proxy_config = RunServiceConfig {
+            project_id: project_id.to_string(),
+            service_name: proxy_name.clone(),
+            instance_id: None,
+            image: "tecnativa/docker-socket-proxy".to_string(),
+            port: None,
+            cmd: None,
+            entrypoint: None,
+            working_dir: None,
+            user: None,
+            env: vec![],
+            memory_limit_mb: None,
+            cpu_limit: None,
+            shm_size: None,
+            tmpfs: None,
+            read_only: None,
+            extra_hosts: None,
+            networks: None,
+            binds: Some(vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()]),
+            is_public: false,
+            bollard_create_body: Some(create_body),
+            bollard_host_config: Some(host_config),
+            allow_raw_ports: false,
+            allow_docker_access: true,
+        };
+
+        // Insert at the beginning of service_order and first topological level
+        self.service_order.insert(0, proxy_name.clone());
+        self.service_levels[0].insert(0, proxy_name.clone());
+        self.configs.insert(0, proxy_config);
     }
 
     /// Build a minimal `ComposeRunPlan` for a single-service project.
@@ -174,6 +234,7 @@ fn build_configs(
                 bollard_create_body: Some(bollard_config.create_body),
                 bollard_host_config: Some(bollard_config.host_config),
                 allow_raw_ports: false,
+                allow_docker_access: false,
             })
         })
         .collect()

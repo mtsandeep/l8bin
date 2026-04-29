@@ -354,6 +354,7 @@ pub async fn wake(
                                         auto_stop_timeout_mins: 0,
                                         auto_start_enabled: false,
                                         allow_raw_ports: false,
+                                        allow_docker_access: false,
                                         last_active_at: None,
                                         service_count: None,
                                         service_summary: None,
@@ -961,6 +962,20 @@ async fn wake_multi_service(state: &AgentState, project_id: &str) -> anyhow::Res
         .get(project_id).map(|e| e.allow_raw_ports).unwrap_or(false);
     for config in plan.configs.iter_mut() {
         config.allow_raw_ports = allow_raw;
+    }
+
+    // Apply allow_docker_access flag and inject docker-socket-proxy if enabled
+    let allow_docker = state.project_meta.read().unwrap()
+        .get(project_id).map(|e| e.allow_docker_access).unwrap_or(false);
+    for config in plan.configs.iter_mut() {
+        config.allow_docker_access = allow_docker;
+    }
+    if allow_docker {
+        plan.inject_docker_proxy(project_id);
+        // Pre-pull the proxy image
+        if let Err(e) = state.docker.pull_image("tecnativa/docker-socket-proxy").await {
+            tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
+        }
     }
 
     tracing::info!(

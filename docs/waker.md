@@ -422,55 +422,35 @@ When the orchestrator pushes a new config (via `/caddy/sync`), it replaces the p
 
 ## Multi-Service Wake
 
-The waker handles multi-service projects differently from single-service. All multi-service traffic routes through the orchestrator (never direct Caddy→container) because per-request health checks are needed.
+Multi-service projects route directly to the public service container via Caddy (same as single-service). The waker is only involved when the container is down — Caddy's `handle_response` catches 502/503/504 and falls back to the orchestrator.
 
 ### Multi-Service Waker Decision Tree (Orchestrator)
 
 ```
 request arrives for multi-service project
     ↓
-find project by host
+Caddy routes to public service container directly
     ↓
-if running:
-    if wake lock active → loading page
-    health check all services (throttled 5s)
-    if all healthy → proxy to public service
-    if public down → wake lock + start_services(force_recreate=false)
-    if non-public down → proxy to public service + background recovery
-else:
-    if auto_start disabled → offline page
-    wake lock + start_services(force_recreate=false)
+if container is up → serve normally (all protocols supported)
+if container is down → 502 → fallback to orchestrator waker
+    ↓
+if auto_start disabled → offline page
+wake lock + start_services(force_recreate=false)
+    ↓
+loading page → next poll serves the site
 ```
 
-### Degraded State Recovery
+### Why not proxy through the orchestrator?
 
-When the public service is up but non-public services are down:
-
-```
-Request arrives → health check all services
-    ↓
-Public service: running ✓
-Non-public service (e.g., api): crashed ✗
-    ↓
-Mark project as "degraded"
-Proxy request to public service immediately (no loading page)
-Spawn background task: start_services(force_recreate=false)
-    ↓
-start_services skips running services, starts/recreates crashed ones
-    ↓
-Next health check (within 5s) → all healthy → project back to "running"
-```
-
-The user never sees a loading page for non-public service crashes. Traffic continues to the public service while the backend recovers silently.
+Previously, all multi-service traffic went through the orchestrator so it could health-check services on every request. This broke WebSocket, gRPC, SSE, and other non-HTTP protocols. With direct Caddy→container routing, all protocols work. Service health is handled by Docker's `restart: unless-stopped` policy.
 
 ### Multi-Service Wake vs Single-Service Wake
 
 | Aspect | Single-Service | Multi-Service |
 |---|---|---|
-| Caddy routes to | Container directly (when running) | Always to orchestrator |
-| Health check on visit | Container alive check only | All services checked (5s throttle) |
-| Degraded state | N/A | Public up + non-public down → proxy + background recovery |
-| Wake on crash | Restart single container | `start_services(force_recreate=false)` — skips running, starts crashed |
+| Caddy routes to | Container directly (when running) | Container directly (when running) |
+| Wake trigger | 502 fallback → orchestrator | 502 fallback → orchestrator |
+| Service health | Docker restart policy | Docker restart policy |
 
 ---
 

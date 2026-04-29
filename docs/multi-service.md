@@ -6,9 +6,9 @@ How LiteBin handles docker-compose projects with multiple containers — per-pro
 
 ## Overview
 
-LiteBin supports both single-service (one container) and multi-service (docker-compose with multiple containers) projects. Multi-service projects get their own isolated Docker network, level-by-level startup respecting `depends_on`, and per-request health checks through the orchestrator.
+LiteBin supports both single-service (one container) and multi-service (docker-compose with multiple containers) projects. Multi-service projects get their own isolated Docker network, level-by-level startup respecting `depends_on`, and direct container routing via Caddy (same as single-service).
 
-Key difference from single-service: **multi-service projects always route through the orchestrator** (never direct Caddy→container proxy) because the orchestrator needs to health-check all services on every request.
+All running projects — single and multi-service — get direct Caddy→container routes. If the container is down, Caddy's `handle_response` catches the 502/503/504 and falls back to the orchestrator for auto-wake. This avoids proxying every request through the orchestrator, which would break WebSocket, gRPC, SSE, and other non-HTTP protocols.
 
 ---
 
@@ -24,8 +24,8 @@ litebin-{project_id}    (e.g., litebin-myapp)
 
 | Component | Why |
 |---|---|
-| **Caddy** | Routes external traffic to the public service container |
-| **Orchestrator** | Health-checks all services, proxies to public service |
+| **Caddy** | Routes external traffic directly to the public service container |
+| **Orchestrator** | Auto-wake fallback (502/503/504 → orchestrator → wake → retry) |
 | **Each service container** | DNS-based service discovery between services |
 
 ### DNS aliases
@@ -67,39 +67,23 @@ Only the public service gets a host port binding. Non-public services are intern
 
 ### Caddy route logic
 
-Multi-service projects are routed differently from single-service projects:
+All running projects route directly to their container:
 
 | Project type | Caddy routes to |
 |---|---|
 | Single-service (running) | Direct to container upstream (`litebin-myapp:3000`) |
-| Multi-service (running) | **Orchestrator** (`litebin-orchestrator:8080`) |
+| Multi-service (running) | Direct to public service container (`litebin-myapp.web:3000`) |
+| Any (stopped/crashed) | 502 → fallback to orchestrator for auto-wake |
 
-### Why multi-service goes through the orchestrator
+### Why direct routing
 
-The orchestrator performs per-request health checks on all services (throttled to once every 5 seconds). This enables:
+Previously, multi-service projects routed through the orchestrator so it could health-check all services on every request. This broke WebSocket, gRPC, SSE, and other non-HTTP protocols because the orchestrator's proxy (reqwest) only supports standard HTTP.
 
-- Detecting crashed backend services and marking the project "degraded"
-- Spawning background recovery for non-public services while still serving traffic
-- Proxying to the public service directly from the orchestrator using Docker network DNS
+With direct Caddy→container routing, all protocols work natively. Service health is handled by:
 
-### How the orchestrator proxies
-
-When the waker receives a request for a running multi-service project:
-
-```
-Browser → Caddy → Orchestrator (waker)
-                    ↓
-               Health check all services (throttled 5s)
-                    ↓
-               If all healthy → proxy to public service
-               If public down → loading page + restart all
-               If non-public down → proxy to public + background recovery
-```
-
-The orchestrator proxies directly to the public service container using Docker DNS:
-```
-http://litebin-myapp.web:8080{path}
-```
+- **Docker restart policy** (`restart: unless-stopped`) — crashed containers auto-restart
+- **Caddy 502 fallback** — if the public service container is down, Caddy falls back to the orchestrator which wakes all services
+- **Dashboard** — manual start/stop/recreate of individual services
 
 ### Inter-service communication
 
@@ -164,25 +148,25 @@ When `rollback_on_failure` is true (deploy only), if any service fails to start,
 
 ## Health Checks
 
-### Per-request health check (runtime)
+### Docker restart policy (recommended)
 
-Every inbound request to a running multi-service project triggers a health check (throttled to once every 5 seconds per project):
+Services with `restart: unless-stopped` in their compose file will automatically restart if they crash. This is the primary health recovery mechanism for multi-service projects:
 
-1. Query all services with `status = 'running'` from `project_services`
-2. For each, call `is_container_running()` (Docker inspect checking `State.Running`)
-3. Determine project state:
+```yaml
+services:
+  api:
+    image: myapp
+    restart: unless-stopped
+  db:
+    image: postgres:16
+    restart: unless-stopped
+```
 
-| State | Condition | Response |
-|---|---|---|
-| Healthy | All services running | Proxy to public service |
-| Degraded | Public up + non-public down | Proxy to public service + background recovery |
-| Stopped | Public down | Loading page + restart all services |
+Without a restart policy, crashed containers stay down until manually restarted from the dashboard.
 
 ### Degraded state recovery
 
-When non-public services are down but the public service is healthy:
-- User traffic is proxied to the public service immediately (no loading page)
-- Background task calls `start_services(force_recreate: false)` which is idempotent — skips already-running services, starts/recreates the crashed ones
+When non-public services are down but the public service is healthy, traffic continues to flow normally. Crashed services with `restart: unless-stopped` will recover automatically via Docker. For services without a restart policy, use the dashboard to restart them individually.
 
 ### Startup health checks
 

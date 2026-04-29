@@ -761,8 +761,8 @@ pub async fn push_project_meta_to_agent(
     config: &Config,
 ) {
     // Query all projects for this node
-    let rows: Vec<(String, bool, bool)> = match sqlx::query_as(
-        "SELECT id, auto_start_enabled, allow_raw_ports FROM projects WHERE node_id = ?",
+    let rows: Vec<(String, bool, bool, bool)> = match sqlx::query_as(
+        "SELECT id, auto_start_enabled, allow_raw_ports, allow_docker_access FROM projects WHERE node_id = ?",
     )
     .bind(node_id)
     .fetch_all(db)
@@ -775,10 +775,14 @@ pub async fn push_project_meta_to_agent(
         }
     };
 
-    let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _)| (id.clone(), *auto)).collect();
-    let allow_raw_ports: HashMap<String, bool> = rows.into_iter()
-        .filter(|(_, _, raw)| *raw)
-        .map(|(id, _, _)| (id, true))
+    let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _, _)| (id.clone(), *auto)).collect();
+    let allow_raw_ports: HashMap<String, bool> = rows.iter()
+        .filter(|(_, _, raw, _)| *raw)
+        .map(|(id, _, _, _)| (id.clone(), true))
+        .collect();
+    let allow_docker_access: HashMap<String, bool> = rows.into_iter()
+        .filter(|(_, _, _, docker)| *docker)
+        .map(|(id, _, _, _)| (id, true))
         .collect();
 
     let client = match get_node_client(node_clients, node_id) {
@@ -818,6 +822,7 @@ pub async fn push_project_meta_to_agent(
     let body = json!({
         "projects": projects,
         "allow_raw_ports": allow_raw_ports,
+        "allow_docker_access": allow_docker_access,
     });
 
     match client

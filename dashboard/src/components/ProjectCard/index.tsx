@@ -89,6 +89,7 @@ export default function ProjectCard({
     project.description ?? "",
   );
   const [allowRawPorts, setAllowRawPorts] = useState(project.allow_raw_ports);
+  const [allowDockerAccess, setAllowDockerAccess] = useState(project.allow_docker_access);
   const [customDomainInput, setCustomDomainInput] = useState(
     project.custom_domain ?? "",
   );
@@ -129,6 +130,7 @@ export default function ProjectCard({
     setTimeoutMins(project.auto_stop_timeout_mins);
     setAutoStart(project.auto_start_enabled);
     setAllowRawPorts(project.allow_raw_ports);
+    setAllowDockerAccess(project.allow_docker_access);
     setProjectName(project.name ?? "");
     setProjectDescription(project.description ?? "");
     setCustomDomainInput(project.custom_domain ?? "");
@@ -431,12 +433,14 @@ export default function ProjectCard({
                 settingsError={settingsError}
                 customDomainSaving={customDomainSaving}
                 allowRawPorts={allowRawPorts}
+                allowDockerAccess={allowDockerAccess}
                 onProjectNameChange={setProjectName}
                 onProjectDescriptionChange={setProjectDescription}
                 onCustomDomainChange={setCustomDomainInput}
                 onSettingsErrorChange={setSettingsError}
                 onCustomDomainSavingChange={setCustomDomainSaving}
                 onAllowRawPortsChange={setAllowRawPorts}
+                onAllowDockerAccessChange={setAllowDockerAccess}
                 onRefresh={onRefresh}
                 onClose={() => {
                   setOpenPopover(null);

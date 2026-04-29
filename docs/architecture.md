@@ -200,7 +200,7 @@ Root CA (self-signed, ECDSA P-256)
 | Memory | 256 MiB default, per-project override |
 | CPU | 0.5 cores default, per-project override |
 | Network | Isolated bridge network |
-| Restart policy | `no` (orchestrator manages lifecycle) |
+| Restart policy | `no` by default; compose can override with `restart: unless-stopped` (recommended for multi-service) |
 
 ## Database Schema
 

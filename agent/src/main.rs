@@ -88,6 +88,8 @@ pub struct ProjectMetaEntry {
     pub auto_start_enabled: bool,
     #[serde(default)]
     pub allow_raw_ports: bool,
+    #[serde(default)]
+    pub allow_docker_access: bool,
 }
 
 pub(crate) fn load_project_meta_from_file() -> Option<HashMap<String, ProjectMetaEntry>> {

@@ -454,8 +454,9 @@ impl DockerManager {
             }
         }
 
-        // When allow_raw_ports is set, bind all compose-declared ports directly on the host
-        // (including UDP). This bypasses Caddy for non-HTTP protocols.
+        // When allow_raw_ports is set, bind all non-public compose-declared ports directly
+        // on the host (e.g., UDP for game servers, TCP for databases). The public HTTP
+        // port is already handled by Caddy and is skipped above.
         if config.allow_raw_ports {
             if let Some(ref bollard_body) = config.bollard_create_body {
                 if let Some(ref compose_exposed) = bollard_body.exposed_ports {
@@ -464,13 +465,29 @@ impl DockerManager {
                         if port_bindings.contains_key(port_spec) {
                             continue;
                         }
+                        // Parse the port number from spec (e.g. "5432/udp" -> "5432")
+                        let host_port = port_spec.split('/').next().unwrap_or("0");
                         port_bindings.insert(
                             port_spec.clone(),
                             Some(vec![PortBinding {
                                 host_ip: Some("0.0.0.0".to_string()),
-                                host_port: Some("0".to_string()),
+                                host_port: Some(host_port.to_string()),
                             }]),
                         );
+                    }
+                }
+            }
+        }
+
+        // Block Docker socket mounts unless allow_docker_access is enabled
+        if !config.allow_docker_access {
+            if let Some(ref binds) = config.binds {
+                for bind in binds {
+                    let source = bind.split(':').next().unwrap_or("");
+                    if source.ends_with(".sock") {
+                        return Err(anyhow::anyhow!(
+                            "Docker socket access requires enabling 'Allow Docker access' in project settings"
+                        ));
                     }
                 }
             }
@@ -576,6 +593,20 @@ impl DockerManager {
             // Set hostname to service name for DNS resolution within the network
             body.hostname = Some(config.service_name.clone());
 
+            // Label all containers with project_id for docker-socket-proxy filtering,
+            // and standard Docker Compose labels for tooling compatibility.
+            // Skip litebin-docker-proxy itself so it can't be managed through its own proxy.
+            if config.service_name != "litebin-docker-proxy" {
+                let mut labels = HashMap::new();
+                labels.insert("litebin.project_id".to_string(), config.project_id.clone());
+                labels.insert("com.docker.compose.service".to_string(), config.service_name.clone());
+                labels.insert("com.docker.compose.project".to_string(), config.project_id.clone());
+                if let Some(ref existing_labels) = body.labels {
+                    labels.extend(existing_labels.clone());
+                }
+                body.labels = Some(labels);
+            }
+
             body
         } else {
             // Single-service path: build from RunServiceConfig fields
@@ -604,6 +635,17 @@ impl DockerManager {
                     .cmd
                     .as_deref()
                     .and_then(|c| shlex::split(c)),
+                labels: if config.service_name == "litebin-docker-proxy" {
+                    None
+                } else {
+                    Some({
+                        let mut labels = HashMap::new();
+                        labels.insert("litebin.project_id".to_string(), config.project_id.clone());
+                        labels.insert("com.docker.compose.service".to_string(), config.service_name.clone());
+                        labels.insert("com.docker.compose.project".to_string(), config.project_id.clone());
+                        labels
+                    })
+                },
                 ..Default::default()
             }
         };
