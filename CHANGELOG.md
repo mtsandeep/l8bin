@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-04-29
+
 ### Added
 - **Docker socket proxy** — Per-project "Allow Docker access" toggle injects a `docker-socket-proxy` service into multi-service projects, restricted to only the project's own containers via label filtering. Enables inter-service container management (exec, logs, stats, restart) without exposing the Docker socket. Follows the same pattern as "Allow raw ports" — toggle in dashboard, flag in DB, pushed to agent.
 - **Standard Docker Compose labels** — All containers now get `com.docker.compose.service` and `com.docker.compose.project` labels, matching what Docker Compose sets natively. Enables tooling that relies on standard compose labels (e.g., service discovery by label).
