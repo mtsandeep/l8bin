@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-04-30
+
 ### Fixed
 - Fix bind mount data not appearing on host filesystem — `scope_volume_source` returned a container-internal path (`/app/projects/...`) that Docker resolved on the host where that path doesn't exist. Now the orchestrator/agent auto-detect the host-side path by inspecting their own container mounts via Docker API, and translate bind mount paths before sending them to Docker.
 - Fix global default memory/CPU settings not applying to new deploys — `DockerManager` was initialized with hardcoded 256MB/0.5 CPU constants and never read from the settings table. Now reads actual defaults from DB at startup and updates live when settings change (no restart needed).
