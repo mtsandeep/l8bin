@@ -57,6 +57,13 @@ pub async fn update_settings(
         }
         upsert_setting(&state.db, "default_cpu_limit", &cpu.to_string()).await?;
     }
+
+    // Update DockerManager defaults so new containers use the latest values
+    let mem_setting: i64 = get_setting(&state.db, "default_memory_limit_mb").await?
+        .as_deref().unwrap_or("256").parse().unwrap_or(256);
+    let cpu_setting: f64 = get_setting(&state.db, "default_cpu_limit").await?
+        .as_deref().unwrap_or("0.5").parse().unwrap_or(0.5);
+    state.docker.update_defaults(mem_setting * 1024 * 1024, cpu_setting);
     if let Some(domain) = payload.domain {
         let domain = domain.trim().to_string();
         if domain.is_empty() {

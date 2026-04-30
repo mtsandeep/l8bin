@@ -742,6 +742,22 @@ pub struct BatchRunRequest {
     pub target_services: Option<Vec<String>>,
     pub allow_raw_ports: Option<bool>,
     pub allow_docker_access: Option<bool>,
+    /// Per-service resource overrides from dashboard (service_name → {memory_limit_mb, cpu_limit}).
+    /// Applied on top of compose-embedded limits; None values mean "use global default".
+    pub service_resources: Option<std::collections::HashMap<String, ServiceResources>>,
+    /// Global default memory limit (MB) from orchestrator settings. Used when neither
+    /// the compose YAML nor per-service overrides specify a memory limit.
+    pub default_memory_limit_mb: Option<i64>,
+    /// Global default CPU limit from orchestrator settings. Used when neither
+    /// the compose YAML nor per-service overrides specify a CPU limit.
+    pub default_cpu_limit: Option<f64>,
+}
+
+/// Per-service resource overrides sent by the orchestrator.
+#[derive(Deserialize)]
+pub struct ServiceResources {
+    pub memory_limit_mb: Option<i64>,
+    pub cpu_limit: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -810,6 +826,32 @@ pub async fn batch_run(
         // Pre-pull the proxy image
         if let Err(e) = state.docker.pull_image("tecnativa/docker-socket-proxy").await {
             tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
+        }
+    }
+
+    // Apply per-service resource overrides from orchestrator (dashboard-set memory/CPU)
+    if let Some(ref overrides) = req.service_resources {
+        for config in plan.configs.iter_mut() {
+            if let Some(res) = overrides.get(&config.service_name) {
+                if res.memory_limit_mb.is_some() {
+                    config.memory_limit_mb = res.memory_limit_mb;
+                }
+                if res.cpu_limit.is_some() {
+                    config.cpu_limit = res.cpu_limit;
+                }
+            }
+        }
+    }
+
+    // Apply global defaults for services that still have no explicit limit
+    if req.default_memory_limit_mb.is_some() || req.default_cpu_limit.is_some() {
+        for config in plan.configs.iter_mut() {
+            if config.memory_limit_mb.is_none() {
+                config.memory_limit_mb = req.default_memory_limit_mb;
+            }
+            if config.cpu_limit.is_none() {
+                config.cpu_limit = req.default_cpu_limit;
+            }
         }
     }
 

@@ -94,13 +94,13 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all("projects")?;
 
     // Seed global settings if not already set
-    let default_mem_mb: i64 = 256;
-    let default_cpu_limit: f64 = 0.5;
+    let seed_mem_mb: i64 = 256;
+    let seed_cpu_limit: f64 = 0.5;
     sqlx::query(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_memory_limit_mb', ?), ('default_cpu_limit', ?), ('routing_mode', ?), ('cloudflare_api_token', ?), ('cloudflare_zone_id', ?), ('dashboard_subdomain', ?), ('poke_subdomain', ?)"
     )
-    .bind(default_mem_mb.to_string())
-    .bind(default_cpu_limit.to_string())
+    .bind(seed_mem_mb.to_string())
+    .bind(seed_cpu_limit.to_string())
     .bind(&config.routing_mode)
     .bind(&config.cloudflare_api_token)
     .bind(&config.cloudflare_zone_id)
@@ -108,7 +108,21 @@ async fn main() -> anyhow::Result<()> {
     .bind(&config.poke_subdomain)
     .execute(&db)
     .await?;
-    tracing::info!(memory_mb = default_mem_mb, cpu = default_cpu_limit, "global settings seeded");
+
+    // Read actual global defaults from DB (user may have changed them after initial seed)
+    let default_mem_mb: i64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_memory_limit_mb'")
+        .fetch_one(&db)
+        .await
+        .ok()
+        .and_then(|v: String| v.parse().ok())
+        .unwrap_or(seed_mem_mb);
+    let default_cpu_limit: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
+        .fetch_one(&db)
+        .await
+        .ok()
+        .and_then(|v: String| v.parse().ok())
+        .unwrap_or(seed_cpu_limit);
+    tracing::info!(memory_mb = default_mem_mb, cpu = default_cpu_limit, "global defaults loaded");
 
     // Auto-register local node
     let now = chrono::Utc::now().timestamp();
@@ -123,12 +137,13 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     tracing::info!(public_ip = %config.public_ip, "local node registered");
 
-    // Init Docker manager
-    let docker = DockerManager::new(
+    // Init Docker manager with global defaults
+    let mut docker = DockerManager::new(
         config.docker_network.clone(),
         default_mem_mb * 1024 * 1024,
         default_cpu_limit,
     )?;
+    docker.detect_host_projects_dir().await;
 
     // Initialize node client pool and load existing online nodes
     let node_clients: Arc<DashMap<String, Arc<reqwest::Client>>> = Arc::new(DashMap::new());

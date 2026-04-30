@@ -9,6 +9,10 @@ pub struct ProjectMetaRequest {
     pub projects: HashMap<String, bool>,
     pub allow_raw_ports: Option<HashMap<String, bool>>,
     pub allow_docker_access: Option<HashMap<String, bool>>,
+    /// Global default memory limit (MB) from orchestrator settings.
+    pub default_memory_limit_mb: Option<i64>,
+    /// Global default CPU limit from orchestrator settings.
+    pub default_cpu_limit: Option<f64>,
 }
 
 /// POST /internal/project-meta — called by orchestrator to push auto_start_enabled + allow_raw_ports + allow_docker_access flags.
@@ -21,7 +25,13 @@ pub async fn update_project_meta(
 
     // Start from auto_start_enabled, then overlay allow_raw_ports and allow_docker_access
     let mut meta: HashMap<String, ProjectMetaEntry> = req.projects.into_iter()
-        .map(|(id, auto)| (id, ProjectMetaEntry { auto_start_enabled: auto, allow_raw_ports: false, allow_docker_access: false }))
+        .map(|(id, auto)| (id, ProjectMetaEntry {
+            auto_start_enabled: auto,
+            allow_raw_ports: false,
+            allow_docker_access: false,
+            default_memory_limit_mb: req.default_memory_limit_mb,
+            default_cpu_limit: req.default_cpu_limit,
+        }))
         .collect();
 
     if let Some(raw_ports) = req.allow_raw_ports {

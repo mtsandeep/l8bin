@@ -978,6 +978,18 @@ async fn wake_multi_service(state: &AgentState, project_id: &str) -> anyhow::Res
         }
     }
 
+    // Apply global defaults for services without explicit limits
+    if let Some(entry) = state.project_meta.read().unwrap().get(project_id) {
+        for config in plan.configs.iter_mut() {
+            if config.memory_limit_mb.is_none() {
+                config.memory_limit_mb = entry.default_memory_limit_mb;
+            }
+            if config.cpu_limit.is_none() {
+                config.cpu_limit = entry.default_cpu_limit;
+            }
+        }
+    }
+
     tracing::info!(
         project_id = %project_id,
         services = ?plan.service_order,

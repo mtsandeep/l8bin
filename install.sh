@@ -215,6 +215,7 @@ run_agent_container() {
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "${certs_dir}":/certs:ro \
     -v litebin-agent-data:/etc/litebin/data \
+    -v "${install_dir}/projects:/app/projects" \
     -p "${agent_port}:8443" \
     litebin-agent
 }

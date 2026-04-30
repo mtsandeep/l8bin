@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering, AtomicU64};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bollard::models::{
@@ -19,12 +21,36 @@ use crate::types::{
     container_name, project_network_name, RunServiceConfig,
 };
 
+/// Cached CPU stats sample for computing deltas between readings.
 #[derive(Clone)]
+struct CpuSample {
+    total_usage: u64,
+    system_cpu_usage: u64,
+}
+
 pub struct DockerManager {
     docker: Docker,
     network: String,
-    memory_limit: i64,
-    cpu_limit: f64,
+    memory_limit: Arc<AtomicI64>,
+    cpu_limit: Arc<AtomicU64>, // f64 stored as bits
+    /// Host-side path for /app/projects (detected via self-inspection).
+    /// Used to translate container-internal bind mount paths to host paths.
+    host_projects_dir: Option<String>,
+    /// Cached CPU stat samples per container_id for delta computation.
+    cpu_samples: Arc<Mutex<HashMap<String, CpuSample>>>,
+}
+
+impl Clone for DockerManager {
+    fn clone(&self) -> Self {
+        Self {
+            docker: self.docker.clone(),
+            network: self.network.clone(),
+            memory_limit: Arc::clone(&self.memory_limit),
+            cpu_limit: Arc::clone(&self.cpu_limit),
+            host_projects_dir: self.host_projects_dir.clone(),
+            cpu_samples: Arc::clone(&self.cpu_samples),
+        }
+    }
 }
 
 impl DockerManager {
@@ -33,8 +59,10 @@ impl DockerManager {
         Ok(Self {
             docker,
             network,
-            memory_limit,
-            cpu_limit,
+            memory_limit: Arc::new(AtomicI64::new(memory_limit)),
+            cpu_limit: Arc::new(AtomicU64::new(cpu_limit.to_bits())),
+            host_projects_dir: None,
+            cpu_samples: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -49,8 +77,66 @@ impl DockerManager {
         Self {
             docker,
             network: "test".to_string(),
-            memory_limit: 0,
-            cpu_limit: 0.0,
+            memory_limit: Arc::new(AtomicI64::new(0)),
+            cpu_limit: Arc::new(AtomicU64::new(0.0_f64.to_bits())),
+            host_projects_dir: None,
+            cpu_samples: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Detect the host-side path for `/app/projects` by inspecting this container's
+    /// own mount information via the Docker API. This allows bind mount sources
+    /// (which Docker resolves on the host) to use the correct host path instead
+    /// of the container-internal path.
+    pub async fn detect_host_projects_dir(&mut self) {
+        let hostname = match std::fs::read_to_string("/etc/hostname") {
+            Ok(h) => h.trim().to_string(),
+            Err(_) => return,
+        };
+
+        let inspect = match self.docker.inspect_container(&hostname, None).await {
+            Ok(i) => i,
+            Err(e) => {
+                tracing::debug!("could not inspect own container for host path detection: {e}");
+                return;
+            }
+        };
+
+        if let Some(mounts) = inspect.mounts {
+            for mount in mounts {
+                if mount.destination.as_deref() == Some("/app/projects") {
+                    if let Some(source) = mount.source {
+                        tracing::info!(host_projects_dir = %source, "detected host projects directory");
+                        self.host_projects_dir = Some(source);
+                    }
+                    return;
+                }
+            }
+        }
+        tracing::debug!("no /app/projects mount found on this container");
+    }
+
+    /// Update the default memory and CPU limits used as fallbacks
+    /// when per-service limits are not specified.
+    pub fn update_defaults(&self, memory_limit: i64, cpu_limit: f64) {
+        tracing::info!(memory_bytes = memory_limit, cpu = cpu_limit, "updating DockerManager defaults");
+        self.memory_limit.store(memory_limit, Ordering::Relaxed);
+        self.cpu_limit.store(cpu_limit.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Translate container-internal `/app/projects/...` paths in bind specs
+    /// to host-side paths, so Docker resolves them correctly on the host.
+    fn translate_bind_paths(&self, binds: &mut [String]) {
+        if let Some(ref host_dir) = self.host_projects_dir {
+            for bind in binds.iter_mut() {
+                if let Some(colon_pos) = bind.find(':') {
+                    let source = &bind[..colon_pos];
+                    if source.starts_with("/app/projects/") {
+                        let new_source = format!("{}{}", host_dir, &source["/app/projects".len()..]);
+                        *bind = format!("{}{}", new_source, &bind[colon_pos..]);
+                    }
+                }
+            }
         }
     }
 
@@ -493,14 +579,16 @@ impl DockerManager {
             }
         }
 
-        // Per-service resource limits
+        // Per-service resource limits (fall back to global defaults when not specified)
+        let default_mem = self.memory_limit.load(Ordering::Relaxed);
+        let default_cpu = f64::from_bits(self.cpu_limit.load(Ordering::Relaxed));
         let memory = config
             .memory_limit_mb
             .map(|mb| mb * 1024 * 1024)
-            .unwrap_or(self.memory_limit);
+            .unwrap_or(default_mem);
         let nano_cpus = match config.cpu_limit {
             Some(cpus) => (cpus * 1_000_000_000.0) as i64,
-            None => (self.cpu_limit * 1_000_000_000.0) as i64,
+            None => (default_cpu * 1_000_000_000.0) as i64,
         };
 
         // Build LiteBin security overrides (shared by both paths)
@@ -548,8 +636,10 @@ impl DockerManager {
 
             // Apply LiteBin binds (volume mounts)
             if let Some(ref binds) = config.binds {
+                let mut translated = binds.clone();
+                self.translate_bind_paths(&mut translated);
                 let mut existing = host.binds.unwrap_or_default();
-                existing.extend(binds.iter().cloned());
+                existing.extend(translated);
                 host.binds = Some(existing);
             }
 
@@ -610,8 +700,12 @@ impl DockerManager {
             body
         } else {
             // Single-service path: build from RunServiceConfig fields
+            let mut translated_binds = config.binds.clone();
+            if let Some(ref mut binds) = translated_binds {
+                self.translate_bind_paths(binds);
+            }
             let mut host_config = HostConfig {
-                binds: config.binds.clone(),
+                binds: translated_binds,
                 network_mode: Some(self.network.clone()),
                 ..Default::default()
             };
@@ -928,7 +1022,10 @@ impl DockerManager {
         Ok(lines)
     }
 
-    /// Get container resource stats (CPU %, memory)
+    /// Get container resource stats (CPU %, memory).
+    /// CPU is computed as a delta between the current reading and the previous
+    /// cached reading (per container_id). Returns 0% on the first call for a
+    /// container since there is no previous sample to diff against.
     pub async fn container_stats(&self, container_id: &str) -> anyhow::Result<ContainerStats> {
         let stats = self
             .docker
@@ -943,20 +1040,33 @@ impl DockerManager {
             .await
             .ok_or_else(|| anyhow::anyhow!("no stats returned"))??;
 
-        // CPU usage %
+        // CPU usage % — compute delta from cached previous sample
         let cpu_stats = stats.cpu_stats.unwrap_or_default();
-        let precpu_stats = stats.precpu_stats.unwrap_or_default();
         let cpu_usage = cpu_stats.cpu_usage.unwrap_or_default();
-        let precpu_usage = precpu_stats.cpu_usage.unwrap_or_default();
-        let cpu_delta = cpu_usage.total_usage.unwrap_or(0) as f64
-            - precpu_usage.total_usage.unwrap_or(0) as f64;
-        let system_delta = cpu_stats.system_cpu_usage.unwrap_or(0) as f64
-            - precpu_stats.system_cpu_usage.unwrap_or(0) as f64;
+        let current_total = cpu_usage.total_usage.unwrap_or(0);
+        let current_system = cpu_stats.system_cpu_usage.unwrap_or(0);
         let num_cpus = cpu_stats.online_cpus.unwrap_or(1) as f64;
-        let cpu_percent = if system_delta > 0.0 {
-            (cpu_delta / system_delta) * num_cpus * 100.0
-        } else {
-            0.0
+
+        // Read and update cached sample
+        let cpu_percent = {
+            let mut samples = self.cpu_samples.lock().unwrap();
+            let prev = samples.get(container_id).map(|s| s.clone());
+            samples.insert(container_id.to_string(), CpuSample {
+                total_usage: current_total,
+                system_cpu_usage: current_system,
+            });
+
+            if let Some(prev) = prev {
+                let cpu_delta = current_total as f64 - prev.total_usage as f64;
+                let system_delta = current_system as f64 - prev.system_cpu_usage as f64;
+                if system_delta > 0.0 {
+                    (cpu_delta / system_delta) * num_cpus * 100.0
+                } else {
+                    0.0
+                }
+            } else {
+                0.0 // First reading — no previous sample to diff against
+            }
         };
 
         // Memory (subtract cache to match `docker stats`)

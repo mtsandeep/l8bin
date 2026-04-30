@@ -819,10 +819,19 @@ pub async fn push_project_meta_to_agent(
     };
 
     let url = format!("{}/internal/project-meta", base_url);
+
+    // Read global defaults to push to agent
+    let default_mem: i64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_memory_limit_mb'")
+        .fetch_one(db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(256);
+    let default_cpu: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
+        .fetch_one(db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(0.5);
+
     let body = json!({
         "projects": projects,
         "allow_raw_ports": allow_raw_ports,
         "allow_docker_access": allow_docker_access,
+        "default_memory_limit_mb": default_mem,
+        "default_cpu_limit": default_cpu,
     });
 
     match client

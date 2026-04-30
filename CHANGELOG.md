@@ -4,7 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fix bind mount data not appearing on host filesystem — `scope_volume_source` returned a container-internal path (`/app/projects/...`) that Docker resolved on the host where that path doesn't exist. Now the orchestrator/agent auto-detect the host-side path by inspecting their own container mounts via Docker API, and translate bind mount paths before sending them to Docker.
+- Fix global default memory/CPU settings not applying to new deploys — `DockerManager` was initialized with hardcoded 256MB/0.5 CPU constants and never read from the settings table. Now reads actual defaults from DB at startup and updates live when settings change (no restart needed).
+- Fix CPU % always showing 0% on project cards — Docker stats API with `one_shot: true` returns a single instantaneous snapshot with no previous sample to compute a delta against. Now caches previous CPU samples per container and computes deltas between consecutive readings. First poll returns 0% (expected), subsequent polls show accurate values.
+
 ## [0.2.12] - 2026-04-29
+
+### Fixed
+- Fix relative bind mounts (e.g. `./data:/container/path`) in compose failing with "invalid characters for a local volume name". The path was not resolved to an absolute path, so Docker treated it as a named volume.
 
 ## [0.2.11] - 2026-04-29
 
@@ -16,7 +24,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Fix raw port binding using ephemeral port (`0`) instead of the compose-declared port. Raw ports now bind to their actual port number (e.g., `19132/udp` binds host port 19132, not a random one).
-- Fix relative bind mounts (e.g. `./data:/container/path`) in compose failing with "invalid characters for a local volume name". The path was not resolved to an absolute path, so Docker treated it as a named volume.
+- Fix www→bare domain redirect producing a trailing `}` in the URL. The Caddy placeholder `{uri}` was double-escaped in the Rust format string.
 
 ### Changed
 - **Multi-service routing now goes directly to containers** — All running projects (single and multi-service) get direct Caddy→container routes. Previously, multi-service projects always proxied through the orchestrator, which broke WebSocket, gRPC, SSE, and other non-HTTP protocols. Caddy's 502/503/504 fallback to the orchestrator handles auto-wake when containers are down. Service health is now handled by Docker's `restart: unless-stopped` policy (recommended in compose files) instead of per-request orchestrator health checks.

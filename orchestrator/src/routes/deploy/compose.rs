@@ -422,6 +422,29 @@ pub async fn deploy_compose(
 
         let base_url = agent_base_url(&state.config, &node);
 
+        // Read per-service resource overrides and global defaults to send to agent
+        let service_resources: std::collections::HashMap<String, serde_json::Value> = sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
+            "SELECT service_name, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ?",
+        )
+        .bind(&project_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(name, mem, cpu)| {
+            if mem.is_some() || cpu.is_some() {
+                Some((name, json!({ "memory_limit_mb": mem, "cpu_limit": cpu })))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+        let default_mem: i64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_memory_limit_mb'")
+            .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(256);
+        let default_cpu: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
+            .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(0.5);
+
         let batch_resp = match client
             .post(&format!("{}/containers/batch-run", base_url))
             .json(&json!({
@@ -431,6 +454,9 @@ pub async fn deploy_compose(
                 "target_services": target_services,
                 "allow_raw_ports": project.allow_raw_ports,
                 "allow_docker_access": project.allow_docker_access,
+                "service_resources": service_resources,
+                "default_memory_limit_mb": default_mem,
+                "default_cpu_limit": default_cpu,
             }))
             .send()
             .await

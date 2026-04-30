@@ -90,6 +90,12 @@ pub struct ProjectMetaEntry {
     pub allow_raw_ports: bool,
     #[serde(default)]
     pub allow_docker_access: bool,
+    /// Global default memory limit (MB) from orchestrator settings.
+    #[serde(default)]
+    pub default_memory_limit_mb: Option<i64>,
+    /// Global default CPU limit from orchestrator settings.
+    #[serde(default)]
+    pub default_cpu_limit: Option<f64>,
 }
 
 pub(crate) fn load_project_meta_from_file() -> Option<HashMap<String, ProjectMetaEntry>> {
@@ -157,15 +163,23 @@ async fn main() -> Result<()> {
     // Ensure projects directory exists
     std::fs::create_dir_all("projects")?;
 
-    // Init Docker manager
+    // Init Docker manager (defaults from env vars, set by orchestrator/install.sh)
     let docker_network = std::env::var("DOCKER_NETWORK").unwrap_or_else(|_| "litebin-network".to_string());
-    let memory_limit: i64 = 256 * 1024 * 1024;
-    let cpu_limit: f64 = 0.5;
-    let docker = Arc::new(DockerManager::new(
+    let memory_limit: i64 = std::env::var("DEFAULT_MEMORY_MB")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(256) * 1024 * 1024;
+    let cpu_limit: f64 = std::env::var("DEFAULT_CPU_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let mut docker = DockerManager::new(
         docker_network,
         memory_limit,
         cpu_limit,
-    )?);
+    )?;
+    docker.detect_host_projects_dir().await;
+    let docker = Arc::new(docker);
 
     // Connect agent to all existing project networks so it can proxy to containers
     let agent_id = std::env::var("AGENT_CONTAINER_NAME")
