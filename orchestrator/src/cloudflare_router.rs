@@ -508,11 +508,13 @@ impl CloudflareDnsRouter {
         Ok(())
     }
 
-    /// Sync Cloudflare DNS records: upsert for running projects, delete stale ones.
+    /// Sync Cloudflare DNS records: upsert for all projects, delete stale ones.
+    /// DNS records are kept for all projects regardless of status (running, stopped, etc.)
+    /// so that stopped projects still resolve and hit the waker.
     /// Returns counts of created, deleted, and errored records.
     async fn sync_dns(
         &self,
-        projects: &[ProjectRoute],
+        _projects: &[ProjectRoute],
         domain: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
@@ -532,23 +534,52 @@ impl CloudflareDnsRouter {
             desired.insert(poke_host, self.config.public_ip.clone());
         }
 
-        for p in projects {
-            let ip = match &p.node_public_ip {
-                Some(ip) if !ip.is_empty() => ip.clone(),
+        // Query ALL projects and add DNS records for each one.
+        // DNS records are only removed when a project is deleted (or Cloudflare is cleared),
+        // never when a project is stopped — so that stopped projects still resolve and
+        // reach the waker via the catch-all route.
+        let all_projects: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT id, node_id, custom_domain FROM projects",
+        )
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default();
+
+        for (project_id, node_id, custom_domain) in &all_projects {
+            let ip = match node_id.as_deref() {
+                Some(nid) if nid != "local" => {
+                    let row: Option<(Option<String>,)> = sqlx::query_as(
+                        "SELECT public_ip FROM nodes WHERE id = ?",
+                    )
+                    .bind(nid)
+                    .fetch_optional(&self.db)
+                    .await
+                    .unwrap_or(None);
+                    match row.and_then(|(ip,)| ip) {
+                        Some(ip) if !ip.is_empty() => ip,
+                        _ => {
+                            tracing::warn!(
+                                project_id = %project_id,
+                                node_id = %nid,
+                                "skipping DNS record — remote node has no public_ip"
+                            );
+                            continue;
+                        }
+                    }
+                }
                 _ => {
-                    tracing::warn!(
-                        project_id = %p.project_id,
-                        "skipping DNS record — node has no public_ip"
-                    );
-                    continue;
+                    if self.config.public_ip.is_empty() {
+                        continue;
+                    }
+                    self.config.public_ip.clone()
                 }
             };
 
-            // Subdomain A record
-            desired.insert(p.subdomain_host.clone(), ip.clone());
+            // Subdomain A record (e.g. mc.e4dx.com)
+            desired.insert(format!("{}.{}", project_id, domain), ip.clone());
 
-            // Custom domain A record
-            if let Some(cd) = &p.custom_domain {
+            // Custom domain A record (if any)
+            if let Some(cd) = custom_domain {
                 desired.insert(cd.clone(), ip.clone());
 
                 // Also add the www variant as a redirect handled by Caddy,
@@ -558,51 +589,7 @@ impl CloudflareDnsRouter {
                 } else {
                     format!("www.{}", cd)
                 };
-                desired.insert(www, ip.clone());
-            }
-        }
-
-        // Also keep DNS records for sleeping projects that have custom domains,
-        // so the domain still resolves and reaches the waker.
-        let sleeping_cd: Vec<(String, Option<String>, String)> = sqlx::query_as(
-            "SELECT p.id, p.node_id, p.custom_domain FROM projects p \
-             WHERE p.status IN ('stopped', 'stopping') \
-             AND p.custom_domain IS NOT NULL AND p.custom_domain != ''",
-        )
-        .fetch_all(&self.db)
-        .await
-        .unwrap_or_default();
-
-        for (_project_id, node_id, custom_domain) in &sleeping_cd {
-            let node_ip = match node_id.as_deref() {
-                Some(nid) if nid != "local" => {
-                    let row: Option<(Option<String>,)> = sqlx::query_as(
-                        "SELECT public_ip FROM nodes WHERE id = ?",
-                    )
-                    .bind(nid)
-                    .fetch_optional(&self.db)
-                    .await
-                    .unwrap_or(None);
-                    row.and_then(|(ip,)| ip)
-                }
-                _ => {
-                    if self.config.public_ip.is_empty() {
-                        continue;
-                    }
-                    Some(self.config.public_ip.clone())
-                }
-            };
-
-            if let Some(ip) = node_ip {
-                if !ip.is_empty() {
-                    desired.insert(custom_domain.clone(), ip.clone());
-                    let www = if custom_domain.starts_with("www.") {
-                        custom_domain[4..].to_string()
-                    } else {
-                        format!("www.{}", custom_domain)
-                    };
-                    desired.insert(www, ip);
-                }
+                desired.insert(www, ip);
             }
         }
 

@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Fix bind mount data not appearing on host filesystem — `scope_volume_source` returned a container-internal path (`/app/projects/...`) that Docker resolved on the host where that path doesn't exist. Now the orchestrator/agent auto-detect the host-side path by inspecting their own container mounts via Docker API, and translate bind mount paths before sending them to Docker.
 - Fix global default memory/CPU settings not applying to new deploys — `DockerManager` was initialized with hardcoded 256MB/0.5 CPU constants and never read from the settings table. Now reads actual defaults from DB at startup and updates live when settings change (no restart needed).
 - Fix CPU % always showing 0% on project cards — Docker stats API with `one_shot: true` returns a single instantaneous snapshot with no previous sample to compute a delta against. Now caches previous CPU samples per container and computes deltas between consecutive readings. First poll returns 0% (expected), subsequent polls show accurate values.
+- Fix DNS records removed for stopped projects — DNS sync only kept records for running, degraded, or stopped projects with a custom domain. Stopped projects without a custom domain (e.g. subdomain-only projects) lost their DNS entry, breaking auto-wake. Simplified to a single query over all projects regardless of status — DNS is only removed when a project is deleted, never when stopped.
 
 ## [0.2.12] - 2026-04-29
 
