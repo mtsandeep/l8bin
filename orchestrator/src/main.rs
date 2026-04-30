@@ -294,6 +294,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/logout", post(routes::auth::logout))
         .route("/auth/me", get(routes::auth::me))
         .route("/auth/change-password", post(routes::auth::change_password))
+        .route("/status", get(routes::auth::status))
         .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
 
     // Routes - Protected API (session auth only)

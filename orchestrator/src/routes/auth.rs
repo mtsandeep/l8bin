@@ -167,6 +167,59 @@ pub struct ChangePasswordResponse {
     pub success: bool,
 }
 
+// --- Status endpoint ---
+
+#[derive(Debug, Serialize)]
+pub struct StatusNode {
+    pub name: String,
+    pub status: String,
+    pub version: Option<String>,
+    pub architecture: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusResponse {
+    pub version: String,
+    pub user: UserResponse,
+    pub nodes: Vec<StatusNode>,
+    pub project_count: i64,
+}
+
+pub async fn status(
+    auth_session: AuthSession<PasswordBackend>,
+    State(state): State<AppState>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let user = match auth_session.user {
+        Some(user) => user,
+        None => return Err(StatusCode::UNAUTHORIZED),
+    };
+
+    let (nodes_result, project_count) = tokio::join!(
+        sqlx::query_as::<_, litebin_common::types::Node>("SELECT * FROM nodes ORDER BY created_at ASC")
+            .fetch_all(&state.db),
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects")
+            .fetch_one(&state.db),
+    );
+
+    let nodes: Vec<StatusNode> = nodes_result
+        .unwrap_or_default()
+        .into_iter()
+        .map(|n| StatusNode {
+            name: n.name,
+            status: n.status,
+            version: n.version,
+            architecture: n.architecture,
+        })
+        .collect();
+
+    Ok(Json(StatusResponse {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        user: user.into(),
+        nodes,
+        project_count: project_count.unwrap_or(0),
+    }))
+}
+
 pub async fn change_password(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
