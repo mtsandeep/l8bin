@@ -8,7 +8,7 @@ import NodesPage from './components/NodesPage';
 import GlobalSettingsModal from './components/GlobalSettingsModal';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { ToastProvider } from './components/ToastContext';
-import { type Project, type Node, type ProjectStats, type ServiceStats, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, formatBytes } from './api';
+import { type Project, type Node, type ProjectStats, type ServiceStats, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, fetchHealthVersion, formatBytes } from './api';
 import { useIntervalWhileVisible } from './hooks';
 
 function AppContent() {
@@ -26,6 +26,7 @@ function AppContent() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [loading, setLoading] = useState(true);
   const [stackExpanded, setStackExpanded] = useState(false);
+  const [version, setVersion] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const { user, loading: authLoading, logout } = useAuth();
   const userMenuRefMobile = useRef<HTMLDivElement>(null);
@@ -36,11 +37,12 @@ function AppContent() {
     if (!user) return;
     (async () => {
       try {
-        const [nodeData, settings] = await Promise.all([fetchNodes(), fetchGlobalSettings()]);
+        const [nodeData, settings, ver] = await Promise.all([fetchNodes(), fetchGlobalSettings(), fetchHealthVersion()]);
         setNodes(nodeData);
         setProjectsDir(settings.projects_dir);
         setDomain(settings.domain);
         setDnsTarget(settings.dns_target);
+        if (ver) setVersion(ver);
       } catch (e) {
         console.error('Failed to fetch nodes/settings:', e);
       }
@@ -98,7 +100,7 @@ function AppContent() {
   }
 
   if (showNodes) {
-    return <NodesPage onBack={() => setShowNodes(false)} />;
+    return <NodesPage onBack={() => setShowNodes(false)} projects={projects} />;
   }
 
   const running = projects.filter((p) => p.status === 'running').length;
@@ -377,6 +379,11 @@ function AppContent() {
           </div>
         )}
       </main>
+
+      <footer className="text-center py-6 text-xs text-slate-600">
+        Powered by <a href="https://l8bin.com" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300 transition-colors">l8bin.com</a>
+        {version && <span className="ml-1.5 text-slate-700">v{version}</span>}
+      </footer>
 
       {/* Deploy modal */}
       {showDeploy && (

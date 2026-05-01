@@ -354,6 +354,17 @@ export async function fetchSystemStats(): Promise<ServiceStats[]> {
   return data.services;
 }
 
+export async function fetchHealthVersion(): Promise<string> {
+  try {
+    const res = await fetch(`${API_BASE}/health`, { credentials: 'include' });
+    if (!res.ok) return '';
+    const data = await res.json();
+    return data.version || '';
+  } catch {
+    return '';
+  }
+}
+
 export function timeAgo(timestamp: number | null): string {
   if (!timestamp) return 'never';
   const seconds = Math.floor(Date.now() / 1000 - timestamp);

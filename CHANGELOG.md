@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Dashboard cleanups
+
 ## [0.2.14] - 2026-05-01
 
 ### Added

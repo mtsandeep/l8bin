@@ -4,7 +4,7 @@ import {
   Clock, Copy, ChevronRight, Loader
 } from 'lucide-react';
 import { useIntervalWhileVisible } from '../hooks';
-import { type Node, type NodeImageStats, fetchNodes, fetchNodeImageStats, pruneNodeImages, addNode, connectNode, deleteNode, timeAgo, formatBytes } from '../api';
+import { type Node, type NodeImageStats, type Project, fetchNodes, fetchNodeImageStats, pruneNodeImages, addNode, connectNode, deleteNode, timeAgo, formatBytes } from '../api';
 
 function statusColor(status: string) {
   if (status === 'online') return 'text-emerald-400';
@@ -393,9 +393,10 @@ function PruneModal({ nodeName, danglingCount, danglingSize, state, reclaimed, e
 
 interface NodesPageProps {
   onBack: () => void;
+  projects: Project[];
 }
 
-export default function NodesPage({ onBack }: NodesPageProps) {
+export default function NodesPage({ onBack, projects }: NodesPageProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [imageStats, setImageStats] = useState<NodeImageStats[]>([]);
   const [loading, setLoading] = useState(true);
@@ -524,13 +525,13 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                 key={node.id}
                 className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/60 hover:border-slate-700/60 transition-colors"
               >
-                {/* Top row: icon + name + status */}
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center shrink-0">
+                {/* Top row: icon + name + badges | status */}
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center shrink-0 mt-0.5">
                     <Server size={16} className="text-slate-400" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <span className="text-sm font-medium text-slate-100">{node.name}</span>
                       {node.id === 'local' && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400">local</span>
@@ -605,8 +606,11 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                     </span>
                   </div>
                   <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
-                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Containers</span>
-                    <span className="text-xs text-slate-400">{node.container_count || 0}</span>
+                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Projects</span>
+                    <span className="text-xs text-slate-400">
+                      {projects.filter(p => p.node_id === node.id).length}
+                      <span className="text-slate-600 ml-1">({projects.filter(p => p.node_id === node.id).reduce((sum, p) => sum + (p.service_count || 0), 0)} services)</span>
+                    </span>
                   </div>
                   <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
                     <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Disk</span>
@@ -616,45 +620,45 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                   </div>
                 </div>
 
-                {/* Last seen + images row */}
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  {node.last_seen_at && (
-                    <span className="text-[10px] text-slate-600 flex items-center gap-1">
-                      <Clock size={10} />
-                      Last seen {timeAgo(node.last_seen_at)}
-                    </span>
-                  )}
-                  {stats && stats.total_count > 0 && (
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="text-slate-500">
+                {/* Last seen + images */}
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-y-1 gap-x-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {node.last_seen_at && (
+                      <span className="text-[10px] text-slate-600 flex items-center gap-1">
+                        <Clock size={10} />
+                        Last seen {timeAgo(node.last_seen_at)}
+                      </span>
+                    )}
+                    {stats && stats.total_count > 0 && (
+                      <span className="text-xs text-slate-500">
                         Images: {stats.total_count} ({formatBytes(stats.total_size)})
                       </span>
-                      {stats.dangling_count > 0 && (
-                        <span className="flex items-center gap-1.5">
-                          <span className="text-amber-400">
-                            {stats.dangling_count} dangling ({formatBytes(stats.dangling_size)})
-                          </span>
-                          <button
-                            onClick={() =>
-                              setPruneModal({
-                                nodeId: node.id,
-                                nodeName: node.name,
-                                danglingCount: stats.dangling_count,
-                                danglingSize: stats.dangling_size,
-                                state: 'confirming',
-                                reclaimed: null,
-                                error: '',
-                              })
-                            }
-                            disabled={pruning === node.id}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 transition-colors cursor-pointer"
-                          >
-                            <Trash2 size={11} />
-                            {pruning === node.id ? 'Pruning…' : 'Prune'}
-                          </button>
-                        </span>
-                      )}
-                    </div>
+                    )}
+                  </div>
+                  {stats && stats.dangling_count > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-xs text-amber-400">
+                        {stats.dangling_count} dangling ({formatBytes(stats.dangling_size)})
+                      </span>
+                      <button
+                        onClick={() =>
+                          setPruneModal({
+                            nodeId: node.id,
+                            nodeName: node.name,
+                            danglingCount: stats.dangling_count,
+                            danglingSize: stats.dangling_size,
+                            state: 'confirming',
+                            reclaimed: null,
+                            error: '',
+                          })
+                        }
+                        disabled={pruning === node.id}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 transition-colors cursor-pointer"
+                      >
+                        <Trash2 size={11} />
+                        {pruning === node.id ? 'Pruning…' : 'Prune'}
+                      </button>
+                    </span>
                   )}
                 </div>
               </div>
@@ -663,6 +667,10 @@ export default function NodesPage({ onBack }: NodesPageProps) {
           </div>
         )}
       </main>
+
+      <footer className="text-center py-6 text-xs text-slate-600">
+        Powered by <a href="https://l8bin.com" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300 transition-colors">l8bin.com</a>
+      </footer>
 
       {showAdd && (
         <AddAgentWizard
