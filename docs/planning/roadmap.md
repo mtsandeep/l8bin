@@ -4,6 +4,46 @@ Planned features beyond the current release. Ordered by priority and dependency.
 
 ---
 
+## What We Have Today
+
+### Deployment
+- Single-service Docker container deployment
+- Multi-service docker-compose deployment
+- GitHub Action for CI/CD auto-deploy
+- CLI tool (`l8b`) for terminal workflow
+- Custom Docker images (including `sha256:` uploaded images)
+- Per-project environment variables (`.env` on agent filesystem)
+- Bind mount data support
+
+### Networking
+- Automatic TLS via Caddy (on-demand Let's Encrypt)
+- Custom domains, custom routes (path + subdomain)
+- Cloudflare DNS integration (automatic A record management)
+- Master proxy mode or direct DNS mode
+- Auto-wake on request, auto-sleep after inactivity
+
+### Multi-Node
+- Orchestrator + agent architecture with mTLS
+- Add/remove agent nodes from dashboard
+- Deploy projects to any node
+- Agent health monitoring and reconciliation
+- Auto-start on agent reconnect
+
+### Management
+- Web dashboard
+- API tokens for programmatic access
+- Resource limits (CPU/memory) per project
+- Docker socket proxy (controlled Docker access per project)
+- Project flags (auto-start, raw ports, Docker access)
+- Janitor (auto-stop idle projects)
+- Crash recovery via auto-wake
+
+### Observability
+- Metrics (CPU/memory/disk per project)
+- Basic log streaming per service (10MB stored)
+
+---
+
 ## Phase 1: Preview Environments
 
 Spin up an isolated container for every pull request or branch, with its own subdomain. Auto-cleanup when the PR closes.
@@ -73,7 +113,7 @@ Builds happen outside the VPS to avoid CPU/RAM load:
 
 **Recommended approach:** The webhook receiver does NOT build images. It expects the CI pipeline to have already pushed an image tagged with the PR number. The webhook triggers a deploy of that pre-built image.
 
-```
+```yaml
 # GitHub Actions workflow (.github/workflows/preview.yml)
 on:
   pull_request:
@@ -122,7 +162,7 @@ CREATE TABLE previews (
 );
 ```
 
-Per-project GitHub config (new columns on `projects` or a separate table):
+Per-project GitHub config:
 
 ```sql
 CREATE TABLE project_github_config (
@@ -150,7 +190,7 @@ GET    /projects/:id/github/config         -- Get GitHub config
 ### Dashboard Changes
 
 - **Project card:** Show active preview count badge
-- **Preview list:** Expandable section under each project showing all active previews with links, status, PR number, commit SHA
+- **Preview list:** Expandable section under each project showing active previews with links, status, PR number, commit SHA
 - **GitHub config modal:** Enter repo URL, auto-generate webhook secret, display webhook URL to configure in GitHub
 - **Preview actions:** Stop, restart, delete individual previews
 
@@ -159,15 +199,6 @@ GET    /projects/:id/github/config         -- Get GitHub config
 ```
 l8b preview list <project>          -- List active previews
 l8b preview delete <project> <id>   -- Delete a preview
-```
-
-### Caddy Routing
-
-Previews use the same on-demand TLS as regular projects. No Caddy changes needed — the waker already handles catch-all subdomains. The router just needs to include preview subdomains in route resolution.
-
-```
-myapp.l8b.in           → litebin-myapp:3000         (production)
-pr-42.myapp.l8b.in     → litebin-myapp-pr-42:3000   (preview)
 ```
 
 ### Edge Cases
@@ -194,117 +225,265 @@ pr-42.myapp.l8b.in     → litebin-myapp-pr-42:3000   (preview)
 | `orchestrator/src/db/migrations/` | New migration for `previews` + `project_github_config` |
 | `orchestrator/src/routing_helpers.rs` | Include preview subdomains in route resolution |
 | `orchestrator/src/routes/waker.rs` | Handle preview subdomain wake |
-| `agent/src/routes/waker.rs` | Handle preview subdomain wake (Mode B) |
-| `dashboard/src/App.tsx` | Preview list in project card |
-| `dashboard/src/api.ts` | Preview API calls |
-| `dashboard/src/components/ProjectCard.tsx` | Preview section + GitHub config |
+| `agent/src/routes/waker.rs` | Handle preview subdomain wake (cloudflare DNS mode) |
+| `dashboard/src/` | Preview list, GitHub config modal |
 | `cli/src/main.rs` | Preview subcommands |
-| `landing/index.html` | Add "Preview Environments" to roadmap ideas |
 
 ---
 
 ## Phase 2: App Migration
 
-Move apps between agents with one command. Makes multi-node actually useful for rebalancing and server upgrades.
+Move projects between nodes with configurable options. Makes multi-node useful for rebalancing and server upgrades. Full plan: [migration.md](migration.md).
 
 ### User Experience
 
-```bash
-l8b move myapp agent-2
-# → Stops on agent-1, exports volume, starts on agent-2, imports volume, updates DNS/routes
+```
+1. Select project → "Migrate to node" → pick target
+2. Choose what to move: config (always), image (optional), volumes (optional)
+3. Place .env on target (user handles secrets)
+4. Source keeps running (dual-run), target deploys
+5. Optional: enable maintenance mode on source
+6. Verify target works → trigger cleanup on source when ready
+```
+
+### Key Design Decisions
+
+- **Dual-run safety** — source stays running until user explicitly triggers cleanup
+- **`migrated` flag** — DB tracks migrated-but-not-cleaned projects, dashboard shows indicator
+- **On-demand cleanup** — `POST /projects/:id/migrate/cleanup` is never automatic
+- **Architecture warning** — soft warning for cross-arch, not a hard block
+- **`.env*` never transferred** — user places manually on target
+- **Maintenance mode** — standalone feature, serves 503 page with admin cookie bypass
+- **Chunked volume transfer** — 100MB chunks, resumable on failure
+- **Project duplication** — clone to same or different node (shares migration infrastructure)
+
+### Endpoints
+
+```
+POST /projects/:id/migrate              -- Start migration
+POST /projects/:id/migrate/cleanup      -- Clean up source (on-demand)
+POST /projects/:id/maintenance          -- Toggle maintenance mode
+POST /projects/:id/duplicate            -- Clone project
+```
+
+### Master Migration + Promote
+
+Migrate orchestrator data to an agent, promote it to master:
+
+```
+1. Migrate all projects off master (to agents)
+2. Transfer DB, config, project files to target agent
+3. SSH to agent → ./install.sh promote
+4. Agent becomes new master, old master decommissioned manually
+```
+
+---
+
+## Phase 3: Backup
+
+SQLite backup via Litestream sidecar. No custom backup code in LiteBin. Full plan: [backup.md](backup.md).
+
+### User Experience
+
+```
+1. Install LiteBin → Litestream starts automatically (local file backup)
+2. Optional: add S3/R2 from dashboard for cloud backups
+3. Restore: l8b backup restore (from local or S3, point-in-time)
+```
+
+### Design
+
+- **Litestream as optional sidecar** — always-on for local, S3 configurable later
+- **Zero custom code** — LiteBin generates config, manages container, that's it
+- **~5-10 MB RAM** extra
+- **Real-time WAL streaming**, point-in-time recovery, LZ4 compression
+- **Local backup by default** during `install.sh`, S3/R2 post-install
+
+### Configuration Points
+
+- **install.sh** — always includes Litestream with local file replica
+- **Dashboard** — add/remove S3 replicas, view status, trigger restore
+- **CLI** — `l8b backup status`, `l8b backup add-s3`, `l8b backup restore`
+
+---
+
+## Phase 4: One-Click Apps
+
+Template catalog of popular apps deployable with a single click. Since LiteBin supports docker-compose, one-click apps are custom compose files (official or user-contributed).
+
+### User Experience
+
+```
+1. Dashboard → "New Project" → "From Template"
+2. Browse catalog (WordPress, Next.js, n8n, Mastodon, etc.)
+3. Click "Deploy" → configure domain + env vars
+4. Running
 ```
 
 ### Approach
 
-1. Export volume data on source agent (existing volume export endpoint)
-2. Transfer tar between agents via orchestrator (stream, not store)
-3. Deploy container on target agent with imported volume
-4. Update project's `node_id` in database
-5. Sync Caddy routes (DNS if Cloudflare mode)
-6. Clean up source container and volume
+- Templates are docker-compose files stored in a registry (GitHub repo or in-app)
+- Official templates maintained by LiteBin
+- Users can submit custom templates
+- Template may include default env vars, volume mounts, health checks
+- Deploy uses existing compose deployment pipeline — no special logic needed
+
+---
+
+## Phase 5: Deploy History & Rollback
+
+Keep previous deploys and allow instant rollback.
+
+### User Experience
+
+```
+l8b history myapp
+# → #3  2026-05-01 10:30  ghcr.io/me/myapp:abc123
+# → #2  2026-04-30 15:00  ghcr.io/me/myapp:def456  ← rollback to this
+# → #1  2026-04-29 09:00  ghcr.io/me/myapp:789abc
+
+l8b rollback myapp 2
+# → Switches to previous image, keeps volumes intact
+```
 
 ### Open Questions
 
-- How to handle large volumes (multi-GB databases)?
-- Should there be a maintenance page during migration?
-- What if the target agent doesn't have enough resources?
+- Store previous image tags only (lightweight) or full image exports (heavy)?
+- How many deploys to keep? Configurable per project?
+- Should rollback also revert .env changes?
 
 ---
 
-## Phase 3: Backup & Restore
+## Phase 6: Eject (Litebin Eject)
 
-One-click snapshots of any app — files, database, and env vars. Download for safekeeping, upload to restore.
-
-### User Experience
-
-```bash
-l8b backup myapp                    # Create snapshot, download tar
-l8b backup myapp --upload s3:...    # Push to S3-compatible storage
-l8b restore myapp backup-2024-04.tar  # Restore from file
-```
-
-### Approach
-
-- Snapshot = tar of container filesystem + named volumes + env vars JSON
-- Use Docker's built-in checkpoint or `docker export` + volume tar
-- Optional push to S3/Minio for off-server storage
-- Restore creates a new container from the snapshot
-
----
-
-## Phase 4: Client Handover
-
-Detach the agent and hand a running server to a client with zero LiteBin dependencies.
+Export a project as a standalone Docker Compose + Caddy setup. The user "graduates" from LiteBin and takes their app with them — no LiteBin dependency needed on the target server.
 
 ### User Experience
 
-```bash
-l8b detach myapp                    # Export app + agent config
-# → Produces a standalone setup: Docker Compose + Caddy config
-# → Client gets a running server, not a login
 ```
+l8b eject myapp
+# → Generates a standalone setup:
+#    ├── docker-compose.yml  (app + caddy)
+#    ├── Caddyfile           (TLS + routing)
+#    ├── .env                (copied from agent)
+#    └── data/               (exported volumes)
+#
+# → Deploy anywhere: docker compose up -d
+```
+
+### Use Cases
+
+- **Client handover** — give a running project to a client without LiteBin access
+- **Server move** — move a project to a server where LiteBin isn't installed
+- **Graduation** — project outgrew LiteBin, needs its own dedicated setup
+- **Backup export** — standalone setup as a form of portable backup
 
 ### Approach
 
-1. Export container image + volume data
-2. Generate a `docker-compose.yml` with the app's config (ports, env, volumes)
-3. Generate a minimal Caddy config for the app's domain
-4. Package everything into a tar that the client can `docker compose up`
-5. Agent is no longer needed — pure Docker + Caddy
+1. Export container image (`docker save`) or reference registry image
+2. Export Docker volumes (reuse chunked export from migration plan)
+3. Copy `.env` from agent (local operation, not over network)
+4. Generate `docker-compose.yml` with app config (ports, volumes, restart policy)
+5. Generate minimal `Caddyfile` (domain, TLS, reverse proxy)
+6. Package into a tar — user extracts and runs `docker compose up -d`
 
----
+### What's Included vs Excluded
 
-## Phase 5: App Duplication
+| Included | Excluded |
+|----------|----------|
+| docker-compose.yml | LiteBin orchestrator/agent |
+| Caddyfile | LiteBin dashboard |
+| Container image | LiteBin mTLS certs |
+| Volumes | LiteBin DB |
+| .env | Auto-wake/sleep |
+| Caddy TLS certs (if exported) | Custom routes |
+| | Metrics/logs |
 
-Create isolated copies of any app with full data and config for feature branches or staging.
+### CLI
 
-### User Experience
-
-```bash
-l8b clone myapp myapp-staging
-# → New container, new subdomain (myapp-staging.l8b.in), copied volumes and env
 ```
-
-### Approach
-
-- Clone container from same image
-- Copy named volumes
-- Copy env vars (with optional overrides)
-- Create new Caddy route
-- Independent lifecycle from the original
+l8b eject myapp                          # Export to ./ejected/myapp/
+l8b eject myapp --output /path/to/dir   # Custom output directory
+l8b eject myapp --include-image          # Bundle image (large, ~200MB+)
+```
 
 ---
 
 ## Quick Wins (Can Be Done Anytime)
 
-### Environment Variable Store
+### Full Real-Time Log Streaming
 
-Per-project env var management via dashboard and CLI. Currently env vars are set at deploy time only.
+Currently logs are stored up to 10MB per service. Full streaming via WebSocket for real-time tail.
 
-> **Note:** The multi-service MVP handles env vars via compose `environment:` + project `.env` file. This feature would add a dashboard/CLI API for managing them without SSH.
+- Dashboard: live log viewer with auto-scroll
+- CLI: `l8b logs -f <project>` (follow mode)
+- API: WebSocket endpoint for log streaming
+- Optional: log aggregation (send to external Loki/ELK)
 
-- New `project_env_vars` table
-- API endpoints: GET/PUT/DELETE per-project env vars
-- Dashboard: env var editor in project settings
+### Environment Variable Dashboard Editor
+
+Per-project env var management via dashboard. Currently env vars are set at deploy time only.
+
+- Dashboard: env var editor in project settings (read/write `.env*` on agent)
 - CLI: `l8b env set myapp KEY=value`
-- Injected at container start (no redeploy needed)
+- No redeploy needed for env changes (container restart only)
+
+> **Note:** `.env*` files are never transferred over the network (core LiteBin principle). The dashboard editor writes directly to the agent's filesystem via API.
+
+### Notifications
+
+Deploy success/fail notifications via Discord/Slack/webhook.
+
+- Per-project notification config (provider, webhook URL)
+- Events: deploy start, deploy success, deploy failure, auto-stop, auto-wake
+- Dashboard: notification settings in project config
+
+---
+
+## Competitive Positioning
+
+### Why LiteBin Over Vercel/Render
+
+| | Vercel | Render | **LiteBin** |
+|---|--------|--------|-------------|
+| Cost | $20-180/mo | $7-85/mo | **Free (your server)** |
+| Server | Theirs, shared | Theirs, shared | **Yours, dedicated** |
+| Lock-in | High (proprietary) | Medium | **None (Docker)** |
+| Deploy target | Next.js/Node primarily | Any container | **Any container + compose** |
+| Multi-service | Limited | Limited | **Full compose** |
+| Multi-node | No | No | **Yes (mTLS agents)** |
+| Data residency | Their infra | Their infra | **Your server** |
+| Sleep/wake | No | No | **Yes** |
+| RAM | N/A | N/A | **~33 MB idle** |
+| Backup | Their managed | Their managed | **Litestream (your storage)** |
+
+### Why LiteBin Over Coolify/Dokku
+
+| | Coolify | Dokku | **LiteBin** |
+|---|---------|-------|-------------|
+| RAM idle | ~1.5 GB | ~50 MB | **~33 MB** |
+| Builds | **On server** (Nixpacks) | **On server** (buildpacks) | **External** (CI/CLI, server just pulls) |
+| Backup | Manual | Manual | **Litestream (real-time)** |
+| Migration | Not supported | Manual guide | **Planned (automated)** |
+| Maintenance mode | Not supported | Not supported | **Planned** |
+| .env handling | Transferred over wire | N/A (git push) | **Never over network** |
+| Auto-wake/sleep | No | No | **Yes** |
+| Preview deploys | No | No | **Planned** |
+| Multi-node | SSH | No | **Yes (mTLS agents)** |
+| Dashboard | Yes | No | **Yes** |
+
+### Implementation Order
+
+| # | Feature | Phase | Complexity |
+|---|---------|-------|------------|
+| 1 | Full real-time log streaming | Quick Win | Low |
+| 2 | Environment variable editor | Quick Win | Low |
+| 3 | Preview environments | Phase 1 | Medium |
+| 4 | App migration + duplication | Phase 2 | Medium |
+| 5 | Backup (Litestream integration) | Phase 3 | Low |
+| 6 | One-click apps | Phase 4 | Low |
+| 7 | Deploy history + rollback | Phase 5 | Medium |
+| 8 | Eject (Litebin Eject) | Phase 6 | Medium |
+| 9 | Notifications | Quick Win | Low |
+| 10 | Master migration + promote | Phase 2 | Medium |
+| 11 | GitHub App (seamless repo connect) | Future | Medium |
