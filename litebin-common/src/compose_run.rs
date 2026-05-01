@@ -96,6 +96,10 @@ impl ComposeRunPlan {
                 "STATS=1".into(),
                 format!("CONTAINER_LABEL_FILTER=litebin.project_id={}", project_id),
             ]),
+            labels: Some(std::collections::HashMap::from([
+                ("com.docker.compose.project".into(), project_id.into()),
+                ("com.docker.compose.service".into(), "litebin-docker-proxy".into()),
+            ])),
             ..Default::default()
         };
         let host_config = HostConfig {

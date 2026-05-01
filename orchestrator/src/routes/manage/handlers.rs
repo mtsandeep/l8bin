@@ -88,6 +88,15 @@ pub async fn stop_project(
                     .send()
                     .await;
             }
+            // Also stop docker-socket-proxy if allow_docker_access is enabled
+            if project.allow_docker_access {
+                let proxy_name = litebin_common::types::container_name(&project_id, "litebin-docker-proxy", None);
+                let _ = client
+                    .post(&format!("{}/containers/stop", base_url))
+                    .json(&json!({"container_id": proxy_name}))
+                    .send()
+                    .await;
+            }
         } else {
             // Local: stop all service containers (works for single and multi-service)
             stop_services(&state, &project_id, None).await;

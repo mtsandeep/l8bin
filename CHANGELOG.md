@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **`l8b status` command** — Shows CLI version, login state, server version, logged-in user, nodes (one per line with name, status, version, architecture), and total project count. Shows login hints when not authenticated. Powered by a single `GET /status` API call.
 
+### Fixed
+- Fix docker-socket-proxy not stopping with the project — all stop paths (manual, janitor, remote) now stop the proxy when `allow_docker_access` is enabled. Added compose labels so Docker Desktop groups it with the project.
+
 ## [0.2.13] - 2026-04-30
 
 ### Fixed

@@ -111,6 +111,11 @@ async fn sweep(
                         stop_local_container(state, &project.id, container_id).await;
                     }
                 }
+                // Also stop docker-socket-proxy if allow_docker_access is enabled
+                if project.allow_docker_access {
+                    let proxy_name = litebin_common::types::container_name(&project.id, "litebin-docker-proxy", None);
+                    stop_local_container_by_name(state, &project.id, &proxy_name).await;
+                }
             } else {
                 let node_id = match project.node_id.as_deref() {
                     Some(n) if n != "local" => n.to_string(),
@@ -120,6 +125,11 @@ async fn sweep(
                     if let Some(container_id) = cid {
                         stop_remote_container(state, &project.id, &node_id, container_id).await;
                     }
+                }
+                // Also stop docker-socket-proxy if allow_docker_access is enabled
+                if project.allow_docker_access {
+                    let proxy_name = litebin_common::types::container_name(&project.id, "litebin-docker-proxy", None);
+                    stop_remote_container(state, &project.id, &node_id, &proxy_name).await;
                 }
             }
         } else if let Some((_svc_name, cid)) = containers.first() {
@@ -148,6 +158,22 @@ async fn stop_local_container(state: &AppState, project_id: &str, container_id: 
         }
     } else {
         tracing::info!(project = %project_id, "janitor: container stopped (idle)");
+    }
+}
+
+/// Stop a local container by name (used for docker-socket-proxy which is not in project_services).
+async fn stop_local_container_by_name(state: &AppState, project_id: &str, container_name: &str) {
+    let prefix = format!("litebin-{}.", project_id);
+    if let Ok(containers) = state.docker.list_containers_by_prefix(&prefix).await {
+        for cid in &containers {
+            if let Ok(inspect) = state.docker.inspect_container(cid).await {
+                if inspect.name.as_deref().map(|n| n.trim_start_matches('/')) == Some(container_name) {
+                    let _ = state.docker.stop_container(cid).await;
+                    tracing::info!(project = %project_id, "janitor: docker-socket-proxy stopped (idle)");
+                    return;
+                }
+            }
+        }
     }
 }
 

@@ -436,6 +436,29 @@ pub async fn stop_services(
             tracing::info!(project = %project_id, service = %svc_name, "service stopped");
         }
     }
+
+    // Stop the docker-socket-proxy if allow_docker_access is enabled
+    let allow_docker: bool = sqlx::query_scalar(
+        "SELECT allow_docker_access FROM projects WHERE id = ?"
+    )
+    .bind(project_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+
+    if allow_docker {
+        let proxy_name = litebin_common::types::container_name(project_id, "litebin-docker-proxy", None);
+        if let Ok(containers) = state.docker.list_containers_by_prefix(&format!("litebin-{}.", project_id)).await {
+            for cid in &containers {
+                if let Ok(inspect) = state.docker.inspect_container(cid).await {
+                    if inspect.name.as_deref().map(|n| n.trim_start_matches('/')) == Some(proxy_name.as_str()) {
+                        let _ = state.docker.stop_container(cid).await;
+                        tracing::info!(project = %project_id, "docker-socket-proxy stopped");
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ── Delete services ──────────────────────────────────────────────────────────
