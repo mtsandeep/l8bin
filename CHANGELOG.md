@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-05-01
+
 ### Added
 - **`l8b status` command** — Shows CLI version, login state, server version, logged-in user, nodes (one per line with name, status, version, architecture), and total project count. Shows login hints when not authenticated. Powered by a single `GET /status` API call.
 
