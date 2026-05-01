@@ -18,6 +18,7 @@ pub const ORCHESTRATOR_API_PATHS: &[&str] = &[
     "/nodes/*",
     "/settings",
     "/settings/*",
+    "/status",
     "/system/*",
     "/caddy/*",
 ];

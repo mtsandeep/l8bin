@@ -1,19 +1,13 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Container, Loader2 } from 'lucide-react';
 import { useAuth } from './AuthContext';
-import { fetchHealthVersion } from '../api';
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [version, setVersion] = useState('');
   const { login, register, needsSetup, error, clearError } = useAuth();
-
-  useEffect(() => {
-    fetchHealthVersion().then((v) => { if (v) setVersion(v); });
-  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -146,7 +140,6 @@ export default function LoginScreen() {
 
         <footer className="text-center mt-8 text-xs text-slate-600">
           Powered by <a href="https://l8bin.com" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300 transition-colors">l8bin.com</a>
-          {version && <span className="ml-1.5 text-slate-700">v{version}</span>}
         </footer>
       </div>
     </div>

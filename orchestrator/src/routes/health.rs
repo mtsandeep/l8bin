@@ -6,7 +6,6 @@ use crate::AppState;
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: String,
-    pub version: String,
 }
 
 pub async fn health_check(
@@ -18,10 +17,7 @@ pub async fn health_check(
         Err(_) => "degraded (docker unreachable)".to_string(),
     };
 
-    Json(HealthResponse {
-        status,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    })
+    Json(HealthResponse { status })
 }
 
 // --- System stats for LiteBin stack services ---

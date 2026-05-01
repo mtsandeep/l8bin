@@ -354,9 +354,9 @@ export async function fetchSystemStats(): Promise<ServiceStats[]> {
   return data.services;
 }
 
-export async function fetchHealthVersion(): Promise<string> {
+export async function fetchVersion(): Promise<string> {
   try {
-    const res = await fetch(`${API_BASE}/health`, { credentials: 'include' });
+    const res = await fetch(`${API_BASE}/status`, { credentials: 'include' });
     if (!res.ok) return '';
     const data = await res.json();
     return data.version || '';

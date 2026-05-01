@@ -8,7 +8,7 @@ import NodesPage from './components/NodesPage';
 import GlobalSettingsModal from './components/GlobalSettingsModal';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { ToastProvider } from './components/ToastContext';
-import { type Project, type Node, type ProjectStats, type ServiceStats, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, fetchHealthVersion, formatBytes } from './api';
+import { type Project, type Node, type ProjectStats, type ServiceStats, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, fetchVersion, formatBytes } from './api';
 import { useIntervalWhileVisible } from './hooks';
 
 function AppContent() {
@@ -37,7 +37,7 @@ function AppContent() {
     if (!user) return;
     (async () => {
       try {
-        const [nodeData, settings, ver] = await Promise.all([fetchNodes(), fetchGlobalSettings(), fetchHealthVersion()]);
+        const [nodeData, settings, ver] = await Promise.all([fetchNodes(), fetchGlobalSettings(), fetchVersion()]);
         setNodes(nodeData);
         setProjectsDir(settings.projects_dir);
         setDomain(settings.domain);
