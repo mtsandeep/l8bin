@@ -632,7 +632,7 @@ CADDYFILE
     local ip_display="${PUBLIC_IP:-<your server IP>}"
     echo "  DNS setup required:"
     if [ "$routing_mode" = "cloudflare_dns" ]; then
-      echo "    You chose ${BOLD}cloudflare_dns${NC} mode."
+      echo -e "    You chose ${BOLD}cloudflare_dns${NC} mode."
       echo ""
       echo "    DNS records for dashboard and poke have been added automatically."
       echo "    Please verify in your Cloudflare dashboard that these A records exist:"
