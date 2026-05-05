@@ -33,6 +33,12 @@ Deploying a common stack (blog + database, e-commerce + postgres + redis) curren
 
 ## Template Structure
 
+### Initial Scope: Pre-Built Images Only
+
+The initial template catalog supports **pre-built image templates only** — templates that reference existing Docker images (e.g., `postgres:16`, `redis:7`, `wordpress:latest`). These deploy directly without building anything.
+
+**Dockerfile-based templates** (Next.js, custom apps) require a build server and are a future add-on. Without a build server configured, Dockerfile-based templates are not available. All other LiteBin features work normally.
+
 Templates are directories with a compose file and a LiteBin manifest:
 
 ```
@@ -160,9 +166,9 @@ Template compose files get the same 4 overrides as any compose deploy (binds, po
 
 ---
 
-## Build Server (Add-on)
+## Build Server (Future Add-on)
 
-An optional service for building Dockerfile-based templates. LiteBin never builds images on the user's VPS — a build server handles it. Without it, only pre-built image templates are available from the catalog. All other LiteBin features work normally.
+An optional service for building Dockerfile-based templates. This is a **future feature** — the initial catalog release only supports pre-built image templates. LiteBin never builds images on the user's VPS — a build server handles it. Without it, only pre-built image templates are available from the catalog. All other LiteBin features work normally.
 
 ### Config
 

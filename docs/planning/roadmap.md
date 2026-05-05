@@ -109,7 +109,7 @@ Builds happen outside the VPS to avoid CPU/RAM load:
 | GitHub Actions | CI builds image, pushes to registry, triggers LiteBin deploy | Yes — `litebin-action` already does this |
 | GitLab CI | Same pattern, different CI | No — but same deploy API works |
 | Bring your own image | User builds locally with `l8b deploy`, preview just manages lifecycle | Yes — `POST /deploy` works today |
-| Future: external builders | Dedicated build service (separate from VPS) | Not planned — adds complexity |
+| Future: external builders | Dedicated build service (separate from VPS) | Future (template catalog add-on) |
 
 **Recommended approach:** The webhook receiver does NOT build images. It expects the CI pipeline to have already pushed an image tagged with the PR number. The webhook triggers a deploy of that pre-built image.
 
@@ -279,7 +279,7 @@ Migrate orchestrator data to an agent, promote it to master:
 
 ---
 
-## Phase 3: Backup
+## Phase 3: Platform Backup (SQLite)
 
 SQLite backup via Litestream sidecar. No custom backup code in LiteBin. Full plan: [backup.md](backup.md).
 
@@ -307,9 +307,9 @@ SQLite backup via Litestream sidecar. No custom backup code in LiteBin. Full pla
 
 ---
 
-## Phase 4: One-Click Apps
+## Phase 4: One-Click Apps (Template Catalog)
 
-Template catalog of popular apps deployable with a single click. Since LiteBin supports docker-compose, one-click apps are custom compose files (official or user-contributed).
+Template catalog of popular apps deployable with a single click. Full plan: [template-catalog.md](template-catalog.md).
 
 ### User Experience
 
@@ -322,10 +322,10 @@ Template catalog of popular apps deployable with a single click. Since LiteBin s
 
 ### Approach
 
-- Templates are docker-compose files stored in a registry (GitHub repo or in-app)
-- Official templates maintained by LiteBin
-- Users can submit custom templates
-- Template may include default env vars, volume mounts, health checks
+- Templates are docker-compose files with a LiteBin manifest (template.yml)
+- Initial support: pre-built image templates only (PostgreSQL, Redis, WordPress, etc.)
+- Build server support for Dockerfile-based templates is a future add-on
+- Official templates maintained by LiteBin, remote catalog served from URL
 - Deploy uses existing compose deployment pipeline — no special logic needed
 
 ---
@@ -432,11 +432,208 @@ Per-project env var management via dashboard. Currently env vars are set at depl
 
 ### Notifications
 
-Deploy success/fail notifications via Discord/Slack/webhook.
+Event-driven notifications pushed to an external notification router. LiteBin writes to a local outbox and POSTs JSON — no provider code, no channel config. Full plan: [notifications.md](notifications.md).
 
-- Per-project notification config (provider, webhook URL)
-- Events: deploy start, deploy success, deploy failure, auto-stop, auto-wake
-- Dashboard: notification settings in project config
+- Global notification config (endpoint URL, dedupe window, severity filter)
+- Project tags for router-side filtering (prod, staging, etc.)
+- Events: deploy success/failure, crash loop, agent offline, backup failure, auto-update available
+- Dashboard: config form, test button, notification log
+
+---
+
+## Phase 7: Zero-Downtime Deploys
+
+Deploy a new version without stopping the current one. Start new container, verify it's healthy, switch traffic, then stop the old one.
+
+### Why This Matters
+
+Current deploy flow: stop container → pull image → start container. Every deploy has a gap where no container is serving requests. For production sites, even 10-30 seconds of downtime per deploy is painful — and if the new container crashes on start, users see errors until manual intervention.
+
+### Approach
+
+For single-service projects (the majority):
+
+```
+1. Pull new image
+2. Start new container on a different port (or with a temp name)
+3. Health check: HTTP GET /health (or TCP port check) — wait for healthy
+4. Update Caddy reverse_proxy to point to new container
+5. Old container continues serving in-flight requests (Caddy drains connections)
+6. Stop old container
+```
+
+For multi-service compose projects: rolling update per service, respecting dependency order. Start updated service → health check → update dependent services one by one.
+
+### Health Check During Deploy
+
+Leverages the dependency health check system from post-MVP Feature 1. During deploy, the orchestrator polls the new container's health endpoint before switching traffic:
+
+```rust
+// Wait for new container to be healthy
+for attempt in 0..max_retries {
+    match container.health().await {
+        HealthStatus::Healthy => break,      // switch traffic
+        HealthStatus::Unhealthy => rollback, // stop new, keep old
+        HealthStatus::Starting => sleep(interval).await,
+    }
+}
+```
+
+### Rollback on Failure
+
+If the new container fails health checks within the timeout:
+
+```
+1. Stop new container (unhealthy)
+2. Keep old container running (never stopped it)
+3. Caddy still pointing to old container
+4. No traffic disruption
+5. Log deploy failure + notify (Quick Win: Notifications)
+```
+
+This is simpler and more reliable than the Phase 5 rollback (which redeploys a previous image). Zero-downtime deploy with automatic rollback on failure covers most production needs.
+
+### Configuration
+
+Per-project setting (default: off, opt-in):
+
+```
+zero_downtime: true
+health_check:
+  type: http          # http, tcp, none
+  path: /health       # for http type
+  port: 3000          # for tcp type (defaults to service port)
+  timeout: 30s        # max wait for healthy
+  interval: 3s        # time between checks
+  failures: 3         # unhealthy after N consecutive failures
+```
+
+For single-service projects, health check config can be inferred from Docker's `HEALTHCHECK` instruction in the image (already supported by Docker API). Explicit config in LiteBin overrides the image's healthcheck.
+
+### What Changes
+
+| Component | Change |
+|-----------|--------|
+| `orchestrator/src/routes/deploy.rs` | Start new before stopping old, health check wait, Caddy update |
+| `orchestrator/src/routes/waker.rs` | Same pattern for wake (if zero_downtime enabled) |
+| `orchestrator/src/routing.rs` | Update Caddy upstream to new container |
+| `projects` table | Add `zero_downtime` boolean column |
+| `project_services` table | Add health check columns (type, path, port, timeout, interval, failures) — may already exist from post-MVP Feature 1 |
+
+### Edge Cases
+
+| Scenario | Handling |
+|----------|----------|
+| New image doesn't exist | Fail before starting new container, old keeps running |
+| New container starts but health check fails | Automatic rollback, old container untouched |
+| Port conflict (new container can't bind) | Fail, old keeps running |
+| Multi-service with dependencies | Update services bottom-up (db first, then workers, then web) |
+| Disk full (can't pull image) | Fail before affecting running container |
+| `zero_downtime: false` (default) | Current behavior: stop → pull → start |
+
+---
+
+## Phase 8: Liveness Probes
+
+Continuous health monitoring for running containers. Detect when an app is running but unhealthy (returning 500s, deadlocked, connection pool exhausted) and restart it automatically.
+
+### Why This Matters
+
+The post-MVP health checks (Feature 1) are **startup-time only** — they wait for dependencies to become healthy before starting dependent services. Once the app is running, nobody checks if it's still healthy.
+
+Docker's `unless-stopped` restart policy only triggers on **process exit**. If the app process is alive but the app inside is broken (deadlock, OOM, connection pool exhaustion), Docker won't restart it. The container appears "running" but serves errors.
+
+### Approach
+
+The orchestrator periodically checks each running container's health and takes action:
+
+```
+Every 60 seconds (configurable):
+  for each running project with liveness probe enabled:
+    check health
+    if healthy:
+      increment consecutive_success
+      if was degraded → trigger `unhealthy_recovered` notification ([notifications.md](notifications.md))
+    if unhealthy:
+      increment consecutive_failures
+      if consecutive_failures >= threshold:
+        restart container
+        notify (via [notifications.md](notifications.md))
+```
+
+### Health Check Methods
+
+| Method | How | Use Case |
+|--------|-----|----------|
+| `http` | GET request to `http://container:port/path`, 2xx = healthy | Web apps, APIs |
+| `tcp` | TCP connection to `container:port`, connects = healthy | Database, Redis, any TCP service |
+| `docker` | Use Docker's built-in health check (`HEALTHCHECK` in Dockerfile) | Apps with built-in health checks |
+| `none` | Skip liveness probe | Default, opt-in only |
+
+### Restart Behavior
+
+On liveness failure (consecutive failures >= threshold):
+
+1. **Stop the unhealthy container** (Docker stop, graceful shutdown)
+2. **Wait 5 seconds** (prevent crash loops)
+3. **Start the container** (same image, same config)
+4. **Reset failure counter**
+
+If the container fails liveness again immediately (crash loop):
+
+```
+Attempt 1: restart
+Attempt 2: restart
+Attempt 3: restart
+Attempt 4+: stop, mark status "unhealthy", trigger `crash_loop` notification ([notifications.md](notifications.md)), do NOT auto-restart
+         → user investigates manually
+```
+
+This prevents infinite restart loops from burning CPU and spamming notifications. The project is marked as `unhealthy` in the dashboard — distinct from `stopped` or `error`.
+
+### Configuration
+
+Per-project or per-service:
+
+```
+liveness_probe:
+  enabled: true
+  type: http              # http, tcp, docker, none
+  path: /health           # for http
+  port: 3000              # defaults to service port
+  interval: 60s           # time between checks
+  timeout: 5s             # per-check timeout
+  failures: 3             # restart after N consecutive failures
+  max_restarts: 3         # stop auto-restarting after N attempts (crash loop protection)
+```
+
+### Relationship to Other Features
+
+| Feature | When It Runs | Purpose |
+|---------|-------------|---------|
+| Startup health check (post-MVP Feature 1) | During deploy/wake | Wait for dependencies before starting dependents |
+| Deploy health check (Phase 7) | During deploy | Verify new container is healthy before switching traffic |
+| **Liveness probe (this phase)** | **Continuously, while running** | **Detect and recover from runtime degradation** |
+
+All three use the same health check infrastructure but serve different purposes.
+
+### What Changes
+
+| Component | Change |
+|-----------|--------|
+| `orchestrator/src/health/mod.rs` | New — liveness probe loop, runs in background task |
+| `orchestrator/src/health/probe.rs` | HTTP/TCP/Docker health check execution |
+| `orchestrator/src/main.rs` | Start liveness probe task on startup |
+| `orchestrator/src/routes/deploy.rs` | Read liveness probe config, pass to health module |
+| `projects` table | Add `liveness_enabled`, `liveness_type`, `liveness_path`, `liveness_port`, `liveness_interval`, `liveness_timeout`, `liveness_failures`, `liveness_max_restarts` columns (or a separate `liveness_config` table) |
+| Dashboard | Show health status badge on project cards (healthy / unhealthy / degraded) |
+
+### Resource Impact
+
+- One background tokio task in the orchestrator
+- Health check requests are lightweight (HTTP GET or TCP connect)
+- For 30 projects with 60s interval: ~30 checks/minute, negligible CPU/network
+- No impact on agent — orchestrator checks via Docker API (same as existing metrics)
 
 ---
 
@@ -455,7 +652,7 @@ Deploy success/fail notifications via Discord/Slack/webhook.
 | Data residency | Their infra | Their infra | **Your server** |
 | Sleep/wake | No | No | **Yes** |
 | RAM | N/A | N/A | **~33 MB idle** |
-| Backup | Their managed | Their managed | **Litestream (your storage)** |
+| Backup | Their managed | Their managed | **Platform (Litestream) + Project (Rustic)** |
 
 ### Why LiteBin Over Coolify/Dokku
 
@@ -463,9 +660,11 @@ Deploy success/fail notifications via Discord/Slack/webhook.
 |---|---------|-------|-------------|
 | RAM idle | ~1.5 GB | ~50 MB | **~33 MB** |
 | Builds | **On server** (Nixpacks) | **On server** (buildpacks) | **External** (CI/CLI, server just pulls) |
-| Backup | Manual | Manual | **Litestream (real-time)** |
+| Backup | Manual | Manual | **Platform (Litestream) + Project (Rustic)** |
 | Migration | Not supported | Manual guide | **Planned (automated)** |
 | Maintenance mode | Not supported | Not supported | **Planned** |
+| Zero-downtime deploy | Partial (not compose) | Yes | **Planned** |
+| Liveness probes | No | No | **Planned** |
 | .env handling | Transferred over wire | N/A (git push) | **Never over network** |
 | Auto-wake/sleep | No | No | **Yes** |
 | Preview deploys | No | No | **Planned** |
@@ -480,10 +679,15 @@ Deploy success/fail notifications via Discord/Slack/webhook.
 | 2 | Environment variable editor | Quick Win | Low |
 | 3 | Preview environments | Phase 1 | Medium |
 | 4 | App migration + duplication | Phase 2 | Medium |
-| 5 | Backup (Litestream integration) | Phase 3 | Low |
+| 5 | Platform backup (Litestream) | Phase 3 | Low |
 | 6 | One-click apps | Phase 4 | Low |
 | 7 | Deploy history + rollback | Phase 5 | Medium |
 | 8 | Eject (Litebin Eject) | Phase 6 | Medium |
-| 9 | Notifications | Quick Win | Low |
-| 10 | Master migration + promote | Phase 2 | Medium |
-| 11 | GitHub App (seamless repo connect) | Future | Medium |
+| 9 | Zero-downtime deploys | Phase 7 | Medium |
+| 10 | Liveness probes | Phase 8 | Low |
+| 11 | Master migration + promote | Phase 2 | Medium |
+| 12 | GitHub App (seamless repo connect) | Future | Medium |
+| 13 | Project backup (Rustic) | Planned | Medium |
+| 14 | Disaster recovery | Planned | Low |
+| 15 | Auto-update Docker images | Planned | Medium |
+| 16 | Notifications (event outbox + router) | Planned | Low |

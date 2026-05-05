@@ -59,9 +59,7 @@ Docker's healthcheck executor uses ~1 MB per container. For 30 containers: ~30 M
 
 ## Feature 2: Template Catalog
 
-See [template-catalog.md](template-catalog.md) for full design.
-
-One-click project deployment from templates. Users pick a template (e-commerce, blog, standalone database), fill in prompted values (name, email, auto-generated passwords), and deploy. Templates include compose files, a LiteBin manifest (prompts, routes, public service), and env defaults.
+See [template-catalog.md](template-catalog.md) for full design. One-click project deployment from templates using docker-compose + manifest.
 
 ---
 
@@ -183,6 +181,5 @@ Suggested priority based on user impact:
 1. Feature 3: Dashboard View    (~150 LoC, high visibility, users can see their services)
 2. Feature 1: Health Checks      (~100 LoC, prevents startup race conditions)
 3. Feature 4: CLI Support        (~80 LoC, power users need it)
-4. Feature 2: Catalog            (~200 LoC, convenience for common add-ons)
-5. Feature 5: Multi-Subdomain    (~100 LoC, advanced use case, low demand)
+4. Feature 5: Multi-Subdomain    (~100 LoC, advanced use case, low demand)
 ```

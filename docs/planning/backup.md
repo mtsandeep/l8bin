@@ -1,4 +1,6 @@
-# SQLite Backup Strategy
+# Platform Backup (SQLite)
+
+LiteBin's platform data — the SQLite database containing all project configs, node configs, routes, and settings — is backed up via Litestream.
 
 ## Approach
 
@@ -69,16 +71,16 @@ Settings page shows a "Backup" section:
 ```bash
 # Backup is enabled by default, no command needed to start
 # Check status
-litebin backup status
+l8b backup status
 
 # Add S3/R2 replica (optional)
-litebin backup add-s3 --url s3://my-bucket/litebin/ --endpoint https://<id>.r2.cloudflarestorage.com
+l8b backup add-s3 --url s3://my-bucket/litebin/ --endpoint https://<id>.r2.cloudflarestorage.com
 
 # Restore from last backup
-litebin backup restore
+l8b backup restore
 
 # Restore to specific point in time
-litebin backup restore --timestamp "2026-05-01T10:30:00Z"
+l8b backup restore --timestamp "2026-05-01T10:30:00Z"
 ```
 
 CLI commands call the same orchestrator endpoints that the dashboard uses.
@@ -125,6 +127,22 @@ services:
 ```
 
 When backup is disabled or not configured, the `litestream` service is not added to the compose file at all. No unused containers.
+
+## Backup Encryption
+
+Litestream does not encrypt backup data — it streams compressed (LZ4) plaintext WAL frames to the configured replica. Encryption at rest must be handled at the storage layer.
+
+**S3 server-side encryption (SSE)** is the standard approach — zero code changes in LiteBin, configured on the bucket:
+
+| Provider | SSE Type | Setup | Protects Against |
+|----------|----------|-------|-----------------|
+| AWS S3 | SSE-S3 (default) | Enabled by default on new buckets | Physical disk theft at AWS |
+| AWS S3 | SSE-KMS | Bucket policy + KMS key | Bucket credential leak |
+| Cloudflare R2 | SSE-C | Customer-provided key per request | Bucket credential leak |
+
+**Recommended:** SSE-S3 is free and automatic for AWS S3. For Cloudflare R2, enable SSE-C if the provider supports it. This is a bucket configuration step during S3/R2 setup, not a LiteBin feature.
+
+Note: Litestream's local file replica (`file:///data/backups/litebin.db`) is not encrypted. Local backups are only useful for same-server recovery — if the server is compromised, local backup encryption provides no additional security.
 
 ## How Litestream Works
 

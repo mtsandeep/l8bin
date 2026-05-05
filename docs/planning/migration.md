@@ -35,7 +35,7 @@ Step 4: Decommission A (manual)
 
 ### New Orchestrator Endpoint: `POST /projects/:id/migrate`
 
-**Request:** `{ "target_node_id": "...", "migrate_volumes": true, "migrate_image": true, "maintenance_mode": true }`
+**Request:** `{ "target_node_id": "...", "migrate_volumes": true, "migrate_image": true, "maintenance_mode": true, "source": "live" }`
 
 **Migration options** (user picks what to move):
 
@@ -44,6 +44,7 @@ Step 4: Decommission A (manual)
 | Config (always) | — | compose.yaml, metadata.json, bind mount data. Required for deploy. `.env*` excluded (user places manually). |
 | `migrate_image` | `false` | Transfer `sha256:` images via `docker save`/`load`. Skip if images are in a registry (target pulls them natively). |
 | `migrate_volumes` | `false` | Transfer Docker named volumes. Skip for cross-arch or if user prefers app-level data migration. |
+| `source` | `"live"` | `"live"` (default) — export volumes from running source agent. `"backup"` — restore volumes from Rustic backup instead (used in disaster recovery when source agent is dead). See [disaster-recovery.md](disaster-recovery.md). |
 
 **Flow:**
 
