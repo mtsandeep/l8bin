@@ -7,7 +7,7 @@ use litebin_common::routing::{wake_fallback_handle, RoutingProvider};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-use litebin_common::caddy::{CaddyClient, ORCHESTRATOR_API_PATHS};
+use litebin_common::caddy::{CaddyClient, ORCHESTRATOR_API_PATHS, http_to_https_redirect};
 use litebin_common::cloudflare::CloudflareClient;
 use litebin_common::routing::ProjectRoute;
 
@@ -51,6 +51,11 @@ impl CloudflareDnsRouter {
     ) -> Value {
         let logging = litebin_common::heartbeat::caddy_logging_config();
         let mut routes: Vec<Value> = Vec::new();
+
+        if let Some(redirect) = http_to_https_redirect(domain) {
+            routes.push(redirect);
+        }
+
         for p in local_projects {
             // Custom routes: path-based and subdomain-based (sorted by priority within
             // this project). Must come BEFORE the catch-all host route.
@@ -276,6 +281,10 @@ impl CloudflareDnsRouter {
         orchestrator_url: &str,
     ) -> Value {
         let mut routes: Vec<Value> = Vec::new();
+
+        if let Some(redirect) = http_to_https_redirect(domain) {
+            routes.push(redirect);
+        }
 
         for p in agent_projects {
             // Only create subdomain route for running projects.

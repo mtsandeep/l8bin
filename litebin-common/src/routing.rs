@@ -116,6 +116,10 @@ impl MasterProxyRouter {
         let logging = crate::heartbeat::caddy_logging_config();
         let mut routes: Vec<Value> = Vec::new();
 
+        if let Some(redirect) = crate::caddy::http_to_https_redirect(domain) {
+            routes.push(redirect);
+        }
+
         for p in projects {
             // Use container_upstream (direct Docker network) when available,
             // otherwise fall back to host upstream.

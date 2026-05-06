@@ -23,6 +23,24 @@ pub const ORCHESTRATOR_API_PATHS: &[&str] = &[
     "/caddy/*",
 ];
 
+/// Returns a Caddy route that redirects HTTP to HTTPS (308 permanent).
+/// Returns `None` for localhost domains where the redirect should be skipped.
+pub fn http_to_https_redirect(domain: &str) -> Option<Value> {
+    if domain.ends_with("localhost") {
+        return None;
+    }
+    Some(json!({
+        "match": [{ "protocol": "http" }],
+        "handle": [{
+            "handler": "static_response",
+            "status_code": 308,
+            "headers": {
+                "Location": ["https://{http.request.host}{http.request.uri}"]
+            }
+        }]
+    }))
+}
+
 pub struct CaddyClient {
     admin_url: String,
     client: reqwest::Client,
@@ -60,6 +78,10 @@ impl CaddyClient {
         orchestrator_upstream: &str,
     ) -> anyhow::Result<()> {
         let mut routes: Vec<Value> = Vec::new();
+
+        if let Some(redirect) = http_to_https_redirect(domain) {
+            routes.push(redirect);
+        }
 
         for project in projects {
             if project.status != "running" {
