@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-05-06
+
 ### Added
 - **Deploy Docker Compose from dashboard** — "Deploy New App" modal now has a toggle between "Docker Image" and "Docker Compose" modes. Compose mode shows a textarea to paste compose YAML with prebuilt images. Settings (sleep, resources, node picker) are shared across both modes.
 - **`deploy_type` column** — Projects now track whether they were deployed as `"image"` or `"compose"`. Used in the dashboard to show compose-specific UI (Docker Compose label with service count, readonly image/port, hidden command override, services badge) for all compose projects including single-service ones.
