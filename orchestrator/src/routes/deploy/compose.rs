@@ -199,6 +199,32 @@ pub async fn deploy_compose(
     let auto_stop_mins = auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
     let auto_start = auto_start_enabled.unwrap_or(true);
 
+    // On redeploy, preserve existing sleep settings unless explicitly provided
+    let is_update = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM projects WHERE id = ?"
+    )
+    .bind(&project_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0) > 0;
+
+    let (auto_stop, auto_stop_mins, auto_start) = if is_update && auto_stop_enabled.is_none() && auto_start_enabled.is_none() {
+        let existing = sqlx::query_as::<_, (bool, i64, bool)>(
+            "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?"
+        )
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        match existing {
+            Some((s, t, a)) => (s, t, a),
+            None => (auto_stop, auto_stop_mins, auto_start),
+        }
+    } else {
+        (auto_stop, auto_stop_mins, auto_start)
+    };
+
     // Parse target_services from comma-separated string (sent by CLI on partial redeploy)
     let target_services: Option<Vec<String>> = target_services_raw.map(|s| {
         s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
@@ -326,10 +352,23 @@ pub async fn deploy_compose(
         let is_public = public_service.as_deref() == Some(svc_name.as_str());
         let depends_on = svc.depends_on.as_ref()
             .and_then(|d| serde_json::to_string(d).ok());
-        let memory_limit_mb: Option<i64> = svc.memory_bytes()
+        let compose_mem: Option<i64> = svc.memory_bytes()
             .map(|bytes| (bytes / (1024 * 1024)) as i64);
-        let cpu_limit: Option<f64> = svc.cpus.as_ref()
+        let compose_cpu: Option<f64> = svc.cpus.as_ref()
             .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())));
+
+        // On redeploy, preserve DB overrides when compose file doesn't specify memory/CPU
+        let existing_override: Option<(Option<i64>, Option<f64>)> = sqlx::query_as(
+            "SELECT memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ? AND service_name = ?"
+        )
+        .bind(&project_id)
+        .bind(svc_name)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        let memory_limit_mb = compose_mem.or_else(|| existing_override.as_ref().and_then(|(m, _)| *m));
+        let cpu_limit = compose_cpu.or_else(|| existing_override.as_ref().and_then(|(_, c)| *c));
 
         // On partial redeploy, only mark targeted services as 'deploying'
         let status = if target_set.as_ref().map_or(true, |ts| ts.contains(svc_name)) {

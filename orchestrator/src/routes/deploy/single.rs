@@ -155,6 +155,25 @@ async fn execute_deploy(
     let auto_stop_timeout_mins = payload.auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
     let auto_start_enabled = payload.auto_start_enabled.unwrap_or(true);
 
+    // On redeploy, preserve existing sleep settings unless explicitly provided
+    let preserve_sleep = is_update && payload.auto_stop_enabled.is_none() && payload.auto_start_enabled.is_none();
+    let (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled) = if preserve_sleep {
+        let existing = sqlx::query_as::<_, (bool, i64, bool)>(
+            "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?"
+        )
+        .bind(&payload.project_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        match existing {
+            Some((s, t, a)) => (s, t, a),
+            None => (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled),
+        }
+    } else {
+        (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled)
+    };
+
     tracing::info!(
         project_id = %payload.project_id,
         image = %payload.image,
