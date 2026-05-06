@@ -197,7 +197,36 @@ impl DockerManager {
             match result {
                 Ok(info) => {
                     if let Some(status) = &info.status {
-                        tracing::debug!(status = %status, "pull progress");
+                        if let Some(pd) = &info.progress_detail {
+                            let current = pd.current.unwrap_or(0);
+                            let total = pd.total.unwrap_or(0);
+                            if total > 0 {
+                                let pct = (current as f64 / total as f64 * 100.0) as u64;
+                                tracing::info!(
+                                    image = %image,
+                                    layer = ?info.id,
+                                    status = %status,
+                                    current = current,
+                                    total = total,
+                                    percent = pct,
+                                    "pull progress"
+                                );
+                            } else {
+                                tracing::info!(
+                                    image = %image,
+                                    layer = ?info.id,
+                                    status = %status,
+                                    "pull progress"
+                                );
+                            }
+                        } else {
+                            tracing::info!(
+                                image = %image,
+                                layer = ?info.id,
+                                status = %status,
+                                "pull progress"
+                            );
+                        }
                     }
                 }
                 Err(e) => return Err(e.into()),

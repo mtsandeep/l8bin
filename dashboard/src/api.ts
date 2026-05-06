@@ -449,6 +449,41 @@ export async function deleteNode(nodeId: string): Promise<void> {
   }
 }
 
+// --- Compose Deploy ---
+
+export interface ComposeDeployPayload {
+  project_id: string;
+  compose: string;
+  name?: string;
+  description?: string;
+  node_id?: string | null;
+  auto_stop_enabled?: boolean;
+  auto_stop_timeout_mins?: number;
+  auto_start_enabled?: boolean;
+}
+
+export async function deployComposeProject(payload: ComposeDeployPayload): Promise<void> {
+  const form = new FormData();
+  form.append('project_id', payload.project_id);
+  form.append('compose', new Blob([payload.compose], { type: 'text/yaml' }), 'compose.yaml');
+  if (payload.name) form.append('name', payload.name);
+  if (payload.description) form.append('description', payload.description);
+  if (payload.node_id) form.append('node_id', payload.node_id);
+  if (payload.auto_stop_enabled !== undefined) form.append('auto_stop_enabled', String(payload.auto_stop_enabled));
+  if (payload.auto_stop_timeout_mins !== undefined) form.append('auto_stop_timeout_mins', String(payload.auto_stop_timeout_mins));
+  if (payload.auto_start_enabled !== undefined) form.append('auto_start_enabled', String(payload.auto_start_enabled));
+
+  const res = await fetch(`${API_BASE}/deploy/compose`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Compose deploy failed'));
+  }
+}
+
 // --- Image Stats ---
 
 export interface ImageStats {

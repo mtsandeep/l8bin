@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Rocket, Loader2, X, ChevronRight, ChevronLeft, Moon, Server } from 'lucide-react';
-import { deployProject, fetchNodes, fetchGlobalSettings, type Node } from '../api';
+import { deployProject, deployComposeProject, fetchNodes, fetchGlobalSettings, type Node } from '../api';
 import ResourceLimitInput from './ResourceLimitInput';
 
 interface DeployFormProps {
@@ -12,11 +12,13 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
   const [step, setStep] = useState<1 | 2>(1);
 
   // Step 1 fields
+  const [deployMode, setDeployMode] = useState<'image' | 'compose'>('image');
   const [projectId, setProjectId] = useState('');
   const [projectName, setProjectName] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
   const [image, setImage] = useState('');
   const [port, setPort] = useState('80');
+  const [composeYaml, setComposeYaml] = useState('');
 
   // Step 2 fields — pre-populated with defaults
   const [autoStop, setAutoStop] = useState(true);
@@ -48,7 +50,7 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const step1Valid = projectId.trim() !== '' && image.trim() !== '';
+  const step1Valid = projectId.trim() !== '' && (deployMode === 'image' ? image.trim() !== '' : composeYaml.trim() !== '');
   const timeoutValid = timeoutMins >= 1;
 
   const handleNext = (e: React.FormEvent) => {
@@ -63,20 +65,33 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
     setLoading(true);
 
     try {
-      await deployProject({
-        project_id: projectId.trim(),
-        image: image.trim(),
-        port: parseInt(port, 10),
-        name: projectName.trim() || undefined,
-        description: projectDescription.trim() || undefined,
-        node_id: selectedNode,
-        auto_stop_enabled: autoStop,
-        auto_stop_timeout_mins: timeoutMins,
-        auto_start_enabled: autoStart,
-        cmd: cmd.trim() || undefined,
-        memory_limit_mb: memMb,
-        cpu_limit: cpuLimit,
-      });
+      if (deployMode === 'compose') {
+        await deployComposeProject({
+          project_id: projectId.trim(),
+          compose: composeYaml.trim(),
+          name: projectName.trim() || undefined,
+          description: projectDescription.trim() || undefined,
+          node_id: selectedNode,
+          auto_stop_enabled: autoStop,
+          auto_stop_timeout_mins: timeoutMins,
+          auto_start_enabled: autoStart,
+        });
+      } else {
+        await deployProject({
+          project_id: projectId.trim(),
+          image: image.trim(),
+          port: parseInt(port, 10),
+          name: projectName.trim() || undefined,
+          description: projectDescription.trim() || undefined,
+          node_id: selectedNode,
+          auto_stop_enabled: autoStop,
+          auto_stop_timeout_mins: timeoutMins,
+          auto_start_enabled: autoStart,
+          cmd: cmd.trim() || undefined,
+          memory_limit_mb: memMb,
+          cpu_limit: cpuLimit,
+        });
+      }
       onDeploy();
       onClose();
     } catch (err) {
@@ -114,6 +129,27 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
                 </div>
               ))}
               <span className="ml-2 text-xs text-slate-500">App details</span>
+            </div>
+
+            {/* Deploy mode toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">Docker Image</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={deployMode === 'compose'}
+                onClick={() => setDeployMode((v) => (v === 'image' ? 'compose' : 'image'))}
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
+                  deployMode === 'compose' ? 'bg-violet-500' : 'bg-slate-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                    deployMode === 'compose' ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+              <span className="text-xs text-slate-400">Compose</span>
             </div>
 
             <div>
@@ -159,6 +195,8 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
               />
             </div>
 
+            {deployMode === 'image' && (
+            <>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">
                 Docker Image
@@ -191,6 +229,27 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
                 Port your app listens on inside the container (e.g. 80 for nginx, 3000 for Node)
               </p>
             </div>
+            </>
+            )}
+
+            {deployMode === 'compose' && (
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                  Docker Compose
+                </label>
+                <textarea
+                  value={composeYaml}
+                  onChange={(e) => setComposeYaml(e.target.value)}
+                  placeholder={`services:\n  app:\n    image: nginx:alpine\n    ports:\n      - "80:80"`}
+                  required
+                  rows={8}
+                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-xs text-slate-200 font-mono placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors resize-none"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Paste your docker-compose YAML with prebuilt images
+                </p>
+              </div>
+            )}
 
             <button
               type="submit"
@@ -278,7 +337,8 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
               </button>
             </label>
 
-            {/* Command override */}
+            {/* Command override — only for single image mode */}
+            {deployMode === 'image' && (
             <div className="pt-1 border-t border-slate-700/50">
               <label className="block text-xs font-medium text-slate-400 mb-1.5">
                 Command override <span className="text-slate-600 font-normal">(optional)</span>
@@ -291,6 +351,7 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
                 className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-xs text-slate-200 font-mono placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
               />
             </div>
+            )}
 
             {/* Resource limits */}
             <div className="pt-1 border-t border-slate-700/50 space-y-3">
