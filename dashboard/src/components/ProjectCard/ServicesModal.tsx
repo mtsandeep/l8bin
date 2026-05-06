@@ -59,8 +59,8 @@ export default function ServicesModal({
   const runningCount = services.filter((s) => s.status === "running").length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-lg mx-4 shadow-2xl max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm pt-8">
+      <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-lg mx-4 shadow-2xl min-h-[60vh] max-h-[85vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/50">
           <div className="flex items-center gap-2">
@@ -79,7 +79,7 @@ export default function ServicesModal({
         </div>
 
         {/* Body */}
-        <div className="overflow-y-auto px-5 py-4 space-y-3">
+        <div className="overflow-y-auto px-5 py-4 space-y-3 flex-1">
           {error && (
             <div className="px-3 py-2 rounded-md bg-red-500/10 border border-red-500/20 text-xs text-red-400">
               {error}

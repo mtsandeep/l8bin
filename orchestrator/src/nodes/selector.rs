@@ -129,6 +129,7 @@ mod tests {
             volumes: None,
             service_count: None,
             service_summary: None,
+            deploy_type: None,
             created_at: 0,
             updated_at: 0,
         }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Terminal, Layers, ChevronRight, Info } from "lucide-react";
+import { ChevronDown, Terminal, Layers, ChevronRight, Info, FileCode } from "lucide-react";
 import ResourceLimitInput from "../ResourceLimitInput";
 import { useToast } from "../ToastContext";
 import {
@@ -24,6 +24,7 @@ export default function AppSettingsPopover({
   onViewServices,
 }: AppSettingsPopoverProps) {
   const ps = project.public_stats;
+  const isCompose = project.deploy_type === "compose";
   const isMultiService = (project.service_count ?? 0) > 1;
 
   const [appImage, setAppImage] = useState(ps?.image ?? "");
@@ -114,9 +115,20 @@ export default function AppSettingsPopover({
             {settingsError}
           </div>
         )}
+        {isCompose && (
+          <div>
+            <span className="text-xs text-slate-400 flex items-center gap-1.5 mb-1.5">
+              <FileCode size={11} />
+              Docker Compose
+              {project.service_count != null && project.service_count > 0 && (
+                <span className="text-slate-500">({project.service_count} service{project.service_count > 1 ? "s" : ""})</span>
+              )}
+            </span>
+          </div>
+        )}
         <div>
-          <span className="text-xs text-slate-400 block mb-1.5">Docker image {isMultiService && ps?.service_name && <span className="text-slate-500">({ps.service_name})</span>}</span>
-          {isMultiService ? (
+          <span className="text-xs text-slate-400 block mb-1.5">Docker image {(isMultiService || isCompose) && ps?.service_name && <span className="text-slate-500">({ps.service_name})</span>}</span>
+          {isCompose ? (
             <input
               type="text"
               value={appImage}
@@ -135,7 +147,7 @@ export default function AppSettingsPopover({
         </div>
         <div>
           <span className="text-xs text-slate-400 block mb-1.5">App port</span>
-          {isMultiService ? (
+          {isCompose ? (
             <input
               type="number"
               value={appPort}
@@ -153,7 +165,7 @@ export default function AppSettingsPopover({
             />
           )}
         </div>
-        {!isMultiService && (
+        {!isCompose && (
           <div>
             <span className="text-xs text-slate-400 block mb-1.5">Command override</span>
             <input
@@ -211,7 +223,7 @@ export default function AppSettingsPopover({
             Save & Recreate
           </button>
         </div>
-        {isMultiService && (
+        {isCompose && (
           <div className="flex items-start gap-1.5 text-[10px] text-slate-500">
             <Info size={10} className="mt-0.5 shrink-0" />
             <span>

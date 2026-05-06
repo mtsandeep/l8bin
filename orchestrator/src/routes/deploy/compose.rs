@@ -246,8 +246,8 @@ pub async fn deploy_compose(
     // Upsert project row
     let result = sqlx::query(
         r#"
-        INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, service_count, service_summary, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, service_count, service_summary, deploy_type, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id = excluded.user_id,
             image = excluded.image,
@@ -261,6 +261,7 @@ pub async fn deploy_compose(
             custom_domain = CASE WHEN excluded.custom_domain IS NOT NULL THEN excluded.custom_domain ELSE COALESCE(projects.custom_domain, excluded.custom_domain) END,
             service_count = excluded.service_count,
             service_summary = excluded.service_summary,
+            deploy_type = excluded.deploy_type,
             updated_at = excluded.updated_at
         "#,
     )
@@ -277,6 +278,7 @@ pub async fn deploy_compose(
     .bind(&custom_domain)
     .bind(service_count)
     .bind(&service_summary)
+    .bind("compose")
     .bind(now)
     .bind(now)
     .execute(&state.db)

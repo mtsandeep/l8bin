@@ -55,6 +55,7 @@ pub struct Project {
     pub volumes: Option<String>,
     pub service_count: Option<i64>,
     pub service_summary: Option<String>,
+    pub deploy_type: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

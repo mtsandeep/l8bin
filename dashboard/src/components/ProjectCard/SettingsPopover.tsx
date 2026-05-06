@@ -272,7 +272,7 @@ export default function SettingsPopover({
             </div>
 
             {/* Allow raw ports (compose-only) */}
-            {(project.service_count ?? 0) > 1 && (
+            {project.deploy_type === "compose" && (
               <div className="border-t border-slate-700/50 pt-3">
                 <label className="flex items-center justify-between gap-2 cursor-pointer">
                   <div>
@@ -300,7 +300,7 @@ export default function SettingsPopover({
             )}
 
             {/* Allow Docker access (compose-only) */}
-            {(project.service_count ?? 0) > 1 && (
+            {project.deploy_type === "compose" && (
               <div className="border-t border-slate-700/50 pt-3">
                 <label className="flex items-center justify-between gap-2 cursor-pointer">
                   <div>

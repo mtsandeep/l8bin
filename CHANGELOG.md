@@ -6,10 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Deploy Docker Compose from dashboard** — "Deploy New App" modal now has a toggle between "Docker Image" and "Docker Compose" modes. Compose mode shows a textarea to paste compose YAML with prebuilt images. Settings (sleep, resources, node picker) are shared across both modes.
+- **`deploy_type` column** — Projects now track whether they were deployed as `"image"` or `"compose"`. Used in the dashboard to show compose-specific UI (Docker Compose label with service count, readonly image/port, hidden command override, services badge) for all compose projects including single-service ones.
 
 ### Fixed
 - Fix HTTP→HTTPS redirect not working — Caddy JSON config with `listen: [":80", ":443"]` on a single server doesn't auto-redirect like the Caddyfile adapter does. Added an explicit 308 redirect route to all client-facing config generators (`sync_routes`, `MasterProxyRouter`, cloudflare master/agent). Skipped for localhost domains.
 - Fix compose deploy routing 503 — Caddy was dialing `litebin-{id}:{port}` (hardcoded single-service name) for single-service compose projects, but the actual container is named `litebin-{id}.{service_name}`. Now always queries `project_services` for the real service name, so compose projects route correctly regardless of service count.
+- Fix stop button not showing "Stopping" state — Stop button now uses the same `handleAction` pattern as start/redeploy, setting a loading state immediately on click instead of fire-and-forget. Shows spinner while the API responds.
 
 ### Changed
 - Dashboard cleanups

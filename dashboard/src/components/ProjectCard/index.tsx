@@ -212,7 +212,7 @@ export default function ProjectCard({
                 {project.name || project.id}
               </h3>
               <StatusBadge status={stats?.status || project.status} />
-              {services.length > 1 && (
+              {(services.length > 1 || project.deploy_type === "compose") && (
                 <span
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer border transition-colors ${
                     showServicesPopover
@@ -603,22 +603,17 @@ export default function ProjectCard({
               Start
             </button>
           )}
-          {(isRunning || isDegraded) && (
+          {(isRunning || isDegraded) && loading !== "stop" && (
             <button
-              onClick={() => {
-                stopProject(project.id).catch((e) => {
-                  console.error(e);
-                  showToast(e instanceof Error ? e.message : "Stop failed");
-                });
-                onRefresh();
-              }}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors cursor-pointer"
+              onClick={() => handleAction("stop", () => stopProject(project.id))}
+              disabled={loading !== null}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50 cursor-pointer"
               title={isDegraded ? "Stop remaining services" : "Stop"}>
               <Square size={12} />
               Stop
             </button>
           )}
-          {isStopping && (
+          {(isStopping || loading === "stop") && (
             <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-orange-500/10 text-orange-400">
               <Loader2 size={12} className="animate-spin" />
               Stopping

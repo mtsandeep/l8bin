@@ -45,6 +45,7 @@ export interface Project {
   custom_domain: string | null;
   service_count: number | null;
   service_summary: string | null;
+  deploy_type: string | null;
   created_at: number;
   updated_at: number;
   public_stats: ServiceInfo | null;

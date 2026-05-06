@@ -285,6 +285,7 @@ pub async fn run_container(
         last_active_at: None,
         service_count: None,
         service_summary: None,
+        deploy_type: None,
         created_at: 0,
         updated_at: 0,
     };
@@ -348,6 +349,7 @@ pub async fn recreate_container(
         last_active_at: None,
         service_count: None,
         service_summary: None,
+        deploy_type: None,
         created_at: 0,
         updated_at: 0,
     };
@@ -424,6 +426,7 @@ pub async fn start_container(
                 last_active_at: None,
                 service_count: None,
                 service_summary: None,
+                deploy_type: None,
                 created_at: 0,
                 updated_at: 0,
             };

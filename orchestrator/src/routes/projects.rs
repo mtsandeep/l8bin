@@ -45,6 +45,7 @@ pub struct ProjectResponse {
     pub custom_domain: Option<String>,
     pub service_count: Option<i64>,
     pub service_summary: Option<String>,
+    pub deploy_type: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub public_stats: Option<ServiceInfo>,
@@ -93,7 +94,7 @@ async fn to_project_response(
     project: &Project,
     db: &sqlx::SqlitePool,
 ) -> ProjectResponse {
-    let public_stats = if project.service_count.unwrap_or(1) > 1 {
+    let public_stats = if project.service_count.unwrap_or(1) > 1 || project.deploy_type.as_deref() == Some("compose") {
         // Multi-service: look up the public service from project_services
         let row: Option<(String, String, Option<i64>, Option<i64>, bool, String, Option<String>, Option<String>, Option<i64>, Option<f64>)> = sqlx::query_as(
             "SELECT service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ? AND is_public = 1 LIMIT 1"
@@ -160,6 +161,7 @@ async fn to_project_response(
         custom_domain: project.custom_domain.clone(),
         service_count: project.service_count,
         service_summary: project.service_summary.clone(),
+        deploy_type: project.deploy_type.clone(),
         created_at: project.created_at,
         updated_at: project.updated_at,
         public_stats,
