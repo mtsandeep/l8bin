@@ -348,9 +348,12 @@ async fn execute_deploy(
 
                 // Pull the new image (skip if it's a local image ID or already exists locally)
                 if !payload_clone.image.starts_with("sha256:") {
-                    crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Pulling image {}...", &payload_clone.image));
-                    state_clone.docker.pull_image_with_opts(&payload_clone.image, false).await?;
-                    crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Image ready");
+                    let log_state = state_clone.clone();
+                    let log_project_id = payload_clone.project_id.clone();
+                    let on_progress: Box<dyn Fn(&str) + Send + Sync> = Box::new(move |msg: &str| {
+                        crate::routes::deploy::logs::push_deploy_log(&log_state, &log_project_id, msg);
+                    });
+                    state_clone.docker.pull_image_with_progress(&payload_clone.image, false, Some(on_progress)).await?;
                 }
 
                 // Start the container

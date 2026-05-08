@@ -655,8 +655,12 @@ pub async fn deploy_compose(
                 let mut pull_errors = Vec::new();
                 for image in &images {
                     if !image.starts_with("sha256:") {
-                        crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, &format!("Pulling image {}...", image));
-                        if let Err(e) = state_clone.docker.pull_image_with_opts(image, false).await {
+                        let log_state = state_clone.clone();
+                        let log_project_id = project_id_clone.clone();
+                        let on_progress: Box<dyn Fn(&str) + Send + Sync> = Box::new(move |msg: &str| {
+                            crate::routes::deploy::logs::push_deploy_log(&log_state, &log_project_id, msg);
+                        });
+                        if let Err(e) = state_clone.docker.pull_image_with_progress(image, false, Some(on_progress)).await {
                             pull_errors.push(format!("{}: {}", image, e));
                         }
                     }

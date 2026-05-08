@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 - **Async deploys with progress** — Deploy endpoints run in background, dashboard shows live progress modal with streaming logs, CLI polls with inline output. `l8b status --project <id>` shows deploy status and logs.
 - **Local image check before pull** — Skips Docker Hub pull when image exists locally (deploy, start, recreate, waker). Only Redeploy force-pulls. Reduces rate limit usage.
+- **Docker pull progress in deploy logs** — Deploy logs now show Docker's native pull output (layer status, download progress).
+- **Docker Hub auth and tag fix** — `LITEBIN_REGISTRY_AUTH` / `LITEBIN_REGISTRY_URL` env vars for registry authentication. Fixed Docker API pulling all tags when no tag specified (now defaults to `:latest`).
 
 ## [0.2.16] - 2026-05-06
 

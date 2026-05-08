@@ -14,6 +14,7 @@ export default function DeployProgressModal({
   onClose,
 }: DeployProgressModalProps) {
   const [deployLines, setDeployLines] = useState<string[]>([]);
+  const hadLogs = useRef(false);
   const [status, setStatus] = useState<string>("deploying");
   const [elapsed, setElapsed] = useState(0);
   const [showTimeoutMsg, setShowTimeoutMsg] = useState(false);
@@ -39,7 +40,10 @@ export default function DeployProgressModal({
     const load = async () => {
       try {
         const data = await fetchDeployLogs(projectId);
-        if (!cancelled) setDeployLines(data.lines);
+        if (!cancelled && data.lines.length > 0) {
+          setDeployLines(data.lines);
+          hadLogs.current = true;
+        }
       } catch {}
     };
     load();
@@ -129,7 +133,7 @@ export default function DeployProgressModal({
 
         {/* Log content */}
         <div className="flex-1 overflow-y-auto p-4 font-mono text-xs leading-5 relative">
-          {deployLines.length === 0 ? (
+          {deployLines.length === 0 && !hadLogs.current ? (
             <div className="flex items-center justify-center py-10">
               <div className="w-5 h-5 border-2 border-slate-700 border-t-amber-500 rounded-full animate-spin" />
             </div>

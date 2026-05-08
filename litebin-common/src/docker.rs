@@ -13,6 +13,7 @@ use bollard::query_parameters::{
     RemoveVolumeOptions,
     StartContainerOptions, StatsOptions, StopContainerOptions,
 };
+use bollard::auth::DockerCredentials;
 use bollard::Docker;
 use futures_util::StreamExt;
 use serde::{Serialize, Deserialize};
@@ -186,72 +187,160 @@ impl DockerManager {
 
     /// Pull a Docker image, optionally forcing a registry check.
     /// When `force` is false, checks if the image exists locally first and skips the pull.
-    pub async fn pull_image_with_opts(&self, image: &str, force: bool) -> anyhow::Result<()> {
+    /// Read Docker registry credentials from LITEBIN_REGISTRY_URL + LITEBIN_REGISTRY_AUTH env vars.
+    /// Falls back to ~/.docker/config.json for inline auth entries.
+    fn read_docker_credentials() -> Option<DockerCredentials> {
+        // 1. Check env vars (base64 user:password)
+        if let Ok(auth_b64) = std::env::var("LITEBIN_REGISTRY_AUTH") {
+            if !auth_b64.is_empty() {
+                let serveraddress = std::env::var("LITEBIN_REGISTRY_URL")
+                    .unwrap_or_else(|_| "https://index.docker.io/v1/".to_string());
+                return Some(DockerCredentials {
+                    auth: Some(auth_b64),
+                    serveraddress: Some(serveraddress),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // 2. Read ~/.docker/config.json for inline auth
+        let home = std::env::var("HOME").ok()?;
+        let path = std::path::Path::new(&home).join(".docker/config.json");
+        let content = std::fs::read_to_string(&path).ok()?;
+
+        #[derive(Deserialize)]
+        struct DockerConfig {
+            auths: Option<std::collections::HashMap<String, serde_json::Value>>,
+        }
+
+        let config: DockerConfig = serde_json::from_str(&content).ok()?;
+        let auths = config.auths?;
+
+        for key in &["https://index.docker.io/v1/", "https://registry-1.docker.io/v1/"] {
+            if let Some(entry) = auths.get(*key) {
+                let auth = entry.get("auth")?.as_str()?;
+                if !auth.is_empty() {
+                    return Some(DockerCredentials {
+                        auth: Some(auth.to_string()),
+                        serveraddress: Some(key.to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    fn format_bytes(bytes: i64) -> String {
+        if bytes < 0 { return "0B".to_string(); }
+        let b = bytes as u64;
+        if b >= 1024 * 1024 * 1024 {
+            format!("{:.1}GB", b as f64 / (1024.0 * 1024.0 * 1024.0))
+        } else if b >= 1024 * 1024 {
+            format!("{:.1}MB", b as f64 / (1024.0 * 1024.0))
+        } else if b >= 1024 {
+            format!("{:.1}KB", b as f64 / 1024.0)
+        } else {
+            format!("{}B", b)
+        }
+    }
+
+    /// Pull a Docker image with an optional progress callback that receives Docker's
+    /// native pull output (status messages, layer progress, etc.).
+    pub async fn pull_image_with_progress(
+        &self,
+        image: &str,
+        force: bool,
+        on_progress: Option<Box<dyn Fn(&str) + Send + Sync>>,
+    ) -> anyhow::Result<()> {
+        // Docker Engine API pulls ALL tags when no tag is specified — always default to :latest
+        let image_ref = if image.contains(':') && !image.starts_with("sha256:") {
+            image.to_string()
+        } else {
+            format!("{}:latest", image)
+        };
+
         if !force {
-            match self.docker.inspect_image(image).await {
+            match self.docker.inspect_image(&image_ref).await {
                 Ok(_) => {
-                    tracing::info!(image = %image, "image exists locally, skipping pull");
+                    tracing::info!(image = %image_ref, "image exists locally, skipping pull");
+                    if let Some(ref cb) = on_progress {
+                        cb(&format!("Image {} exists locally, skipping pull", image_ref));
+                    }
                     return Ok(());
                 }
                 Err(_) => {
-                    tracing::debug!(image = %image, "image not found locally, will pull");
+                    tracing::debug!(image = %image_ref, "image not found locally, will pull");
                 }
             }
         }
 
-        tracing::info!(image = %image, "pulling image");
+        tracing::info!(image = %image_ref, "pulling image");
 
         let options = CreateImageOptions {
-            from_image: Some(image.to_string()),
+            from_image: Some(image_ref.clone()),
             ..Default::default()
         };
 
-        let mut stream = self.docker.create_image(Some(options), None, None);
+        let credentials = Self::read_docker_credentials();
+        let mut stream = self.docker.create_image(Some(options), None, credentials);
+
+        let mut last_pct: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
         while let Some(result) = stream.next().await {
             match result {
                 Ok(info) => {
                     if let Some(status) = &info.status {
-                        if let Some(pd) = &info.progress_detail {
-                            let current = pd.current.unwrap_or(0);
-                            let total = pd.total.unwrap_or(0);
-                            if total > 0 {
-                                let pct = (current as f64 / total as f64 * 100.0) as u64;
-                                tracing::debug!(
-                                    image = %image,
-                                    layer = ?info.id,
-                                    status = %status,
-                                    current = current,
-                                    total = total,
-                                    percent = pct,
-                                    "pull progress"
-                                );
+                        // Format message like Docker CLI
+                        let msg = if let Some(id) = &info.id {
+                            if let Some(pd) = &info.progress_detail {
+                                let current = pd.current.unwrap_or(0);
+                                let total = pd.total.unwrap_or(0);
+                                if total > 0 {
+                                    let pct = (current as f64 / total as f64 * 100.0) as u64;
+                                    // Only emit progress lines at every 10% boundary to avoid flooding
+                                    let prev = last_pct.get(id).copied().unwrap_or(0);
+                                    let should_emit = pct / 10 > prev / 10;
+                                    last_pct.insert(id.clone(), pct);
+                                    if should_emit {
+                                        Some(format!("{}: {} {}/{}", id, status, Self::format_bytes(current), Self::format_bytes(total)))
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    last_pct.remove(id);
+                                    Some(format!("{}: {}", id, status))
+                                }
                             } else {
-                                tracing::debug!(
-                                    image = %image,
-                                    layer = ?info.id,
-                                    status = %status,
-                                    "pull progress"
-                                );
+                                last_pct.remove(id);
+                                Some(format!("{}: {}", id, status))
                             }
                         } else {
-                            tracing::debug!(
-                                image = %image,
-                                layer = ?info.id,
-                                status = %status,
-                                "pull progress"
-                            );
+                            Some(status.clone())
+                        };
+
+                        if let Some(m) = msg {
+                            tracing::debug!(image = %image_ref, "pull: {}", m);
+                            if let Some(ref cb) = on_progress {
+                                cb(&m);
+                            }
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!(image = %image, error = %e, "pull failed");
+                    tracing::error!(image = %image_ref, error = %e, "pull failed");
                     return Err(e.into());
                 }
             }
         }
 
-        tracing::info!(image = %image, "image pulled successfully");
+        tracing::info!(image = %image_ref, "image pulled successfully");
         Ok(())
+    }
+
+    /// Pull a Docker image, optionally skipping if it exists locally.
+    pub async fn pull_image_with_opts(&self, image: &str, force: bool) -> anyhow::Result<()> {
+        self.pull_image_with_progress(image, force, None).await
     }
 
     /// Pull a Docker image (always contacts the registry).

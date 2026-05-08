@@ -1,6 +1,8 @@
 # Template Catalog
 
-A template system for one-click project deployment. Users pick a template, fill in a few inputs, and get a running multi-service or single-service project.
+A template system for one-click project deployment. Users pick a template (or paste any compose file), fill in env vars, and get a running multi-service or single-service project.
+
+**Philosophy:** No vendor lock-in. A template is just a standard docker-compose.yml — the same file you'd use with `docker compose up` anywhere. Bring your own compose files from Docker Hub, GitHub, or any self-hosted community. LiteBin parses it in the browser to auto-generate a setup form for env vars and image tags, then deploys it as-is. Your compose file stays untouched; your secrets stay in your browser and are never sent through the server.
 
 **Status:** Post-MVP
 
@@ -12,8 +14,8 @@ Templates have two layers. The core is built into LiteBin. The add-ons are optio
 
 | Layer | What | Required? | Runs Where |
 |---|---|---|---|
-| **Built-in templates** | Pre-built image templates bundled with LiteBin (postgres, redis, etc.) | Always available | User's VPS |
-| **Remote catalog** | Curated template library served from a URL | No | External (static file host) |
+| **Built-in templates** | Pre-built image compose files bundled with LiteBin (postgres, redis, etc.) | Always available | User's VPS |
+| **Remote catalog** | Curated compose library served from a URL | No | External (static file host) |
 | **Build server** | Builds Dockerfile-based templates | No | External (managed by LiteBin) |
 
 Without catalog and build server, users still have:
@@ -33,128 +35,99 @@ Deploying a common stack (blog + database, e-commerce + postgres + redis) curren
 
 ## Template Structure
 
-### Initial Scope: Pre-Built Images Only
+### No Custom Manifest — Plain Docker Compose
 
-The initial template catalog supports **pre-built image templates only** — templates that reference existing Docker images (e.g., `postgres:16`, `redis:7`, `wordpress:latest`). These deploy directly without building anything.
-
-**Dockerfile-based templates** (Next.js, custom apps) require a build server and are a future add-on. Without a build server configured, Dockerfile-based templates are not available. All other LiteBin features work normally.
-
-Templates are directories with a compose file and a LiteBin manifest:
+Templates are **standard docker-compose.yml files**. No LiteBin-specific manifest, no `template.yml`, no custom format. Any valid compose file from any source works as a template.
 
 ```
 templates/
-├── ecommerce/
-│   ├── template.yml              # LiteBin manifest (prompts, routes, public service)
-│   ├── docker-compose.yml        # Service definitions
-│   └── .env.example              # Hint for required env vars
+├── wordpress/
+│   └── docker-compose.yml
 ├── postgres/
-│   ├── template.yml
-│   └── docker-compose.yml        # Single-service template
-├── nextjs/
-│   ├── template.yml
-│   ├── Dockerfile                # Single-service with Dockerfile
-│   └── .env.example
-└── wordpress/
-    ├── template.yml
-    ├── docker-compose.yml
-    └── .env.example
+│   └── docker-compose.yml
+├── wordpress-mysql/
+│   └── docker-compose.yml
+└── n8n/
+    └── docker-compose.yml
 ```
 
 ### Two Template Types
 
 | Type | Has | Build Required | Example |
 |---|---|---|---|
-| Pre-built image | `docker-compose.yml` with image references | No | PostgreSQL, Redis |
+| Pre-built image | `docker-compose.yml` with image references | No | PostgreSQL, Redis, WordPress |
 | Dockerfile | `Dockerfile` (+ optional `docker-compose.yml`) | Yes | Next.js app |
 
 Dockerfile templates require a build server. Pre-built image templates deploy directly.
 
 ---
 
-## Template Manifest (template.yml)
+## Compose Parsing & Env Handling
 
-```yaml
-name: E-commerce Stack
-description: Next.js storefront + PostgreSQL + Redis
-version: 1.0
+All compose parsing happens in the **frontend** (dashboard browser). No server-side parsing needed.
 
-# Which service is public (gets Caddy route)
-public: web
+### What the parser extracts
 
-# Prompts shown to user during deploy
-prompts:
-  - name: STORE_NAME
-    label: "Store name"
-    default: "my-store"
-    target: env
+From any docker-compose.yml:
 
-  - name: ADMIN_EMAIL
-    label: "Admin email"
-    required: true
-    target: env
+1. **Services** — list of services, user can toggle which to deploy
+2. **Images** — `image:tag` for each service (editable, e.g., pin a version)
+3. **Ports** — first port mapping per service (detects internal port for LiteBin routing)
+4. **Environment variables** — all env vars from `services.*.environment`
+   - Empty values → required fields (highlighted)
+   - Keys containing PASSWORD/SECRET/TOKEN → password input fields
+   - Values referencing other services (e.g., `db`) → auto-filled, read-only
+   - Everything else → text inputs with current value as default
 
-  - name: DB_PASSWORD
-    label: "Database password"
-    generate: password
-    target: env
+No special library needed — just a YAML parser (`js-yaml`) + walking the object. ~100-150 lines of TypeScript.
 
-  - name: PROJECT_SUBDOMAIN
-    label: "Project ID"
-    default: "my-store"
-    target: project_id
+### Env vars stay in browser
 
-# Routes created automatically on deploy
-routes:
-  - type: path
-    path: "/admin/*"
-    service: admin
-    description: "Admin panel"
+LiteBin's core principle: `.env` files are never sent through the server. For templates:
+
+1. Compose.yml is sent to the deploy endpoint **with env var values replaced by `${VAR_NAME}` references** — no secrets in the compose
+2. The `.env` content is generated in the browser from user's form inputs
+3. Dashboard shows a **read-only `.env` preview** during template creation — user copies it manually to the project's `.env` on the agent
+4. `.env` never touches the orchestrator, never travels over the network
+
+```
+Template compose.yml:
+  MYSQL_ROOT_PASSWORD: changeme
+       ↓ frontend transforms
+Deployed compose.yml:
+  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+
+.env (generated in browser, user copies to agent):
+  MYSQL_ROOT_PASSWORD=mySecurePass123
 ```
 
-### Prompt Types
+### Template sources
 
-| Type | Description | Example |
+| Source | How | Example |
 |---|---|---|
-| `target: env` | Value injected into project `.env` | `STORE_NAME=my-store` |
-| `target: project_id` | Value used as the project ID | `my-store` |
-| `generate: password` | Auto-generate a secure random value | `xK9mR2pL4vN7` |
+| Bundled catalog | Static compose files in dashboard image | WordPress, PostgreSQL |
+| Paste | User pastes compose.yml into dashboard | Any compose from the internet |
+| Upload | User uploads a compose file | Local compose files |
+| URL | Dashboard fetches from a URL (future) | GitHub raw links |
 
-### Variable Resolution
-
-Compose files use `${VAR}` syntax. Resolved from user prompts first, then project `.env`:
-
-```yaml
-# docker-compose.yml (in template)
-services:
-  db:
-    environment:
-      POSTGRES_PASSWORD: ${DB_PASSWORD}    # ← from user prompt
-      POSTGRES_DB: ${STORE_NAME}           # ← from user prompt
-```
+All sources go through the same parser. No LiteBin-specific format needed.
 
 ---
 
 ## Deploy Flow
 
 ```
-1. User selects template (dashboard or CLI)
-2. LiteBin reads template.yml → shows prompts
-3. User fills inputs (name, email, password, etc.)
-4. LiteBin generates project .env from user inputs
-5. LiteBin reads docker-compose.yml → resolves ${VAR} from .env
-6. Injects litebin.public: "true" label on the service specified in template.yml
-7. Template needs building (has Dockerfile)?
-   ├─ No  → skip to step 8
-   └─ Yes → build server configured?
-        ├─ Yes → send template + inputs + project deploy token + VPS address to build server
-        │        (authenticated with L8BIN_BUILD_TOKEN)
-        │        build server builds image → tar → sends to VPS with project deploy token
-        │        VPS loads image (docker load) → image available locally
-        └─ No  → skip Dockerfile templates (pre-built templates still available)
-8. Validate via compose-bollard (topological sort, cycle detection)
-9. Store resolved compose.yml at projects/{id}/compose.yml
-10. Deploy (same multi-service deploy flow)
-11. Create routes from template.yml manifest
+1. User selects template or pastes/uploads compose.yml (dashboard or CLI)
+2. Frontend parses compose.yml → extracts services, images, ports, env vars
+3. Dashboard shows auto-generated form (env vars, image tags, service toggles)
+4. User fills in values
+5. Frontend transforms compose.yml: hardcoded env values → ${VAR_NAME} references
+6. Frontend generates .env content from user inputs (stays in browser)
+7. Dashboard shows .env preview — user copies to project's .env on agent
+8. Deployed compose.yml (with ${VAR} refs) sent to orchestrator deploy endpoint
+9. Validate via compose-bollard (topological sort, cycle detection)
+10. Store compose.yml at projects/{id}/compose.yml
+11. Deploy (same multi-service deploy flow)
 12. Project is running
 ```
 
@@ -192,7 +165,7 @@ The build server uses the same mechanism as `l8b ship`:
 ```
 LiteBin → Build Server:
   1. Sends build request with L8BIN_BUILD_TOKEN (authenticates with build server)
-     Payload: template, user inputs, user's project deploy token, VPS node address
+     Payload: compose file, user's project deploy token, VPS node address
 
 Build Server:
   2. Builds Docker image (docker build)
@@ -219,7 +192,7 @@ Users who want Dockerfile-based templates can:
 
 ## Built-in Templates
 
-Bundled with LiteBin:
+Bundled with LiteBin as plain docker-compose.yml files. Curated from popular self-hosted apps (reference: CapRover, Dokploy, Coolify open-source catalogs).
 
 | Template | Services | Description |
 |---|---|---|
@@ -228,50 +201,40 @@ Bundled with LiteBin:
 | `redis` | Redis 7 | Standalone cache |
 | `mongodb` | MongoDB 7 | Standalone database |
 | `wordpress` | WordPress + MySQL | Blog/CMS |
-| `nextjs-postgres` | Next.js + PostgreSQL | Full-stack web app |
+| `nextcloud` | Nextcloud | File sync and sharing |
+| `n8n` | n8n | Workflow automation |
+| `uptime-kuma` | Uptime Kuma | Status monitoring |
+| `grafana` | Grafana + Prometheus | Metrics dashboard |
 
-Each includes sensible defaults (shm_size for postgres, healthchecks, resource limits).
+Each includes sensible defaults (healthchecks, resource limits where applicable).
 
 ---
 
 ## API
 
+No template-specific endpoints needed. The existing compose deploy flow handles everything:
+
 ```
-GET  /templates                  — List all templates (name + description)
-GET  /templates/:name            — Get template details + prompts
-POST /projects/deploy            — Deploy from template (new format)
+POST /projects/:id/deploy         — Deploy compose.yml (same as manual compose deploy)
 ```
 
-Deploy from template:
-
-```json
-POST /projects/deploy
-{
-  "project_id": "my-store",
-  "template": "ecommerce",
-  "inputs": {
-    "STORE_NAME": "my-store",
-    "ADMIN_EMAIL": "admin@example.com",
-    "DB_PASSWORD": "xK9mR2pL4vN7"
-  }
-}
-```
+The dashboard handles compose parsing and form generation client-side. The orchestrator receives a standard compose.yml with `${VAR}` references — no template awareness needed on the backend.
 
 ---
 
 ## CLI
 
 ```
-l8b deploy --template ecommerce my-store
-# → prompts for ADMIN_EMAIL, auto-generates DB_PASSWORD
-# → deploys full stack
+l8b deploy --template wordpress my-blog
+# → shows parsed env vars from compose, prompts for values
+# → generates .env preview for user to copy
+# → deploys
 
-l8b deploy --template postgres my-db
-# → prompts for DB_PASSWORD
-# → deploys standalone postgres
+l8b deploy --compose ./my-stack.yml my-project
+# → same flow, just from a local file instead of bundled template
 
 l8b template list
-l8b template info ecommerce
+l8b template info wordpress
 ```
 
 ---
@@ -280,9 +243,12 @@ l8b template info ecommerce
 
 Template picker on the deploy page:
 1. Grid of template cards (name, description, service count)
-2. Click template → modal with prompts
-3. Fill inputs → deploy
-4. Redirect to project page
+2. Click template → modal with auto-generated form (env vars, image tags)
+3. Fill values → see .env preview (read-only, copy button)
+4. Copy .env to agent → deploy
+5. Redirect to project page
+
+Users can also paste/upload any compose.yml directly — same form, same flow.
 
 ---
 
@@ -291,20 +257,20 @@ Template picker on the deploy page:
 Users define their own templates outside the built-in set:
 
 ```
-# Local directory
-l8b deploy --template ./my-template my-project
+# Local file
+l8b deploy --compose ./my-stack.yml my-project
 
-# Git repo (future)
-l8b deploy --template github.com/user/litebin-templates/nextjs my-project
+# URL (future)
+l8b deploy --compose https://raw.githubusercontent.com/user/stack/main/compose.yml my-project
 ```
 
-Same structure required: `template.yml` + compose file.
+Any valid docker-compose.yml works. No special structure required.
 
 ---
 
 ## Remote Catalog (Add-on)
 
-An optional curated template library served from a remote URL. Adds more templates beyond the built-in set. Without it, built-in templates work as normal — nothing changes.
+An optional curated compose library served from a remote URL. Adds more templates beyond the built-in set. Without it, built-in templates work as normal — nothing changes.
 
 ### Config
 
@@ -329,19 +295,19 @@ The catalog URL serves static files — no server logic needed (S3, Cloudflare P
 
 ```
 GET {url}/index.json                       → list of available templates
-GET {url}/templates/{name}/template.yml    → manifest
 GET {url}/templates/{name}/docker-compose.yml
-GET {url}/templates/{name}/.env.example
 ```
 
 **index.json** at the catalog root:
 
 ```json
 [
-  { "name": "ecommerce", "description": "E-commerce Stack", "version": "1.0" },
-  { "name": "saas-starter", "description": "SaaS boilerplate with Stripe", "version": "2.1" }
+  { "name": "wordpress", "description": "Blog/CMS with MySQL", "services": 2 },
+  { "name": "nextcloud", "description": "File sync and sharing", "services": 1 }
 ]
 ```
+
+No custom manifest files — just compose.yml files. The frontend parses them identically to bundled templates.
 
 ### Merged Template List
 
@@ -355,8 +321,8 @@ Built-in:
   redis          Redis 7
 
 Remote (catalog.litebin.in):
-  ecommerce      E-commerce Stack
-  saas-starter   SaaS boilerplate with Stripe
+  wordpress      Blog/CMS with MySQL
+  nextcloud      File sync and sharing
 ```
 
 When no catalog URL is configured, only built-in templates are shown.
@@ -375,9 +341,10 @@ If the catalog URL requires authentication, set the `token` config. LiteBin send
 
 | Component | Relationship |
 |---|---|
-| compose-bollard | Template compose files parsed by compose-bollard |
-| Custom Routes (pre-MVP) | Template routes created via same `project_routes` CRUD |
-| Multi-service deploy | Same deploy flow — compose file comes from a template |
+| compose-bollard | Template compose files parsed by compose-bollard (same as manual compose) |
+| Custom Routes | Routes created via same `project_routes` CRUD (same as manual compose) |
+| Multi-service deploy | Same deploy flow — compose file comes from a template instead of user upload |
+| Per-project .env | `.env` generated in browser, user copies to agent (never over network) |
 
 ---
 
@@ -385,11 +352,12 @@ If the catalog URL requires authentication, set the `token` config. LiteBin send
 
 | File | Change |
 |---|---|
-| `litebin-common/src/templates.rs` | Template manifest parsing, prompt types, variable resolution |
-| `litebin-common/src/templates/` | Built-in template files |
-| `orchestrator/src/routes/templates.rs` | Template list + info endpoints |
-| `orchestrator/src/routes/deploy.rs` | Template deploy format (template + inputs) |
-| Dashboard | Template picker UI |
+| `dashboard/src/` | Compose parser, auto-form generator, .env preview, template picker UI |
+| `dashboard/static/templates/` | Bundled docker-compose.yml files |
+| `cli/src/` | `--template` and `--compose` flags, compose parser for CLI |
+| `orchestrator/src/routes/deploy.rs` | No changes needed — receives standard compose.yml |
+
+No changes to `litebin-common` or the orchestrator — all template logic is frontend-only.
 
 ---
 
@@ -397,11 +365,11 @@ If the catalog URL requires authentication, set the `token` config. LiteBin send
 
 ### Scope
 
-- Template manifest format (template.yml)
-- Built-in templates: postgres, mysql, redis, mongodb (pre-built images, no build needed)
-- Prompt types: env, project_id, password generation
-- Variable resolution in compose files
+- Compose parser (frontend): extract services, images, ports, env vars
+- Auto-form generator: env var fields, image tag editing, service toggles
+- `.env` generator: extracts env vars from compose, pre-fills defaults, user fills in values, generates .env file to copy to agent (future: swap manual copy with secret storage once implemented)
+- Built-in templates: postgres, mysql, redis, mongodb, wordpress, n8n, uptime-kuma, grafana, nextcloud
+- Template sources: bundled, paste, upload
 - Build server integration (config, build flow)
 - Remote catalog (config, fetch, cache)
-- CLI: `--template` flag on deploy
-- Dashboard: template picker
+- CLI: `--template` and `--compose` flags
