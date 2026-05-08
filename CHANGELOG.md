@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-05-08
+
 - **Async deploys with progress** — Deploy endpoints run in background, dashboard shows live progress modal with streaming logs, CLI polls with inline output. `l8b status --project <id>` shows deploy status and logs.
 - **Local image check before pull** — Skips Docker Hub pull when image exists locally (deploy, start, recreate, waker). Only Redeploy force-pulls. Reduces rate limit usage.
 - **Docker pull progress in deploy logs** — Deploy logs now show Docker's native pull output (layer status, download progress).
