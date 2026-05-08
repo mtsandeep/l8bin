@@ -279,7 +279,22 @@ Migrate orchestrator data to an agent, promote it to master:
 
 ---
 
-## Phase 3: Platform Backup (SQLite)
+## Phase 3: Access Control (Maintenance Mode + Password Protection)
+
+Per-project access control with two modes: maintenance mode (503 page) and password-protected (password entry page). Both share the same password backend — admin password + disposable passwords. Full plan: [access-control.md](access-control.md).
+
+### Key Design Decisions
+
+- **Admin password** — auto-generated per project, long-lived, can regenerate but not delete
+- **Disposable passwords** — N per project, custom or auto-generated, default 1-day expiry, can delete/regenerate
+- **Password vs token separation** — visitor enters password (sent once over HTTPS), cookie contains random token (not the password)
+- **Caddy cookie bypass** — `static_response` with `not` cookie matcher, zero per-request overhead
+- **Immediate session invalidation** — deleting a token triggers route sync, Caddy reload drops the old cookie within <1s
+- **Expired tokens** — excluded from Caddy config on sync, remain visible in dashboard until user deletes
+
+---
+
+## Phase 4: Platform Backup (SQLite)
 
 SQLite backup via Litestream sidecar. No custom backup code in LiteBin. Full plan: [backup.md](backup.md).
 
@@ -307,7 +322,7 @@ SQLite backup via Litestream sidecar. No custom backup code in LiteBin. Full pla
 
 ---
 
-## Phase 4: One-Click Apps (Template Catalog)
+## Phase 5: One-Click Apps (Template Catalog)
 
 Template catalog of popular apps deployable with a single click. Full plan: [template-catalog.md](template-catalog.md).
 
@@ -330,7 +345,7 @@ Template catalog of popular apps deployable with a single click. Full plan: [tem
 
 ---
 
-## Phase 5: Deploy History & Rollback
+## Phase 6: Deploy History & Rollback
 
 Keep previous deploys and allow instant rollback.
 
@@ -354,7 +369,7 @@ l8b rollback myapp 2
 
 ---
 
-## Phase 6: Eject (Litebin Eject)
+## Phase 7: Eject (Litebin Eject)
 
 Export a project as a standalone Docker Compose + Caddy setup. The user "graduates" from LiteBin and takes their app with them — no LiteBin dependency needed on the target server.
 
@@ -441,7 +456,7 @@ Event-driven notifications pushed to an external notification router. LiteBin wr
 
 ---
 
-## Phase 7: Zero-Downtime Deploys
+## Phase 8: Zero-Downtime Deploys
 
 Deploy a new version without stopping the current one. Start new container, verify it's healthy, switch traffic, then stop the old one.
 
@@ -491,7 +506,7 @@ If the new container fails health checks within the timeout:
 5. Log deploy failure + notify (Quick Win: Notifications)
 ```
 
-This is simpler and more reliable than the Phase 5 rollback (which redeploys a previous image). Zero-downtime deploy with automatic rollback on failure covers most production needs.
+This is simpler and more reliable than the Phase 6 rollback (which redeploys a previous image). Zero-downtime deploy with automatic rollback on failure covers most production needs.
 
 ### Configuration
 
@@ -533,7 +548,7 @@ For single-service projects, health check config can be inferred from Docker's `
 
 ---
 
-## Phase 8: Liveness Probes
+## Phase 9: Liveness Probes
 
 Continuous health monitoring for running containers. Detect when an app is running but unhealthy (returning 500s, deadlocked, connection pool exhausted) and restart it automatically.
 
@@ -612,7 +627,7 @@ liveness_probe:
 | Feature | When It Runs | Purpose |
 |---------|-------------|---------|
 | Startup health check (post-MVP Feature 1) | During deploy/wake | Wait for dependencies before starting dependents |
-| Deploy health check (Phase 7) | During deploy | Verify new container is healthy before switching traffic |
+| Deploy health check (Phase 8) | During deploy | Verify new container is healthy before switching traffic |
 | **Liveness probe (this phase)** | **Continuously, while running** | **Detect and recover from runtime degradation** |
 
 All three use the same health check infrastructure but serve different purposes.
@@ -662,7 +677,7 @@ All three use the same health check infrastructure but serve different purposes.
 | Builds | **On server** (Nixpacks) | **On server** (buildpacks) | **External** (CI/CLI, server just pulls) |
 | Backup | Manual | Manual | **Platform (Litestream) + Project (Rustic)** |
 | Migration | Not supported | Manual guide | **Planned (automated)** |
-| Maintenance mode | Not supported | Not supported | **Planned** |
+| Maintenance mode / password protection | Not supported | Not supported | **Planned** |
 | Zero-downtime deploy | Partial (not compose) | Yes | **Planned** |
 | Liveness probes | No | No | **Planned** |
 | .env handling | Transferred over wire | N/A (git push) | **Never over network** |
@@ -679,13 +694,14 @@ All three use the same health check infrastructure but serve different purposes.
 | 2 | Environment variable editor | Quick Win | Low |
 | 3 | Preview environments | Phase 1 | Medium |
 | 4 | App migration + duplication | Phase 2 | Medium |
-| 5 | Platform backup (Litestream) | Phase 3 | Low |
-| 6 | One-click apps | Phase 4 | Low |
-| 7 | Deploy history + rollback | Phase 5 | Medium |
-| 8 | Eject (Litebin Eject) | Phase 6 | Medium |
-| 9 | Zero-downtime deploys | Phase 7 | Medium |
-| 10 | Liveness probes | Phase 8 | Low |
-| 11 | Master migration + promote | Phase 2 | Medium |
+| 5 | Access control (maintenance + password) | Phase 3 | Low |
+| 6 | Platform backup (Litestream) | Phase 4 | Low |
+| 7 | One-click apps | Phase 5 | Low |
+| 8 | Deploy history + rollback | Phase 6 | Medium |
+| 9 | Eject (Litebin Eject) | Phase 7 | Medium |
+| 10 | Zero-downtime deploys | Phase 8 | Medium |
+| 11 | Liveness probes | Phase 9 | Low |
+| 12 | Master migration + promote | Phase 2 | Medium |
 | 12 | GitHub App (seamless repo connect) | Future | Medium |
 | 13 | Project backup (Rustic) | Planned | Medium |
 | 14 | Disaster recovery | Planned | Low |
