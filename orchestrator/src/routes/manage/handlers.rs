@@ -143,6 +143,7 @@ pub async fn start_project(
         start_services(&state, &project, StartServicesOpts {
             force_recreate: false,
             pull_images: false,
+            force_pull: false,
             services: None,
             connect_orchestrator: true,
             rollback_on_failure: false,
@@ -201,6 +202,7 @@ pub async fn start_project(
                 "service_resources": service_resources,
                 "default_memory_limit_mb": default_mem,
                 "default_cpu_limit": default_cpu,
+                "force_pull": false,
             }))
             .send()
             .await
@@ -414,6 +416,9 @@ pub async fn delete_project(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
+    // Clear in-memory deploy logs
+    crate::routes::deploy::logs::clear_deploy_logs(&state, &project_id);
+
     // Resync Caddy routes
     sync_caddy(&state).await;
 
@@ -511,6 +516,8 @@ pub async fn recreate_project(
             let default_cpu: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
                 .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(0.5);
 
+            let pull = body.as_ref().and_then(|b| b.0.pull_images).unwrap_or(false);
+
             let resp = match client
                 .post(format!("{}/containers/batch-run", base_url))
                 .json(&json!({
@@ -522,6 +529,7 @@ pub async fn recreate_project(
                     "service_resources": service_resources,
                     "default_memory_limit_mb": default_mem,
                     "default_cpu_limit": default_cpu,
+                    "force_pull": pull,
                 }))
                 .send()
                 .await
@@ -531,8 +539,8 @@ pub async fn recreate_project(
             };
 
             if !resp.status().is_success() {
-                let body = resp.text().await.unwrap_or_default();
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("remote recreate failed: {body}")));
+                let resp_body = resp.text().await.unwrap_or_default();
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("remote recreate failed: {resp_body}")));
             }
 
             // Update project_services with results from agent
@@ -688,6 +696,7 @@ pub async fn start_service(
     start_services(&state, &project, StartServicesOpts {
         force_recreate: true,
         pull_images: false,
+        force_pull: false,
         services: Some(services),
         connect_orchestrator: true,
         rollback_on_failure: false,
@@ -750,6 +759,7 @@ pub async fn restart_service(
     start_services(&state, &project, StartServicesOpts {
         force_recreate: true,
         pull_images: false,
+        force_pull: false,
         services: Some(services),
         connect_orchestrator: true,
         rollback_on_failure: false,

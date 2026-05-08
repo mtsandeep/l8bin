@@ -273,7 +273,7 @@ pub async fn wake(
         .unwrap()
         .get(&subdomain)
         .map(|e| e.auto_start_enabled)
-        .unwrap_or(true); // default true if not pushed yet (backward compat)
+        .unwrap_or(true); // default true if not pushed yet
 
     if !auto_start {
         return if json { offline_json_response() } else { offline_page() };
@@ -973,8 +973,8 @@ async fn wake_multi_service(state: &AgentState, project_id: &str) -> anyhow::Res
     }
     if allow_docker {
         plan.inject_docker_proxy(project_id);
-        // Pre-pull the proxy image
-        if let Err(e) = state.docker.pull_image("tecnativa/docker-socket-proxy").await {
+        // Pre-pull the proxy image (skip if already local)
+        if let Err(e) = state.docker.pull_image_with_opts("tecnativa/docker-socket-proxy", false).await {
             tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
         }
     }

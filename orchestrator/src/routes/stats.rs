@@ -941,3 +941,22 @@ pub async fn project_logs(
         lines,
     }))
 }
+
+/// GET /projects/:id/deploy-logs — Returns in-memory deploy log lines for a project.
+pub async fn deploy_logs(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let lines = state.deploy_logs
+        .get(&project_id)
+        .and_then(|entry| {
+            let guard = entry.lock().ok()?;
+            Some(guard.clone())
+        })
+        .unwrap_or_default();
+
+    Json(json!({
+        "project_id": project_id,
+        "lines": lines,
+    }))
+}

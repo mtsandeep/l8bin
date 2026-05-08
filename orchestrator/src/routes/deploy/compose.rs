@@ -498,6 +498,7 @@ pub async fn deploy_compose(
                 "service_resources": service_resources,
                 "default_memory_limit_mb": default_mem,
                 "default_cpu_limit": default_cpu,
+                "force_pull": true,
             }))
             .send()
             .await
@@ -582,139 +583,159 @@ pub async fn deploy_compose(
         ).into_response();
     }
 
-    // Partial redeploy: only recreate targeted services
-    if let Some(ref targets) = target_services {
-        tracing::info!(project = %project_id, targets = ?targets, "partial compose redeploy");
+    // --- Local path: spawn background task for heavy lifting ---
+    let state_clone = state.clone();
+    let project_id_clone = project_id.clone();
+    let project_clone = project.clone();
+    let compose_clone = compose.clone();
+    let start_order_clone = start_order.clone();
+    let target_node_id_clone = target_node_id.clone();
+    let target_services_clone = target_services.clone();
+    let _public_service_clone = public_service.clone();
+    let _custom_domain_clone = custom_domain.clone();
 
-        let target_set: std::collections::HashSet<String> = targets.iter().cloned().collect();
+    tokio::spawn(async move {
+        crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, "Compose deployment started");
 
-        // Stop and remove targeted service containers
-        let prefix = format!("litebin-{}.", project_id);
-        if let Ok(all_containers) = state.docker.list_containers_by_prefix(&prefix).await {
-            for cid in &all_containers {
-                if let Ok(inspect) = state.docker.inspect_container(cid).await {
-                    if let Some(ref name) = inspect.name {
-                        let trimmed = name.trim_start_matches('/');
-                        if let Some(svc_name) = trimmed.strip_prefix(&prefix) {
-                            if target_set.contains(svc_name) {
-                                let _ = state.docker.stop_container(cid).await;
-                                let _ = state.docker.remove_container(cid).await;
-                                let _ = status::set_service_stopped(&state.db, &project_id, svc_name).await;
+        let result: Result<(), anyhow::Error> = async {
+            // Partial redeploy: only recreate targeted services
+            if let Some(ref targets) = target_services_clone {
+                tracing::info!(project = %project_id_clone, targets = ?targets, "partial compose redeploy");
+
+                let target_set: std::collections::HashSet<String> = targets.iter().cloned().collect();
+
+                // Stop and remove targeted service containers
+                let prefix = format!("litebin-{}.", project_id_clone);
+                if let Ok(all_containers) = state_clone.docker.list_containers_by_prefix(&prefix).await {
+                    for cid in &all_containers {
+                        if let Ok(inspect) = state_clone.docker.inspect_container(cid).await {
+                            if let Some(ref name) = inspect.name {
+                                let trimmed = name.trim_start_matches('/');
+                                if let Some(svc_name) = trimmed.strip_prefix(&prefix) {
+                                    if target_set.contains(svc_name) {
+                                        let _ = state_clone.docker.stop_container(cid).await;
+                                        let _ = state_clone.docker.remove_container(cid).await;
+                                        let _ = status::set_service_stopped(&state_clone.db, &project_id_clone, svc_name).await;
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-        }
 
-        // Start only the targeted services
-        if let Err((status, msg)) = crate::routes::manage::start_services(
-            &state,
-            &project,
-            crate::routes::manage::StartServicesOpts {
-                force_recreate: true,
-                pull_images: false,
-                services: Some(target_set),
-                connect_orchestrator: true,
-                rollback_on_failure: true,
-            },
-        ).await {
-            return (status, Json(json!({"error": msg}))).into_response();
-        }
-    } else {
-        // Full deploy: clean up existing containers, pull images, start all services
-        // Clean up existing containers from a previous deploy (by name prefix).
-        // Handles orphaned containers from failed deploys.
-        let prefix = format!("litebin-{}.", project_id);
-        if let Ok(all_containers) = state.docker.list_containers_by_prefix(&prefix).await {
-            for cid in &all_containers {
-                let _ = state.docker.stop_container(cid).await;
-                let _ = state.docker.remove_container(cid).await;
-            }
-        }
+                // Start only the targeted services
+                if let Err((_, msg)) = crate::routes::manage::start_services(
+                    &state_clone,
+                    &project_clone,
+                    crate::routes::manage::StartServicesOpts {
+                        force_recreate: true,
+                        pull_images: false,
+                        force_pull: false,
+                        services: Some(target_set),
+                        connect_orchestrator: true,
+                        rollback_on_failure: true,
+                    },
+                ).await {
+                    anyhow::bail!("start_services failed: {}", msg);
+                }
+            } else {
+                // Full deploy: clean up existing containers, pull images, start all services
+                let prefix = format!("litebin-{}.", project_id_clone);
+                if let Ok(all_containers) = state_clone.docker.list_containers_by_prefix(&prefix).await {
+                    for cid in &all_containers {
+                        let _ = state_clone.docker.stop_container(cid).await;
+                        let _ = state_clone.docker.remove_container(cid).await;
+                    }
+                }
 
-        // Pull all images before starting (fail on any pull error)
-        let images: Vec<String> = start_order.iter()
-            .filter_map(|name| compose.services[name].image.clone())
-            .collect();
-        let mut pull_errors = Vec::new();
-        for image in &images {
-            if !image.starts_with("sha256:") {
-                if let Err(e) = state.docker.pull_image(image).await {
-                    pull_errors.push(format!("{}: {}", image, e));
+                // Pull all images before starting (fail on any pull error)
+                let images: Vec<String> = start_order_clone.iter()
+                    .filter_map(|name| compose_clone.services[name].image.clone())
+                    .collect();
+                let mut pull_errors = Vec::new();
+                for image in &images {
+                    if !image.starts_with("sha256:") {
+                        crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, &format!("Pulling image {}...", image));
+                        if let Err(e) = state_clone.docker.pull_image_with_opts(image, false).await {
+                            pull_errors.push(format!("{}: {}", image, e));
+                        }
+                    }
+                }
+                if !pull_errors.is_empty() {
+                    let msg = pull_errors.join("; ");
+                    anyhow::bail!("failed to pull images: {}", msg);
+                }
+
+                // Start all services using the unified function
+                if let Err((_, msg)) = crate::routes::manage::start_services(
+                    &state_clone,
+                    &project_clone,
+                    crate::routes::manage::StartServicesOpts {
+                        force_recreate: true,
+                        pull_images: false, // already pulled above
+                        force_pull: false,
+                        services: None,
+                        connect_orchestrator: true,
+                        rollback_on_failure: true,
+                    },
+                ).await {
+                    anyhow::bail!("start_services failed: {}", msg);
                 }
             }
+
+            // Persist node_id for sticky scheduling on redeploys
+            let _ = sqlx::query(
+                "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
+            )
+            .bind(&target_node_id_clone)
+            .bind(chrono::Utc::now().timestamp())
+            .bind(&project_id_clone)
+            .execute(&state_clone.db)
+            .await;
+
+            // Full route sync after deploy
+            crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, "Syncing routes...");
+            let orchestrator_upstream = format!("litebin-orchestrator:{}", state_clone.config.port);
+            let route_entries = crate::routing_helpers::resolve_all_routes(&state_clone.db, &state_clone.config.domain, &orchestrator_upstream).await?;
+            let _ = state_clone
+                .router
+                .read()
+                .await
+                .sync_routes(&route_entries, &state_clone.config.domain, &orchestrator_upstream, &state_clone.config.dashboard_subdomain, &state_clone.config.poke_subdomain, true)
+                .await;
+
+            let url = format!("https://{}.{}", project_id_clone, state_clone.config.domain);
+
+            tracing::info!(
+                project_id = %project_id_clone,
+                services = start_order_clone.len(),
+                url = %url,
+                "compose deploy complete"
+            );
+
+            crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, "Routes synced");
+            crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, "Deployment complete");
+            crate::routes::deploy::logs::clear_deploy_logs(&state_clone, &project_id_clone);
+
+            // Trigger route sync for downstream consumers
+            let _ = state_clone.route_sync_tx.send(());
+
+            Ok(())
+        }.await;
+
+        if let Err(e) = result {
+            tracing::error!(project_id = %project_id_clone, error = %e, "background compose deploy failed");
+            crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, &format!("Deploy failed: {}", e));
+            let _ = status::transition(&state_clone.db, &project_id_clone, "error", &ProjectUpdateFields::default(), None).await;
         }
-        if !pull_errors.is_empty() {
-            let msg = pull_errors.join("; ");
-            tracing::error!(errors = %msg, "failed to pull images");
-            let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("failed to pull images: {msg}")})),
-            ).into_response();
-        }
-
-        // Start all services using the unified function.
-        // Network setup, Caddy/orchestrator connect, health checks, DB updates,
-        // and DNS wait are all handled internally by start_services.
-        if let Err((status, msg)) = crate::routes::manage::start_services(
-            &state,
-            &project,
-            crate::routes::manage::StartServicesOpts {
-                force_recreate: true,
-                pull_images: false, // already pulled above
-                services: None,
-                connect_orchestrator: true,
-                rollback_on_failure: true,
-            },
-        ).await {
-            return (status, Json(json!({"error": msg}))).into_response();
-        }
-    }
-
-    // Persist node_id for sticky scheduling on redeploys
-    let _ = sqlx::query(
-        "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
-    )
-    .bind(&target_node_id)
-    .bind(now)
-    .bind(&project_id)
-    .execute(&state.db)
-    .await;
-
-    // Full route sync after deploy
-    let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-    let route_entries = match crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to resolve routes after compose deploy");
-            Vec::new()
-        }
-    };
-    let _ = state
-        .router
-        .read()
-        .await
-        .sync_routes(&route_entries, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, true)
-        .await;
-
-    let url = format!("https://{}.{}", project_id, state.config.domain);
-
-    tracing::info!(
-        project_id = %project_id,
-        services = start_order.len(),
-        url = %url,
-        "compose deploy complete"
-    );
+    });
 
     (
         StatusCode::OK,
         Json(json!({
-            "status": "running",
+            "status": "deploying",
             "project_id": project_id,
-            "url": url,
-            "custom_domain": custom_domain,
+            "message": "Compose deployment started in background"
         })),
     )
         .into_response()

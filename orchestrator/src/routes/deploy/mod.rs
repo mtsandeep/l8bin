@@ -1,4 +1,5 @@
 mod compose;
+pub mod logs;
 pub mod single;
 
 pub use compose::deploy_compose;

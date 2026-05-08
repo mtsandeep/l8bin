@@ -791,8 +791,60 @@ async fn build_and_deploy(
         client, server, project_id, &image_id, port, selected_node.as_deref(), None, None, None, true,
     )
     .await?;
-    deploy_spinner.finish_and_clear();
-    println!("  {} Deploy successful!", "✔".green());
+
+    if deploy_resp.status == "deploying" {
+        // Poll for completion with Wait/Detach prompt after 2 min
+        deploy_spinner.set_message("Waiting for deployment...");
+        let final_status = crate::status::poll_project_status(client, server, project_id, 120).await?;
+        deploy_spinner.finish_and_clear();
+
+        match final_status.as_deref() {
+            Some("running") => {
+                println!("  {} Deploy successful!", "✔".green());
+            }
+            Some("error") => {
+                println!("  {} Deploy failed!", "✘".red());
+                anyhow::bail!("Deploy failed for project '{}'", project_id);
+            }
+            _ => {
+                // Timeout — ask user
+                println!("  {} Deployment is taking longer than expected.", "!".yellow());
+                let choices = vec!["Wait", "Detach"];
+                let selection = Select::new()
+                    .with_prompt("Continue waiting or detach?")
+                    .items(&choices)
+                    .default(0)
+                    .interact()?;
+
+                match selection {
+                    0 => {
+                        // Keep polling until done
+                        let final_status = crate::status::poll_project_status(client, server, project_id, 300).await?;
+                        match final_status.as_deref() {
+                            Some("running") => {
+                                println!("  {} Deploy successful!", "✔".green());
+                            }
+                            Some("error") => {
+                                println!("  {} Deploy failed!", "✘".red());
+                                anyhow::bail!("Deploy failed for project '{}'", project_id);
+                            }
+                            _ => {
+                                println!("  Still deploying. Check status with:");
+                                println!("    {}", format!("l8b status --project {}", project_id).cyan());
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("  Detached. Check status with:");
+                        println!("    {}", format!("l8b status --project {}", project_id).cyan());
+                    }
+                }
+            }
+        }
+    } else {
+        deploy_spinner.finish_and_clear();
+        println!("  {} Deploy successful!", "✔".green());
+    }
     show_env_path(server, project_id);
     println!();
 
@@ -807,7 +859,10 @@ async fn build_and_deploy(
         .stderr(std::process::Stdio::null())
         .status();
 
-    Ok(deploy_resp.url)
+    let url = deploy_resp.url.unwrap_or_else(|| {
+        format!("https://{}.{}", project_id, server.trim_start_matches("https://").trim_start_matches("http://"))
+    });
+    Ok(url)
 }
 
 fn short_image(image: &str) -> String {
@@ -1119,9 +1174,59 @@ async fn deploy_compose(
     }
 
     let resp = auth::session_post_multipart(client, server, "/deploy/compose", form).await?;
-    deploy_spinner.finish_and_clear();
+    let resp_status = resp["status"].as_str().unwrap_or("").to_string();
 
-    println!("  {} Compose deploy successful!", "✔".green());
+    if resp_status == "deploying" {
+        // Poll for completion with Wait/Detach prompt after 2 min
+        deploy_spinner.set_message("Waiting for deployment...");
+        let final_status = crate::status::poll_project_status(client, server, project_id, 120).await?;
+        deploy_spinner.finish_and_clear();
+
+        match final_status.as_deref() {
+            Some("running") => {
+                println!("  {} Compose deploy successful!", "✔".green());
+            }
+            Some("error") => {
+                println!("  {} Compose deploy failed!", "✘".red());
+                anyhow::bail!("Compose deploy failed for project '{}'", project_id);
+            }
+            _ => {
+                println!("  {} Deployment is taking longer than expected.", "!".yellow());
+                let choices = vec!["Wait", "Detach"];
+                let selection = Select::new()
+                    .with_prompt("Continue waiting or detach?")
+                    .items(&choices)
+                    .default(0)
+                    .interact()?;
+
+                match selection {
+                    0 => {
+                        let final_status = crate::status::poll_project_status(client, server, project_id, 300).await?;
+                        match final_status.as_deref() {
+                            Some("running") => {
+                                println!("  {} Compose deploy successful!", "✔".green());
+                            }
+                            Some("error") => {
+                                println!("  {} Compose deploy failed!", "✘".red());
+                                anyhow::bail!("Compose deploy failed for project '{}'", project_id);
+                            }
+                            _ => {
+                                println!("  Still deploying. Check status with:");
+                                println!("    {}", format!("l8b status --project {}", project_id).cyan());
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("  Detached. Check status with:");
+                        println!("    {}", format!("l8b status --project {}", project_id).cyan());
+                    }
+                }
+            }
+        }
+    } else {
+        deploy_spinner.finish_and_clear();
+        println!("  {} Compose deploy successful!", "✔".green());
+    }
     show_env_path(server, project_id);
     println!();
 
@@ -1319,9 +1424,7 @@ pub async fn deploy_compose_noninteractive(
 
     let resp = auth::session_post_multipart(client, server, "/deploy/compose", form).await?;
 
-    println!("  {} Compose deploy successful!", "✔".green());
-    show_env_path(server, project_id);
-    println!();
+    println!("  {} Compose deploy submitted.", "🚢".dimmed());
 
     // Stop BuildKit container
     println!("  🧹 Stopping BuildKit...");
@@ -1331,9 +1434,8 @@ pub async fn deploy_compose_noninteractive(
         .stderr(std::process::Stdio::null())
         .status();
 
-    let fallback_url = format!("{}.{}", project_id, server);
-    let url = resp["url"].as_str().unwrap_or(&fallback_url);
-    Ok(url.to_string())
+    let _ = resp; // Response used by caller for status polling
+    Ok(project_id.to_string())
 }
 
 /// Detect compose file in the given directory. Returns the filename or None.

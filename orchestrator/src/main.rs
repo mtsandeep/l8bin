@@ -50,6 +50,8 @@ pub struct AppState {
     pub proxy_client: reqwest::Client,
     // Per-project throttle for multi-service health checks (5s cooldown)
     pub multi_svc_health_check: Arc<DashMap<String, std::time::Instant>>,
+    // In-memory deploy log buffers (project_id -> log lines)
+    pub deploy_logs: Arc<DashMap<String, std::sync::Mutex<Vec<String>>>>,
 }
 
 #[tokio::main]
@@ -237,6 +239,7 @@ async fn main() -> anyhow::Result<()> {
         route_sync_tx,
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
+        deploy_logs: Arc::new(DashMap::new()),
     };
 
     // Sync routes for any previously running projects (retry up to 5 times)
@@ -310,6 +313,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/{id}/stats", get(routes::stats::project_stats))
         .route("/projects/{id}/disk-usage", get(routes::stats::project_disk_usage))
         .route("/projects/{id}/logs", get(routes::stats::project_logs))
+        .route("/projects/{id}/deploy-logs", get(routes::stats::deploy_logs))
         .route("/projects/{id}/recreate", post(routes::manage::recreate_project))
         .route("/projects/{id}/services/{name}/start", post(routes::manage::start_service))
         .route("/projects/{id}/services/{name}/stop", post(routes::manage::stop_service))

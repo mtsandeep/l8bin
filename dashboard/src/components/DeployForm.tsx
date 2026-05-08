@@ -2,13 +2,17 @@ import { useState, useEffect } from 'react';
 import { Rocket, Loader2, X, ChevronRight, ChevronLeft, Moon, Server } from 'lucide-react';
 import { deployProject, deployComposeProject, fetchNodes, fetchGlobalSettings, type Node } from '../api';
 import ResourceLimitInput from './ResourceLimitInput';
+import DeployProgressModal from './DeployProgressModal';
 
 interface DeployFormProps {
   onDeploy: () => void;
   onClose: () => void;
+  domain: string;
 }
 
-export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
+export default function DeployForm({ onDeploy, onClose, domain: domainProp }: DeployFormProps) {
+  const [showProgress, setShowProgress] = useState(false);
+  const [deployProjectId, setDeployProjectId] = useState('');
   const [step, setStep] = useState<1 | 2>(1);
 
   // Step 1 fields
@@ -30,7 +34,7 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
   const [globalMemMb, setGlobalMemMb] = useState(256);
   const [globalCpu, setGlobalCpu] = useState(0.5);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [domain, setDomain] = useState('localhost');
+  const [domain, setDomain] = useState(domainProp);
   const [nodes, setNodes] = useState<Node[]>([]);
 
   // Fetch nodes + global settings when entering step 2
@@ -93,13 +97,28 @@ export default function DeployForm({ onDeploy, onClose }: DeployFormProps) {
         });
       }
       onDeploy();
-      onClose();
+      setDeployProjectId(projectId.trim());
+      setShowProgress(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Deploy failed');
     } finally {
       setLoading(false);
     }
   };
+
+  // Deploy progress modal (shown after deploy API returns)
+  if (showProgress) {
+    return (
+      <DeployProgressModal
+        projectId={deployProjectId}
+        domain={domain}
+        onClose={() => {
+          setShowProgress(false);
+          onClose();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">

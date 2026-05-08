@@ -197,6 +197,7 @@ async fn start_stopped_services(state: &AppState, project: &crate::db::models::P
     match crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
         force_recreate: false,
         pull_images: true,
+        force_pull: false,
         services: Some(filter),
         connect_orchestrator: true,
         rollback_on_failure: false,
@@ -324,6 +325,7 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
     crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
         force_recreate: false,
         pull_images: true,
+        force_pull: false,
         services: None,
         connect_orchestrator: true,
         rollback_on_failure: false,
@@ -369,6 +371,7 @@ async fn restart_crashed_container(
     crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
         force_recreate: true,
         pull_images: false,
+        force_pull: false,
         services: None,
         connect_orchestrator: true,
         rollback_on_failure: false,
@@ -695,6 +698,7 @@ pub async fn wake_for_host(
                 crate::routes::manage::start_services(&state_for_start, &project_clone, crate::routes::manage::StartServicesOpts {
                     force_recreate: false,
                     pull_images: true,
+                    force_pull: false,
                     services: None,
                     connect_orchestrator: true,
                     rollback_on_failure: false,

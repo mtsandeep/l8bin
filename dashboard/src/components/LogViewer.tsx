@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, RefreshCw, ArrowDown, Loader2 } from 'lucide-react';
-import { fetchLogs, type ServiceInfo } from '../api';
+import { X, RefreshCw, ArrowDown, Loader2, Rocket } from 'lucide-react';
+import { fetchLogs, fetchDeployLogs, type ServiceInfo } from '../api';
 import { useIntervalWhileVisible } from '../hooks';
 
 interface LogViewerProps {
   projectId: string;
   services?: ServiceInfo[];
+  status?: string;
   onClose: () => void;
 }
 
@@ -15,13 +16,16 @@ interface TabState {
   stale: boolean;
 }
 
-export default function LogViewer({ projectId, services = [], onClose }: LogViewerProps) {
+export default function LogViewer({ projectId, services = [], status, onClose }: LogViewerProps) {
   const isMultiService = services.length > 1;
   const serviceNames = services.map(s => s.service_name);
   const publicService = services.find(s => s.is_public);
+  const isDeploying = status === 'deploying';
+  const isError = status === 'error';
 
-  // Default to public service, or first service
-  const defaultTab = publicService?.service_name || serviceNames[0] || '';
+  // Default to "deploy" tab when deploying or error, otherwise public service or first
+  const shouldShowDeploy = isDeploying || isError;
+  const defaultTab = shouldShowDeploy ? 'deploy' : (publicService?.service_name || serviceNames[0] || '');
   const [activeTab, setActiveTab] = useState(defaultTab);
   const [autoScroll, setAutoScroll] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -34,42 +38,69 @@ export default function LogViewer({ projectId, services = [], onClose }: LogView
         initial[name] = { lines: [], loading: false, stale: false };
       }
     }
+    if (shouldShowDeploy) {
+      initial['deploy'] = { lines: [], loading: true, stale: false };
+    }
     return initial;
   });
 
-  // Single-service state (backward compat)
+  // For error state, check if deploy logs exist; if not, fall back to service tab
+  useEffect(() => {
+    if (isError) {
+      fetchDeployLogs(projectId)
+        .then(data => {
+          if (data.lines.length === 0) {
+            // No deploy logs — switch away from deploy tab
+            setActiveTab(publicService?.service_name || serviceNames[0] || '');
+          }
+        })
+        .catch(() => {
+          setActiveTab(publicService?.service_name || serviceNames[0] || '');
+        });
+    }
+  }, [projectId, isError]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Single-service state
   const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadLogs = useCallback(async (serviceName?: string) => {
+  const loadLogs = useCallback(async (tab?: string) => {
     try {
-      const data = await fetchLogs(projectId, 200, serviceName);
-      if (isMultiService) {
+      if (tab === 'deploy') {
+        const data = await fetchDeployLogs(projectId);
         setTabStates(prev => ({
           ...prev,
-          [serviceName || '']: { lines: data.lines, loading: false, stale: false },
+          deploy: { lines: data.lines, loading: false, stale: false },
         }));
       } else {
-        setLines(data.lines);
+        const data = await fetchLogs(projectId, 200, tab);
+        if (isMultiService) {
+          setTabStates(prev => ({
+            ...prev,
+            [tab || '']: { lines: data.lines, loading: false, stale: false },
+          }));
+        } else {
+          setLines(data.lines);
+        }
       }
     } catch (e) {
       console.error('Failed to fetch logs:', e);
-      if (isMultiService) {
+      if (isMultiService || tab === 'deploy') {
         setTabStates(prev => ({
           ...prev,
-          [serviceName || '']: { ...prev[serviceName || ''], loading: false },
+          [tab || '']: { ...prev[tab || ''], loading: false },
         }));
       } else {
         setLoading(false);
       }
     } finally {
-      if (!isMultiService) setLoading(false);
+      if (!isMultiService && tab !== 'deploy') setLoading(false);
     }
   }, [projectId, isMultiService]);
 
   // Load logs for active tab on interval
   useIntervalWhileVisible(() => {
-    if (isMultiService) {
+    if (isMultiService || activeTab === 'deploy') {
       loadLogs(activeTab);
     } else {
       loadLogs();
@@ -94,8 +125,9 @@ export default function LogViewer({ projectId, services = [], onClose }: LogView
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Get current display state
-  const currentLines = isMultiService ? (tabStates[activeTab]?.lines ?? []) : lines;
-  const currentLoading = isMultiService ? (tabStates[activeTab]?.loading ?? true) : loading;
+  const isDeployTab = activeTab === 'deploy';
+  const currentLines = (isMultiService || isDeployTab) ? (tabStates[activeTab]?.lines ?? []) : lines;
+  const currentLoading = (isMultiService || isDeployTab) ? (tabStates[activeTab]?.loading ?? false) : loading;
 
   useEffect(() => {
     if (autoScroll && bottomRef.current) {
@@ -116,7 +148,7 @@ export default function LogViewer({ projectId, services = [], onClose }: LogView
           </div>
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => isMultiService ? loadLogs(activeTab) : loadLogs()}
+              onClick={() => (isMultiService || isDeployTab) ? loadLogs(activeTab) : loadLogs()}
               className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors cursor-pointer"
               title="Refresh"
             >
@@ -142,9 +174,23 @@ export default function LogViewer({ projectId, services = [], onClose }: LogView
           </div>
         </div>
 
-        {/* Service tabs (multi-service only) */}
-        {isMultiService && (
+        {/* Service tabs (multi-service or deploying) */}
+        {(isMultiService || shouldShowDeploy) && (
           <div className="flex border-b border-slate-700/50 flex-shrink-0 overflow-x-auto">
+            {shouldShowDeploy && (
+              <button
+                onClick={() => handleTabSwitch('deploy')}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap border-b-2 ${
+                  activeTab === 'deploy'
+                    ? 'text-amber-300 border-amber-500 bg-amber-500/5'
+                    : 'text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                {tabStates['deploy']?.loading && activeTab === 'deploy' && <Loader2 size={10} className="animate-spin text-amber-400" />}
+                <Rocket size={10} />
+                Deploy
+              </button>
+            )}
             {serviceNames.map(name => {
               const tab = tabStates[name];
               const isActive = name === activeTab;
@@ -202,6 +248,19 @@ export default function LogViewer({ projectId, services = [], onClose }: LogView
                 {line}
               </div>
             ))
+          )}
+          {/* Deploy finished indicator */}
+          {isDeployTab && currentLines.length > 0 && !currentLoading && status === 'error' && (
+            <div className="flex items-center gap-2 mt-3 px-2 py-2 rounded-md bg-red-500/10 border border-red-500/20">
+              <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+              <span className="text-xs text-red-400 font-medium">Deploy failed — no more logs</span>
+            </div>
+          )}
+          {isDeployTab && currentLines.length > 0 && !currentLoading && status === 'running' && (
+            <div className="flex items-center gap-2 mt-3 px-2 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/20">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              <span className="text-xs text-emerald-400 font-medium">Deploy completed</span>
+            </div>
           )}
           <div ref={bottomRef} />
         </div>

@@ -19,6 +19,10 @@ pub struct StartServicesOpts {
     /// Pull images before starting (for fresh deploys).
     pub pull_images: bool,
 
+    /// When pull_images is true, force_pull controls whether to always pull from
+    /// the registry (true) or skip the pull if the image exists locally (false).
+    pub force_pull: bool,
+
     /// Only start these services. None = all services.
     pub services: Option<HashSet<String>>,
 
@@ -34,6 +38,7 @@ impl Default for StartServicesOpts {
         Self {
             force_recreate: false,
             pull_images: false,
+            force_pull: false,
             services: None,
             connect_orchestrator: false,
             rollback_on_failure: false,
@@ -115,8 +120,8 @@ pub async fn start_services(
         if let Some(ref mut filter) = opts.services {
             filter.insert("litebin-docker-proxy".to_string());
         }
-        // Pre-pull the proxy image (it's not in project_services so the normal pull logic skips it)
-        if let Err(e) = state.docker.pull_image("tecnativa/docker-socket-proxy").await {
+        // Pre-pull the proxy image (skip if already local; it's not in project_services so the normal pull logic skips it)
+        if let Err(e) = state.docker.pull_image_with_opts("tecnativa/docker-socket-proxy", false).await {
             tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
         }
     }
@@ -180,7 +185,7 @@ pub async fn start_services(
     if opts.pull_images {
         for config in &plan.configs {
             if !config.image.starts_with("sha256:") && (opts.force_recreate || !existing_containers.contains_key(&config.service_name)) {
-                if let Err(e) = state.docker.pull_image(&config.image).await {
+                if let Err(e) = state.docker.pull_image_with_opts(&config.image, opts.force_pull).await {
                     tracing::warn!(service = %config.service_name, image = %config.image, error = %e, "pull failed, continuing");
                 }
             }
@@ -536,6 +541,7 @@ pub async fn recreate_services(
     start_services(state, project, StartServicesOpts {
         force_recreate: true,
         pull_images,
+        force_pull: pull_images,
         services: target_set,
         connect_orchestrator: true,
         rollback_on_failure: false,

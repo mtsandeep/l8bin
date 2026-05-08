@@ -6,7 +6,11 @@ use serde::Deserialize;
 pub struct DeployResponse {
     pub status: String,
     pub project_id: String,
-    pub url: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
     pub mapped_port: Option<u16>,
 }
 

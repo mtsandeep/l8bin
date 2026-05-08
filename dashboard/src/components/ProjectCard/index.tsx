@@ -630,7 +630,7 @@ export default function ProjectCard({
         </div>
       </div>
       {showLogs && (
-        <LogViewer projectId={project.id} services={services} onClose={() => setShowLogs(false)} />
+        <LogViewer projectId={project.id} services={services} status={effectiveStatus} onClose={() => setShowLogs(false)} />
       )}
 
       {/* Delete confirmation modal */}

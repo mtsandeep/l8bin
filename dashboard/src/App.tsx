@@ -390,6 +390,7 @@ function AppContent() {
         <DeployForm
           onDeploy={loadProjectsAndStats}
           onClose={() => setShowDeploy(false)}
+          domain={domain}
         />
       )}
 

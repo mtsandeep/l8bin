@@ -12,7 +12,7 @@ use crate::routes::manage::agent_base_url;
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct DeployRequest {
     pub project_id: String,
     pub image: String,
@@ -324,317 +324,218 @@ async fn execute_deploy(
         }
     };
 
-    // 5. Branch: local vs remote node
-    let (container_id, mapped_port) = if node_id == "local" {
-        // --- Local path ---
-        crate::routes::manage::ensure_project_dir_and_env(&payload.project_id);
+    // 5. Spawn background task for heavy lifting (Pull, Start, Route Sync)
+    let state_clone = state.clone();
+    let payload_clone = payload.clone();
+    let project_clone = project.clone();
+    let node_id_clone = node_id.clone();
+    let old_image_clone = old_image.clone();
+    let old_volumes_clone = old_volumes.clone();
 
-        // Remove any existing container for this project
-        if let Err(e) = state.docker.remove_by_name(&payload.project_id).await {
-            tracing::warn!(error = %e, "failed to remove old container (may not exist)");
-        }
+    tokio::spawn(async move {
+        crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Deployment started");
 
-        // Pull the new image (skip if it's a local image ID, i.e. already uploaded)
-        if !payload.image.starts_with("sha256:") {
-            if let Err(e) = state
-                .docker
-                .pull_image(&payload.image)
+        let result: Result<(), anyhow::Error> = async {
+            // 5a. Pull image / start container
+            let (container_id, mapped_port) = if node_id_clone == "local" {
+                // --- Local path ---
+                crate::routes::manage::ensure_project_dir_and_env(&payload_clone.project_id);
+
+                // Remove any existing container for this project
+                if let Err(e) = state_clone.docker.remove_by_name(&payload_clone.project_id).await {
+                    tracing::warn!(error = %e, "failed to remove old container (may not exist)");
+                }
+
+                // Pull the new image (skip if it's a local image ID or already exists locally)
+                if !payload_clone.image.starts_with("sha256:") {
+                    crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Pulling image {}...", &payload_clone.image));
+                    state_clone.docker.pull_image_with_opts(&payload_clone.image, false).await?;
+                    crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Image ready");
+                }
+
+                // Start the container
+                crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Creating container...");
+                let extra_env = crate::routes::manage::read_local_project_env(&payload_clone.project_id);
+                let config = litebin_common::types::RunServiceConfig::from_project(&project_clone, extra_env);
+                let result = state_clone.docker.run_service_container(&config).await?;
+                crate::routes::manage::write_local_env_snapshot(&payload_clone.project_id);
+                crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Container started on port {}", result.1));
+                result
+            } else {
+                // --- Remote node path ---
+                crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Deploying to remote node {}...", &node_id_clone));
+                let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
+                    .bind(&node_id_clone)
+                    .fetch_optional(&state_clone.db)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("node '{}' not found", node_id_clone))?;
+
+                let client = nodes::client::get_node_client(&state_clone.node_clients, &node_id_clone)?;
+                let base_url = agent_base_url(&state_clone.config, &node);
+
+                let run_resp = client
+                    .post(&format!("{}/containers/run", base_url))
+                    .json(&json!({
+                        "image": payload_clone.image,
+                        "internal_port": payload_clone.port,
+                        "project_id": payload_clone.project_id,
+                        "cmd": project_clone.cmd,
+                        "memory_limit_mb": project_clone.memory_limit_mb,
+                        "cpu_limit": project_clone.cpu_limit,
+                        "volumes": payload_clone.volumes,
+                    }))
+                    .send()
+                    .await?;
+
+                if !run_resp.status().is_success() {
+                    let body = run_resp.text().await.unwrap_or_default();
+                    anyhow::bail!("agent container run failed: {}", body);
+                }
+
+                let run_json: serde_json::Value = run_resp.json().await?;
+                let cid = run_json["container_id"].as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing container_id in run response"))?
+                    .to_string();
+                let port = run_json["mapped_port"].as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("missing mapped_port in run response"))? as u16;
+                (cid, port)
+            };
+
+            // 6. Update DB with container info
+            status::transition(
+                &state_clone.db,
+                &payload_clone.project_id,
+                "running",
+                &ProjectUpdateFields {
+                    container_id: Some(Some(container_id.clone())),
+                    mapped_port: Some(Some(mapped_port as i64)),
+                    node_id: Some(node_id_clone.clone()),
+                    last_active_at: Some(chrono::Utc::now().timestamp()),
+                },
+                None,
+            ).await?;
+
+            // Create project_services row for single-service deploy
+            sqlx::query(
+                "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit)
+                 VALUES (?, 'web', ?, ?, ?, 1, 'running', ?, ?, ?, ?)",
+            )
+            .bind(&payload_clone.project_id)
+            .bind(&payload_clone.image)
+            .bind(payload_clone.port)
+            .bind(mapped_port as i64)
+            .bind(&container_id)
+            .bind(&project_clone.cmd)
+            .bind(project_clone.memory_limit_mb)
+            .bind(project_clone.cpu_limit)
+            .execute(&state_clone.db)
+            .await?;
+
+            // 7. Sync Caddy routes
+            crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Syncing routes...");
+            let orchestrator_upstream = format!("litebin-orchestrator:{}", state_clone.config.port);
+            let route_entries = crate::routing_helpers::resolve_all_routes(&state_clone.db, &state_clone.config.domain, &orchestrator_upstream).await?;
+            if let Err(e) = state_clone
+                .router
+                .read()
+                .await
+                .sync_routes(&route_entries, &state_clone.config.domain, &orchestrator_upstream, &state_clone.config.dashboard_subdomain, &state_clone.config.poke_subdomain, true)
                 .await
             {
-                tracing::error!(error = %e, "failed to pull image");
-            let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("failed to pull image: {e}")})),
-            )
-                .into_response();
+                tracing::error!(error = %e, "failed to sync routes — rolling back container");
+
+                // Roll back: stop the container and reset DB status
+                if node_id_clone == "local" {
+                    let _ = state_clone.docker.stop_container(&container_id).await;
+                    let _ = state_clone.docker.remove_container(&container_id).await;
+                } else {
+                    if let Some(node) = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
+                        .bind(&node_id_clone)
+                        .fetch_optional(&state_clone.db)
+                        .await
+                        .ok()
+                        .flatten()
+                    {
+                        if let Ok(client) = nodes::client::get_node_client(&state_clone.node_clients, &node_id_clone) {
+                            let url = agent_base_url(&state_clone.config, &node);
+                            let _ = client
+                                .post(format!("{}/containers/stop", url))
+                                .json(&json!({"container_id": &container_id}))
+                                .send()
+                                .await;
+                        }
+                    }
+                }
+                let _ = status::transition(&state_clone.db, &payload_clone.project_id, "error", &ProjectUpdateFields::default(), None).await;
+                anyhow::bail!("failed to configure routing: {}", e);
             }
-        }
 
-        // Start the container
-        let extra_env = crate::routes::manage::read_local_project_env(&payload.project_id);
-        let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
-        match state.docker.run_service_container(&config).await {
-            Ok(result) => {
-                crate::routes::manage::write_local_env_snapshot(&payload.project_id);
-                result
-            },
-            Err(e) => {
-                tracing::error!(error = %e, "failed to start container");
-                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": format!("failed to start container: {e}")})),
-                )
-                    .into_response();
-            }
-        }
-    } else {
-        // --- Remote node path ---
-
-        // Get the node record for host/port
-        let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-            .bind(&node_id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(Some(n)) => n,
-            Ok(None) => {
-                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": format!("node '{}' not found", node_id)})),
-                )
-                    .into_response();
-            }
-            Err(e) => {
-                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": format!("database error: {e}")})),
-                )
-                    .into_response();
-            }
-        };
-
-        // Get client from pool
-        let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": format!("node client not available: {e}")})),
-                )
-                    .into_response();
-            }
-        };
-
-        let base_url = agent_base_url(&state.config, &node);
-
-        // Run container on agent
-        let run_resp = match client
-            .post(&format!("{}/containers/run", base_url))
-            .json(&json!({
-                "image": payload.image,
-                "internal_port": payload.port,
-                "project_id": payload.project_id,
-                "cmd": project.cmd,
-                "memory_limit_mb": project.memory_limit_mb,
-                "cpu_limit": project.cpu_limit,
-                "volumes": payload.volumes,
-            }))
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!(error = %e, node_id = %node_id, "failed to run container on agent");
-                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": format!("agent unreachable during container run: {e}")})),
-                )
-                    .into_response();
-            }
-        };
-
-        if !run_resp.status().is_success() {
-            let status_code = run_resp.status();
-            let body = run_resp.text().await.unwrap_or_default();
-            tracing::error!(node_id = %node_id, status = %status_code, "container run failed");
-            let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": format!("container run failed: {body}")})),
-            )
-                .into_response();
-        }
-
-        let run_json: serde_json::Value = match run_resp.json().await {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": format!("invalid container run response: {e}")})),
-                )
-                    .into_response();
-            }
-        };
-
-        let container_id = match run_json["container_id"].as_str() {
-            Some(id) => id.to_string(),
-            None => {
-                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "missing container_id in run response"})),
-                )
-                    .into_response();
-            }
-        };
-
-        let mapped_port = match run_json["mapped_port"].as_u64() {
-            Some(p) => p as u16,
-            None => {
-                let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "missing mapped_port in run response"})),
-                )
-                    .into_response();
-            }
-        };
-
-        (container_id, mapped_port)
-    };
-
-    // 6. Update DB with container info, node_id, and project_services row
-    if let Err(e) = status::transition(
-        &state.db,
-        &payload.project_id,
-        "running",
-        &ProjectUpdateFields {
-            container_id: Some(Some(container_id.clone())),
-            mapped_port: Some(Some(mapped_port as i64)),
-            node_id: Some(node_id.clone()),
-            last_active_at: Some(now),
-        },
-        None,
-    ).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("database error: {e}")})),
-        )
-            .into_response();
-    }
-
-    // Create project_services row for single-service deploy
-    let _ = sqlx::query(
-        "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit)
-         VALUES (?, 'web', ?, ?, ?, 1, 'running', ?, ?, ?, ?)",
-    )
-    .bind(&payload.project_id)
-    .bind(&payload.image)
-    .bind(payload.port)
-    .bind(mapped_port as i64)
-    .bind(&container_id)
-    .bind(&project.cmd)
-    .bind(project.memory_limit_mb)
-    .bind(project.cpu_limit)
-    .execute(&state.db)
-    .await;
-
-    // 7. Sync Caddy routes
-    let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-    let route_entries = match crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to resolve routes");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("failed to resolve routes: {e}")})),
-            )
-                .into_response();
-        }
-    };
-    if let Err(e) = state
-        .router
-        .read()
-        .await
-        .sync_routes(&route_entries, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, true)
-        .await
-    {
-        tracing::error!(error = %e, "failed to sync routes — rolling back container");
-
-        // Roll back: stop the container and reset DB status
-        if node_id == "local" {
-            let _ = state.docker.stop_container(&container_id).await;
-            let _ = state.docker.remove_container(&container_id).await;
-        } else {
-            let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-                .bind(&node_id)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
-            if let Some(node) = node {
-                if let Ok(client) = nodes::client::get_node_client(&state.node_clients, &node_id) {
-                    let url = agent_base_url(&state.config, &node);
-                    let _ = client
-                        .post(format!("{}/containers/stop", url))
-                        .json(&json!({"container_id": &container_id}))
-                        .send()
-                        .await;
+            // 8. Clean up old image if it changed
+            if let Some(ref old) = old_image_clone {
+                if old != &payload_clone.image {
+                    crate::routes::manage::cleanup_unused_image(
+                        &state_clone,
+                        Some(&node_id_clone),
+                        old,
+                    ).await;
                 }
             }
-        }
-        let _ = status::transition(&state.db, &payload.project_id, "error", &ProjectUpdateFields::default(), None).await;
 
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("failed to configure routing: {e}")})),
-        )
-            .into_response();
-    }
-
-    let url = format!("https://{}.{}", payload.project_id, state.config.domain);
-
-    // 8. Clean up old image if it changed
-    if let Some(ref old) = old_image {
-        if old != &payload.image {
-            crate::routes::manage::cleanup_unused_image(
-                &state,
-                Some(&node_id),
-                old,
-            )
-            .await;
-        }
-    }
-
-    tracing::info!(
-        project_id = %payload.project_id,
-        container_id = %container_id,
-        mapped_port = %mapped_port,
-        node_id = %node_id,
-        url = %url,
-        "deploy complete"
-    );
-
-    // 9. Detect orphaned volumes and optionally clean up
-    let mut orphaned_volumes: Vec<String> = Vec::new();
-    if let Some(ref old) = old_volumes {
-        let new_names: std::collections::HashSet<String> = payload.volumes
-            .as_ref()
-            .map(|v| v.iter().map(|vm| vm.name.clone().unwrap_or_else(|| payload.project_id.clone())).collect())
-            .unwrap_or_default();
-        for vm in old {
-            let name = vm.name.as_deref().unwrap_or(&payload.project_id);
-            if !new_names.contains(name) {
-                let scoped = litebin_common::types::scope_volume_source(name, &payload.project_id);
-                match litebin_common::types::classify_volume(&scoped) {
-                    litebin_common::types::VolumeKind::AbsoluteBindMount => continue,
-                    _ => {}
-                }
-                orphaned_volumes.push(scoped.clone());
-                if payload.cleanup_volumes == Some(true) {
-                    let _ = state.docker.remove_volume_by_name(&scoped).await;
-                    tracing::info!(volume = %scoped, "cleaned up orphaned volume");
+            // 9. Detect orphaned volumes and optionally clean up
+            if let Some(ref old) = old_volumes_clone {
+                let new_names: std::collections::HashSet<String> = payload_clone.volumes
+                    .as_ref()
+                    .map(|v: &Vec<litebin_common::types::VolumeMount>| v.iter().map(|vm| vm.name.clone().unwrap_or_else(|| payload_clone.project_id.clone())).collect())
+                    .unwrap_or_default();
+                for vm in old {
+                    let name = vm.name.as_deref().unwrap_or(&payload_clone.project_id);
+                    if !new_names.contains(name) {
+                        let scoped = litebin_common::types::scope_volume_source(name, &payload_clone.project_id);
+                        match litebin_common::types::classify_volume(&scoped) {
+                            litebin_common::types::VolumeKind::AbsoluteBindMount => continue,
+                            _ => {}
+                        }
+                        if payload_clone.cleanup_volumes == Some(true) {
+                            let _ = state_clone.docker.remove_volume_by_name(&scoped).await;
+                            tracing::info!(volume = %scoped, "cleaned up orphaned volume");
+                        }
+                    }
                 }
             }
+
+            let url = format!("https://{}.{}", payload_clone.project_id, state_clone.config.domain);
+            tracing::info!(
+                project_id = %payload_clone.project_id,
+                container_id = %container_id,
+                mapped_port = %mapped_port,
+                node_id = %node_id_clone,
+                url = %url,
+                "deploy complete"
+            );
+
+            crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Routes synced");
+            crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Deployment complete");
+            crate::routes::deploy::logs::clear_deploy_logs(&state_clone, &payload_clone.project_id);
+
+            // Trigger route sync for downstream consumers
+            let _ = state_clone.route_sync_tx.send(());
+
+            Ok(())
+        }.await;
+
+        if let Err(e) = result {
+            tracing::error!(project_id = %payload_clone.project_id, error = %e, "background deploy failed");
+            crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Deploy failed: {}", e));
+            let _ = status::transition(&state_clone.db, &payload_clone.project_id, "error", &ProjectUpdateFields::default(), None).await;
         }
-    }
+    });
 
     (
         StatusCode::OK,
         Json(json!({
-            "status": "running",
+            "status": "deploying",
             "project_id": payload.project_id,
-            "url": url,
-            "custom_domain": payload.custom_domain,
-            "mapped_port": mapped_port,
-            "orphaned_volumes": orphaned_volumes
+            "message": "Deployment started in background"
         })),
     )
         .into_response()

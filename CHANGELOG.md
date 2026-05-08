@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- **Async deploys with progress** — Deploy endpoints run in background, dashboard shows live progress modal with streaming logs, CLI polls with inline output. `l8b status --project <id>` shows deploy status and logs.
+- **Local image check before pull** — Skips Docker Hub pull when image exists locally (deploy, start, recreate, waker). Only Redeploy force-pulls. Reduces rate limit usage.
+
 ## [0.2.16] - 2026-05-06
 
 - Fix redeploy resetting sleep and per-service resource settings — Preserves `auto_stop_enabled`/`auto_start_enabled` on redeploy when not explicitly provided. Preserves dashboard-set memory/CPU overrides on compose redeploy when compose YAML doesn't specify them.

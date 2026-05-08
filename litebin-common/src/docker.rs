@@ -184,7 +184,21 @@ impl DockerManager {
         }
     }
 
-    pub async fn pull_image(&self, image: &str) -> anyhow::Result<()> {
+    /// Pull a Docker image, optionally forcing a registry check.
+    /// When `force` is false, checks if the image exists locally first and skips the pull.
+    pub async fn pull_image_with_opts(&self, image: &str, force: bool) -> anyhow::Result<()> {
+        if !force {
+            match self.docker.inspect_image(image).await {
+                Ok(_) => {
+                    tracing::info!(image = %image, "image exists locally, skipping pull");
+                    return Ok(());
+                }
+                Err(_) => {
+                    tracing::debug!(image = %image, "image not found locally, will pull");
+                }
+            }
+        }
+
         tracing::info!(image = %image, "pulling image");
 
         let options = CreateImageOptions {
@@ -202,7 +216,7 @@ impl DockerManager {
                             let total = pd.total.unwrap_or(0);
                             if total > 0 {
                                 let pct = (current as f64 / total as f64 * 100.0) as u64;
-                                tracing::info!(
+                                tracing::debug!(
                                     image = %image,
                                     layer = ?info.id,
                                     status = %status,
@@ -212,7 +226,7 @@ impl DockerManager {
                                     "pull progress"
                                 );
                             } else {
-                                tracing::info!(
+                                tracing::debug!(
                                     image = %image,
                                     layer = ?info.id,
                                     status = %status,
@@ -220,7 +234,7 @@ impl DockerManager {
                                 );
                             }
                         } else {
-                            tracing::info!(
+                            tracing::debug!(
                                 image = %image,
                                 layer = ?info.id,
                                 status = %status,
@@ -229,12 +243,20 @@ impl DockerManager {
                         }
                     }
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    tracing::error!(image = %image, error = %e, "pull failed");
+                    return Err(e.into());
+                }
             }
         }
 
         tracing::info!(image = %image, "image pulled successfully");
         Ok(())
+    }
+
+    /// Pull a Docker image (always contacts the registry).
+    pub async fn pull_image(&self, image: &str) -> anyhow::Result<()> {
+        self.pull_image_with_opts(image, true).await
     }
 
     /// Inspect a container and return the mapped host port.

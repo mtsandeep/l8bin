@@ -735,6 +735,10 @@ pub async fn batch_container_stats(
 
 // ── Multi-Service Batch Run ──────────────────────────────────────────────
 
+fn default_false() -> bool {
+    false
+}
+
 #[derive(Deserialize)]
 pub struct BatchRunRequest {
     pub project_id: String,
@@ -745,6 +749,9 @@ pub struct BatchRunRequest {
     pub target_services: Option<Vec<String>>,
     pub allow_raw_ports: Option<bool>,
     pub allow_docker_access: Option<bool>,
+    /// Whether to force-pull images (true) or skip if already present locally (false).
+    #[serde(default = "default_false")]
+    pub force_pull: bool,
     /// Per-service resource overrides from dashboard (service_name → {memory_limit_mb, cpu_limit}).
     /// Applied on top of compose-embedded limits; None values mean "use global default".
     pub service_resources: Option<std::collections::HashMap<String, ServiceResources>>,
@@ -826,8 +833,8 @@ pub async fn batch_run(
             config.allow_docker_access = true;
         }
         plan.inject_docker_proxy(&req.project_id);
-        // Pre-pull the proxy image
-        if let Err(e) = state.docker.pull_image("tecnativa/docker-socket-proxy").await {
+        // Pre-pull the proxy image (skip if already local)
+        if let Err(e) = state.docker.pull_image_with_opts("tecnativa/docker-socket-proxy", false).await {
             tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
         }
     }
@@ -914,10 +921,11 @@ pub async fn batch_run(
         .into_iter()
         .filter(|img| !img.starts_with("sha256:"))
         .collect();
+    let force_pull = req.force_pull;
     let pull_handles: Vec<_> = images_to_pull.into_iter().map(|image| {
         let docker = state.docker.clone();
         tokio::spawn(async move {
-            (image.clone(), docker.pull_image(&image).await.map_err(|e| e.to_string()))
+            (image.clone(), docker.pull_image_with_opts(&image, force_pull).await.map_err(|e| e.to_string()))
         })
     }).collect();
 

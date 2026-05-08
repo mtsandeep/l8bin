@@ -331,6 +331,12 @@ export async function fetchLogs(projectId: string, tail = 100, service?: string)
   return res.json();
 }
 
+export async function fetchDeployLogs(projectId: string): Promise<{ project_id: string; lines: string[] }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/deploy-logs`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch deploy logs');
+  return res.json();
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;

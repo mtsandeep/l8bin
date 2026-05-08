@@ -6,6 +6,7 @@ mod deploy;
 mod mise;
 mod railpack;
 mod ship;
+mod status;
 mod upload;
 
 use anyhow::{bail, Result};
@@ -106,7 +107,11 @@ enum Commands {
     /// Log out (clear stored session)
     Logout,
     /// Show CLI status and server info
-    Status,
+    Status {
+        /// Show status of a specific project
+        #[arg(long, short)]
+        project: Option<String>,
+    },
     /// Clean up leftover build artifacts (.env backups, temp dockerignore files)
     Cleanup {
         /// Project directory (default: current directory)
@@ -214,13 +219,28 @@ async fn main() -> Result<()> {
                 let nodes = auth::fetch_online_nodes(&client, &server).await;
                 let platform = ship::resolve_platform(&nodes, effective_node.as_deref());
 
-                let url = ship::deploy_compose_noninteractive(
+                ship::deploy_compose_noninteractive(
                     &client, &server, &project, &path, compose_name, true,
                     ship::ComposeDeployOpts { target_services, node_id: effective_node.clone() },
                     platform.as_deref(),
                 ).await?;
 
-                println!("Deployed! {}", url);
+                // Poll for completion (2 min timeout, non-interactive)
+                let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
+                match final_status.as_deref() {
+                    Some("running") => {
+                        let url = format!("https://{}.{}", project, server.trim_start_matches("https://").trim_start_matches("http://"));
+                        println!("Deployed! {}", url);
+                    }
+                    Some("error") => {
+                        println!("Deploy failed for project '{}'.", project);
+                        std::process::exit(1);
+                    }
+                    _ => {
+                        println!("Deployment is still in progress.");
+                        println!("Run {} to check status.", format!("l8b status --project {}", project).cyan());
+                    }
+                }
             } else {
                 let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
 
@@ -257,7 +277,28 @@ async fn main() -> Result<()> {
                 )
                 .await?;
 
-                println!("Deployed! {}", response.url);
+                if response.status == "deploying" {
+                    // Poll for completion (2 min timeout, non-interactive)
+                    let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
+                    match final_status.as_deref() {
+                        Some("running") => {
+                            let url = response.url.as_deref()
+                                .map(|u| u.to_string())
+                                .unwrap_or_else(|| format!("https://{}.{}", project, server.trim_start_matches("https://").trim_start_matches("http://")));
+                            println!("Deployed! {}", url);
+                        }
+                        Some("error") => {
+                            println!("Deploy failed for project '{}'.", project);
+                            std::process::exit(1);
+                        }
+                        _ => {
+                            println!("Deployment is still in progress.");
+                            println!("Run {} to check status.", format!("l8b status --project {}", project).cyan());
+                        }
+                    }
+                } else {
+                    println!("Deployed! {}", response.url.as_deref().unwrap_or("?"));
+                }
 
                 // Clean up
                 let _ = std::fs::remove_file(&image.path);
@@ -287,74 +328,83 @@ async fn main() -> Result<()> {
             auth::clear_session()?;
             println!("Logged out.");
         }
-        Commands::Status => {
-            println!("l8b v{}", env!("CARGO_PKG_VERSION"));
-
-            let has_session = auth::load_session().is_some();
-            let cfg = config::CliConfig::load(cli.server.as_deref(), cli.token.as_deref())?;
-            let has_token = cfg.token.is_some();
-
-            if !has_session && !has_token {
-                println!();
-                println!("  {}", "Not logged in.".dimmed());
-                println!();
-                println!("  Log in with:");
-                println!("    {}", "l8b login --server <url>".cyan());
-                println!("    {}", "l8b config set --token <token>".cyan());
+        Commands::Status { project } => {
+            if let Some(project_id) = project {
+                // Show specific project status
+                let cfg = config::CliConfig::load(cli.server.as_deref(), cli.token.as_deref())?;
+                let client = auth::authenticated_client(&cfg)?;
+                let server = auth::resolve_server(&cfg)?;
+                status::show_project_status(&client, &server, &project_id).await?;
             } else {
-                let auth_method = if has_token { "token" } else { "session" };
+                // Show system status (original behavior)
+                println!("l8b v{}", env!("CARGO_PKG_VERSION"));
 
-                match auth::resolve_server(&cfg) {
-                    Ok(server) => {
-                        println!();
-                        println!("  {} {}", "Server:".dimmed(), server.cyan());
-                        println!("  {} {}", "Auth:".dimmed(), auth_method.green());
+                let has_session = auth::load_session().is_some();
+                let cfg = config::CliConfig::load(cli.server.as_deref(), cli.token.as_deref())?;
+                let has_token = cfg.token.is_some();
 
-                        if has_session {
-                            let client = auth::authenticated_client(&cfg)?;
-                            if let Ok(resp) = auth::session_get(&client, &server, "/status").await {
-                                // Server version
-                                if let Some(ver) = resp["version"].as_str() {
-                                    println!("  {} {}", "Server version:".dimmed(), ver.cyan());
-                                }
+                if !has_session && !has_token {
+                    println!();
+                    println!("  {}", "Not logged in.".dimmed());
+                    println!();
+                    println!("  Log in with:");
+                    println!("    {}", "l8b login --server <url>".cyan());
+                    println!("    {}", "l8b config set --token <token>".cyan());
+                } else {
+                    let auth_method = if has_token { "token" } else { "session" };
 
-                                // User
-                                let user = &resp["user"];
-                                let username = user["username"].as_str().unwrap_or("unknown");
-                                let email = user["email"].as_str();
-                                let is_admin = user["is_admin"].as_bool().unwrap_or(false);
-                                let user_label = if let Some(email) = email {
-                                    format!("{} ({})", username, email)
-                                } else {
-                                    username.to_string()
-                                };
-                                let admin_tag = if is_admin { " [admin]" } else { "" };
-                                println!("  {} {}{}", "User:".dimmed(), user_label.cyan(), admin_tag.yellow());
+                    match auth::resolve_server(&cfg) {
+                        Ok(server) => {
+                            println!();
+                            println!("  {} {}", "Server:".dimmed(), server.cyan());
+                            println!("  {} {}", "Auth:".dimmed(), auth_method.green());
 
-                                // Nodes — one per line
-                                if let Some(nodes) = resp["nodes"].as_array() {
-                                    println!("  {} {}", "Nodes:".dimmed(), nodes.len().to_string().cyan());
-                                    for node in nodes {
-                                        let name = node["name"].as_str().unwrap_or("?");
-                                        let status = node["status"].as_str().unwrap_or("?");
-                                        let version = node["version"].as_str().unwrap_or("?");
-                                        let arch = node["architecture"].as_str().unwrap_or("?");
-                                        let status_color = if status == "online" { status.green() } else { status.dimmed() };
-                                        println!("    {}  {}  {}", name.cyan(), status_color, format!("v{} ({})", version, arch).dimmed());
+                            if has_session {
+                                let client = auth::authenticated_client(&cfg)?;
+                                if let Ok(resp) = auth::session_get(&client, &server, "/status").await {
+                                    // Server version
+                                    if let Some(ver) = resp["version"].as_str() {
+                                        println!("  {} {}", "Server version:".dimmed(), ver.cyan());
                                     }
-                                }
 
-                                // Projects
-                                if let Some(count) = resp["project_count"].as_i64() {
-                                    println!("  {} {}", "Projects:".dimmed(), count.to_string().cyan());
+                                    // User
+                                    let user = &resp["user"];
+                                    let username = user["username"].as_str().unwrap_or("unknown");
+                                    let email = user["email"].as_str();
+                                    let is_admin = user["is_admin"].as_bool().unwrap_or(false);
+                                    let user_label = if let Some(email) = email {
+                                        format!("{} ({})", username, email)
+                                    } else {
+                                        username.to_string()
+                                    };
+                                    let admin_tag = if is_admin { " [admin]" } else { "" };
+                                    println!("  {} {}{}", "User:".dimmed(), user_label.cyan(), admin_tag.yellow());
+
+                                    // Nodes — one per line
+                                    if let Some(nodes) = resp["nodes"].as_array() {
+                                        println!("  {} {}", "Nodes:".dimmed(), nodes.len().to_string().cyan());
+                                        for node in nodes {
+                                            let name = node["name"].as_str().unwrap_or("?");
+                                            let status = node["status"].as_str().unwrap_or("?");
+                                            let version = node["version"].as_str().unwrap_or("?");
+                                            let arch = node["architecture"].as_str().unwrap_or("?");
+                                            let status_color = if status == "online" { status.green() } else { status.dimmed() };
+                                            println!("    {}  {}  {}", name.cyan(), status_color, format!("v{} ({})", version, arch).dimmed());
+                                        }
+                                    }
+
+                                    // Projects
+                                    if let Some(count) = resp["project_count"].as_i64() {
+                                        println!("  {} {}", "Projects:".dimmed(), count.to_string().cyan());
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(_) => {
-                        println!();
-                        println!("  {} {}", "Server:".dimmed(), "(not configured)".dimmed());
-                        println!("  {} {}", "Auth:".dimmed(), auth_method.green());
+                        Err(_) => {
+                            println!();
+                            println!("  {} {}", "Server:".dimmed(), "(not configured)".dimmed());
+                            println!("  {} {}", "Auth:".dimmed(), auth_method.green());
+                        }
                     }
                 }
             }
