@@ -38,6 +38,8 @@ pub async fn deploy_compose(
     let mut auto_stop_timeout_mins = None;
     let mut auto_start_enabled = None;
     let mut custom_domain = None;
+    let mut allow_raw_ports = None;
+    let mut allow_docker_access = None;
     let mut compose_content = None;
     let mut target_services_raw = None;
 
@@ -71,6 +73,12 @@ pub async fn deploy_compose(
             }
             "custom_domain" => {
                 custom_domain = field.text().await.ok();
+            }
+            "allow_raw_ports" => {
+                allow_raw_ports = field.text().await.ok().and_then(|v| v.parse::<bool>().ok());
+            }
+            "allow_docker_access" => {
+                allow_docker_access = field.text().await.ok().and_then(|v| v.parse::<bool>().ok());
             }
             "compose" => {
                 compose_content = field.bytes().await.ok();
@@ -269,11 +277,32 @@ pub async fn deploy_compose(
     // On partial redeploy, project stays running (we're only updating a subset of services)
     let project_status = if target_services.is_some() { "running" } else { "deploying" };
 
+    // On redeploy, preserve existing allow_raw_ports/allow_docker_access unless explicitly provided
+    let (db_allow_raw_ports, db_allow_docker_access) = if is_update && allow_raw_ports.is_none() && allow_docker_access.is_none() {
+        let existing = sqlx::query_as::<_, (bool, bool)>(
+            "SELECT allow_raw_ports, allow_docker_access FROM projects WHERE id = ?"
+        )
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        match existing {
+            Some((rp, da)) => (Some(rp), Some(da)),
+            None => (allow_raw_ports, allow_docker_access),
+        }
+    } else {
+        (allow_raw_ports, allow_docker_access)
+    };
+
+    let allow_raw_ports = db_allow_raw_ports.unwrap_or(false);
+    let allow_docker_access = db_allow_docker_access.unwrap_or(false);
+
     // Upsert project row
     let result = sqlx::query(
         r#"
-        INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, service_count, service_summary, deploy_type, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, allow_raw_ports, allow_docker_access, service_count, service_summary, deploy_type, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id = excluded.user_id,
             image = excluded.image,
@@ -285,6 +314,8 @@ pub async fn deploy_compose(
             auto_stop_timeout_mins = excluded.auto_stop_timeout_mins,
             auto_start_enabled = excluded.auto_start_enabled,
             custom_domain = CASE WHEN excluded.custom_domain IS NOT NULL THEN excluded.custom_domain ELSE COALESCE(projects.custom_domain, excluded.custom_domain) END,
+            allow_raw_ports = excluded.allow_raw_ports,
+            allow_docker_access = excluded.allow_docker_access,
             service_count = excluded.service_count,
             service_summary = excluded.service_summary,
             deploy_type = excluded.deploy_type,
@@ -302,6 +333,8 @@ pub async fn deploy_compose(
     .bind(auto_stop_mins)
     .bind(auto_start)
     .bind(&custom_domain)
+    .bind(allow_raw_ports)
+    .bind(allow_docker_access)
     .bind(service_count)
     .bind(&service_summary)
     .bind("compose")

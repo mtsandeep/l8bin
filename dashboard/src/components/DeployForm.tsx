@@ -23,6 +23,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [image, setImage] = useState('');
   const [port, setPort] = useState('80');
   const [composeYaml, setComposeYaml] = useState('');
+  const [allowRawPorts, setAllowRawPorts] = useState(false);
+  const [allowDockerAccess, setAllowDockerAccess] = useState(false);
 
   // Step 2 fields — pre-populated with defaults
   const [autoStop, setAutoStop] = useState(true);
@@ -79,6 +81,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           auto_stop_enabled: autoStop,
           auto_stop_timeout_mins: timeoutMins,
           auto_start_enabled: autoStart,
+          allow_raw_ports: allowRawPorts,
+          allow_docker_access: allowDockerAccess,
         });
       } else {
         await deployProject({
@@ -267,6 +271,58 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                 <p className="text-[11px] text-slate-500 mt-1">
                   Paste your docker-compose YAML with prebuilt images
                 </p>
+              </div>
+            )}
+
+            {deployMode === 'compose' && (
+              <div className="border-t border-slate-700/50 pt-3 space-y-3">
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <div>
+                    <span className="text-xs text-slate-300">Allow raw ports</span>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Expose all compose ports directly on host (TCP/UDP)
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={allowRawPorts}
+                    onClick={() => setAllowRawPorts(v => !v)}
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
+                      allowRawPorts ? 'bg-violet-500' : 'bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                        allowRawPorts ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </label>
+
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <div>
+                    <span className="text-xs text-slate-300">Allow Docker access</span>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Inject docker-socket-proxy for inter-service container management
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={allowDockerAccess}
+                    onClick={() => setAllowDockerAccess(v => !v)}
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
+                      allowDockerAccess ? 'bg-violet-500' : 'bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                        allowDockerAccess ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </label>
               </div>
             )}
 

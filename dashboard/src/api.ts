@@ -467,6 +467,8 @@ export interface ComposeDeployPayload {
   auto_stop_enabled?: boolean;
   auto_stop_timeout_mins?: number;
   auto_start_enabled?: boolean;
+  allow_raw_ports?: boolean;
+  allow_docker_access?: boolean;
 }
 
 export async function deployComposeProject(payload: ComposeDeployPayload): Promise<void> {
@@ -479,6 +481,8 @@ export async function deployComposeProject(payload: ComposeDeployPayload): Promi
   if (payload.auto_stop_enabled !== undefined) form.append('auto_stop_enabled', String(payload.auto_stop_enabled));
   if (payload.auto_stop_timeout_mins !== undefined) form.append('auto_stop_timeout_mins', String(payload.auto_stop_timeout_mins));
   if (payload.auto_start_enabled !== undefined) form.append('auto_start_enabled', String(payload.auto_start_enabled));
+  if (payload.allow_raw_ports !== undefined) form.append('allow_raw_ports', String(payload.allow_raw_ports));
+  if (payload.allow_docker_access !== undefined) form.append('allow_docker_access', String(payload.allow_docker_access));
 
   const res = await fetch(`${API_BASE}/deploy/compose`, {
     method: 'POST',
