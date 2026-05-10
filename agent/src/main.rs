@@ -252,14 +252,18 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Create shutdown signal channel
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
     // Spawn activity reporter (reports active hosts to orchestrator via UDP → HTTP)
-    tokio::spawn(activity::run_activity_reporter(state.clone()));
+    tokio::spawn(activity::run_activity_reporter(state.clone(), shutdown_rx.clone()));
 
     // Spawn internal wake server (HTTP, no TLS, Docker network only).
     // Used by agent Caddy to trigger wake for sleeping containers in cloudflare_dns mode.
     // Port 8444 is not exposed on the host — only reachable from the Docker network.
     {
         let wake_state = state.clone();
+        let mut wake_shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
             let wake_addr = SocketAddr::from(([0, 0, 0, 0], 8444));
             let wake_app = Router::new()
@@ -269,7 +273,12 @@ async fn main() -> Result<()> {
             info!("Starting internal wake server on {}", wake_addr);
             match tokio::net::TcpListener::bind(wake_addr).await {
                 Ok(listener) => {
-                    if let Err(e) = axum::serve(listener, wake_app).await {
+                    if let Err(e) = axum::serve(listener, wake_app)
+                        .with_graceful_shutdown(async move {
+                            let _ = wake_shutdown_rx.changed().await;
+                        })
+                        .await
+                    {
                         tracing::error!(error = %e, "internal wake server failed");
                     }
                 }
@@ -318,7 +327,6 @@ async fn main() -> Result<()> {
         );
     }
 
-    info!("Starting agent with mTLS on https://{}", addr);
     let tls_config = tls::build_server_tls_config(
         &cfg.cert_path,
         &cfg.key_path,
@@ -326,9 +334,49 @@ async fn main() -> Result<()> {
     )?;
     let rustls_config =
         axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config));
+    let handle = axum_server::Handle::new();
+
+    // Spawn signal handler for graceful shutdown
+    let shutdown_handle = handle.clone();
+    let shutdown_signal_tx = shutdown_tx.clone();
+    tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        tracing::info!("shutdown signal received, draining connections...");
+        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+        let _ = shutdown_signal_tx.send(true);
+    });
+
+    tracing::info!(
+        addr = %addr,
+        node_id = ?registration.read().unwrap().as_ref().map(|r| &r.node_id),
+        version = env!("CARGO_PKG_VERSION"),
+        "agent startup complete — accepting connections"
+    );
+
     axum_server::bind_rustls(addr, rustls_config)
+        .handle(handle)
         .serve(app.into_make_service())
         .await?;
 
+    // Wait briefly for background tasks to finish
+    tracing::info!("shutdown complete");
+
     Ok(())
+}
+
+/// Wait for a shutdown signal (Ctrl+C on all platforms, SIGTERM on Unix).
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

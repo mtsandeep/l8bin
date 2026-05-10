@@ -7,12 +7,19 @@ use crate::AppState;
 use crate::nodes::client::get_node_client;
 use litebin_common::types::HealthReport;
 
-pub async fn run_heartbeat(state: AppState) {
+pub async fn run_heartbeat(state: AppState, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
     let interval = Duration::from_secs(state.config.heartbeat_interval_secs);
 
     loop {
-        sleep(interval).await;
-        run_heartbeat_pass(&state).await;
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                tracing::info!("heartbeat shutting down");
+                break;
+            }
+            _ = sleep(interval) => {
+                run_heartbeat_pass(&state).await;
+            }
+        }
     }
 }
 

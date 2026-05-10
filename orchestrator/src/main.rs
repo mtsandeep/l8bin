@@ -263,14 +263,27 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Create shutdown signal channel
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // Spawn signal handler: sends shutdown signal on Ctrl+C or SIGTERM
+    {
+        let signal_tx = shutdown_tx.clone();
+        tokio::spawn(async move {
+            wait_for_shutdown_signal().await;
+            tracing::info!("shutdown signal received, draining connections...");
+            let _ = signal_tx.send(true);
+        });
+    }
+
     // Spawn janitor background task
-    tokio::spawn(sleep::janitor::run_janitor(state.clone()));
+    tokio::spawn(sleep::janitor::run_janitor(state.clone(), shutdown_rx.clone()));
 
     // Spawn heartbeat background task
-    tokio::spawn(nodes::heartbeat::run_heartbeat(state.clone()));
+    tokio::spawn(nodes::heartbeat::run_heartbeat(state.clone(), shutdown_rx.clone()));
 
     // Spawn activity tracker (updates last_active_at based on real traffic)
-    tokio::spawn(activity::run_activity_tracker(state.clone()));
+    tokio::spawn(activity::run_activity_tracker(state.clone(), shutdown_rx.clone()));
 
     // Spawn debounced route sync background task
     tokio::spawn(routing_helpers::run_route_sync(
@@ -278,10 +291,11 @@ async fn main() -> anyhow::Result<()> {
         state.db.clone(),
         state.router.clone(),
         state.config.clone(),
+        shutdown_rx.clone(),
     ));
 
     // Spawn periodic status reconciliation background task
-    tokio::spawn(status::run_periodic_sync(state.clone()));
+    tokio::spawn(status::run_periodic_sync(state.clone(), shutdown_rx.clone()));
 
     // Run startup reconciliation pass
     nodes::reconciliation::run_reconciliation(state.clone(), None).await;
@@ -372,12 +386,50 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     let addr = format!("{}:{}", config.host, config.port);
-    tracing::info!(addr = %addr, "starting server");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    tracing::info!(
+        addr = %addr,
+        domain = %config.domain,
+        version = env!("CARGO_PKG_VERSION"),
+        "startup complete — accepting connections"
+    );
+
+    let mut server_shutdown_rx = shutdown_rx.clone();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = server_shutdown_rx.changed().await;
+        })
+        .await?;
+
+    // --- Shutdown sequence (signal already logged by signal handler) ---
+
+    // Signal all background tasks to stop
+    let _ = shutdown_tx.send(true);
+
+    // Close the DB pool
+    db.close().await;
+
+    tracing::info!("shutdown complete");
 
     Ok(())
+}
+
+/// Wait for a shutdown signal (Ctrl+C on all platforms, SIGTERM on Unix).
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 /// Construct the appropriate routing provider based on the given mode.

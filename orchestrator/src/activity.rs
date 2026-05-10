@@ -9,7 +9,7 @@ use crate::AppState;
 /// Background task that tails Caddy container logs via Docker,
 /// collects unique hosts from access logs,
 /// and updates `last_active_at` for projects that received traffic.
-pub async fn run_activity_tracker(state: AppState) {
+pub async fn run_activity_tracker(state: AppState, shutdown_rx: tokio::sync::watch::Receiver<bool>) {
     info!("activity tracker: starting");
     let domain = state.config.domain.clone();
     let dashboard_host = format!("{}.{}", state.config.dashboard_subdomain, domain);
@@ -22,6 +22,7 @@ pub async fn run_activity_tracker(state: AppState) {
         state.docker.as_ref().clone(),
         caddy_container,
         state.config.flush_interval_secs,
+        shutdown_rx,
         move |hosts| {
             let state = state.clone();
             let dashboard_host = dashboard_host.clone();

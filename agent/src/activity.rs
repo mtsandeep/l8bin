@@ -13,7 +13,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// Background task that tails agent-caddy container logs via Docker,
 /// collects unique hosts from access logs,
 /// and periodically reports them to the orchestrator.
-pub async fn run_activity_reporter(state: AgentState) {
+pub async fn run_activity_reporter(state: AgentState, shutdown_rx: tokio::sync::watch::Receiver<bool>) {
     let caddy_container = std::env::var("AGENT_CADDY_CONTAINER_NAME")
         .unwrap_or_else(|_| "litebin-agent-caddy".into());
 
@@ -24,6 +24,7 @@ pub async fn run_activity_reporter(state: AgentState) {
             .unwrap_or_else(|_| "60".into())
             .parse()
             .unwrap_or(60),
+        shutdown_rx,
         move |hosts| {
             let state = state.clone();
             async move {

@@ -52,6 +52,7 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
         route_sync_tx: tokio::sync::mpsc::unbounded_channel().0,
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
+        deploy_logs: Arc::new(DashMap::new()),
     };
 
     let app = build_router(state);
@@ -101,6 +102,7 @@ pub async fn test_server() -> TestServer {
         route_sync_tx: tokio::sync::mpsc::unbounded_channel().0,
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
+        deploy_logs: Arc::new(DashMap::new()),
     };
 
     let app = build_router(state);

@@ -274,15 +274,29 @@ pub async fn run_route_sync(
     db: SqlitePool,
     router: Arc<RwLock<Arc<dyn RoutingProvider>>>,
     config: Arc<Config>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     loop {
-        // Wait for the first signal
-        if rx.recv().await.is_none() {
-            break;
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                tracing::info!("route sync shutting down");
+                break;
+            }
+            result = rx.recv() => {
+                if result.is_none() {
+                    break;
+                }
+            }
         }
 
-        // Debounce: wait for more signals to accumulate
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Debounce: wait for more signals to accumulate (with shutdown check)
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                tracing::info!("route sync shutting down");
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+        }
         while rx.try_recv().is_ok() {}
 
         // Perform a single route sync for the entire batch

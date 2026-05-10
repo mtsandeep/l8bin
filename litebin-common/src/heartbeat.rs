@@ -46,16 +46,26 @@ fn extract_host_from_line(line: &str) -> Option<String> {
 /// and periodically calls `on_flush` with the collected hosts.
 ///
 /// Reconnects automatically if the log stream breaks (e.g., container restart).
+/// Exits gracefully when `shutdown_rx` signals shutdown.
 pub async fn run_docker_log_tailer<F, Fut>(
     docker: DockerManager,
     container_name: String,
     flush_interval_secs: u64,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     on_flush: F,
 ) where
     F: Fn(HashSet<String>) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = ()> + Send + 'static,
 {
     loop {
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                info!(container = %container_name, "activity tracker: shutting down");
+                break;
+            }
+            _ = async {} => {}
+        }
+
         let since = chrono::Utc::now().timestamp();
         info!(container = %container_name, since = since, "activity tracker: creating log stream");
 
@@ -63,7 +73,7 @@ pub async fn run_docker_log_tailer<F, Fut>(
 
         info!(container = %container_name, "activity tracker: tailing container logs");
 
-        match tail_stream(stream, flush_interval_secs, &on_flush).await {
+        match tail_stream(stream, flush_interval_secs, &on_flush, shutdown_rx.clone()).await {
             Ok(()) => {
                 info!(container = %container_name, "activity tracker: log stream ended");
             }
@@ -76,7 +86,13 @@ pub async fn run_docker_log_tailer<F, Fut>(
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                info!(container = %container_name, "activity tracker: shutting down");
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(10)) => {}
+        }
     }
 }
 
@@ -85,6 +101,7 @@ async fn tail_stream<S, F, Fut>(
     mut stream: S,
     flush_interval_secs: u64,
     on_flush: &F,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()>
 where
     S: StreamExt<Item = Result<LogOutput, bollard::errors::Error>> + Unpin,
@@ -131,6 +148,14 @@ where
                 let count = batch.len();
                 debug!(host_count = count, "activity tracker: flushing hosts");
                 on_flush(batch).await;
+            }
+            _ = shutdown_rx.changed() => {
+                // Flush remaining hosts before exiting
+                if !hosts.is_empty() {
+                    let batch: HashSet<String> = std::mem::take(&mut hosts);
+                    on_flush(batch).await;
+                }
+                return Err(anyhow::anyhow!("shutdown"));
             }
         }
     }

@@ -6,7 +6,7 @@ use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
 /// Background task that periodically stops idle containers.
-pub async fn run_janitor(state: AppState) {
+pub async fn run_janitor(state: AppState, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
     let interval = Duration::from_secs(state.config.janitor_interval_secs);
 
     tracing::info!(
@@ -15,11 +15,17 @@ pub async fn run_janitor(state: AppState) {
     );
 
     loop {
-        tokio::time::sleep(interval).await;
-
-        let r = state.router.read().await.clone();
-        if let Err(e) = sweep(&state, r.as_ref()).await {
-            tracing::error!(error = %e, "janitor sweep failed");
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                tracing::info!("janitor shutting down");
+                break;
+            }
+            _ = tokio::time::sleep(interval) => {
+                let r = state.router.read().await.clone();
+                if let Err(e) = sweep(&state, r.as_ref()).await {
+                    tracing::error!(error = %e, "janitor sweep failed");
+                }
+            }
         }
     }
 }

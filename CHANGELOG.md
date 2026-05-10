@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- **Graceful shutdown** — Orchestrator and agent handle SIGTERM/SIGINT: stop accepting new connections, drain in-flight requests, cancel background tasks (janitor, heartbeat, activity tracker, route sync, periodic sync), close DB pool, and log each step.
+- **Startup complete log** — Single clear `"startup complete — accepting connections"` log with addr, domain, and version after all init is done (replaces the ambiguous `"starting server"` message).
 - **Fix delete modal volume classification** — Relative bind mounts (`./data`) were incorrectly shown as "Absolute bind mounts — not removed". Scoped paths now use `projects/{id}/...` instead of container-internal `/app/projects/...`.
 
 ## [0.2.17] - 2026-05-08
