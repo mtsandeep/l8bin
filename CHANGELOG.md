@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- **Fix delete modal volume classification** — Relative bind mounts (`./data`) were incorrectly shown as "Absolute bind mounts — not removed". Scoped paths now use `projects/{id}/...` instead of container-internal `/app/projects/...`.
+
 ## [0.2.17] - 2026-05-08
 
 - **Async deploys with progress** — Deploy endpoints run in background, dashboard shows live progress modal with streaming logs, CLI polls with inline output. `l8b status --project <id>` shows deploy status and logs.

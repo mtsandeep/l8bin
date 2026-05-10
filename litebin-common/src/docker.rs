@@ -34,8 +34,8 @@ pub struct DockerManager {
     network: String,
     memory_limit: Arc<AtomicI64>,
     cpu_limit: Arc<AtomicU64>, // f64 stored as bits
-    /// Host-side path for /app/projects (detected via self-inspection).
-    /// Used to translate container-internal bind mount paths to host paths.
+    /// Host-side path for the projects directory (detected via self-inspection).
+    /// Used to translate `projects/...` bind mount paths to host paths.
     host_projects_dir: Option<String>,
     /// Cached CPU stat samples per container_id for delta computation.
     cpu_samples: Arc<Mutex<HashMap<String, CpuSample>>>,
@@ -85,10 +85,10 @@ impl DockerManager {
         }
     }
 
-    /// Detect the host-side path for `/app/projects` by inspecting this container's
-    /// own mount information via the Docker API. This allows bind mount sources
-    /// (which Docker resolves on the host) to use the correct host path instead
-    /// of the container-internal path.
+    /// Detect the host-side path for the projects directory by inspecting this
+    /// container's own mount information via the Docker API. This allows bind
+    /// mount sources (which Docker resolves on the host) to use the correct
+    /// host path instead of the relative `projects/...` path.
     pub async fn detect_host_projects_dir(&mut self) {
         let hostname = match std::fs::read_to_string("/etc/hostname") {
             Ok(h) => h.trim().to_string(),
@@ -125,15 +125,15 @@ impl DockerManager {
         self.cpu_limit.store(cpu_limit.to_bits(), Ordering::Relaxed);
     }
 
-    /// Translate container-internal `/app/projects/...` paths in bind specs
-    /// to host-side paths, so Docker resolves them correctly on the host.
+    /// Translate `projects/...` paths in bind specs to host-side paths,
+    /// so Docker resolves them correctly on the host.
     fn translate_bind_paths(&self, binds: &mut [String]) {
         if let Some(ref host_dir) = self.host_projects_dir {
             for bind in binds.iter_mut() {
                 if let Some(colon_pos) = bind.find(':') {
                     let source = &bind[..colon_pos];
-                    if source.starts_with("/app/projects/") {
-                        let new_source = format!("{}{}", host_dir, &source["/app/projects".len()..]);
+                    if source.starts_with("projects/") {
+                        let new_source = format!("{}/{}", host_dir, &source["projects/".len()..]);
                         *bind = format!("{}{}", new_source, &bind[colon_pos..]);
                     }
                 }

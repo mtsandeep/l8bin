@@ -80,7 +80,7 @@ pub fn scope_volume_source(name: &str, project_id: &str) -> String {
         name.to_string()
     } else if name.starts_with("./") {
         let relative = name.strip_prefix("./").unwrap();
-        format!("/app/projects/{}/{}", project_id, relative)
+        format!("projects/{}/{}", project_id, relative)
     } else {
         format!("litebin_{}_{}", project_id, name)
     }
@@ -91,7 +91,7 @@ pub fn scope_volume_source(name: &str, project_id: &str) -> String {
 pub enum VolumeKind {
     /// Docker named volume (e.g. `litebin_myproject_pgdata`)
     DockerVolume,
-    /// Relative bind mount resolved by LiteBin (e.g. `/app/projects/myproject/data`)
+    /// Relative bind mount resolved by LiteBin (e.g. `projects/myproject/data`)
     RelativeBindMount,
     /// Absolute bind mount (e.g. `/host/path`) — user-managed, skip on delete
     AbsoluteBindMount,
