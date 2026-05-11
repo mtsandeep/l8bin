@@ -51,11 +51,14 @@ pub async fn extract_deploy_token(
     let t = token_row?;
 
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query("UPDATE deploy_tokens SET last_used_at = ? WHERE id = ?")
+    if let Err(e) = sqlx::query("UPDATE deploy_tokens SET last_used_at = ? WHERE id = ?")
         .bind(now)
         .bind(&t.id)
         .execute(&state.db)
-        .await;
+        .await
+    {
+        tracing::warn!(token_id = %t.id, error = %e, "auth: failed to update deploy token last_used_at");
+    }
 
     Some(t.user_id)
 }

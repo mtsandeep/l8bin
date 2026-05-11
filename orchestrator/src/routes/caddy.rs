@@ -22,12 +22,17 @@ pub async fn ask(
         .strip_suffix(&format!(".{}", state.config.domain))
         .unwrap_or(domain);
 
-    let subdomain_exists =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
-            .bind(subdomain)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(0);
+    let subdomain_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
+        .bind(subdomain)
+        .fetch_one(&state.db)
+        .await
+    {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking subdomain");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
 
     if subdomain_exists > 0 {
         tracing::debug!(domain = %domain, subdomain = %subdomain, "caddy ask: approved (subdomain)");
@@ -35,12 +40,17 @@ pub async fn ask(
     }
 
     // 2. Exact custom_domain match
-    let custom_exists =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE custom_domain = ?")
-            .bind(domain)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(0);
+    let custom_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE custom_domain = ?")
+        .bind(domain)
+        .fetch_one(&state.db)
+        .await
+    {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking custom domain");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
 
     if custom_exists > 0 {
         tracing::debug!(domain = %domain, "caddy ask: approved (custom domain)");
@@ -49,12 +59,17 @@ pub async fn ask(
 
     // 3. www variant: if queried domain starts with "www.", check bare domain too
     if let Some(bare) = domain.strip_prefix("www.") {
-        let www_exists =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE custom_domain = ?")
-                .bind(bare)
-                .fetch_one(&state.db)
-                .await
-                .unwrap_or(0);
+        let www_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE custom_domain = ?")
+            .bind(bare)
+            .fetch_one(&state.db)
+            .await
+        {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking www variant");
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
+        };
 
         if www_exists > 0 {
             tracing::debug!(domain = %domain, bare = %bare, "caddy ask: approved (www variant)");
@@ -67,14 +82,20 @@ pub async fn ask(
     if let Some(rest) = domain.strip_suffix(&suffix) {
         // Case A: "{alias}.{project_id}" — project-scoped alias (e.g., api2.test.localhost)
         if let Some((alias, project_id)) = rest.rsplit_once('.') {
-            let route_exists = sqlx::query_scalar::<_, i64>(
+            let route_exists = match sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM project_routes WHERE project_id = ? AND route_type = 'alias' AND subdomain = ?"
             )
             .bind(project_id)
             .bind(alias)
             .fetch_one(&state.db)
             .await
-            .unwrap_or(0);
+            {
+                Ok(count) => count,
+                Err(e) => {
+                    tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking project-scoped alias");
+                    return StatusCode::INTERNAL_SERVER_ERROR;
+                }
+            };
 
             if route_exists > 0 {
                 tracing::debug!(domain = %domain, project = %project_id, alias = %alias, "caddy ask: approved (project-scoped alias)");
@@ -83,13 +104,19 @@ pub async fn ask(
         }
 
         // Case B: "{alias}" — domain-level alias (e.g., api2.localhost)
-        let route_exists = sqlx::query_scalar::<_, i64>(
+        let route_exists = match sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM project_routes WHERE route_type = 'alias' AND subdomain = ?"
         )
         .bind(rest)
         .fetch_one(&state.db)
         .await
-        .unwrap_or(0);
+        {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking domain-level alias");
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
+        };
 
         if route_exists > 0 {
             tracing::debug!(domain = %domain, alias = %rest, "caddy ask: approved (domain-level alias)");

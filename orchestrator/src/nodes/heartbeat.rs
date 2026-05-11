@@ -67,7 +67,7 @@ async fn refresh_local_node(state: &AppState) {
     let container_count = state.docker.running_container_count().await.unwrap_or(0) as i64;
     let now = chrono::Utc::now().timestamp();
 
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE nodes SET total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, last_seen_at = ?, updated_at = ? WHERE id = 'local'",
     )
     .bind(total)
@@ -79,7 +79,10 @@ async fn refresh_local_node(state: &AppState) {
     .bind(now)
     .bind(now)
     .execute(&state.db)
-    .await;
+    .await
+    {
+        tracing::warn!(error = %e, "heartbeat: failed to update local node stats");
+    }
 }
 
 async fn poll_node(state: &AppState, node: &litebin_common::types::Node) {
@@ -127,7 +130,7 @@ async fn handle_success(
         (Some(ip), _) if !ip.is_empty() => Some(ip.clone()),
         (_, agent_ip) => agent_ip.clone(),
     };
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE nodes SET last_seen_at = ?, fail_count = 0, status = 'online',
          total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?,
          public_ip = ?, architecture = ?, version = ?, updated_at = ? WHERE id = ?",
@@ -145,7 +148,10 @@ async fn handle_success(
     .bind(now)
     .bind(&node.id)
     .execute(&state.db)
-    .await;
+    .await
+    {
+        tracing::warn!(node_id = %node.id, error = %e, "heartbeat: failed to update node on success");
+    }
 
     info!(node_id = %node.id, "heartbeat: node online");
 }
@@ -154,31 +160,43 @@ async fn handle_failure(state: &AppState, node: &litebin_common::types::Node) {
     let now = chrono::Utc::now().timestamp();
 
     // Increment fail_count
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE nodes SET fail_count = fail_count + 1, updated_at = ? WHERE id = ?",
     )
     .bind(now)
     .bind(&node.id)
     .execute(&state.db)
-    .await;
+    .await
+    {
+        tracing::warn!(node_id = %node.id, error = %e, "heartbeat: failed to increment fail_count");
+    }
 
     // Re-read fail_count
-    let new_count: i64 = sqlx::query_scalar("SELECT fail_count FROM nodes WHERE id = ?")
+    let new_count: i64 = match sqlx::query_scalar("SELECT fail_count FROM nodes WHERE id = ?")
         .bind(&node.id)
         .fetch_one(&state.db)
         .await
-        .unwrap_or(0);
+    {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::error!(node_id = %node.id, error = %e, "heartbeat: failed to read fail_count, treating as 0");
+            0
+        }
+    };
 
     warn!(node_id = %node.id, fail_count = new_count, "heartbeat: node poll failed");
 
     if new_count >= 3 {
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "UPDATE nodes SET status = 'offline', updated_at = ? WHERE id = ?",
         )
         .bind(now)
         .bind(&node.id)
         .execute(&state.db)
-        .await;
+        .await
+        {
+            tracing::error!(node_id = %node.id, error = %e, "heartbeat: failed to mark node offline");
+        }
 
         warn!(node_id = %node.id, "heartbeat: node marked offline, triggering reconciliation");
 
@@ -269,7 +287,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
         (Some(ip), _) if !ip.is_empty() => Some(ip.clone()),
         (_, agent_ip) => agent_ip.clone(),
     };
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, public_ip = ?, architecture = ?, version = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
     )
     .bind(health.memory_total as i64)
@@ -285,7 +303,10 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
     .bind(now)
     .bind(&node.id)
     .execute(&state.db)
-    .await;
+    .await
+    {
+        tracing::warn!(node_id = %node.id, error = %e, "heartbeat: failed to update node on connect");
+    }
 
     info!(node_id = %node.id, "heartbeat: node connected and online");
 }

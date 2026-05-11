@@ -294,7 +294,9 @@ pub async fn run_container(
     match state.docker.run_service_container(&config).await {
         Ok((container_id, mapped_port)) => {
             // Rebuild agent Caddy config so the new container gets a route
-            let _ = super::waker::rebuild_local_caddy(&state).await;
+            if let Err(e) = super::waker::rebuild_local_caddy(&state).await {
+                tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
+            }
             write_env_snapshot(&req.project_id);
             write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, req.volumes.clone());
             (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
@@ -358,7 +360,9 @@ pub async fn recreate_container(
     match state.docker.run_service_container(&config).await {
         Ok((container_id, mapped_port)) => {
             // Rebuild agent Caddy config so the new container gets a route
-            let _ = super::waker::rebuild_local_caddy(&state).await;
+            if let Err(e) = super::waker::rebuild_local_caddy(&state).await {
+                tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
+            }
             write_env_snapshot(&req.project_id);
             write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, req.volumes.clone());
             (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
@@ -434,7 +438,9 @@ pub async fn start_container(
             let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
             return match state.docker.run_service_container(&config).await {
                 Ok((_container_id, mapped_port)) => {
-                    let _ = super::waker::rebuild_local_caddy(&state).await;
+                    if let Err(e) = super::waker::rebuild_local_caddy(&state).await {
+                tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
+            }
                     write_env_snapshot(project_id);
                     write_project_metadata(project_id, &image, internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, None);
                     (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
@@ -459,7 +465,9 @@ pub async fn start_container(
     }
 
     // Rebuild agent Caddy config so the new container gets a route
-    let _ = super::waker::rebuild_local_caddy(&state).await;
+    if let Err(e) = super::waker::rebuild_local_caddy(&state).await {
+        tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
+    }
 
     // Inspect to return the mapped port
     match state.docker.inspect_mapped_port(&req.container_id).await {
@@ -1006,7 +1014,9 @@ pub async fn batch_run(
     }
 
     // Rebuild local Caddy with all running containers
-    let _ = super::waker::rebuild_local_caddy(&state).await;
+    if let Err(e) = super::waker::rebuild_local_caddy(&state).await {
+        tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
+    }
 
     (StatusCode::OK, Json(BatchRunResponse { services: results })).into_response()
 }

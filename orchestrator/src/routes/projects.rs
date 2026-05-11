@@ -107,14 +107,20 @@ async fn to_project_response(
         match row {
             Some((service_name, image, port, mapped_port, is_public, status, container_id, _cmd, memory_limit_mb, cpu_limit)) => {
                 // Load volumes for this service from project_volumes
-                let vol_rows: Vec<(Option<String>, String)> = sqlx::query_as(
+                let vol_rows: Vec<(Option<String>, String)> = match sqlx::query_as(
                     "SELECT volume_name, container_path FROM project_volumes WHERE project_id = ? AND service_name = ?"
                 )
                 .bind(&project.id)
                 .bind(&service_name)
                 .fetch_all(db)
                 .await
-                .unwrap_or_default();
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(project_id = %project.id, service = %service_name, error = %e, "failed to load volumes");
+                        Vec::new()
+                    }
+                };
 
                 let volumes: Vec<ServiceVolumeInfo> = vol_rows
                     .into_iter()
@@ -381,13 +387,19 @@ pub async fn create_route(
         let alias = payload.subdomain.as_deref().unwrap_or("");
         if !alias.is_empty() {
             // Check against project IDs
-            let conflicts = sqlx::query_scalar::<_, i64>(
+            let conflicts = match sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM projects WHERE id = ?"
             )
             .bind(alias)
             .fetch_one(&state.db)
             .await
-            .unwrap_or(0);
+            {
+                Ok(count) => count,
+                Err(e) => {
+                    tracing::error!(alias = %alias, error = %e, "create route: failed to check project ID conflict");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"}))).into_response();
+                }
+            };
 
             if conflicts > 0 {
                 return (StatusCode::CONFLICT, Json(serde_json::json!({"error": format!("alias '{}' conflicts with an existing project ID", alias)}))).into_response();

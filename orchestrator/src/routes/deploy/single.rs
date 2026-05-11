@@ -50,11 +50,17 @@ pub async fn deploy_create(
     }
 
     // Check project doesn't already exist
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
+    let exists: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
         .bind(&payload.project_id)
         .fetch_one(&state.db)
         .await
-        .unwrap_or(0);
+    {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::error!(project_id = %payload.project_id, error = %e, "deploy: failed to check project existence");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "database error"}))).into_response();
+        }
+    };
     if exists > 0 {
         return (
             StatusCode::CONFLICT,
@@ -319,7 +325,9 @@ async fn execute_deploy(
     let node_id = match nodes::selector::select_node(&state.db, &project, payload.node_id.clone()).await {
         Ok(id) => id,
         Err(e) => {
-            let _ = status::transition(&state.db, &payload.project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await;
+            if let Err(e) = status::transition(&state.db, &payload.project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %payload.project_id, error = %e, "deploy: failed to transition to Stopped");
+            }
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": e.to_string()})),
@@ -473,7 +481,9 @@ async fn execute_deploy(
                         }
                     }
                 }
-                let _ = status::transition(&state_clone.db, &payload_clone.project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+                if let Err(e) = status::transition(&state_clone.db, &payload_clone.project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                    tracing::warn!(project_id = %payload_clone.project_id, error = %e, "deploy: failed to transition to Error");
+                }
                 anyhow::bail!("failed to configure routing: {}", e);
             }
 

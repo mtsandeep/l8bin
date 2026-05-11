@@ -245,7 +245,13 @@ async fn main() -> anyhow::Result<()> {
     // Sync routes for any previously running projects (retry up to 5 times)
     let orchestrator_upstream = format!("litebin-orchestrator:{}", config.port);
     for attempt in 1..=5 {
-        let routes = routing_helpers::resolve_all_routes(&db, &config.domain, &orchestrator_upstream).await.unwrap_or_default();
+        let routes = match routing_helpers::resolve_all_routes(&db, &config.domain, &orchestrator_upstream).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "startup: failed to resolve routes (attempt {})", attempt);
+                Vec::new()
+            }
+        };
         let r = router.read().await.clone();
         match r
             .sync_routes(&routes, &config.domain, &orchestrator_upstream, &config.dashboard_subdomain, &config.poke_subdomain, true)

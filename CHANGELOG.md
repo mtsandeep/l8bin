@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 - **Typed status enums** — Replaced bare status strings with enums across backend and frontend.
+- **Silent failure logging** — DB errors and status transition failures that were silently discarded now produce `tracing::warn`/`error` logs. Existence guards (duplicate checks, TLS validation) return 500 on DB error instead of silently bypassing guards.
 - Added "Allow raw ports" and "Allow Docker access" toggles to Deploy New App form (compose mode).
 - **Graceful shutdown** — Orchestrator and agent handle SIGTERM/SIGINT: stop accepting new connections, drain in-flight requests, cancel background tasks (janitor, heartbeat, activity tracker, route sync, periodic sync), close DB pool, and log each step.
 - **Startup complete log** — Single clear `"startup complete — accepting connections"` log with addr, domain, and version after all init is done (replaces the ambiguous `"starting server"` message).

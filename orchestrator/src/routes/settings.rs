@@ -328,11 +328,14 @@ pub async fn update_service_settings(
 
     let now = chrono::Utc::now().timestamp();
     // Update project's updated_at timestamp too
-    let _ = sqlx::query("UPDATE projects SET updated_at = ? WHERE id = ?")
+    if let Err(e) = sqlx::query("UPDATE projects SET updated_at = ? WHERE id = ?")
         .bind(now)
         .bind(&project_id)
         .execute(&state.db)
-        .await;
+        .await
+    {
+        tracing::warn!(project_id = %project_id, error = %e, "settings: failed to update project timestamp");
+    }
 
     (StatusCode::OK, Json(serde_json::json!({"updated": true}))).into_response()
 }

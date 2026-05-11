@@ -316,7 +316,7 @@ pub async fn connect_node(
 
     // 5. Update node status to online
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, public_ip = ?, architecture = ?, version = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
     )
     .bind(health.memory_total as i64)
@@ -328,7 +328,10 @@ pub async fn connect_node(
     .bind(now)
     .bind(&id)
     .execute(&state.db)
-    .await;
+    .await
+    {
+        tracing::warn!(node_id = %id, error = %e, "nodes: failed to update node status on manual connect");
+    }
 
     let updated_node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
         .bind(&id)

@@ -168,12 +168,14 @@ async fn remote_recreate(
     let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
     let now = chrono::Utc::now().timestamp();
-    let _ = status::transition(&state.db, &project.id, ProjectStatus::Running, &ProjectUpdateFields {
+    if let Err(e) = status::transition(&state.db, &project.id, ProjectStatus::Running, &ProjectUpdateFields {
         container_id: Some(Some(new_container_id.clone())),
         mapped_port: Some(mapped_port.map(|p| p as i64)),
         last_active_at: Some(now),
         ..Default::default()
-    }, None).await;
+    }, None).await {
+        tracing::warn!(project_id = %project.id, error = %e, "waker: failed to transition to Running");
+    }
 
     Ok(())
 }
@@ -181,13 +183,19 @@ async fn remote_recreate(
 /// Start only the stopped services of a project (targeted recovery).
 /// Used by the waker when non-public services are down but the public service is up.
 async fn start_stopped_services(state: &AppState, project: &crate::db::models::Project) {
-    let stopped: Vec<String> = sqlx::query_scalar(
+    let stopped: Vec<String> = match sqlx::query_scalar(
         "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped'"
     )
     .bind(&project.id)
     .fetch_all(&state.db)
     .await
-    .unwrap_or_default();
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(project_id = %project.id, error = %e, "waker: failed to fetch stopped services");
+            return;
+        }
+    };
 
     if stopped.is_empty() {
         return;
@@ -221,19 +229,29 @@ async fn handle_down_services(
     public_service_up: &mut bool,
 ) {
     // After marking crashed services as stopped, check if public is among them
-    let public_down: bool = sqlx::query_scalar(
+    let public_down = match sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'stopped'",
     )
     .bind(project_id)
     .fetch_one(&state.db)
     .await
-    .unwrap_or(0) > 0;
+    {
+        Ok(count) => count > 0,
+        Err(e) => {
+            tracing::warn!(project_id = %project_id, error = %e, "waker: failed to check public service status, assuming up");
+            false
+        }
+    };
 
     if public_down {
         *public_service_up = false;
-        let _ = status::transition(&state.db, project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await;
+        if let Err(e) = status::transition(&state.db, project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await {
+            tracing::warn!(project_id = %project_id, error = %e, "waker: failed to transition to Stopped");
+        }
     } else {
-        let _ = status::transition(&state.db, project_id, ProjectStatus::Degraded, &ProjectUpdateFields::default(), None).await;
+        if let Err(e) = status::transition(&state.db, project_id, ProjectStatus::Degraded, &ProjectUpdateFields::default(), None).await {
+            tracing::warn!(project_id = %project_id, error = %e, "waker: failed to transition to Degraded");
+        }
         let _ = state.route_sync_tx.send(());
         let state_clone = state.clone();
         let project_clone = project.clone();
@@ -307,11 +325,13 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
             let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
             let now = chrono::Utc::now().timestamp();
-            let _ = status::transition(&state.db, &subdomain, ProjectStatus::Running, &ProjectUpdateFields {
+            if let Err(e) = status::transition(&state.db, &subdomain, ProjectStatus::Running, &ProjectUpdateFields {
                 mapped_port: Some(mapped_port.map(|p| p as i64)),
                 last_active_at: Some(now),
                 ..Default::default()
-            }, None).await;
+            }, None).await {
+                tracing::warn!(project_id = %subdomain, error = %e, "waker: failed to transition to Running after start");
+            }
             return Ok(());
         }
 
@@ -384,14 +404,20 @@ async fn restart_crashed_container(
 async fn resolve_alias_project(db: &sqlx::SqlitePool, rest: &str) -> Result<Option<crate::db::models::Project>, ()> {
     // Case A: "{alias}.{project_id}" — project-scoped alias
     if let Some((_alias, pid)) = rest.rsplit_once('.') {
-        let route_exists = sqlx::query_scalar::<_, i64>(
+        let route_exists = match sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM project_routes WHERE project_id = ? AND route_type = 'alias' AND subdomain = ?"
         )
         .bind(pid)
         .bind(_alias)
         .fetch_one(db)
         .await
-        .unwrap_or(0);
+        {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::warn!(project_id = %pid, alias = %_alias, error = %e, "waker: failed to check alias route existence");
+                return Err(());
+            }
+        };
 
         if route_exists > 0 {
             return sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
@@ -514,13 +540,19 @@ pub async fn wake_for_host(
         let mut public_service_up = true;
 
         // Fast DB-only check: are any services already marked "stopped"?
-        let db_stopped: Vec<String> = sqlx::query_scalar(
+        let db_stopped: Vec<String> = match sqlx::query_scalar(
             "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped'",
         )
         .bind(&project_id)
         .fetch_all(&state.db)
         .await
-        .unwrap_or_default();
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(project_id = %project_id, error = %e, "waker: failed to fetch DB-stopped services");
+                Vec::new()
+            }
+        };
 
         if !db_stopped.is_empty() {
             tracing::info!(project = %project_id, stopped = ?db_stopped, "waker: has DB-stopped services");
@@ -538,13 +570,19 @@ pub async fn wake_for_host(
             if should_check {
                 state.multi_svc_health_check.insert(project_id.clone(), std::time::Instant::now());
 
-                let services: Vec<(String, Option<String>)> = sqlx::query_as(
+                let services: Vec<(String, Option<String>)> = match sqlx::query_as(
                     "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status = 'running' AND container_id IS NOT NULL",
                 )
                 .bind(&project_id)
                 .fetch_all(&state.db)
                 .await
-                .unwrap_or_default();
+                {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(project_id = %project_id, error = %e, "waker: failed to fetch running services for crash check");
+                        Vec::new()
+                    }
+                };
 
                 let mut crashed_services = Vec::new();
                 for (service_name, container_id) in &services {
@@ -559,7 +597,9 @@ pub async fn wake_for_host(
                     tracing::info!(project = %project_id, crashed = ?crashed_services, "waker: has crashed containers");
 
                     for service_name in &crashed_services {
-                        let _ = status::set_service_stopped(&state.db, &project_id, service_name).await;
+                        if let Err(e) = status::set_service_stopped(&state.db, &project_id, service_name).await {
+                            tracing::warn!(project_id = %project_id, service = %service_name, error = %e, "waker: failed to set crashed service stopped");
+                        }
                     }
 
                     handle_down_services(&state, &project, &project_id, &mut public_service_up).await;
@@ -576,14 +616,17 @@ pub async fn wake_for_host(
                             let db_port = project.mapped_port.unwrap_or(0) as u16;
                             if actual_port != db_port {
                                 let now = chrono::Utc::now().timestamp();
-                                let _ = sqlx::query(
+                                if let Err(e) = sqlx::query(
                                     "UPDATE projects SET mapped_port = ?, updated_at = ? WHERE id = ?",
                                 )
                                 .bind(actual_port as i64)
                                 .bind(now)
                                 .bind(&project_id)
                                 .execute(&state.db)
-                                .await;
+                                .await
+                                {
+                                    tracing::warn!(project_id = %project_id, error = %e, "waker: failed to update mapped_port");
+                                }
                                 status::sync_single_service_row(&state.db, &project_id, container_id, actual_port as i64).await;
                                 tracing::info!(project = %project_id, old = %db_port, new = %actual_port, "waker: port drifted, updated DB");
                             }
@@ -633,7 +676,9 @@ pub async fn wake_for_host(
                 if let Some(ref cid) = container_id {
                     if state.docker.is_container_running(cid).await.unwrap_or(false) {
                         tracing::info!(project = %project_id, service = %svc_name, "waker: public service running but DB stale, syncing status");
-                        let _ = status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields::default(), Some(&[svc_name.clone()])).await;
+                        if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields::default(), Some(&[svc_name.clone()])).await {
+                            tracing::warn!(project_id = %project_id, error = %e, "waker: failed to sync stale Running status");
+                        }
                         let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
                         let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
                         let resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;

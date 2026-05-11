@@ -166,12 +166,18 @@ pub async fn revoke_token(
         }
     };
 
-    let result = sqlx::query("DELETE FROM deploy_tokens WHERE id = ? AND user_id = ?")
+    let result = match sqlx::query("DELETE FROM deploy_tokens WHERE id = ? AND user_id = ?")
         .bind(&token_id)
         .bind(&user_id)
         .execute(&state.db)
         .await
-        .unwrap_or_default();
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(token_id = %token_id, error = %e, "failed to revoke deploy token");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"}))).into_response();
+        }
+    };
 
     if result.rows_affected() == 0 {
         return (

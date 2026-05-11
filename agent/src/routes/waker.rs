@@ -238,7 +238,9 @@ pub async fn wake(
                         tracing::info!(project = %subdomain_clone, "agent waker: background recovery of degraded services");
                         match wake_multi_service(&state_clone, &subdomain_clone).await {
                             Ok(_) => {
-                                let _ = rebuild_local_caddy(&state_clone).await;
+                                if let Err(e) = rebuild_local_caddy(&state_clone).await {
+                                    tracing::error!(project = %subdomain_clone, error = %e, "agent waker: failed to rebuild Caddy after recovery");
+                                }
                                 tracing::info!(project = %subdomain_clone, "agent waker: background recovery succeeded");
                             }
                             Err(e) => tracing::warn!(project = %subdomain_clone, error = %e, "agent waker: background recovery failed"),
@@ -262,7 +264,9 @@ pub async fn wake(
         // Public service is down — fall through to wake lock below
     } else if is_running {
         // Single-service running — rebuild local Caddy and return loading page
-        let _ = rebuild_local_caddy(&state).await;
+        if let Err(e) = rebuild_local_caddy(&state).await {
+            tracing::error!(project = %subdomain, error = %e, "agent waker: failed to rebuild Caddy");
+        }
         return if json { starting_json_response() } else { loading_page(&subdomain) };
     }
 

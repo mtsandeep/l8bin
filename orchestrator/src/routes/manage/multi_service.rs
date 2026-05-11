@@ -84,13 +84,19 @@ pub async fn start_services(
     };
 
     // 1b. Apply per-service overrides from project_services (dashboard-set memory/cpu)
-    let db_overrides: Vec<(String, Option<i64>, Option<f64>)> = sqlx::query_as(
+    let db_overrides: Vec<(String, Option<i64>, Option<f64>)> = match sqlx::query_as(
         "SELECT service_name, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ?",
     )
     .bind(project_id)
     .fetch_all(&state.db)
     .await
-    .unwrap_or_default();
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(project_id = %project_id, error = %e, "start: failed to fetch service overrides");
+            Vec::new()
+        }
+    };
 
     for config in &mut plan.configs {
         if let Some((_, mem, cpu)) = db_overrides.iter().find(|(name, _, _)| name == &config.service_name) {
@@ -166,13 +172,19 @@ pub async fn start_services(
 
     // 4. Pre-load existing containers from DB (for fast-path)
     let existing_containers: std::collections::HashMap<String, (String, u16)> = {
-        let rows: Vec<(String, Option<String>, Option<i64>)> = sqlx::query_as(
+        let rows: Vec<(String, Option<String>, Option<i64>)> = match sqlx::query_as(
             "SELECT service_name, container_id, mapped_port FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
         )
         .bind(project_id)
         .fetch_all(&state.db)
         .await
-        .unwrap_or_default();
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(project_id = %project_id, error = %e, "start: failed to fetch existing containers");
+                Vec::new()
+            }
+        };
         let mut map = std::collections::HashMap::new();
         for (name, cid, port) in rows {
             if let Some(cid) = cid {
@@ -245,7 +257,9 @@ pub async fn start_services(
                         } else if docker.is_container_running(existing_cid).await.unwrap_or(false) {
                             // Already running — fix stale DB status (e.g. stats polling
                             // may have marked it 'stopped' after a transient check failure)
-                            let _ = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(existing_port as i64)).await;
+                            if let Err(e) = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(existing_port as i64)).await {
+                                tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service running (existing container)");
+                            }
                             return Ok(StartedService {
                                 container_id: existing_cid.clone(),
                                 mapped_port: existing_port,
@@ -263,7 +277,9 @@ pub async fn start_services(
                                         existing_port
                                     };
                                     // Update service status and mapped port
-                                    let _ = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(actual_port as i64)).await;
+                                    if let Err(e) = status::set_service_running(&db, &run_config.project_id, &svc, existing_cid, Some(actual_port as i64)).await {
+                                        tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service running (docker start)");
+                                    }
                                     tracing::info!(service = %svc, container_id = %existing_cid, "started existing stopped container");
                                     return Ok(StartedService {
                                         container_id: existing_cid.clone(),
@@ -301,7 +317,9 @@ pub async fn start_services(
                 }
 
                 // Update project_services row
-                let _ = status::set_service_running(&db, &run_config.project_id, &svc, &container_id, Some(mapped_port as i64)).await;
+                if let Err(e) = status::set_service_running(&db, &run_config.project_id, &svc, &container_id, Some(mapped_port as i64)).await {
+                    tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service running (new container)");
+                }
 
                 // Track for rollback
                 if let Ok(mut started) = started_containers.lock() {
@@ -342,9 +360,13 @@ pub async fn start_services(
                             .map(|s| s.iter().map(|(name, _)| name.clone()).collect())
                             .unwrap_or_default();
                         for svc_name in &svc_names {
-                            let _ = status::set_service_stopped(&state.db, project_id, svc_name).await;
+                            if let Err(e) = status::set_service_stopped(&state.db, project_id, svc_name).await {
+                                tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "start: failed to set service stopped on rollback");
+                            }
                         }
-                        let _ = status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+                        if let Err(e) = status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                            tracing::warn!(project_id = %project_id, error = %e, "start services: failed to transition to Error on rollback");
+                        }
                         return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
                     }
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
@@ -372,24 +394,29 @@ pub async fn start_services(
 
     if opts.services.is_none() {
         // Full start: all services started, set project to "running"
-        let _ = status::transition(&state.db, project_id, ProjectStatus::Running, &ProjectUpdateFields {
+        if let Err(e) = status::transition(&state.db, project_id, ProjectStatus::Running, &ProjectUpdateFields {
             container_id: Some(if public_container_id.is_empty() { None } else { Some(public_container_id) }),
             mapped_port: Some(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) }),
             last_active_at: Some(now),
             ..Default::default()
-        }, None).await;
+        }, None).await {
+            tracing::error!(project_id = %project_id, error = %e, "start services: failed to transition to Running after full start");
+        }
     } else {
         // Partial start: derive project status from aggregate service states
         if !public_container_id.is_empty() {
             // Update public container info on projects row
-            let _ = sqlx::query("UPDATE projects SET container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?")
+            if let Err(e) = sqlx::query("UPDATE projects SET container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?")
                 .bind(&public_container_id)
                 .bind(public_mapped_port as i64)
                 .bind(now)
                 .bind(now)
                 .bind(project_id)
                 .execute(&state.db)
-                .await;
+                .await
+            {
+                tracing::warn!(project_id = %project_id, error = %e, "start services: failed to update public container info");
+            }
         }
         status::derive_and_set_project_status(&state.db, project_id).await;
     }
@@ -438,19 +465,27 @@ pub async fn stop_services(
         }
         if let Some(container_id) = cid {
             let _ = state.docker.stop_container(container_id).await;
-            let _ = status::set_service_stopped(&state.db, project_id, svc_name).await;
+            if let Err(e) = status::set_service_stopped(&state.db, project_id, svc_name).await {
+                tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "stop: failed to set service stopped");
+            }
             tracing::info!(project = %project_id, service = %svc_name, "service stopped");
         }
     }
 
     // Stop the docker-socket-proxy if allow_docker_access is enabled
-    let allow_docker: bool = sqlx::query_scalar(
+    let allow_docker: bool = match sqlx::query_scalar(
         "SELECT allow_docker_access FROM projects WHERE id = ?"
     )
     .bind(project_id)
     .fetch_one(&state.db)
     .await
-    .unwrap_or(false);
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(project_id = %project_id, error = %e, "stop: failed to read allow_docker_access, skipping proxy stop");
+            false
+        }
+    };
 
     if allow_docker {
         let proxy_name = litebin_common::types::container_name(project_id, "litebin-docker-proxy", None);
@@ -535,7 +570,9 @@ pub async fn recreate_services(
             let _ = state.docker.remove_container(cid).await;
             tracing::info!(project = %project_id, service = %svc.service_name, "recreate: service container removed");
         }
-        let _ = status::set_service_stopped(&state.db, project_id, &svc.service_name).await;
+        if let Err(e) = status::set_service_stopped(&state.db, project_id, &svc.service_name).await {
+            tracing::warn!(project_id = %project_id, service = %svc.service_name, error = %e, "recreate: failed to set service stopped");
+        }
     }
 
     // Re-deploy targeted services

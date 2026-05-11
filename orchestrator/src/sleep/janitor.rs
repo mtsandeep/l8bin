@@ -62,13 +62,19 @@ async fn sweep(
     let mut service_containers: std::collections::HashMap<String, Vec<(String, Option<String>)>> = std::collections::HashMap::new();
     for project in &idle_projects {
         let rows: Vec<(String, Option<String>)> = if project.service_count.unwrap_or(1) > 1 {
-            sqlx::query_as(
+            match sqlx::query_as(
                 "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL AND container_id != ''",
             )
             .bind(&project.id)
             .fetch_all(&state.db)
             .await
-            .unwrap_or_default()
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(project_id = %project.id, error = %e, "janitor: failed to fetch service containers, skipping project");
+                    Vec::new()
+                }
+            }
         } else {
             // Single-service: use projects.container_id
             project.container_id.as_ref().map(|cid| vec![("web".to_string(), Some(cid.clone()))]).unwrap_or_default()

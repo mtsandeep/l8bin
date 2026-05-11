@@ -164,7 +164,13 @@ async fn batch_load_services(
         builder = builder.bind(pid);
     }
 
-    let rows = builder.fetch_all(db).await.unwrap_or_default();
+    let rows = match builder.fetch_all(db).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "stats: failed to fetch service rows");
+            Vec::new()
+        }
+    };
 
     // Group by project_id
     let mut map: std::collections::HashMap<String, Vec<(ServiceInfo, Option<String>)>> = std::collections::HashMap::new();
@@ -201,7 +207,13 @@ async fn batch_load_services(
         for pid in project_ids {
             vol_builder = vol_builder.bind(pid);
         }
-        let vol_rows = vol_builder.fetch_all(db).await.unwrap_or_default();
+        let vol_rows = match vol_builder.fetch_all(db).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "stats: failed to fetch volume rows");
+                Vec::new()
+            }
+        };
         for (pid, svc_name, vol_name, container_path) in vol_rows {
             if let Some(services) = map.get_mut(&pid) {
                 for (svc, _) in services.iter_mut() {

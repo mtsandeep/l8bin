@@ -209,13 +209,19 @@ pub async fn deploy_compose(
     let auto_start = auto_start_enabled.unwrap_or(true);
 
     // On redeploy, preserve existing sleep settings unless explicitly provided
-    let is_update = sqlx::query_scalar::<_, i64>(
+    let is_update = match sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM projects WHERE id = ?"
     )
     .bind(&project_id)
     .fetch_one(&state.db)
     .await
-    .unwrap_or(0) > 0;
+    {
+        Ok(count) => count > 0,
+        Err(e) => {
+            tracing::error!(project_id = %project_id, error = %e, "compose deploy: failed to check project existence");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "database error"}))).into_response();
+        }
+    };
 
     let (auto_stop, auto_stop_mins, auto_start) = if is_update && auto_stop_enabled.is_none() && auto_start_enabled.is_none() {
         let existing = sqlx::query_as::<_, (bool, i64, bool)>(
@@ -280,14 +286,19 @@ pub async fn deploy_compose(
 
     // On redeploy, preserve existing allow_raw_ports/allow_docker_access unless explicitly provided
     let (db_allow_raw_ports, db_allow_docker_access) = if is_update && allow_raw_ports.is_none() && allow_docker_access.is_none() {
-        let existing = sqlx::query_as::<_, (bool, bool)>(
+        let existing = match sqlx::query_as::<_, (bool, bool)>(
             "SELECT allow_raw_ports, allow_docker_access FROM projects WHERE id = ?"
         )
         .bind(&project_id)
         .fetch_optional(&state.db)
         .await
-        .ok()
-        .flatten();
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to read allow_raw_ports/allow_docker_access, using defaults");
+                None
+            }
+        };
         match existing {
             Some((rp, da)) => (Some(rp), Some(da)),
             None => (allow_raw_ports, allow_docker_access),
@@ -411,7 +422,7 @@ pub async fn deploy_compose(
             // Preserve current status for non-targeted services
             ProjectStatus::Running
         };
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, is_public, depends_on, memory_limit_mb, cpu_limit, status)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
@@ -425,14 +436,20 @@ pub async fn deploy_compose(
         .bind(cpu_limit)
         .bind(status)
         .execute(&state.db)
-        .await;
+        .await
+        {
+            tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "compose deploy: failed to upsert project_services row");
+        }
     }
 
     // Seed project_volumes rows from compose volume definitions
-    let _ = sqlx::query("DELETE FROM project_volumes WHERE project_id = ?")
+    if let Err(e) = sqlx::query("DELETE FROM project_volumes WHERE project_id = ?")
         .bind(&project_id)
         .execute(&state.db)
-        .await;
+        .await
+    {
+        tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to delete existing volumes");
+    }
     for svc_name in &start_order {
         let svc = &compose.services[svc_name];
         if let Some(ref vols) = svc.volumes {
@@ -444,7 +461,7 @@ pub async fn deploy_compose(
                         Some(litebin_common::types::scope_volume_source(parts[0], &project_id))
                     } else { None };
                     let container_path = parts[1].to_string();
-                    let _ = sqlx::query(
+                    if let Err(e) = sqlx::query(
                         "INSERT OR IGNORE INTO project_volumes (project_id, service_name, volume_name, container_path)
                          VALUES (?, ?, ?, ?)"
                     )
@@ -453,7 +470,10 @@ pub async fn deploy_compose(
                     .bind(&volume_name)
                     .bind(&container_path)
                     .execute(&state.db)
-                    .await;
+                    .await
+                    {
+                        tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "compose deploy: failed to insert volume row");
+                    }
                 }
             }
         }
@@ -462,7 +482,9 @@ pub async fn deploy_compose(
     let target_node_id = match nodes::selector::select_node(&state.db, &project, node_id.clone()).await {
         Ok(id) => id,
         Err(e) => {
-            let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+            if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+            }
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": format!("{:?}", e)})),
@@ -476,7 +498,9 @@ pub async fn deploy_compose(
         let node = match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
             Ok(n) => n,
             Err(e) => {
-                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+            }
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("{:?}", e)})),
@@ -487,7 +511,9 @@ pub async fn deploy_compose(
         let client = match nodes::client::get_node_client(&state.node_clients, &target_node_id) {
             Ok(c) => c,
             Err(e) => {
-                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+            }
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("node client unavailable: {:?}", e)})),
@@ -498,13 +524,19 @@ pub async fn deploy_compose(
         let base_url = agent_base_url(&state.config, &node);
 
         // Read per-service resource overrides and global defaults to send to agent
-        let service_resources: std::collections::HashMap<String, serde_json::Value> = sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
+        let service_resources: std::collections::HashMap<String, serde_json::Value> = match sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
             "SELECT service_name, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ?",
         )
         .bind(&project_id)
         .fetch_all(&state.db)
         .await
-        .unwrap_or_default()
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to fetch service resource overrides");
+                Vec::new()
+            }
+        }
         .into_iter()
         .filter_map(|(name, mem, cpu)| {
             if mem.is_some() || cpu.is_some() {
@@ -540,7 +572,9 @@ pub async fn deploy_compose(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "remote batch-run request failed");
-                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+            }
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("agent unreachable: {e}")})),
@@ -552,7 +586,9 @@ pub async fn deploy_compose(
             let status_code = batch_resp.status();
             let body = batch_resp.text().await.unwrap_or_default();
             tracing::error!(status = %status_code, body = %body, "remote batch-run failed");
-            let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+            if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+            }
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": format!("remote batch-run failed: {body}")})),
@@ -562,7 +598,9 @@ pub async fn deploy_compose(
         let batch_result: serde_json::Value = match batch_resp.json().await {
             Ok(v) => v,
             Err(e) => {
-                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+            }
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": format!("failed to parse batch-run response: {e}")})),
@@ -578,9 +616,13 @@ pub async fn deploy_compose(
                 let mapped_port = svc["mapped_port"].as_u64().map(|p| p as i64);
 
                 if let Some(cid) = container_id {
-                    let _ = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await;
+                    if let Err(e) = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await {
+                        tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "compose deploy: failed to set service running");
+                    }
                 } else {
-                    let _ = status::set_service_stopped(&state.db, &project_id, svc_name).await;
+                    if let Err(e) = status::set_service_stopped(&state.db, &project_id, svc_name).await {
+                        tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "compose deploy: failed to set service stopped");
+                    }
                 }
             }
 
@@ -593,7 +635,7 @@ pub async fn deploy_compose(
             if let Some(pub_svc) = public_service {
                 let cid = pub_svc["container_id"].as_str().unwrap_or("").to_string();
                 let port = pub_svc["mapped_port"].as_u64().map(|p| p as i64);
-                let _ = status::transition(
+                if let Err(e) = status::transition(
                     &state.db,
                     &project_id,
                     ProjectStatus::Running,
@@ -604,7 +646,9 @@ pub async fn deploy_compose(
                         last_active_at: Some(now),
                     },
                     None,
-                ).await;
+                ).await {
+                    tracing::error!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Running");
+                }
             }
         }
 
@@ -649,7 +693,9 @@ pub async fn deploy_compose(
                                     if target_set.contains(svc_name) {
                                         let _ = state_clone.docker.stop_container(cid).await;
                                         let _ = state_clone.docker.remove_container(cid).await;
-                                        let _ = status::set_service_stopped(&state_clone.db, &project_id_clone, svc_name).await;
+                                        if let Err(e) = status::set_service_stopped(&state_clone.db, &project_id_clone, svc_name).await {
+                                            tracing::warn!(project_id = %project_id_clone, service = %svc_name, error = %e, "compose partial redeploy: failed to set service stopped");
+                                        }
                                     }
                                 }
                             }
@@ -722,14 +768,17 @@ pub async fn deploy_compose(
             }
 
             // Persist node_id for sticky scheduling on redeploys
-            let _ = sqlx::query(
+            if let Err(e) = sqlx::query(
                 "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
             )
             .bind(&target_node_id_clone)
             .bind(chrono::Utc::now().timestamp())
             .bind(&project_id_clone)
             .execute(&state_clone.db)
-            .await;
+            .await
+            {
+                tracing::warn!(project_id = %project_id_clone, error = %e, "compose deploy: failed to persist node_id");
+            }
 
             // Full route sync after deploy
             crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, "Syncing routes...");
@@ -764,7 +813,9 @@ pub async fn deploy_compose(
         if let Err(e) = result {
             tracing::error!(project_id = %project_id_clone, error = %e, "background compose deploy failed");
             crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, &format!("Deploy failed: {}", e));
-            let _ = status::transition(&state_clone.db, &project_id_clone, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+            if let Err(e) = status::transition(&state_clone.db, &project_id_clone, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %project_id_clone, error = %e, "compose deploy: failed to transition to Error in background task");
+            }
         }
     });
 

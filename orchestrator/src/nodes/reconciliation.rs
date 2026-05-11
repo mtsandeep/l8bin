@@ -40,22 +40,34 @@ pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
     // Also check running projects on remote nodes (container may have crashed)
     let running_projects = match node_id.as_deref() {
         Some(nid) if nid != "local" => {
-            sqlx::query_as::<_, Project>(
+            match sqlx::query_as::<_, Project>(
                 "SELECT * FROM projects WHERE status = 'running' AND node_id = ?",
             )
             .bind(nid)
             .fetch_all(&state.db)
             .await
-            .unwrap_or_default()
+            {
+                Ok(projects) => projects,
+                Err(e) => {
+                    tracing::warn!(node_id = %nid, error = %e, "reconciliation: failed to fetch running projects for node");
+                    Vec::new()
+                }
+            }
         }
         None => {
             // On full pass, only check remote running projects (local Docker is authoritative)
-            sqlx::query_as::<_, Project>(
+            match sqlx::query_as::<_, Project>(
                 "SELECT * FROM projects WHERE status = 'running' AND node_id IS NOT NULL AND node_id != 'local'",
             )
             .fetch_all(&state.db)
             .await
-            .unwrap_or_default()
+            {
+                Ok(projects) => projects,
+                Err(e) => {
+                    tracing::warn!(error = %e, "reconciliation: failed to fetch remote running projects");
+                    Vec::new()
+                }
+            }
         }
         _ => Vec::new(), // local-only pass: skip running check for local
     };
@@ -213,30 +225,42 @@ async fn reconcile_project(state: &AppState, project: &Project, corrections: &mu
 }
 
 async fn set_project_error(state: &AppState, project_id: &str) {
-    let _ = status::transition(
+    if let Err(e) = status::transition(
         &state.db,
         project_id,
         ProjectStatus::Error,
         &ProjectUpdateFields::default(),
         None,
     )
-    .await;
+    .await
+    {
+        tracing::warn!(project_id, error = %e, "reconciliation: failed to set project to Error");
+    }
     warn!(project_id, "reconciliation: project set to error");
 }
 
 async fn set_project_running(state: &AppState, project: &Project) {
-    let _ = status::transition(
+    if let Err(e) = status::transition(
         &state.db,
         &project.id,
         ProjectStatus::Running,
         &ProjectUpdateFields::default(),
         None,
     )
-    .await;
+    .await
+    {
+        tracing::warn!(project_id = %project.id, error = %e, "reconciliation: failed to set project to Running");
+    }
 
     // Sync routes
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-    let routes = crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await.unwrap_or_default();
+    let routes = match crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "reconciliation: failed to resolve routes");
+            Vec::new()
+        }
+    };
     let _ = state
         .router
         .read()

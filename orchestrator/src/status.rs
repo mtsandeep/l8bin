@@ -168,7 +168,7 @@ pub async fn sync_single_service_row(
     container_id: &str,
     mapped_port: i64,
 ) {
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE project_services SET status = ?, container_id = ?, mapped_port = ? WHERE project_id = ? AND service_name = 'web'",
     )
     .bind(ProjectStatus::Running)
@@ -176,7 +176,10 @@ pub async fn sync_single_service_row(
     .bind(mapped_port)
     .bind(project_id)
     .execute(db)
-    .await;
+    .await
+    {
+        tracing::warn!(project_id = %project_id, error = %e, "status: failed to sync single service row");
+    }
 }
 
 /// Derive project status from aggregated service states and update projects table.
@@ -186,13 +189,19 @@ pub async fn sync_single_service_row(
 /// - Some services running → Degraded
 /// - No services running → Stopped
 pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) -> ProjectStatus {
-    let statuses: Vec<ProjectStatus> = sqlx::query_scalar(
+    let statuses: Vec<ProjectStatus> = match sqlx::query_scalar(
         "SELECT status FROM project_services WHERE project_id = ?",
     )
     .bind(project_id)
     .fetch_all(db)
     .await
-    .unwrap_or_default();
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(project_id = %project_id, error = %e, "status: failed to fetch service statuses, defaulting to Stopped");
+            return ProjectStatus::Stopped;
+        }
+    };
 
     if statuses.is_empty() {
         return ProjectStatus::Stopped;
@@ -209,12 +218,15 @@ pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) ->
     };
 
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
+    if let Err(e) = sqlx::query("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
         .bind(&new_status)
         .bind(now)
         .bind(project_id)
         .execute(db)
-        .await;
+        .await
+    {
+        tracing::warn!(project_id = %project_id, status = %new_status, error = %e, "status: failed to update project status");
+    }
 
     new_status
 }
@@ -261,13 +273,23 @@ pub async fn sync_project_from_docker(
     }
 
     // Load services
-    let services: Vec<(String, Option<String>)> = sqlx::query_as(
+    let services: Vec<(String, Option<String>)> = match sqlx::query_as(
         "SELECT service_name, container_id FROM project_services WHERE project_id = ?",
     )
     .bind(project_id)
     .fetch_all(db)
     .await
-    .unwrap_or_default();
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(project_id = %project_id, error = %e, "status: failed to fetch services for sync, skipping");
+            return SyncResult {
+                old_status: current_status.clone(),
+                new_status: current_status,
+                caddy_dirty: false,
+            };
+        }
+    };
 
     if services.is_empty() {
         return SyncResult {
@@ -291,7 +313,7 @@ pub async fn sync_project_from_docker(
         }
 
         // Fix stale service status
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "UPDATE project_services SET status = ? WHERE project_id = ? AND service_name = ? AND status != ?",
         )
         .bind(&new_svc_status)
@@ -299,7 +321,10 @@ pub async fn sync_project_from_docker(
         .bind(service_name)
         .bind(&new_svc_status)
         .execute(db)
-        .await;
+        .await
+        {
+            tracing::warn!(project_id = %project_id, service = %service_name, error = %e, "status: failed to fix stale service status");
+        }
     }
 
     // Fallback for single-service projects: the waker may have created a new container
@@ -347,12 +372,18 @@ pub async fn sync_all_local_from_docker(
     db: &SqlitePool,
     docker: &DockerManager,
 ) -> Vec<SyncResult> {
-    let project_ids: Vec<String> = sqlx::query_scalar(
+    let project_ids: Vec<String> = match sqlx::query_scalar(
         "SELECT DISTINCT project_id FROM project_services WHERE container_id IS NOT NULL AND container_id != ''",
     )
     .fetch_all(db)
     .await
-    .unwrap_or_default();
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(error = %e, "status: failed to fetch project IDs for sync");
+            Vec::new()
+        }
+    };
 
     let mut changed = Vec::new();
     for pid in &project_ids {
@@ -400,7 +431,7 @@ pub async fn update_status_from_container_states(
     for (container_id, is_running) in container_states {
         let new_svc_status = if *is_running { ProjectStatus::Running } else { ProjectStatus::Stopped };
 
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "UPDATE project_services SET status = ? WHERE project_id = ? AND container_id = ? AND status != ?",
         )
         .bind(&new_svc_status)
@@ -408,7 +439,10 @@ pub async fn update_status_from_container_states(
         .bind(container_id)
         .bind(&new_svc_status)
         .execute(db)
-        .await;
+        .await
+        {
+            tracing::warn!(project_id = %project_id, container_id = %container_id, error = %e, "status: failed to update service status from container state");
+        }
     }
 
     // Derive project status from aggregated service states

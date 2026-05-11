@@ -75,13 +75,19 @@ pub async fn stop_project(
                 }
             };
             let base_url = agent_base_url(&state.config, &node);
-            let container_ids: Vec<String> = sqlx::query_scalar(
+            let container_ids: Vec<String> = match sqlx::query_scalar(
                 "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL AND container_id != ''",
             )
             .bind(&project_id)
             .fetch_all(&state.db)
             .await
-            .unwrap_or_default();
+            {
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::warn!(project_id = %project_id, error = %e, "stop: failed to fetch container IDs");
+                    Vec::new()
+                }
+            };
             for cid in &container_ids {
                 let _ = client
                     .post(&format!("{}/containers/stop", base_url))
@@ -103,7 +109,9 @@ pub async fn stop_project(
             stop_services(&state, &project_id, None).await;
         }
 
-        let _ = status::transition(&state.db, &project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await;
+        if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await {
+            tracing::warn!(project_id = %project_id, error = %e, "stop: failed to transition to Stopped");
+        }
 
         sync_caddy(&state).await;
         tracing::info!(project = %project_id, "project stopped via API");
@@ -223,9 +231,13 @@ pub async fn start_project(
                 let container_id = svc["container_id"].as_str();
                 let mapped_port = svc["mapped_port"].as_u64().map(|p| p as i64);
                 if let Some(cid) = container_id {
-                    let _ = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await;
+                    if let Err(e) = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await {
+                        tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "start: failed to set service running");
+                    }
                 } else {
-                    let _ = status::set_service_stopped(&state.db, &project_id, svc_name).await;
+                    if let Err(e) = status::set_service_stopped(&state.db, &project_id, svc_name).await {
+                        tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "start: failed to set service stopped");
+                    }
                 }
             }
         }
@@ -554,9 +566,13 @@ pub async fn recreate_project(
                     let container_id = svc["container_id"].as_str();
                     let mapped_port = svc["mapped_port"].as_u64().map(|p| p as i64);
                     if let Some(cid) = container_id {
-                        let _ = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await;
+                        if let Err(e) = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await {
+                            tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "recreate: failed to set service running");
+                        }
                     } else {
-                        let _ = status::set_service_stopped(&state.db, &project_id, svc_name).await;
+                        if let Err(e) = status::set_service_stopped(&state.db, &project_id, svc_name).await {
+                            tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "recreate: failed to set service stopped");
+                        }
                     }
                 }
             }

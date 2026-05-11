@@ -201,9 +201,14 @@ pub async fn status(
             .fetch_one(&state.db),
     );
 
-    let nodes: Vec<StatusNode> = nodes_result
-        .unwrap_or_default()
-        .into_iter()
+    let nodes: Vec<StatusNode> = match nodes_result {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(error = %e, "status: failed to fetch nodes");
+            Vec::new()
+        }
+    }
+    .into_iter()
         .map(|n| StatusNode {
             name: n.name,
             status: n.status.to_string(),
