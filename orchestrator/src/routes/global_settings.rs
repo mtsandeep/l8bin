@@ -2,6 +2,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 
 use crate::{AppState, config::Config};
+use litebin_common::types::RoutingMode;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GlobalSettings {
@@ -83,6 +84,10 @@ pub async fn update_settings(
         if !["master_proxy", "cloudflare_dns"].contains(&routing_mode.as_str()) {
             return Err((StatusCode::BAD_REQUEST, "routing_mode must be 'master_proxy' or 'cloudflare_dns'".into()));
         }
+        let routing_mode_enum: RoutingMode = match routing_mode.as_str() {
+            "cloudflare_dns" => RoutingMode::CloudflareDns,
+            _ => RoutingMode::MasterProxy,
+        };
         upsert_setting(&state.db, "routing_mode", &routing_mode).await?;
 
         // Save Cloudflare credentials before hot-swap so the router reads the latest values
@@ -98,7 +103,7 @@ pub async fn update_settings(
         let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await?.unwrap_or_default();
 
         let new_router = crate::build_routing_provider(
-            &routing_mode,
+            &routing_mode_enum,
             &cf_token,
             &cf_zone,
             &state.config.caddy_admin_url,
@@ -160,7 +165,7 @@ pub async fn load_settings(db: &sqlx::SqlitePool, config: &Config) -> Result<Glo
     let mem: i64 = get_setting(db, "default_memory_limit_mb").await?.as_deref().unwrap_or("256").parse().unwrap_or(256);
     let cpu: f64 = get_setting(db, "default_cpu_limit").await?.as_deref().unwrap_or("0.5").parse().unwrap_or(0.5);
     let dns_target: String = get_setting(db, "dns_target").await?.unwrap_or_default();
-    let routing_mode: String = get_setting(db, "routing_mode").await?.unwrap_or_else(|| config.routing_mode.clone());
+    let routing_mode: String = get_setting(db, "routing_mode").await?.unwrap_or_else(|| config.routing_mode.to_string());
     let cloudflare_api_token: String = get_setting(db, "cloudflare_api_token").await?.unwrap_or_else(|| config.cloudflare_api_token.clone());
     let cloudflare_zone_id: String = get_setting(db, "cloudflare_zone_id").await?.unwrap_or_else(|| config.cloudflare_zone_id.clone());
     let dashboard_subdomain: String = get_setting(db, "dashboard_subdomain").await?.unwrap_or_else(|| config.dashboard_subdomain.clone());

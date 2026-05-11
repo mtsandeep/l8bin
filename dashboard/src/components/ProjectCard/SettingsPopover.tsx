@@ -13,6 +13,8 @@ import {
   type Project,
   type ProjectRoute,
   type ServiceInfo,
+  DeployType,
+  RouteType,
   fetchProjectRoutes,
   createProjectRoute,
   deleteProjectRoute,
@@ -71,7 +73,7 @@ export default function SettingsPopover({
   // Routes state
   const [routes, setRoutes] = useState<ProjectRoute[]>([]);
   const [routesLoading, setRoutesLoading] = useState(false);
-  const [newRouteType, setNewRouteType] = useState<"path" | "alias">("path");
+  const [newRouteType, setNewRouteType] = useState<RouteType>(RouteType.Path);
   const [newRoutePath, setNewRoutePath] = useState("");
   const [newRouteSubdomain, setNewRouteSubdomain] = useState("");
   const [newRouteUpstream, setNewRouteUpstream] = useState("");
@@ -106,15 +108,15 @@ export default function SettingsPopover({
   };
 
   const handleAddRoute = async () => {
-    if (newRouteType === "path" && !newRoutePath.trim()) return;
-    if (newRouteType === "alias" && !newRouteSubdomain.trim()) return;
+    if (newRouteType === RouteType.Path && !newRoutePath.trim()) return;
+    if (newRouteType === RouteType.Alias && !newRouteSubdomain.trim()) return;
     if (!newRouteUpstream.trim()) return;
     setAddingRoute(true);
     try {
       await createProjectRoute(project.id, {
         route_type: newRouteType,
-        path: newRouteType === "path" ? newRoutePath : undefined,
-        subdomain: newRouteType === "alias" ? newRouteSubdomain : undefined,
+        path: newRouteType === RouteType.Path ? newRoutePath : undefined,
+        subdomain: newRouteType === RouteType.Alias ? newRouteSubdomain : undefined,
         upstream: newRouteUpstream,
         priority: newRoutePriority,
       });
@@ -272,7 +274,7 @@ export default function SettingsPopover({
             </div>
 
             {/* Allow raw ports (compose-only) */}
-            {project.deploy_type === "compose" && (
+            {project.deploy_type === DeployType.Compose && (
               <div className="border-t border-slate-700/50 pt-3">
                 <label className="flex items-center justify-between gap-2 cursor-pointer">
                   <div>
@@ -300,7 +302,7 @@ export default function SettingsPopover({
             )}
 
             {/* Allow Docker access (compose-only) */}
-            {project.deploy_type === "compose" && (
+            {project.deploy_type === DeployType.Compose && (
               <div className="border-t border-slate-700/50 pt-3">
                 <label className="flex items-center justify-between gap-2 cursor-pointer">
                   <div>
@@ -452,13 +454,13 @@ export default function SettingsPopover({
                     <div className="flex items-center gap-2">
                       <span
                         className={`text-[9px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                          route.route_type === "path"
+                          route.route_type === RouteType.Path
                             ? "bg-sky-500/15 text-sky-400"
                             : "bg-violet-500/15 text-violet-400"
                         }`}>
-                        {route.route_type === "path" ? "PATH" : "ALIAS"}
+                        {route.route_type === RouteType.Path ? "PATH" : "ALIAS"}
                       </span>
-                      {route.route_type === "path" ? (
+                      {route.route_type === RouteType.Path ? (
                         <>
                           <span className="text-xs text-slate-300 font-mono truncate min-w-0">
                             {route.path}
@@ -493,7 +495,7 @@ export default function SettingsPopover({
                         )}
                       </button>
                     </div>
-                    {route.route_type === "alias" && route.subdomain && (
+                    {route.route_type === RouteType.Alias && route.subdomain && (
                       <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-1">
                         <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/15 text-amber-400">
                           P{route.priority}
@@ -520,9 +522,9 @@ export default function SettingsPopover({
               <div className="flex gap-1">
                 <button
                   type="button"
-                  onClick={() => setNewRouteType("path")}
+                  onClick={() => setNewRouteType(RouteType.Path)}
                   className={`flex-1 py-1.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    newRouteType === "path"
+                    newRouteType === RouteType.Path
                       ? "bg-sky-500/20 text-sky-400"
                       : "bg-slate-900/50 text-slate-500 hover:text-slate-300"
                   }`}>
@@ -530,16 +532,16 @@ export default function SettingsPopover({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setNewRouteType("alias")}
+                  onClick={() => setNewRouteType(RouteType.Alias)}
                   className={`flex-1 py-1.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                    newRouteType === "alias"
+                    newRouteType === RouteType.Alias
                       ? "bg-violet-500/20 text-violet-400"
                       : "bg-slate-900/50 text-slate-500 hover:text-slate-300"
                   }`}>
                   Alias
                 </button>
               </div>
-              {newRouteType === "path" ? (
+              {newRouteType === RouteType.Path ? (
                 <input
                   type="text"
                   value={newRoutePath}
@@ -606,8 +608,8 @@ export default function SettingsPopover({
                   disabled={
                     addingRoute ||
                     !newRouteUpstream.trim() ||
-                    (newRouteType === "path" && !newRoutePath.trim()) ||
-                    (newRouteType === "alias" && !newRouteSubdomain.trim())
+                    (newRouteType === RouteType.Path && !newRoutePath.trim()) ||
+                    (newRouteType === RouteType.Alias && !newRouteSubdomain.trim())
                   }
                   className="ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer">
                   {addingRoute ? (

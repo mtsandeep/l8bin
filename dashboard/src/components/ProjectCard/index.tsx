@@ -30,6 +30,8 @@ import {
   recreateProject,
   redeployProject,
   timeAgo,
+  ProjectStatus,
+  DeployType,
 } from "../../api";
 import SleepPopover from "./SleepPopover";
 import StatsGrid from "./ProjectStats";
@@ -192,13 +194,13 @@ export default function ProjectCard({
   };
 
   const effectiveStatus = stats?.status || project.status;
-  const isRunning = effectiveStatus === "running";
-  const isStopped = effectiveStatus === "stopped";
-  const isStopping = effectiveStatus === "stopping";
-  const isDegraded = effectiveStatus === "degraded";
+  const isRunning = effectiveStatus === ProjectStatus.Running;
+  const isStopped = effectiveStatus === ProjectStatus.Stopped;
+  const isStopping = effectiveStatus === ProjectStatus.Stopping;
+  const isDegraded = effectiveStatus === ProjectStatus.Degraded;
   const isUnconfigured =
-    project.status === "unconfigured" ||
-    (project.status === "stopped" && !project.public_stats?.image);
+    project.status === ProjectStatus.Unconfigured ||
+    (project.status === ProjectStatus.Stopped && !project.public_stats?.image);
   return (
     <div className="relative bg-slate-800/50 border border-slate-700/50 rounded-lg p-5 hover:border-slate-600/50 transition-colors">
       {/* Header */}
@@ -212,7 +214,7 @@ export default function ProjectCard({
                 {project.name || project.id}
               </h3>
               <StatusBadge status={stats?.status || project.status} />
-              {(services.length > 1 || project.deploy_type === "compose") && (
+              {(services.length > 1 || project.deploy_type === DeployType.Compose) && (
                 <span
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer border transition-colors ${
                     showServicesPopover
@@ -258,7 +260,7 @@ export default function ProjectCard({
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span
                             className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                              svc.status === "running"
+                              svc.status === ProjectStatus.Running
                                 ? "bg-emerald-400"
                                 : "bg-slate-600"
                             }`}
@@ -273,7 +275,7 @@ export default function ProjectCard({
                           )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className={`text-[10px] ${svc.status === "running" ? "text-emerald-400" : "text-slate-500"}`}>
+                          <span className={`text-[10px] ${svc.status === ProjectStatus.Running ? "text-emerald-400" : "text-slate-500"}`}>
                             {svc.status}
                           </span>
                           {svc.cpu_percent !== undefined && (

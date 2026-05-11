@@ -1,9 +1,104 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
 
 use bollard::models::{ContainerCreateBody, HostConfig};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, Type};
+
+// ── Status Enums ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+pub enum ProjectStatus {
+    Stopped,
+    Running,
+    Deploying,
+    Stopping,
+    Error,
+    Degraded,
+    Unconfigured,
+}
+
+impl ProjectStatus {
+    /// Transient statuses are managed by their owning code paths and should
+    /// not be overwritten by periodic Docker reconciliation.
+    pub fn is_transient(&self) -> bool {
+        matches!(self, ProjectStatus::Deploying | ProjectStatus::Stopping | ProjectStatus::Error | ProjectStatus::Unconfigured)
+    }
+}
+
+impl fmt::Display for ProjectStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProjectStatus::Stopped => write!(f, "stopped"),
+            ProjectStatus::Running => write!(f, "running"),
+            ProjectStatus::Deploying => write!(f, "deploying"),
+            ProjectStatus::Stopping => write!(f, "stopping"),
+            ProjectStatus::Error => write!(f, "error"),
+            ProjectStatus::Degraded => write!(f, "degraded"),
+            ProjectStatus::Unconfigured => write!(f, "unconfigured"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+pub enum NodeStatus {
+    Online,
+    Offline,
+    PendingSetup,
+    Decommissioned,
+}
+
+impl fmt::Display for NodeStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeStatus::Online => write!(f, "online"),
+            NodeStatus::Offline => write!(f, "offline"),
+            NodeStatus::PendingSetup => write!(f, "pending_setup"),
+            NodeStatus::Decommissioned => write!(f, "decommissioned"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+pub enum RoutingMode {
+    MasterProxy,
+    CloudflareDns,
+}
+
+impl fmt::Display for RoutingMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RoutingMode::MasterProxy => write!(f, "master_proxy"),
+            RoutingMode::CloudflareDns => write!(f, "cloudflare_dns"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+pub enum DeployType {
+    Image,
+    Compose,
+}
+
+impl fmt::Display for DeployType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DeployType::Image => write!(f, "image"),
+            DeployType::Compose => write!(f, "compose"),
+        }
+    }
+}
+
+// ── Domain Types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Node {
@@ -15,7 +110,7 @@ pub struct Node {
     pub public_ip: Option<String>,
     pub agent_port: i64,
     pub region: Option<String>,
-    pub status: String, // "pending_setup" | "online" | "offline" | "decommissioned"
+    pub status: NodeStatus,
     pub total_memory: Option<i64>,
     pub total_cpu: Option<f64>,
     pub available_memory: Option<i64>,
@@ -41,7 +136,7 @@ pub struct Project {
     pub mapped_port: Option<i64>,
     pub container_id: Option<String>,
     pub node_id: Option<String>,
-    pub status: String,
+    pub status: ProjectStatus,
     pub last_active_at: Option<i64>,
     pub auto_stop_enabled: bool,
     pub auto_stop_timeout_mins: i64,
@@ -55,7 +150,7 @@ pub struct Project {
     pub volumes: Option<String>,
     pub service_count: Option<i64>,
     pub service_summary: Option<String>,
-    pub deploy_type: Option<String>,
+    pub deploy_type: Option<DeployType>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -184,7 +279,7 @@ pub struct ProjectService {
     pub mapped_port: Option<i64>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
-    pub status: String,
+    pub status: ProjectStatus,
     pub instance_id: Option<String>,
 }
 

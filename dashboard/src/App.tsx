@@ -8,7 +8,7 @@ import NodesPage from './components/NodesPage';
 import GlobalSettingsModal from './components/GlobalSettingsModal';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { ToastProvider } from './components/ToastContext';
-import { type Project, type Node, type ProjectStats, type ServiceStats, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, fetchVersion, formatBytes } from './api';
+import { type Project, type Node, type ProjectStats, type ServiceStats, ProjectStatus, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, fetchVersion, formatBytes } from './api';
 import { useIntervalWhileVisible } from './hooks';
 
 function AppContent() {
@@ -27,7 +27,7 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [stackExpanded, setStackExpanded] = useState(false);
   const [version, setVersion] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<ProjectStatus | null>(null);
   const { user, loading: authLoading, logout } = useAuth();
   const userMenuRefMobile = useRef<HTMLDivElement>(null);
   const userMenuRefDesktop = useRef<HTMLDivElement>(null);
@@ -103,9 +103,9 @@ function AppContent() {
     return <NodesPage onBack={() => setShowNodes(false)} projects={projects} />;
   }
 
-  const running = projects.filter((p) => p.status === 'running').length;
-  const stopped = projects.filter((p) => p.status === 'stopped').length;
-  const stopping = projects.filter((p) => p.status === 'stopping').length;
+  const running = projects.filter((p) => p.status === ProjectStatus.Running).length;
+  const stopped = projects.filter((p) => p.status === ProjectStatus.Stopped).length;
+  const stopping = projects.filter((p) => p.status === ProjectStatus.Stopping).length;
 
   const sortedProjects = [...projects].sort((a, b) => b.id.localeCompare(a.id));
   const filteredProjects = statusFilter
@@ -301,23 +301,23 @@ function AppContent() {
               total
             </span>
             <button
-              onClick={() => setStatusFilter(statusFilter === 'running' ? null : 'running')}
-              className={`hover:underline cursor-pointer ${statusFilter === 'running' ? 'underline' : ''}`}
+              onClick={() => setStatusFilter(statusFilter === ProjectStatus.Running ? null : ProjectStatus.Running)}
+              className={`hover:underline cursor-pointer ${statusFilter === ProjectStatus.Running ? 'underline' : ''}`}
             >
               <span className="text-emerald-400 font-medium">{running}</span>{' '}
               running
             </button>
             <button
-              onClick={() => setStatusFilter(statusFilter === 'stopped' ? null : 'stopped')}
-              className={`hover:underline cursor-pointer ${statusFilter === 'stopped' ? 'underline' : ''}`}
+              onClick={() => setStatusFilter(statusFilter === ProjectStatus.Stopped ? null : ProjectStatus.Stopped)}
+              className={`hover:underline cursor-pointer ${statusFilter === ProjectStatus.Stopped ? 'underline' : ''}`}
             >
               <span className="text-slate-400 font-medium">{stopped}</span>{' '}
               stopped
             </button>
             {stopping > 0 && (
               <button
-                onClick={() => setStatusFilter(statusFilter === 'stopping' ? null : 'stopping')}
-                className={`hover:underline cursor-pointer ${statusFilter === 'stopping' ? 'underline' : ''}`}
+                onClick={() => setStatusFilter(statusFilter === ProjectStatus.Stopping ? null : ProjectStatus.Stopping)}
+                className={`hover:underline cursor-pointer ${statusFilter === ProjectStatus.Stopping ? 'underline' : ''}`}
               >
                 <span className="text-orange-400 font-medium">{stopping}</span>{' '}
                 stopping

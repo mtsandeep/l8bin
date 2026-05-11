@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use litebin_common::types::{ContainerStatus, VolumeMount};
+use litebin_common::types::{ContainerStatus, ProjectStatus, VolumeMount};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash as StdHash, Hasher};
 use std::collections::hash_map::DefaultHasher;
@@ -271,7 +271,7 @@ pub async fn run_container(
         mapped_port: None,
         container_id: None,
         node_id: None,
-        status: "deploying".to_string(),
+        status: ProjectStatus::Deploying,
         cmd: req.cmd.clone(),
         memory_limit_mb: req.memory_limit_mb,
         cpu_limit: req.cpu_limit,
@@ -335,7 +335,7 @@ pub async fn recreate_container(
         mapped_port: None,
         container_id: None,
         node_id: None,
-        status: "deploying".to_string(),
+        status: ProjectStatus::Deploying,
         cmd: req.cmd.clone(),
         memory_limit_mb: req.memory_limit_mb,
         cpu_limit: req.cpu_limit,
@@ -412,7 +412,7 @@ pub async fn start_container(
                 mapped_port: None,
                 container_id: None,
                 node_id: None,
-                status: "running".to_string(),
+                status: ProjectStatus::Running,
                 cmd: req.cmd.clone(),
                 memory_limit_mb: req.memory_limit_mb,
                 cpu_limit: req.cpu_limit,

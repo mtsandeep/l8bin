@@ -1,45 +1,47 @@
+import { ProjectStatus } from '../api';
+
 interface StatusBadgeProps {
-  status: string;
+  status: ProjectStatus;
 }
 
 const statusConfig: Record<string, { bg: string; text: string; dot: string; label: string }> = {
-  running: {
+  [ProjectStatus.Running]: {
     bg: 'bg-emerald-500/10',
     text: 'text-emerald-400',
     dot: 'bg-emerald-400',
     label: 'Running',
   },
-  stopped: {
+  [ProjectStatus.Stopped]: {
     bg: 'bg-slate-500/10',
     text: 'text-slate-400',
     dot: 'bg-slate-400',
     label: 'Stopped',
   },
-  deploying: {
+  [ProjectStatus.Deploying]: {
     bg: 'bg-amber-500/10',
     text: 'text-amber-400',
     dot: 'bg-amber-400 animate-pulse',
     label: 'Deploying',
   },
-  stopping: {
+  [ProjectStatus.Stopping]: {
     bg: 'bg-orange-500/10',
     text: 'text-orange-400',
     dot: 'bg-orange-400 animate-pulse',
     label: 'Stopping',
   },
-  degraded: {
+  [ProjectStatus.Degraded]: {
     bg: 'bg-yellow-500/10',
     text: 'text-yellow-400',
     dot: 'bg-yellow-400',
     label: 'Degraded',
   },
-  waking: {
+  [ProjectStatus.Waking]: {
     bg: 'bg-sky-500/10',
     text: 'text-sky-400',
     dot: 'bg-sky-400 animate-pulse',
     label: 'Waking',
   },
-  unconfigured: {
+  [ProjectStatus.Unconfigured]: {
     bg: 'bg-indigo-500/10',
     text: 'text-indigo-400',
     dot: 'bg-indigo-400',

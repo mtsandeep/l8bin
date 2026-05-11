@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::types::Project;
+use crate::types::{Project, ProjectStatus};
 
 /// API path prefixes that should be proxied to the orchestrator (not the dashboard).
 pub const ORCHESTRATOR_API_PATHS: &[&str] = &[
@@ -84,7 +84,7 @@ impl CaddyClient {
         }
 
         for project in projects {
-            if project.status != "running" {
+            if project.status != ProjectStatus::Running {
                 continue;
             }
             let Some(internal_port) = project.internal_port else {

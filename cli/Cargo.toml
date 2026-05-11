@@ -8,6 +8,7 @@ name = "l8b"
 path = "src/main.rs"
 
 [dependencies]
+litebin-common = { path = "../litebin-common" }
 clap = { version = "4", features = ["derive", "env"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
 tokio = { version = "1.51", features = ["rt-multi-thread", "macros", "process", "fs"] }

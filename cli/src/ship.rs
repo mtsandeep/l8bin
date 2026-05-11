@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::{Confirm, Input, Select};
 use indicatif::HumanBytes;
+use litebin_common::types::ProjectStatus;
 use serde_json::json;
 
 use crate::auth;
@@ -19,7 +20,7 @@ struct PublicStats {
 #[derive(serde::Deserialize)]
 struct ProjectInfo {
     id: String,
-    status: String,
+    status: ProjectStatus,
     node_id: Option<String>,
     public_stats: Option<PublicStats>,
 }
@@ -178,11 +179,11 @@ async fn existing_project_flow(
     let items: Vec<String> = projects
         .iter()
         .map(|p| {
-            let status = match p.status.as_str() {
-                "running" => p.status.green().to_string(),
-                "stopped" | "unconfigured" => p.status.yellow().to_string(),
-                s if s.starts_with("error") => p.status.red().to_string(),
-                _ => p.status.clone(),
+            let status = match &p.status {
+                ProjectStatus::Running => p.status.to_string().green().to_string(),
+                ProjectStatus::Stopped | ProjectStatus::Unconfigured => p.status.to_string().yellow().to_string(),
+                ProjectStatus::Error | ProjectStatus::Degraded => p.status.to_string().red().to_string(),
+                _ => p.status.to_string(),
             };
             let image = p
                 .public_stats
@@ -792,17 +793,17 @@ async fn build_and_deploy(
     )
     .await?;
 
-    if deploy_resp.status == "deploying" {
+    if deploy_resp.status == ProjectStatus::Deploying {
         // Poll for completion with Wait/Detach prompt after 2 min
         deploy_spinner.set_message("Waiting for deployment...");
         let final_status = crate::status::poll_project_status(client, server, project_id, 120).await?;
         deploy_spinner.finish_and_clear();
 
-        match final_status.as_deref() {
-            Some("running") => {
+        match final_status.as_ref() {
+            Some(ProjectStatus::Running) => {
                 println!("  {} Deploy successful!", "✔".green());
             }
-            Some("error") => {
+            Some(ProjectStatus::Error) => {
                 println!("  {} Deploy failed!", "✘".red());
                 anyhow::bail!("Deploy failed for project '{}'", project_id);
             }
@@ -820,11 +821,11 @@ async fn build_and_deploy(
                     0 => {
                         // Keep polling until done
                         let final_status = crate::status::poll_project_status(client, server, project_id, 300).await?;
-                        match final_status.as_deref() {
-                            Some("running") => {
+                        match final_status.as_ref() {
+                            Some(ProjectStatus::Running) => {
                                 println!("  {} Deploy successful!", "✔".green());
                             }
-                            Some("error") => {
+                            Some(ProjectStatus::Error) => {
                                 println!("  {} Deploy failed!", "✘".red());
                                 anyhow::bail!("Deploy failed for project '{}'", project_id);
                             }
@@ -1174,19 +1175,21 @@ async fn deploy_compose(
     }
 
     let resp = auth::session_post_multipart(client, server, "/deploy/compose", form).await?;
-    let resp_status = resp["status"].as_str().unwrap_or("").to_string();
+    let resp_status: ProjectStatus = resp["status"].as_str()
+        .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
+        .unwrap_or(ProjectStatus::Stopped);
 
-    if resp_status == "deploying" {
+    if resp_status == ProjectStatus::Deploying {
         // Poll for completion with Wait/Detach prompt after 2 min
         deploy_spinner.set_message("Waiting for deployment...");
         let final_status = crate::status::poll_project_status(client, server, project_id, 120).await?;
         deploy_spinner.finish_and_clear();
 
-        match final_status.as_deref() {
-            Some("running") => {
+        match final_status.as_ref() {
+            Some(ProjectStatus::Running) => {
                 println!("  {} Compose deploy successful!", "✔".green());
             }
-            Some("error") => {
+            Some(ProjectStatus::Error) => {
                 println!("  {} Compose deploy failed!", "✘".red());
                 anyhow::bail!("Compose deploy failed for project '{}'", project_id);
             }
@@ -1202,11 +1205,11 @@ async fn deploy_compose(
                 match selection {
                     0 => {
                         let final_status = crate::status::poll_project_status(client, server, project_id, 300).await?;
-                        match final_status.as_deref() {
-                            Some("running") => {
+                        match final_status.as_ref() {
+                            Some(ProjectStatus::Running) => {
                                 println!("  {} Compose deploy successful!", "✔".green());
                             }
-                            Some("error") => {
+                            Some(ProjectStatus::Error) => {
                                 println!("  {} Compose deploy failed!", "✘".red());
                                 anyhow::bail!("Compose deploy failed for project '{}'", project_id);
                             }

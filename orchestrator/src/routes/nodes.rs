@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::AppState;
 use crate::nodes::client::build_node_client;
-use litebin_common::types::{HealthReport, ImageStats, Node};
+use litebin_common::types::{HealthReport, ImageStats, Node, NodeStatus};
 
 #[derive(Deserialize)]
 pub struct CreateNodeRequest {
@@ -40,7 +40,7 @@ pub struct NodeResponse {
 }
 
 fn recommended_node_id(nodes: &[Node]) -> Option<String> {
-    let online: Vec<&Node> = nodes.iter().filter(|n| n.status == "online").collect();
+    let online: Vec<&Node> = nodes.iter().filter(|n| n.status == NodeStatus::Online).collect();
     if online.is_empty() {
         return None;
     }
@@ -196,7 +196,7 @@ pub async fn connect_node(
     };
 
     // Only connect pending_setup or offline nodes
-    if node.status != "pending_setup" && node.status != "offline" {
+    if node.status != NodeStatus::PendingSetup && node.status != NodeStatus::Offline {
         return (
             StatusCode::CONFLICT,
             Json(ErrorResponse {

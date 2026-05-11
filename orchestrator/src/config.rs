@@ -1,5 +1,7 @@
 use std::env;
 
+use litebin_common::types::RoutingMode;
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub domain: String,
@@ -16,7 +18,7 @@ pub struct Config {
     pub client_key_path: String,
     pub heartbeat_interval_secs: u64,
     pub public_ip: String,
-    pub routing_mode: String,
+    pub routing_mode: RoutingMode,
     pub cloudflare_api_token: String,
     pub cloudflare_zone_id: String,
     pub dashboard_subdomain: String,
@@ -53,8 +55,13 @@ impl Config {
                 .unwrap_or_else(|_| "30".into())
                 .parse()?,
             public_ip: env::var("PUBLIC_IP").unwrap_or_default(),
-            routing_mode: env::var("ROUTING_MODE")
-                .unwrap_or_else(|_| "master_proxy".into()),
+            routing_mode: match env::var("ROUTING_MODE")
+                .unwrap_or_else(|_| "master_proxy".into())
+                .as_str()
+            {
+                "cloudflare_dns" => RoutingMode::CloudflareDns,
+                _ => RoutingMode::MasterProxy,
+            },
             cloudflare_api_token: env::var("CLOUDFLARE_API_TOKEN").unwrap_or_default(),
             cloudflare_zone_id: env::var("CLOUDFLARE_ZONE_ID").unwrap_or_default(),
             dashboard_subdomain: env::var("DASHBOARD_SUBDOMAIN")

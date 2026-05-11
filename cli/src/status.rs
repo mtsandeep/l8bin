@@ -2,16 +2,17 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use colored::Colorize;
+use litebin_common::types::ProjectStatus;
 
 /// Poll project status until it reaches a terminal state (running, stopped, error).
-/// Returns the final status string.
+/// Returns the final status.
 /// If timeout_secs is reached, returns None (still deploying).
 pub async fn poll_project_status(
     client: &reqwest::Client,
     server: &str,
     project_id: &str,
     timeout_secs: u64,
-) -> Result<Option<String>> {
+) -> Result<Option<ProjectStatus>> {
     let start = std::time::Instant::now();
     let poll_interval = std::time::Duration::from_secs(3);
     let timeout = std::time::Duration::from_secs(timeout_secs);
@@ -26,8 +27,10 @@ pub async fn poll_project_status(
         match resp {
             Ok(r) if r.status().is_success() => {
                 let json: serde_json::Value = r.json().await?;
-                let status = json["status"].as_str().unwrap_or("unknown").to_string();
-                if status == "running" || status == "stopped" || status == "error" {
+                let status: ProjectStatus = json["status"].as_str()
+                    .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
+                    .unwrap_or(ProjectStatus::Stopped);
+                if status == ProjectStatus::Running || status == ProjectStatus::Stopped || status == ProjectStatus::Error {
                     // Print any remaining new logs before returning
                     fetch_and_print_new_logs(client, server, project_id, &mut seen_lines).await;
                     return Ok(Some(status));
@@ -120,7 +123,10 @@ pub async fn show_project_status(
     let json: serde_json::Value = resp.json().await?;
     let project = &json["project"];
 
-    let status = project["status"].as_str().unwrap_or("unknown");
+    let status: ProjectStatus = project["status"].as_str()
+        .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
+        .unwrap_or(ProjectStatus::Stopped);
+    let status_str = status.to_string();
     let name = project["name"].as_str().unwrap_or(project_id);
     let image = project["public_stats"]["image"].as_str();
     let custom_domain = project["custom_domain"].as_str();
@@ -130,12 +136,12 @@ pub async fn show_project_status(
         .unwrap_or_else(|| format!("https://{}.{}", project_id, server.trim_end_matches('/').trim_start_matches("https://").trim_start_matches("http://")));
 
     // Status color
-    let status_colored = match status {
-        "running" => status.green().bold(),
-        "stopped" => status.dimmed(),
-        "deploying" => status.yellow().bold(),
-        "error" => status.red().bold(),
-        _ => status.normal(),
+    let status_colored = match &status {
+        ProjectStatus::Running => status_str.green().bold(),
+        ProjectStatus::Stopped => status_str.dimmed(),
+        ProjectStatus::Deploying => status_str.yellow().bold(),
+        ProjectStatus::Error => status_str.red().bold(),
+        _ => status_str.normal(),
     };
 
     println!();
@@ -157,15 +163,17 @@ pub async fn show_project_status(
             println!();
             for svc in services {
                 let svc_name = svc["service_name"].as_str().unwrap_or("?");
-                let svc_status = svc["status"].as_str().unwrap_or("unknown");
+                let svc_status: ProjectStatus = svc["status"].as_str()
+                    .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
+                    .unwrap_or(ProjectStatus::Stopped);
                 let is_public = svc["is_public"].as_bool().unwrap_or(false);
                 let cpu = svc["cpu_percent"].as_f64();
                 let mem_mb = svc["memory_mb"].as_u64();
 
-                let svc_status_colored = match svc_status {
-                    "running" => "running".green(),
-                    "stopped" => "stopped".dimmed(),
-                    _ => svc_status.yellow(),
+                let svc_status_colored = match &svc_status {
+                    ProjectStatus::Running => "running".green(),
+                    ProjectStatus::Stopped => "stopped".dimmed(),
+                    _ => svc_status.to_string().yellow(),
                 };
 
                 let pub_tag = if is_public { " (public)".dimmed() } else { "".dimmed() };
@@ -182,7 +190,7 @@ pub async fn show_project_status(
     }
 
     // If deploying, show deploy logs
-    if status == "deploying" {
+    if status == ProjectStatus::Deploying {
         println!();
         println!("  {} Deploy logs:", "---".dimmed());
         show_deploy_logs(client, server, project_id).await?;

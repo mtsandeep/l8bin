@@ -9,6 +9,7 @@ use crate::auth::backend::PasswordBackend;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::AppState;
+use litebin_common::types::{ProjectStatus, DeployType};
 use crate::status::{self, ProjectUpdateFields};
 
 /// POST /deploy/compose — Deploy a multi-service project via compose file.
@@ -275,7 +276,7 @@ pub async fn deploy_compose(
     let service_summary = start_order.join(":");
 
     // On partial redeploy, project stays running (we're only updating a subset of services)
-    let project_status = if target_services.is_some() { "running" } else { "deploying" };
+    let project_status = if target_services.is_some() { ProjectStatus::Running } else { ProjectStatus::Deploying };
 
     // On redeploy, preserve existing allow_raw_ports/allow_docker_access unless explicitly provided
     let (db_allow_raw_ports, db_allow_docker_access) = if is_update && allow_raw_ports.is_none() && allow_docker_access.is_none() {
@@ -337,7 +338,7 @@ pub async fn deploy_compose(
     .bind(allow_docker_access)
     .bind(service_count)
     .bind(&service_summary)
-    .bind("compose")
+    .bind(DeployType::Compose)
     .bind(now)
     .bind(now)
     .execute(&state.db)
@@ -405,10 +406,10 @@ pub async fn deploy_compose(
 
         // On partial redeploy, only mark targeted services as 'deploying'
         let status = if target_set.as_ref().map_or(true, |ts| ts.contains(svc_name)) {
-            "deploying"
+            ProjectStatus::Deploying
         } else {
             // Preserve current status for non-targeted services
-            "running"
+            ProjectStatus::Running
         };
         let _ = sqlx::query(
             "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, is_public, depends_on, memory_limit_mb, cpu_limit, status)
@@ -461,7 +462,7 @@ pub async fn deploy_compose(
     let target_node_id = match nodes::selector::select_node(&state.db, &project, node_id.clone()).await {
         Ok(id) => id,
         Err(e) => {
-            let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
+            let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": format!("{:?}", e)})),
@@ -475,7 +476,7 @@ pub async fn deploy_compose(
         let node = match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
             Ok(n) => n,
             Err(e) => {
-                let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
+                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("{:?}", e)})),
@@ -486,7 +487,7 @@ pub async fn deploy_compose(
         let client = match nodes::client::get_node_client(&state.node_clients, &target_node_id) {
             Ok(c) => c,
             Err(e) => {
-                let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
+                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("node client unavailable: {:?}", e)})),
@@ -539,7 +540,7 @@ pub async fn deploy_compose(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "remote batch-run request failed");
-                let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
+                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("agent unreachable: {e}")})),
@@ -551,7 +552,7 @@ pub async fn deploy_compose(
             let status_code = batch_resp.status();
             let body = batch_resp.text().await.unwrap_or_default();
             tracing::error!(status = %status_code, body = %body, "remote batch-run failed");
-            let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
+            let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": format!("remote batch-run failed: {body}")})),
@@ -561,7 +562,7 @@ pub async fn deploy_compose(
         let batch_result: serde_json::Value = match batch_resp.json().await {
             Ok(v) => v,
             Err(e) => {
-                let _ = status::transition(&state.db, &project_id, "error", &ProjectUpdateFields::default(), None).await;
+                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": format!("failed to parse batch-run response: {e}")})),
@@ -595,7 +596,7 @@ pub async fn deploy_compose(
                 let _ = status::transition(
                     &state.db,
                     &project_id,
-                    "running",
+                    ProjectStatus::Running,
                     &ProjectUpdateFields {
                         container_id: Some(Some(cid)),
                         mapped_port: Some(Some(port.unwrap_or(0))),
@@ -763,7 +764,7 @@ pub async fn deploy_compose(
         if let Err(e) = result {
             tracing::error!(project_id = %project_id_clone, error = %e, "background compose deploy failed");
             crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, &format!("Deploy failed: {}", e));
-            let _ = status::transition(&state_clone.db, &project_id_clone, "error", &ProjectUpdateFields::default(), None).await;
+            let _ = status::transition(&state_clone.db, &project_id_clone, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
         }
     });
 

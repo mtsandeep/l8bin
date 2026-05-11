@@ -6,6 +6,7 @@ import {
   type Project,
   updateProjectSettings,
   recreateProject,
+  DeployType,
 } from "../../api";
 
 interface AppSettingsPopoverProps {
@@ -24,7 +25,7 @@ export default function AppSettingsPopover({
   onViewServices,
 }: AppSettingsPopoverProps) {
   const ps = project.public_stats;
-  const isCompose = project.deploy_type === "compose";
+  const isCompose = project.deploy_type === DeployType.Compose;
   const isMultiService = (project.service_count ?? 0) > 1;
 
   const [appImage, setAppImage] = useState(ps?.image ?? "");

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use litebin_common::types::Node;
+use litebin_common::types::{Node, ProjectStatus};
 
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
@@ -83,7 +83,7 @@ async fn sweep(
         status::transition(
             &state.db,
             &project.id,
-            "stopped",
+            ProjectStatus::Stopped,
             &ProjectUpdateFields {
                 mapped_port: Some(None),
                 ..Default::default()

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Rocket, Loader2, X, ChevronRight, ChevronLeft, Moon, Server } from 'lucide-react';
-import { deployProject, deployComposeProject, fetchNodes, fetchGlobalSettings, type Node } from '../api';
+import { deployProject, deployComposeProject, fetchNodes, fetchGlobalSettings, type Node, DeployType, NodeStatus } from '../api';
 import ResourceLimitInput from './ResourceLimitInput';
 import DeployProgressModal from './DeployProgressModal';
 
@@ -16,7 +16,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [step, setStep] = useState<1 | 2>(1);
 
   // Step 1 fields
-  const [deployMode, setDeployMode] = useState<'image' | 'compose'>('image');
+  const [deployMode, setDeployMode] = useState<DeployType>(DeployType.Image);
   const [projectId, setProjectId] = useState('');
   const [projectName, setProjectName] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
@@ -56,7 +56,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const step1Valid = projectId.trim() !== '' && (deployMode === 'image' ? image.trim() !== '' : composeYaml.trim() !== '');
+  const step1Valid = projectId.trim() !== '' && (deployMode === DeployType.Image ? image.trim() !== '' : composeYaml.trim() !== '');
   const timeoutValid = timeoutMins >= 1;
 
   const handleNext = (e: React.FormEvent) => {
@@ -71,7 +71,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
     setLoading(true);
 
     try {
-      if (deployMode === 'compose') {
+      if (deployMode === DeployType.Compose) {
         await deployComposeProject({
           project_id: projectId.trim(),
           compose: composeYaml.trim(),
@@ -160,15 +160,15 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
               <button
                 type="button"
                 role="switch"
-                aria-checked={deployMode === 'compose'}
-                onClick={() => setDeployMode((v) => (v === 'image' ? 'compose' : 'image'))}
+                aria-checked={deployMode === DeployType.Compose}
+                onClick={() => setDeployMode((v) => (v === DeployType.Image ? DeployType.Compose : DeployType.Image))}
                 className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                  deployMode === 'compose' ? 'bg-violet-500' : 'bg-slate-600'
+                  deployMode === DeployType.Compose ? 'bg-violet-500' : 'bg-slate-600'
                 }`}
               >
                 <span
                   className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                    deployMode === 'compose' ? 'translate-x-3.5' : 'translate-x-0.5'
+                    deployMode === DeployType.Compose ? 'translate-x-3.5' : 'translate-x-0.5'
                   }`}
                 />
               </button>
@@ -218,7 +218,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
               />
             </div>
 
-            {deployMode === 'image' && (
+            {deployMode === DeployType.Image && (
             <>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">
@@ -255,7 +255,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             </>
             )}
 
-            {deployMode === 'compose' && (
+            {deployMode === DeployType.Compose && (
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1.5">
                   Docker Compose
@@ -274,7 +274,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
               </div>
             )}
 
-            {deployMode === 'compose' && (
+            {deployMode === DeployType.Compose && (
               <div className="border-t border-slate-700/50 pt-3 space-y-3">
                 <label className="flex items-center justify-between gap-2 cursor-pointer">
                   <div>
@@ -413,7 +413,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             </label>
 
             {/* Command override — only for single image mode */}
-            {deployMode === 'image' && (
+            {deployMode === DeployType.Image && (
             <div className="pt-1 border-t border-slate-700/50">
               <label className="block text-xs font-medium text-slate-400 mb-1.5">
                 Command override <span className="text-slate-600 font-normal">(optional)</span>
@@ -479,7 +479,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                   <span>Automatic</span>
                   {selectedNode === null && <span className="text-[10px] text-violet-400">selected</span>}
                 </button>
-                {nodes.filter(n => n.status === 'online').map(node => (
+                {nodes.filter(n => n.status === NodeStatus.Online).map(node => (
                   <button
                     key={node.id}
                     type="button"

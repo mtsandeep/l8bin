@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ServiceInfo } from "../../api";
+import { ProjectStatus } from "../../api";
 
 interface ServiceSelectModalProps {
   projectName: string;
@@ -85,7 +86,7 @@ export default function ServiceSelectModal({
                 )}
                 <span
                   className={`text-[10px] px-1 py-0.5 rounded ${
-                    svc.status === "running"
+                    svc.status === ProjectStatus.Running
                       ? "bg-emerald-500/20 text-emerald-400"
                       : "bg-slate-700/60 text-slate-500"
                   }`}>

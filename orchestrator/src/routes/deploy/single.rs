@@ -9,6 +9,7 @@ use crate::auth::backend::PasswordBackend;
 use litebin_common::types::{Node, VolumeMount};
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
+use litebin_common::types::ProjectStatus;
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
@@ -217,12 +218,12 @@ async fn execute_deploy(
         sqlx::query(
             r#"
             INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'deploying', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 user_id = excluded.user_id,
                 image = excluded.image,
                 internal_port = excluded.internal_port,
-                status = 'deploying',
+                status = ?,
                 name = CASE WHEN excluded.name IS NOT NULL THEN excluded.name ELSE COALESCE(projects.name, excluded.name) END,
                 description = CASE WHEN excluded.description IS NOT NULL THEN excluded.description ELSE COALESCE(projects.description, excluded.description) END,
                 auto_stop_enabled = excluded.auto_stop_enabled,
@@ -242,6 +243,7 @@ async fn execute_deploy(
         .bind(&payload.description)
         .bind(&payload.image)
         .bind(payload.port)
+        .bind(ProjectStatus::Deploying)
         .bind(auto_stop_enabled)
         .bind(auto_stop_timeout_mins)
         .bind(auto_start_enabled)
@@ -252,6 +254,7 @@ async fn execute_deploy(
         .bind(&volumes_json)
         .bind(now)
         .bind(now)
+        .bind(ProjectStatus::Deploying)
         .execute(&state.db)
         .await
     } else {
@@ -259,7 +262,7 @@ async fn execute_deploy(
         sqlx::query(
             r#"
             INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'deploying', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&payload.project_id)
@@ -268,6 +271,7 @@ async fn execute_deploy(
         .bind(&payload.description)
         .bind(&payload.image)
         .bind(payload.port)
+        .bind(ProjectStatus::Deploying)
         .bind(auto_stop_enabled)
         .bind(auto_stop_timeout_mins)
         .bind(auto_start_enabled)
@@ -315,7 +319,7 @@ async fn execute_deploy(
     let node_id = match nodes::selector::select_node(&state.db, &project, payload.node_id.clone()).await {
         Ok(id) => id,
         Err(e) => {
-            let _ = status::transition(&state.db, &payload.project_id, "stopped", &ProjectUpdateFields::default(), None).await;
+            let _ = status::transition(&state.db, &payload.project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await;
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": e.to_string()})),
@@ -408,7 +412,7 @@ async fn execute_deploy(
             status::transition(
                 &state_clone.db,
                 &payload_clone.project_id,
-                "running",
+                ProjectStatus::Running,
                 &ProjectUpdateFields {
                     container_id: Some(Some(container_id.clone())),
                     mapped_port: Some(Some(mapped_port as i64)),
@@ -469,7 +473,7 @@ async fn execute_deploy(
                         }
                     }
                 }
-                let _ = status::transition(&state_clone.db, &payload_clone.project_id, "error", &ProjectUpdateFields::default(), None).await;
+                let _ = status::transition(&state_clone.db, &payload_clone.project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
                 anyhow::bail!("failed to configure routing: {}", e);
             }
 
@@ -529,7 +533,7 @@ async fn execute_deploy(
         if let Err(e) = result {
             tracing::error!(project_id = %payload_clone.project_id, error = %e, "background deploy failed");
             crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Deploy failed: {}", e));
-            let _ = status::transition(&state_clone.db, &payload_clone.project_id, "error", &ProjectUpdateFields::default(), None).await;
+            let _ = status::transition(&state_clone.db, &payload_clone.project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
         }
     });
 

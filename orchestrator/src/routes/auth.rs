@@ -206,7 +206,7 @@ pub async fn status(
         .into_iter()
         .map(|n| StatusNode {
             name: n.name,
-            status: n.status,
+            status: n.status.to_string(),
             version: n.version,
             architecture: n.architecture,
         })

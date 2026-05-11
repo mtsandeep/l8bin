@@ -344,7 +344,7 @@ pub async fn wake(
                                         mapped_port: None,
                                         container_id: None,
                                         node_id: None,
-                                        status: "running".to_string(),
+                                        status: litebin_common::types::ProjectStatus::Running,
                                         cmd: meta.cmd.clone(),
                                         memory_limit_mb: meta.memory_limit_mb,
                                         cpu_limit: meta.cpu_limit,

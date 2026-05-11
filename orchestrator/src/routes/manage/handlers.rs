@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::nodes;
+use litebin_common::types::ProjectStatus;
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
@@ -26,7 +27,7 @@ pub async fn stop_project(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    if project.status != "running" && project.status != "degraded" {
+    if !matches!(project.status, ProjectStatus::Running | ProjectStatus::Degraded) {
         return Err((
             StatusCode::BAD_REQUEST,
             format!("project is not running (status: {})", project.status),
@@ -41,7 +42,7 @@ pub async fn stop_project(
         .unwrap_or(false);
 
     // Set status to 'stopping' immediately and return — actual stop happens in background
-    status::transition(&state.db, &project_id, "stopping", &ProjectUpdateFields::default(), None)
+    status::transition(&state.db, &project_id, ProjectStatus::Stopping, &ProjectUpdateFields::default(), None)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
@@ -102,7 +103,7 @@ pub async fn stop_project(
             stop_services(&state, &project_id, None).await;
         }
 
-        let _ = status::transition(&state.db, &project_id, "stopped", &ProjectUpdateFields::default(), None).await;
+        let _ = status::transition(&state.db, &project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await;
 
         sync_caddy(&state).await;
         tracing::info!(project = %project_id, "project stopped via API");
@@ -129,7 +130,7 @@ pub async fn start_project(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    if project.status == "running" {
+    if project.status == ProjectStatus::Running {
         return Ok(Json(MessageResponse {
             message: format!("project '{}' is already running", project_id),
         }));
@@ -256,7 +257,7 @@ pub async fn start_project(
                 let port = r.json::<serde_json::Value>().await.ok()
                     .and_then(|v| v["mapped_port"].as_u64())
                     .map(|p| p as i64);
-                status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+                status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
                     mapped_port: port.map(Some),
                     last_active_at: Some(now),
                     ..Default::default()
@@ -302,7 +303,7 @@ pub async fn start_project(
                 let port = result["mapped_port"].as_u64()
                     .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port".to_string()))? as i64;
 
-                status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+                status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
                     container_id: Some(Some(new_cid)),
                     mapped_port: Some(Some(port)),
                     last_active_at: Some(now),
@@ -454,7 +455,7 @@ pub async fn recreate_project(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    if project.status == "deploying" {
+    if project.status == ProjectStatus::Deploying {
         return Err((
             StatusCode::BAD_REQUEST,
             "project is already deploying".to_string(),
@@ -635,7 +636,7 @@ pub async fn recreate_project(
             .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port in response".to_string()))? as u16;
 
         // Update DB
-        status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+        status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
                 container_id: Some(Some(container_id)),
                 mapped_port: Some(Some(port as i64)),
                 last_active_at: Some(now),
@@ -655,7 +656,7 @@ pub async fn recreate_project(
         let (container_id, mapped_port) = state.docker.run_service_container(&config).await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to recreate: {e}")))?;
 
-        status::transition(&state.db, &project_id, "running", &ProjectUpdateFields {
+        status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
                 container_id: Some(Some(container_id)),
                 mapped_port: Some(Some(mapped_port as i64)),
                 last_active_at: Some(now),

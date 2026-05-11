@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
+use litebin_common::types::ProjectStatus;
 use crate::AppState;
 use crate::status::{self, ProjectUpdateFields};
 
@@ -343,7 +344,7 @@ pub async fn start_services(
                         for svc_name in &svc_names {
                             let _ = status::set_service_stopped(&state.db, project_id, svc_name).await;
                         }
-                        let _ = status::transition(&state.db, project_id, "error", &ProjectUpdateFields::default(), None).await;
+                        let _ = status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
                         return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
                     }
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
@@ -371,7 +372,7 @@ pub async fn start_services(
 
     if opts.services.is_none() {
         // Full start: all services started, set project to "running"
-        let _ = status::transition(&state.db, project_id, "running", &ProjectUpdateFields {
+        let _ = status::transition(&state.db, project_id, ProjectStatus::Running, &ProjectUpdateFields {
             container_id: Some(if public_container_id.is_empty() { None } else { Some(public_container_id) }),
             mapped_port: Some(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) }),
             last_active_at: Some(now),

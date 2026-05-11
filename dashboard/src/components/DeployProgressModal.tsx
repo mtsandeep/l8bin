@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { X, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
-import { fetchDeployLogs, fetchAllStats } from "../api";
+import { fetchDeployLogs, fetchAllStats, ProjectStatus } from "../api";
 
 interface DeployProgressModalProps {
   projectId: string;
@@ -15,7 +15,7 @@ export default function DeployProgressModal({
 }: DeployProgressModalProps) {
   const [deployLines, setDeployLines] = useState<string[]>([]);
   const hadLogs = useRef(false);
-  const [status, setStatus] = useState<string>("deploying");
+  const [status, setStatus] = useState<ProjectStatus>(ProjectStatus.Deploying);
   const [elapsed, setElapsed] = useState(0);
   const [showTimeoutMsg, setShowTimeoutMsg] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -80,8 +80,8 @@ export default function DeployProgressModal({
     }
   }, [deployLines]);
 
-  const isSuccess = status === "running";
-  const isError = status === "error";
+  const isSuccess = status === ProjectStatus.Running;
+  const isError = status === ProjectStatus.Error;
   const isDone = isSuccess || isError;
 
   const formatTime = (secs: number) => {

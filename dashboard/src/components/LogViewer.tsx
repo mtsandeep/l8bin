@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, RefreshCw, ArrowDown, Loader2, Rocket } from 'lucide-react';
-import { fetchLogs, fetchDeployLogs, type ServiceInfo } from '../api';
+import { fetchLogs, fetchDeployLogs, type ServiceInfo, ProjectStatus } from '../api';
 import { useIntervalWhileVisible } from '../hooks';
 
 interface LogViewerProps {
   projectId: string;
   services?: ServiceInfo[];
-  status?: string;
+  status?: ProjectStatus;
   onClose: () => void;
 }
 
@@ -20,8 +20,8 @@ export default function LogViewer({ projectId, services = [], status, onClose }:
   const isMultiService = services.length > 1;
   const serviceNames = services.map(s => s.service_name);
   const publicService = services.find(s => s.is_public);
-  const isDeploying = status === 'deploying';
-  const isError = status === 'error';
+  const isDeploying = status === ProjectStatus.Deploying;
+  const isError = status === ProjectStatus.Error;
 
   // Default to "deploy" tab when deploying or error, otherwise public service or first
   const shouldShowDeploy = isDeploying || isError;
@@ -250,13 +250,13 @@ export default function LogViewer({ projectId, services = [], status, onClose }:
             ))
           )}
           {/* Deploy finished indicator */}
-          {isDeployTab && currentLines.length > 0 && !currentLoading && status === 'error' && (
+          {isDeployTab && currentLines.length > 0 && !currentLoading && status === ProjectStatus.Error && (
             <div className="flex items-center gap-2 mt-3 px-2 py-2 rounded-md bg-red-500/10 border border-red-500/20">
               <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
               <span className="text-xs text-red-400 font-medium">Deploy failed — no more logs</span>
             </div>
           )}
-          {isDeployTab && currentLines.length > 0 && !currentLoading && status === 'running' && (
+          {isDeployTab && currentLines.length > 0 && !currentLoading && status === ProjectStatus.Running && (
             <div className="flex items-center gap-2 mt-3 px-2 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/20">
               <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
               <span className="text-xs text-emerald-400 font-medium">Deploy completed</span>

@@ -13,7 +13,7 @@ use crate::db::models::Project;
 use crate::AppState;
 
 use super::stats::{ServiceInfo, ServiceVolumeInfo};
-use litebin_common::types::{VolumeMount, scope_volume_source};
+use litebin_common::types::{VolumeMount, DeployType, ProjectStatus, scope_volume_source};
 
 #[derive(Deserialize)]
 pub struct CreateProjectRequest {
@@ -94,9 +94,9 @@ async fn to_project_response(
     project: &Project,
     db: &sqlx::SqlitePool,
 ) -> ProjectResponse {
-    let public_stats = if project.service_count.unwrap_or(1) > 1 || project.deploy_type.as_deref() == Some("compose") {
+    let public_stats = if project.service_count.unwrap_or(1) > 1 || project.deploy_type == Some(DeployType::Compose) {
         // Multi-service: look up the public service from project_services
-        let row: Option<(String, String, Option<i64>, Option<i64>, bool, String, Option<String>, Option<String>, Option<i64>, Option<f64>)> = sqlx::query_as(
+        let row: Option<(String, String, Option<i64>, Option<i64>, bool, ProjectStatus, Option<String>, Option<String>, Option<i64>, Option<f64>)> = sqlx::query_as(
             "SELECT service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ? AND is_public = 1 LIMIT 1"
         )
         .bind(&project.id)
@@ -151,7 +151,7 @@ async fn to_project_response(
         name: project.name.clone(),
         description: project.description.clone(),
         node_id: project.node_id.clone(),
-        status: project.status.clone(),
+        status: project.status.to_string(),
         last_active_at: project.last_active_at,
         auto_stop_enabled: project.auto_stop_enabled,
         auto_stop_timeout_mins: project.auto_stop_timeout_mins,
@@ -161,7 +161,7 @@ async fn to_project_response(
         custom_domain: project.custom_domain.clone(),
         service_count: project.service_count,
         service_summary: project.service_summary.clone(),
-        deploy_type: project.deploy_type.clone(),
+        deploy_type: project.deploy_type.as_ref().map(|d| d.to_string()),
         created_at: project.created_at,
         updated_at: project.updated_at,
         public_stats,

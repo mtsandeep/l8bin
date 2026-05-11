@@ -4,7 +4,7 @@ import {
   fetchGlobalSettings, updateGlobalSettings, fetchProjects,
   createDeployToken, revokeDeployToken, createProject,
   cleanupDnsRecords, syncDnsRecords,
-  timeAgo, type GlobalSettings, type Project, type DeployTokenInfo,
+  timeAgo, type GlobalSettings, type Project, type DeployTokenInfo, RoutingMode,
 } from '../api';
 import { useToast } from './ToastContext';
 
@@ -71,7 +71,7 @@ function GeneralTab() {
   const [cpu, setCpu] = useState(0.5);
   const [domain, setDomain] = useState('');
   const [dnsTarget, setDnsTarget] = useState('');
-  const [routingMode, setRoutingMode] = useState('master_proxy');
+  const [routingMode, setRoutingMode] = useState<RoutingMode>(RoutingMode.MasterProxy);
   const [cfToken, setCfToken] = useState('');
   const [cfZoneId, setCfZoneId] = useState('');
   const [dashboardSubdomain, setDashboardSubdomain] = useState('l8bin');
@@ -81,7 +81,7 @@ function GeneralTab() {
   const hasUnsavedChanges = settings && (
     cfToken !== (settings.cloudflare_api_token || '') ||
     cfZoneId !== (settings.cloudflare_zone_id || '') ||
-    routingMode !== (settings.routing_mode || 'master_proxy') ||
+    routingMode !== (settings.routing_mode || RoutingMode.MasterProxy) ||
     domain !== settings.domain ||
     dnsTarget !== settings.dns_target ||
     memMb !== settings.default_memory_limit_mb ||
@@ -101,7 +101,7 @@ function GeneralTab() {
       setCpu(s.default_cpu_limit);
       setDomain(s.domain);
       setDnsTarget(s.dns_target);
-      setRoutingMode(s.routing_mode || 'master_proxy');
+      setRoutingMode(s.routing_mode || RoutingMode.MasterProxy);
       setCfToken(s.cloudflare_api_token || '');
       setCfZoneId(s.cloudflare_zone_id || '');
       setDashboardSubdomain(s.dashboard_subdomain || 'l8bin');
@@ -118,8 +118,8 @@ function GeneralTab() {
         domain: domain.trim() || undefined,
         dns_target: dnsTarget.trim() || undefined,
         routing_mode: routingMode,
-        cloudflare_api_token: routingMode === 'cloudflare_dns' ? cfToken : '',
-        cloudflare_zone_id: routingMode === 'cloudflare_dns' ? cfZoneId : '',
+        cloudflare_api_token: routingMode === RoutingMode.CloudflareDns ? cfToken : '',
+        cloudflare_zone_id: routingMode === RoutingMode.CloudflareDns ? cfZoneId : '',
         dashboard_subdomain: dashboardSubdomain.trim() || undefined,
       });
       setSaved(true);
@@ -236,9 +236,9 @@ function GeneralTab() {
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => setRoutingMode('master_proxy')}
+            onClick={() => setRoutingMode(RoutingMode.MasterProxy)}
             className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              routingMode === 'master_proxy'
+              routingMode === RoutingMode.MasterProxy
                 ? 'bg-cyan-600 text-white'
                 : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
             }`}
@@ -249,7 +249,7 @@ function GeneralTab() {
             type="button"
             onClick={() => setRoutingMode('cloudflare_dns')}
             className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              routingMode === 'cloudflare_dns'
+              routingMode === RoutingMode.CloudflareDns
                 ? 'bg-cyan-600 text-white'
                 : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
             }`}
@@ -258,14 +258,14 @@ function GeneralTab() {
           </button>
         </div>
         <p className="text-[10px] text-slate-600 mt-1">
-          {routingMode === 'master_proxy'
+          {routingMode === RoutingMode.MasterProxy
             ? 'All traffic routes through this server via Caddy reverse proxy.'
             : 'DNS records point directly to each node. Requires Cloudflare API token.'}
         </p>
       </div>
 
       {/* Cloudflare Config (conditional) */}
-      {routingMode === 'cloudflare_dns' && (
+      {routingMode === RoutingMode.CloudflareDns && (
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-slate-300 mb-1.5">Cloudflare API Token</label>
@@ -383,11 +383,11 @@ function GeneralTab() {
                         const result = await cleanupDnsRecords();
                         setCfToken('');
                         setCfZoneId('');
-                        setRoutingMode('master_proxy');
+                        setRoutingMode(RoutingMode.MasterProxy);
                         await updateGlobalSettings({
                           cloudflare_api_token: '',
                           cloudflare_zone_id: '',
-                          routing_mode: 'master_proxy',
+                          routing_mode: RoutingMode.MasterProxy,
                         });
                         setShowRemoveConfirm(false);
                         showToast(`Removed Cloudflare: ${result.deleted_count} DNS record(s) deleted`, 'success');

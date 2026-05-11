@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
+use litebin_common::types::ProjectStatus;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
 pub struct DeployResponse {
-    pub status: String,
+    pub status: ProjectStatus,
     pub project_id: String,
     #[serde(default)]
     pub url: Option<String>,

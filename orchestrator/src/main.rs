@@ -435,7 +435,7 @@ async fn wait_for_shutdown_signal() {
 /// Construct the appropriate routing provider based on the given mode.
 /// Used both at startup and during hot-swap when settings change.
 pub(crate) fn build_routing_provider(
-    routing_mode: &str,
+    routing_mode: &litebin_common::types::RoutingMode,
     cf_token: &str,
     cf_zone: &str,
     caddy_admin_url: &str,
@@ -445,7 +445,7 @@ pub(crate) fn build_routing_provider(
 ) -> Arc<dyn RoutingProvider> {
     let caddy_client = CaddyClient::new(caddy_admin_url);
     match routing_mode {
-        "cloudflare_dns" => {
+        litebin_common::types::RoutingMode::CloudflareDns => {
             tracing::info!(zone_id = %cf_zone, "using cloudflare_dns routing mode");
             let cloudflare = CloudflareClient::new(cf_token, cf_zone);
             Arc::new(CloudflareDnsRouter::new(

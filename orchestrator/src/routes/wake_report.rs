@@ -7,6 +7,7 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 
+use litebin_common::types::ProjectStatus;
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
@@ -144,7 +145,7 @@ pub async fn wake_report(
     let _ = status::transition(
         &state.db,
         &report.project_id,
-        "running",
+        ProjectStatus::Running,
         &ProjectUpdateFields {
             container_id: Some(Some(report.container_id.clone())),
             mapped_port: Some(Some(report.mapped_port as i64)),

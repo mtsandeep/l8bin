@@ -1,5 +1,22 @@
 const API_BASE = '';
 
+// ── Shared Types ──────────────────────────────────────────────────────────────
+
+export const ProjectStatus = { Running: 'running', Stopped: 'stopped', Deploying: 'deploying', Stopping: 'stopping', Error: 'error', Degraded: 'degraded', Unconfigured: 'unconfigured', Waking: 'waking' } as const;
+export type ProjectStatus = typeof ProjectStatus[keyof typeof ProjectStatus];
+
+export const NodeStatus = { Online: 'online', Offline: 'offline', PendingSetup: 'pending_setup', Decommissioned: 'decommissioned' } as const;
+export type NodeStatus = typeof NodeStatus[keyof typeof NodeStatus];
+
+export const DeployType = { Image: 'image', Compose: 'compose' } as const;
+export type DeployType = typeof DeployType[keyof typeof DeployType];
+
+export const RoutingMode = { MasterProxy: 'master_proxy', CloudflareDns: 'cloudflare_dns' } as const;
+export type RoutingMode = typeof RoutingMode[keyof typeof RoutingMode];
+
+export const RouteType = { Path: 'path', Alias: 'alias' } as const;
+export type RouteType = typeof RouteType[keyof typeof RouteType];
+
 function parseErrorMessage(text: string, fallback: string): string {
   try {
     const json = JSON.parse(text);
@@ -19,7 +36,7 @@ export interface ServiceInfo {
   port: number | null;
   mapped_port?: number | null;
   is_public: boolean;
-  status: string;
+  status: ProjectStatus;
   container_id?: string | null;
   cmd?: string | null;
   cpu_percent?: number;
@@ -35,7 +52,7 @@ export interface Project {
   name: string | null;
   description: string | null;
   node_id: string | null;
-  status: string;
+  status: ProjectStatus;
   last_active_at: number | null;
   auto_stop_enabled: boolean;
   auto_stop_timeout_mins: number;
@@ -45,7 +62,7 @@ export interface Project {
   custom_domain: string | null;
   service_count: number | null;
   service_summary: string | null;
-  deploy_type: string | null;
+  deploy_type: DeployType | null;
   created_at: number;
   updated_at: number;
   public_stats: ServiceInfo | null;
@@ -53,7 +70,7 @@ export interface Project {
 
 export interface ProjectStats {
   project_id: string;
-  status: string;
+  status: ProjectStatus;
   last_active_at?: number | null;
   services: ServiceInfo[];
 }
@@ -135,7 +152,7 @@ export interface GlobalSettings {
   projects_dir: string;
   domain: string;
   dns_target: string;
-  routing_mode: string;
+  routing_mode: RoutingMode;
   cloudflare_api_token: string;
   cloudflare_zone_id: string;
   dashboard_subdomain: string;
@@ -391,7 +408,7 @@ export interface Node {
   public_ip: string | null;
   agent_port: number;
   region: string | null;
-  status: string; // 'online' | 'offline' | 'decommissioned'
+  status: NodeStatus;
   total_memory: number | null;
   available_memory: number | null;
   total_cpu: number | null;
@@ -589,7 +606,7 @@ export interface VolumeMount {
 export interface ProjectRoute {
   id: string;
   project_id: string;
-  route_type: string; // "path" | "alias"
+  route_type: RouteType;
   path: string | null;
   subdomain: string | null;
   upstream: string;
@@ -603,7 +620,7 @@ export async function fetchProjectRoutes(projectId: string): Promise<ProjectRout
   return res.json();
 }
 
-export async function createProjectRoute(projectId: string, payload: { route_type: string; path?: string; subdomain?: string; upstream: string; priority?: number }): Promise<ProjectRoute> {
+export async function createProjectRoute(projectId: string, payload: { route_type: RouteType; path?: string; subdomain?: string; upstream: string; priority?: number }): Promise<ProjectRoute> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/routes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

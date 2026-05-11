@@ -12,6 +12,7 @@ mod upload;
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use litebin_common::types::ProjectStatus;
 
 #[derive(Parser)]
 #[command(name = "l8b", version, about = "LiteBin CLI — deploy apps from your terminal")]
@@ -227,12 +228,12 @@ async fn main() -> Result<()> {
 
                 // Poll for completion (2 min timeout, non-interactive)
                 let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
-                match final_status.as_deref() {
-                    Some("running") => {
+                match final_status.as_ref() {
+                    Some(ProjectStatus::Running) => {
                         let url = format!("https://{}.{}", project, server.trim_start_matches("https://").trim_start_matches("http://"));
                         println!("Deployed! {}", url);
                     }
-                    Some("error") => {
+                    Some(ProjectStatus::Error) => {
                         println!("Deploy failed for project '{}'.", project);
                         std::process::exit(1);
                     }
@@ -277,17 +278,17 @@ async fn main() -> Result<()> {
                 )
                 .await?;
 
-                if response.status == "deploying" {
+                if response.status == ProjectStatus::Deploying {
                     // Poll for completion (2 min timeout, non-interactive)
                     let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
-                    match final_status.as_deref() {
-                        Some("running") => {
+                    match final_status.as_ref() {
+                        Some(ProjectStatus::Running) => {
                             let url = response.url.as_deref()
                                 .map(|u| u.to_string())
                                 .unwrap_or_else(|| format!("https://{}.{}", project, server.trim_start_matches("https://").trim_start_matches("http://")));
                             println!("Deployed! {}", url);
                         }
-                        Some("error") => {
+                        Some(ProjectStatus::Error) => {
                             println!("Deploy failed for project '{}'.", project);
                             std::process::exit(1);
                         }
@@ -388,7 +389,7 @@ async fn main() -> Result<()> {
                                             let status = node["status"].as_str().unwrap_or("?");
                                             let version = node["version"].as_str().unwrap_or("?");
                                             let arch = node["architecture"].as_str().unwrap_or("?");
-                                            let status_color = if status == "online" { status.green() } else { status.dimmed() };
+                                            let status_color = if status == "online" { status.green() } else { status.dimmed() }; // status from JSON string, not enum
                                             println!("    {}  {}  {}", name.cyan(), status_color, format!("v{} ({})", version, arch).dimmed());
                                         }
                                     }

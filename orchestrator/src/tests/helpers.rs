@@ -219,7 +219,7 @@ fn test_config() -> Config {
         client_cert_path: String::new(),
         client_key_path: String::new(),
         heartbeat_interval_secs: 30,
-        routing_mode: "master_proxy".to_string(),
+        routing_mode: litebin_common::types::RoutingMode::MasterProxy,
         cloudflare_api_token: String::new(),
         cloudflare_zone_id: String::new(),
         public_ip: String::new(),

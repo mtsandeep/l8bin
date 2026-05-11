@@ -5,7 +5,7 @@ use tracing::{info, warn};
 
 use crate::AppState;
 use crate::nodes::client::get_node_client;
-use litebin_common::types::HealthReport;
+use litebin_common::types::{HealthReport, NodeStatus};
 
 pub async fn run_heartbeat(state: AppState, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
     let interval = Duration::from_secs(state.config.heartbeat_interval_secs);
@@ -84,7 +84,7 @@ async fn refresh_local_node(state: &AppState) {
 
 async fn poll_node(state: &AppState, node: &litebin_common::types::Node) {
     // For pending_setup nodes, attempt to connect (push config)
-    if node.status == "pending_setup" {
+    if node.status == NodeStatus::PendingSetup {
         attempt_connect(state, node).await;
         return;
     }

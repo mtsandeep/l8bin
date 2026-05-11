@@ -5,6 +5,7 @@ use serde_json::json;
 use crate::nodes;
 use crate::status;
 use crate::AppState;
+use litebin_common::types::ProjectStatus;
 use super::manage::{agent_base_url, get_node_from_db, sync_caddy};
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,7 +21,7 @@ pub struct ServiceInfo {
     pub port: Option<i64>,
     pub mapped_port: Option<i64>,
     pub is_public: bool,
-    pub status: String,
+    pub status: ProjectStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -92,7 +93,7 @@ fn enrich_services(
         let mut enriched = svc.clone();
         if let Some(container_id) = cid {
             if stopped_cids.contains(container_id) {
-                enriched.status = "stopped".to_string();
+                enriched.status = ProjectStatus::Stopped;
                 enriched.cpu_percent = None;
                 enriched.memory_usage = None;
                 if let Some(bytes) = disk_cache.get(container_id) {
@@ -158,7 +159,7 @@ async fn batch_load_services(
         placeholders
     );
 
-    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, Option<i64>, bool, String, Option<String>, Option<String>, Option<i64>, Option<f64>)>(&query);
+    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, Option<i64>, bool, ProjectStatus, Option<String>, Option<String>, Option<i64>, Option<f64>)>(&query);
     for pid in project_ids {
         builder = builder.bind(pid);
     }
@@ -219,17 +220,17 @@ async fn batch_load_services(
     map
 }
 
-fn make_stats_response(project_id: String, status: String, last_active_at: Option<i64>, services: Vec<ServiceInfo>) -> StatsResponse {
+fn make_stats_response(project_id: String, status: ProjectStatus, last_active_at: Option<i64>, services: Vec<ServiceInfo>) -> StatsResponse {
     // Compute effective status: if DB says "running" but not all services are up, mark as "degraded"
-    let effective_status = if status == "running"
+    let effective_status = if status == ProjectStatus::Running
         && !services.is_empty()
-        && services.iter().any(|s| s.status != "running")
+        && services.iter().any(|s| s.status != ProjectStatus::Running)
     {
-        "degraded".to_string()
+        ProjectStatus::Degraded
     } else {
         status
     };
-    StatsResponse { project_id, status: effective_status, last_active_at, services }
+    StatsResponse { project_id, status: effective_status.to_string(), last_active_at, services }
 }
 
 /// GET /projects/stats — returns stats + disk + services for all projects in one call
@@ -267,7 +268,7 @@ pub async fn all_project_stats(
     let mut disk_lookups: Vec<(String, Vec<(ServiceInfo, Option<String>)>)> = Vec::new();
 
     for project in &projects {
-        if project.status != "running" && project.status != "degraded" {
+        if project.status != ProjectStatus::Running && project.status != ProjectStatus::Degraded {
             let services_raw = services_map.get(&project.id).cloned().unwrap_or_default();
 
             // Check if any service has a container_id for disk lookup
@@ -346,12 +347,12 @@ pub async fn all_project_stats(
         }
         // Use the actual project status — preserve transient states (stopping, deploying, error, unconfigured)
         // and only derive stopped/degraded when the project is in a stable terminal state
-        let project_status = projects.iter().find(|p| p.id == project_id).map(|p| p.status.as_str()).unwrap_or("stopped");
+        let project_status = projects.iter().find(|p| p.id == project_id).map(|p| p.status.clone()).unwrap_or(ProjectStatus::Stopped);
         let status = match project_status {
-            "stopping" | "deploying" | "error" | "unconfigured" => project_status.to_string(),
+            ProjectStatus::Stopping | ProjectStatus::Deploying | ProjectStatus::Error | ProjectStatus::Unconfigured => project_status,
             _ => {
-                let any_running = services.iter().any(|s| s.status == "running");
-                if any_running { "degraded".to_string() } else { "stopped".to_string() }
+                let any_running = services.iter().any(|s| s.status == ProjectStatus::Running);
+                if any_running { ProjectStatus::Degraded } else { ProjectStatus::Stopped }
             }
         };
         results.push(make_stats_response(
@@ -448,7 +449,7 @@ pub async fn all_project_stats(
             }).collect();
             results.push(make_stats_response(
                 project_id.clone(),
-                "stopped".to_string(),
+                ProjectStatus::Stopped,
                 last_active_map.get(project_id).copied().flatten(),
                 services,
             ));
@@ -458,7 +459,7 @@ pub async fn all_project_stats(
         let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
         results.push(make_stats_response(
             project_id.clone(),
-            "running".to_string(),
+            ProjectStatus::Running,
             last_active_map.get(project_id).copied().flatten(),
             services,
         ));
@@ -488,7 +489,7 @@ pub async fn all_project_stats(
                     let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
                     results.push(make_stats_response(
                         project_id.clone(),
-                        "running".to_string(),
+                        ProjectStatus::Running,
                         last_active_map.get(project_id).copied().flatten(),
                         services_raw.into_iter().map(|(s, _)| s).collect(),
                     ));
@@ -505,7 +506,7 @@ pub async fn all_project_stats(
                     let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
                     results.push(make_stats_response(
                         project_id.clone(),
-                        "running".to_string(),
+                        ProjectStatus::Running,
                         last_active_map.get(project_id).copied().flatten(),
                         services_raw.into_iter().map(|(s, _)| s).collect(),
                     ));
@@ -529,7 +530,7 @@ pub async fn all_project_stats(
                     let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
                     results.push(make_stats_response(
                         project_id.clone(),
-                        "running".to_string(),
+                        ProjectStatus::Running,
                         last_active_map.get(project_id).copied().flatten(),
                         services_raw.into_iter().map(|(s, _)| s).collect(),
                     ));
@@ -545,7 +546,7 @@ pub async fn all_project_stats(
                 let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
                 results.push(make_stats_response(
                     project_id.clone(),
-                    "running".to_string(),
+                    ProjectStatus::Running,
                     last_active_map.get(project_id).copied().flatten(),
                     services_raw.into_iter().map(|(s, _)| s).collect(),
                 ));
@@ -619,7 +620,7 @@ pub async fn all_project_stats(
                 let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
                 results.push(make_stats_response(
                     project_id.clone(),
-                    "running".to_string(),
+                    ProjectStatus::Running,
                     last_active_map.get(project_id).copied().flatten(),
                     services,
                 ));
@@ -634,7 +635,7 @@ pub async fn all_project_stats(
                 }).collect();
                 results.push(make_stats_response(
                     project_id.clone(),
-                    "stopped".to_string(),
+                    ProjectStatus::Stopped,
                     last_active_map.get(project_id).copied().flatten(),
                     services,
                 ));
@@ -696,7 +697,7 @@ pub async fn project_stats(
         .remove(&project_id)
         .unwrap_or_default();
 
-    if project.status != "running" {
+    if project.status != ProjectStatus::Running {
         return Ok(Json(make_stats_response(
             project_id,
             project.status,
@@ -749,7 +750,7 @@ pub async fn project_stats(
     if !any_running {
         return Ok(Json(make_stats_response(
             project_id,
-            "stopped".to_string(),
+            ProjectStatus::Stopped,
             project.last_active_at,
             services_raw.into_iter().map(|(s, _)| s).collect(),
         )));
@@ -778,7 +779,7 @@ pub async fn project_disk_usage(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    if project.status != "running" {
+    if project.status != ProjectStatus::Running {
         return Ok(Json(DiskUsageResponse {
             project_id,
             size_gb: 0.0,

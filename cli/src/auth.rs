@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use litebin_common::types::NodeStatus;
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 
@@ -264,7 +265,7 @@ pub async fn session_delete(
 pub struct NodeInfo {
     pub id: String,
     pub name: String,
-    pub status: String,
+    pub status: NodeStatus,
     pub architecture: Option<String>,
     pub recommended: Option<bool>,
 }
@@ -277,7 +278,7 @@ pub async fn fetch_online_nodes(
     match session_get(client, server, "/nodes").await {
         Ok(resp) => {
             let nodes: Vec<NodeInfo> = serde_json::from_value(resp).unwrap_or_default();
-            nodes.into_iter().filter(|n| n.status == "online").collect()
+            nodes.into_iter().filter(|n| n.status == NodeStatus::Online).collect()
         }
         Err(_) => Vec::new(),
     }

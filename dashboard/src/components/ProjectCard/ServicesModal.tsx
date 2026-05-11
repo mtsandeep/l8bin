@@ -17,6 +17,7 @@ import {
   startService,
   stopService,
   restartService,
+  ProjectStatus,
 } from "../../api";
 import ServiceSettingsPopover from "./ServiceSettingsPopover";
 
@@ -56,7 +57,7 @@ export default function ServicesModal({
       .finally(() => setLoadingService(null));
   };
 
-  const runningCount = services.filter((s) => s.status === "running").length;
+  const runningCount = services.filter((s) => s.status === ProjectStatus.Running).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm pt-8">
@@ -88,7 +89,7 @@ export default function ServicesModal({
 
           {services.map((svc) => {
             const isLoading = loadingService === svc.service_name;
-            const isRunning = svc.status === "running";
+            const isRunning = svc.status === ProjectStatus.Running;
             const memPercent =
               svc.memory_limit_mb && svc.memory_usage
                 ? (svc.memory_usage / (svc.memory_limit_mb * 1024 * 1024)) * 100

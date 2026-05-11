@@ -5,7 +5,7 @@ use futures_util::FutureExt;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use litebin_common::types::Node;
+use litebin_common::types::{Node, ProjectStatus};
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::status::{self, ProjectUpdateFields};
@@ -168,7 +168,7 @@ async fn remote_recreate(
     let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
     let now = chrono::Utc::now().timestamp();
-    let _ = status::transition(&state.db, &project.id, "running", &ProjectUpdateFields {
+    let _ = status::transition(&state.db, &project.id, ProjectStatus::Running, &ProjectUpdateFields {
         container_id: Some(Some(new_container_id.clone())),
         mapped_port: Some(mapped_port.map(|p| p as i64)),
         last_active_at: Some(now),
@@ -231,9 +231,9 @@ async fn handle_down_services(
 
     if public_down {
         *public_service_up = false;
-        let _ = status::transition(&state.db, project_id, "stopped", &ProjectUpdateFields::default(), None).await;
+        let _ = status::transition(&state.db, project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await;
     } else {
-        let _ = status::transition(&state.db, project_id, "degraded", &ProjectUpdateFields::default(), None).await;
+        let _ = status::transition(&state.db, project_id, ProjectStatus::Degraded, &ProjectUpdateFields::default(), None).await;
         let _ = state.route_sync_tx.send(());
         let state_clone = state.clone();
         let project_clone = project.clone();
@@ -307,7 +307,7 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
             let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
             let now = chrono::Utc::now().timestamp();
-            let _ = status::transition(&state.db, &subdomain, "running", &ProjectUpdateFields {
+            let _ = status::transition(&state.db, &subdomain, ProjectStatus::Running, &ProjectUpdateFields {
                 mapped_port: Some(mapped_port.map(|p| p as i64)),
                 last_active_at: Some(now),
                 ..Default::default()
@@ -497,7 +497,7 @@ pub async fn wake_for_host(
 
     // Unified running/degraded path for ALL projects
     let is_multi = project.service_count.unwrap_or(1) > 1;
-    if project.status == "running" || project.status == "degraded" {
+    if project.status == ProjectStatus::Running || project.status == ProjectStatus::Degraded {
         // Remote: no Docker checks possible, return loading page
         if is_remote {
             return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
@@ -633,7 +633,7 @@ pub async fn wake_for_host(
                 if let Some(ref cid) = container_id {
                     if state.docker.is_container_running(cid).await.unwrap_or(false) {
                         tracing::info!(project = %project_id, service = %svc_name, "waker: public service running but DB stale, syncing status");
-                        let _ = status::transition(&state.db, &project_id, "running", &ProjectUpdateFields::default(), Some(&[svc_name.clone()])).await;
+                        let _ = status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields::default(), Some(&[svc_name.clone()])).await;
                         let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
                         let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
                         let resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;
@@ -678,7 +678,7 @@ pub async fn wake_for_host(
         }
     };
 
-    let is_stopped = project.status == "stopped" || project.status == "degraded";
+    let is_stopped = project.status == ProjectStatus::Stopped || project.status == ProjectStatus::Degraded;
     let state_clone = state.clone();
     let project_clone = project.clone();
     let project_id_bg = project_id.clone();

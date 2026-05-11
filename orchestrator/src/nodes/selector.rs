@@ -70,6 +70,7 @@ pub async fn select_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use litebin_common::types::ProjectStatus;
     use proptest::prelude::*;
 
     async fn test_db() -> SqlitePool {
@@ -115,7 +116,7 @@ mod tests {
             mapped_port: None,
             container_id: None,
             node_id: node_id.map(|s| s.to_string()),
-            status: "stopped".to_string(),
+            status: ProjectStatus::Stopped,
             last_active_at: None,
             auto_stop_enabled: true,
             auto_stop_timeout_mins: 15,

@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::config::Config;
 use litebin_common::routing::{ProjectCustomRoute, ProjectRoute, RoutingProvider};
-use litebin_common::types::{container_name, Project, ProjectService};
+use litebin_common::types::{container_name, Project, ProjectService, ProjectStatus};
 
 /// Look up a node's host address and public_ip by node_id.
 /// Returns None if the node doesn't exist in the database.
@@ -78,7 +78,7 @@ pub async fn resolve_routes(
         let Some(_mapped_port) = project.mapped_port else {
             continue;
         };
-        if project.status != "running" {
+        if project.status != ProjectStatus::Running {
             continue;
         }
 

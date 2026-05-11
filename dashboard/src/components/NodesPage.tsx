@@ -4,18 +4,18 @@ import {
   Clock, Copy, ChevronRight, Loader
 } from 'lucide-react';
 import { useIntervalWhileVisible } from '../hooks';
-import { type Node, type NodeImageStats, type Project, fetchNodes, fetchNodeImageStats, pruneNodeImages, addNode, connectNode, deleteNode, timeAgo, formatBytes } from '../api';
+import { type Node, NodeStatus, type NodeImageStats, type Project, fetchNodes, fetchNodeImageStats, pruneNodeImages, addNode, connectNode, deleteNode, timeAgo, formatBytes } from '../api';
 
-function statusColor(status: string) {
-  if (status === 'online') return 'text-emerald-400';
-  if (status === 'offline') return 'text-rose-400';
+function statusColor(status: NodeStatus) {
+  if (status === NodeStatus.Online) return 'text-emerald-400';
+  if (status === NodeStatus.Offline) return 'text-rose-400';
   return 'text-slate-500';
 }
 
-function StatusDot({ status }: { status: string }) {
+function StatusDot({ status }: { status: NodeStatus }) {
   const color =
-    status === 'online' ? 'bg-emerald-400' :
-    status === 'offline' ? 'bg-rose-400' : 'bg-slate-600';
+    status === NodeStatus.Online ? 'bg-emerald-400' :
+    status === NodeStatus.Offline ? 'bg-rose-400' : 'bg-slate-600';
   return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
 }
 
@@ -561,7 +561,7 @@ export default function NodesPage({ onBack, projects }: NodesPageProps) {
                         {node.fail_count} fail{node.fail_count > 1 ? 's' : ''}
                       </span>
                     )}
-                    {node.status === 'pending_setup' && (
+                    {node.status === NodeStatus.PendingSetup && (
                       <button
                         onClick={() => handleConnect(node.id)}
                         disabled={connecting === node.id}

@@ -1,11 +1,8 @@
 use sqlx::SqlitePool;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use litebin_common::docker::DockerManager;
-
-/// Transient states that should NOT be overridden by sync_from_docker.
-/// These are intentional states managed by their owning code paths.
-const TRANSIENT_STATUSES: &[&str] = &["deploying", "stopping", "error", "unconfigured"];
+use litebin_common::types::ProjectStatus;
 
 // ---------------------------------------------------------------------------
 // transition() — intentional state changes
@@ -32,7 +29,7 @@ pub struct ProjectUpdateFields {
 pub async fn transition(
     db: &SqlitePool,
     project_id: &str,
-    new_status: &str,
+    new_status: ProjectStatus,
     extra: &ProjectUpdateFields,
     service_filter: Option<&[String]>,
 ) -> anyhow::Result<()> {
@@ -41,7 +38,7 @@ pub async fn transition(
 
     // 1. Update projects table using QueryBuilder for dynamic fields
     let mut qb = sqlx::QueryBuilder::new("UPDATE projects SET ");
-    qb.push("status = ").push_bind(new_status);
+    qb.push("status = ").push_bind(new_status.clone());
     qb.push(", updated_at = ").push_bind(now);
 
     if let Some(ref cid) = extra.container_id {
@@ -71,14 +68,14 @@ pub async fn transition(
     qb.build().execute(&mut *tx).await?;
 
     // 2. Update project_services table
-    match new_status {
-        s if s == "deploying" || s == "running" => {
+    match &new_status {
+        ProjectStatus::Deploying | ProjectStatus::Running => {
             if let Some(services) = service_filter {
                 for svc_name in services {
                     sqlx::query(
                         "UPDATE project_services SET status = ? WHERE project_id = ? AND service_name = ?",
                     )
-                    .bind(new_status)
+                    .bind(&new_status)
                     .bind(project_id)
                     .bind(svc_name)
                     .execute(&mut *tx)
@@ -86,25 +83,30 @@ pub async fn transition(
                 }
             } else {
                 sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ?")
-                    .bind(new_status)
+                    .bind(&new_status)
                     .bind(project_id)
                     .execute(&mut *tx)
                     .await?;
             }
         }
-        s if s == "stopped" || s == "stopping" || s == "error" => {
+        ProjectStatus::Stopped | ProjectStatus::Stopping | ProjectStatus::Error => {
             // Always cascade to ALL services for terminal/error states
             sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ?")
-                .bind(new_status)
+                .bind(&new_status)
                 .bind(project_id)
                 .execute(&mut *tx)
                 .await?;
         }
-        "degraded" => {
+        ProjectStatus::Degraded => {
             // Do NOT touch services — degraded is derived from individual service states
         }
-        _ => {
-            warn!(status = new_status, "transition: unknown status, skipping service cascade");
+        ProjectStatus::Unconfigured => {
+            // Cascade to all services
+            sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ?")
+                .bind(&new_status)
+                .bind(project_id)
+                .execute(&mut *tx)
+                .await?;
         }
     }
 
@@ -126,8 +128,9 @@ pub async fn set_service_running(
     mapped_port: Option<i64>,
 ) -> anyhow::Result<()> {
     sqlx::query(
-        "UPDATE project_services SET status = 'running', container_id = ?, mapped_port = ? WHERE project_id = ? AND service_name = ?",
+        "UPDATE project_services SET status = ?, container_id = ?, mapped_port = ? WHERE project_id = ? AND service_name = ?",
     )
+    .bind(ProjectStatus::Running)
     .bind(container_id)
     .bind(mapped_port)
     .bind(project_id)
@@ -146,8 +149,9 @@ pub async fn set_service_stopped(
     service_name: &str,
 ) -> anyhow::Result<()> {
     sqlx::query(
-        "UPDATE project_services SET status = 'stopped', mapped_port = NULL WHERE project_id = ? AND service_name = ?",
+        "UPDATE project_services SET status = ?, mapped_port = NULL WHERE project_id = ? AND service_name = ?",
     )
+    .bind(ProjectStatus::Stopped)
     .bind(project_id)
     .bind(service_name)
     .execute(db)
@@ -165,8 +169,9 @@ pub async fn sync_single_service_row(
     mapped_port: i64,
 ) {
     let _ = sqlx::query(
-        "UPDATE project_services SET status = 'running', container_id = ?, mapped_port = ? WHERE project_id = ? AND service_name = 'web'",
+        "UPDATE project_services SET status = ?, container_id = ?, mapped_port = ? WHERE project_id = ? AND service_name = 'web'",
     )
+    .bind(ProjectStatus::Running)
     .bind(container_id)
     .bind(mapped_port)
     .bind(project_id)
@@ -175,13 +180,13 @@ pub async fn sync_single_service_row(
 }
 
 /// Derive project status from aggregated service states and update projects table.
-/// Returns the derived status string.
+/// Returns the derived status.
 ///
-/// - All services running → "running"
-/// - Some services running → "degraded"
-/// - No services running → "stopped"
-pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) -> String {
-    let statuses: Vec<(String,)> = sqlx::query_as(
+/// - All services running → Running
+/// - Some services running → Degraded
+/// - No services running → Stopped
+pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) -> ProjectStatus {
+    let statuses: Vec<ProjectStatus> = sqlx::query_scalar(
         "SELECT status FROM project_services WHERE project_id = ?",
     )
     .bind(project_id)
@@ -190,28 +195,28 @@ pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) ->
     .unwrap_or_default();
 
     if statuses.is_empty() {
-        return "stopped".to_string();
+        return ProjectStatus::Stopped;
     }
 
     let total = statuses.len();
-    let running = statuses.iter().filter(|(s,)| s == "running").count();
+    let running = statuses.iter().filter(|s| **s == ProjectStatus::Running).count();
     let new_status = if running == total {
-        "running"
+        ProjectStatus::Running
     } else if running > 0 {
-        "degraded"
+        ProjectStatus::Degraded
     } else {
-        "stopped"
+        ProjectStatus::Stopped
     };
 
     let now = chrono::Utc::now().timestamp();
     let _ = sqlx::query("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
-        .bind(new_status)
+        .bind(&new_status)
         .bind(now)
         .bind(project_id)
         .execute(db)
         .await;
 
-    new_status.to_string()
+    new_status
 }
 
 // ---------------------------------------------------------------------------
@@ -221,8 +226,8 @@ pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) ->
 /// Result of a sync pass for one project.
 #[derive(Debug, Clone)]
 pub struct SyncResult {
-    pub old_status: String,
-    pub new_status: String,
+    pub old_status: ProjectStatus,
+    pub new_status: ProjectStatus,
     pub caddy_dirty: bool,
 }
 
@@ -238,16 +243,16 @@ pub async fn sync_project_from_docker(
     project_id: &str,
 ) -> SyncResult {
     // Load current project status
-    let current_status: String = sqlx::query_scalar(
+    let current_status: ProjectStatus = sqlx::query_scalar(
         "SELECT status FROM projects WHERE id = ?",
     )
     .bind(project_id)
     .fetch_one(db)
     .await
-    .unwrap_or_else(|_| "error".into());
+    .unwrap_or(ProjectStatus::Error);
 
     // Skip transient states — these are managed by their owning code paths
-    if TRANSIENT_STATUSES.contains(&current_status.as_str()) {
+    if current_status.is_transient() {
         return SyncResult {
             old_status: current_status.clone(),
             new_status: current_status,
@@ -279,7 +284,7 @@ pub async fn sync_project_from_docker(
             Some(cid) if !cid.is_empty() => docker.is_container_running(cid).await.unwrap_or(false),
             _ => false,
         };
-        let new_svc_status = if actually_running { "running" } else { "stopped" };
+        let new_svc_status = if actually_running { ProjectStatus::Running } else { ProjectStatus::Stopped };
 
         if actually_running {
             running_count += 1;
@@ -289,10 +294,10 @@ pub async fn sync_project_from_docker(
         let _ = sqlx::query(
             "UPDATE project_services SET status = ? WHERE project_id = ? AND service_name = ? AND status != ?",
         )
-        .bind(new_svc_status)
+        .bind(&new_svc_status)
         .bind(project_id)
         .bind(service_name)
-        .bind(new_svc_status)
+        .bind(&new_svc_status)
         .execute(db)
         .await;
     }
@@ -376,15 +381,15 @@ pub async fn update_status_from_container_states(
     project_id: &str,
     container_states: &[(String, bool)], // (container_id, is_running)
 ) -> SyncResult {
-    let current_status: String = sqlx::query_scalar(
+    let current_status: ProjectStatus = sqlx::query_scalar(
         "SELECT status FROM projects WHERE id = ?",
     )
     .bind(project_id)
     .fetch_one(db)
     .await
-    .unwrap_or_else(|_| "error".into());
+    .unwrap_or(ProjectStatus::Error);
 
-    if TRANSIENT_STATUSES.contains(&current_status.as_str()) {
+    if current_status.is_transient() {
         return SyncResult {
             old_status: current_status.clone(),
             new_status: current_status,
@@ -393,15 +398,15 @@ pub async fn update_status_from_container_states(
     }
 
     for (container_id, is_running) in container_states {
-        let new_svc_status = if *is_running { "running" } else { "stopped" };
+        let new_svc_status = if *is_running { ProjectStatus::Running } else { ProjectStatus::Stopped };
 
         let _ = sqlx::query(
             "UPDATE project_services SET status = ? WHERE project_id = ? AND container_id = ? AND status != ?",
         )
-        .bind(new_svc_status)
+        .bind(&new_svc_status)
         .bind(project_id)
         .bind(container_id)
-        .bind(new_svc_status)
+        .bind(&new_svc_status)
         .execute(db)
         .await;
     }

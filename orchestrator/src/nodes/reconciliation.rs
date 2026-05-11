@@ -4,7 +4,7 @@ use tracing::{info, warn};
 use crate::AppState;
 use crate::nodes::client::get_node_client;
 use crate::status::{self, ProjectUpdateFields};
-use litebin_common::types::{ContainerStatus, Project};
+use litebin_common::types::{ContainerStatus, Project, ProjectStatus};
 
 pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
     let start = Instant::now();
@@ -216,7 +216,7 @@ async fn set_project_error(state: &AppState, project_id: &str) {
     let _ = status::transition(
         &state.db,
         project_id,
-        "error",
+        ProjectStatus::Error,
         &ProjectUpdateFields::default(),
         None,
     )
@@ -228,7 +228,7 @@ async fn set_project_running(state: &AppState, project: &Project) {
     let _ = status::transition(
         &state.db,
         &project.id,
-        "running",
+        ProjectStatus::Running,
         &ProjectUpdateFields::default(),
         None,
     )
