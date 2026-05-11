@@ -329,7 +329,13 @@ async fn start_stopped_container(state: &AppState, project: &crate::db::models::
         };
 
         if resp.status().is_success() {
-            let result: serde_json::Value = resp.json().await.unwrap_or_default();
+            let result: serde_json::Value = match resp.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(project = %subdomain, error = %e, "waker: failed to parse agent start response");
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to parse agent response").into_response());
+                }
+            };
             let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
             let now = chrono::Utc::now().timestamp();

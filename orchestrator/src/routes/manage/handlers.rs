@@ -89,20 +89,26 @@ pub async fn stop_project(
                 }
             };
             for cid in &container_ids {
-                let _ = client
+                if let Err(e) = client
                     .post(&format!("{}/containers/stop", base_url))
                     .json(&json!({"container_id": cid}))
                     .send()
-                    .await;
+                    .await
+                {
+                    tracing::warn!(project_id = %project_id, container_id = %cid, error = %e, "stop: failed to stop container on agent");
+                }
             }
             // Also stop docker-socket-proxy if allow_docker_access is enabled
             if project.allow_docker_access {
                 let proxy_name = litebin_common::types::container_name(&project_id, "litebin-docker-proxy", None);
-                let _ = client
+                if let Err(e) = client
                     .post(&format!("{}/containers/stop", base_url))
                     .json(&json!({"container_id": proxy_name}))
                     .send()
-                    .await;
+                    .await
+                {
+                    tracing::warn!(project_id = %project_id, error = %e, "stop: failed to stop docker-socket-proxy on agent");
+                }
             }
         } else {
             // Local: stop all service containers (works for single and multi-service)
@@ -279,11 +285,14 @@ pub async fn start_project(
             Ok(r) => {
                 tracing::warn!(project = %project_id, status = %r.status(), "agent start returned non-success, falling back to recreate");
                 // Fallback: recreate on agent
-                let _ = client
+                if let Err(e) = client
                     .post(format!("{}/containers/remove", base_url))
                     .json(&json!({ "container_id": container_id }))
                     .send()
-                    .await;
+                    .await
+                {
+                    tracing::warn!(project_id = %project_id, container_id = %container_id, error = %e, "start: failed to remove old container on agent");
+                }
 
                 let image = project.image.as_deref()
                     .ok_or((StatusCode::BAD_REQUEST, "project has no image".to_string()))?;
@@ -397,14 +406,17 @@ pub async fn delete_project(
                 match get_node_from_db(&state.db, node_id).await {
                     Ok(node) => {
                         let base_url = agent_base_url(&state.config, &node);
-                        let _ = client
+                        if let Err(e) = client
                             .post(&format!("{}/containers/cleanup", base_url))
                             .json(&json!({
                                 "project_id": project_id,
                                 "volumes": volumes,
                             }))
                             .send()
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(project_id = %project_id, error = %e, "delete: failed to cleanup on agent");
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(node_id = %node_id, error = ?e, "delete: node not found, skipping remote cleanup");
@@ -617,13 +629,16 @@ pub async fn recreate_project(
         let base_url = agent_base_url(&state.config, &node);
 
         // Remove existing container on agent
-        let _ = client
+        if let Err(e) = client
             .post(format!("{}/containers/remove", base_url))
             .json(&json!({
                 "container_id": project.container_id,
             }))
             .send()
-            .await;
+            .await
+        {
+            tracing::warn!(project_id = %project_id, error = %e, "recreate: failed to remove old container on agent");
+        }
 
         // Recreate container on agent (no pull, auto-assign port)
         let resp = client

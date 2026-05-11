@@ -479,11 +479,14 @@ async fn execute_deploy(
                     {
                         if let Ok(client) = nodes::client::get_node_client(&state_clone.node_clients, &node_id_clone) {
                             let url = agent_base_url(&state_clone.config, &node);
-                            let _ = client
+                            if let Err(e) = client
                                 .post(format!("{}/containers/stop", url))
                                 .json(&json!({"container_id": &container_id}))
                                 .send()
-                                .await;
+                                .await
+                            {
+                                tracing::warn!(project_id = %payload_clone.project_id, container_id = %container_id, error = %e, "deploy: failed to stop container on agent");
+                            }
                         }
                     }
                 }

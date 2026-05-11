@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - **Silent deserialization fixes** — Volume and metadata JSON serialization failures no longer silently produce empty strings (which destroyed data on disk/DB). Volume deserialization failures now log errors instead of silently dropping volumes. `serialize_volumes()` helper returns `None` on failure.
 - **Typed DB/Cloudflare error matching** — UNIQUE constraint detection uses SQLite error code 2067 instead of string matching. Cloudflare duplicate-record detection uses error code 81057 instead of message string.
 - **DNS sync safety** — DB failure during DNS sync now aborts instead of proceeding with empty project list (which would delete all DNS records). Master Caddy `/load` failure now returns error instead of silently continuing.
+- **Silent agent HTTP call logging** — Container stop/remove/cleanup calls to remote agents now log errors instead of silently discarding them. Waker no longer transitions to "Running" on non-JSON agent response.
 
 ## [0.2.17] - 2026-05-08
 
