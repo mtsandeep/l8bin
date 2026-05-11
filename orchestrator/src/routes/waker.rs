@@ -147,7 +147,15 @@ async fn remote_recreate(
             "cmd": project.cmd,
             "memory_limit_mb": project.memory_limit_mb,
             "cpu_limit": project.cpu_limit,
-            "volumes": project.volumes.as_ref().and_then(|v| serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(v).ok()),
+            "volumes": project.volumes.as_ref().and_then(|v| {
+                match serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(v) {
+                    Ok(mounts) => Some(mounts),
+                    Err(e) => {
+                        tracing::error!(project = %project.id, error = %e, "waker: failed to parse volumes JSON");
+                        None
+                    }
+                }
+            }),
         }))
         .send()
         .await

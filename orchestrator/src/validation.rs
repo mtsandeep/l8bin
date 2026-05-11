@@ -13,6 +13,11 @@ pub fn is_valid_project_id(id: &str) -> bool {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Check if a sqlx error is a SQLite UNIQUE constraint violation (error code 2067).
+pub fn is_unique_constraint(e: &sqlx::Error) -> bool {
+    matches!(e, sqlx::Error::Database(db_err) if db_err.code().as_deref() == Some("2067"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

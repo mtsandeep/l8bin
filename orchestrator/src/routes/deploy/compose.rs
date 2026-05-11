@@ -356,15 +356,15 @@ pub async fn deploy_compose(
     .await;
 
     if let Err(e) = result {
-        let msg = e.to_string();
-        let status = if msg.contains("UNIQUE constraint") {
+        let is_conflict = crate::validation::is_unique_constraint(&e);
+        let status = if is_conflict {
             StatusCode::CONFLICT
         } else {
             StatusCode::INTERNAL_SERVER_ERROR
         };
         return (
             status,
-            Json(json!({"error": if msg.contains("UNIQUE constraint") { format!("project '{}' already exists", project_id) } else { format!("database error: {msg}") } })),
+            Json(json!({"error": if is_conflict { format!("project '{}' already exists", project_id) } else { format!("database error: {e}") } })),
         ).into_response();
     }
 

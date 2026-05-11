@@ -547,23 +547,35 @@ impl CloudflareDnsRouter {
         // DNS records are only removed when a project is deleted (or Cloudflare is cleared),
         // never when a project is stopped — so that stopped projects still resolve and
         // reach the waker via the catch-all route.
-        let all_projects: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        let all_projects: Vec<(String, Option<String>, Option<String>)> = match sqlx::query_as(
             "SELECT id, node_id, custom_domain FROM projects",
         )
         .fetch_all(&self.db)
         .await
-        .unwrap_or_default();
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "sync_dns: failed to fetch projects, aborting DNS sync");
+                return Err(e.into());
+            }
+        };
 
         for (project_id, node_id, custom_domain) in &all_projects {
             let ip = match node_id.as_deref() {
                 Some(nid) if nid != "local" => {
-                    let row: Option<(Option<String>,)> = sqlx::query_as(
+                    let row: Option<(Option<String>,)> = match sqlx::query_as(
                         "SELECT public_ip FROM nodes WHERE id = ?",
                     )
                     .bind(nid)
                     .fetch_optional(&self.db)
                     .await
-                    .unwrap_or(None);
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tracing::warn!(project_id = %project_id, node_id = %nid, error = %e, "sync_dns: failed to fetch node public_ip");
+                            None
+                        }
+                    };
                     match row.and_then(|(ip,)| ip) {
                         Some(ip) if !ip.is_empty() => ip,
                         _ => {
@@ -705,10 +717,9 @@ impl RoutingProvider for CloudflareDnsRouter {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            tracing::warn!(status = %status, "master caddy /load failed: {}", body);
-        } else {
-            tracing::info!(local_count = local_projects.len(), "master caddy config loaded");
+            anyhow::bail!("master caddy /load failed ({status}): {body}");
         }
+        tracing::info!(local_count = local_projects.len(), "master caddy config loaded");
 
         // 2. Agent Caddys — push config for remote projects
         for (node_id, agent_projects) in &by_node {

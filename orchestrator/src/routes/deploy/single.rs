@@ -216,9 +216,15 @@ async fn execute_deploy(
     .ok()
     .flatten()
     .flatten()
-    .and_then(|v| serde_json::from_str(&v).ok());
+    .and_then(|v| match serde_json::from_str(&v) {
+        Ok(mounts) => Some(mounts),
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to parse old volumes JSON, skipping volume diff");
+            None
+        }
+    });
 
-    let volumes_json = payload.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+    let volumes_json = payload.volumes.as_ref().and_then(|v| litebin_common::types::serialize_volumes(v));
 
     let result = if is_update {
         sqlx::query(
@@ -293,15 +299,15 @@ async fn execute_deploy(
     };
 
     if let Err(e) = result {
-        let msg = e.to_string();
-        let status = if msg.contains("UNIQUE constraint") {
+        let is_conflict = crate::validation::is_unique_constraint(&e);
+        let status = if is_conflict {
             StatusCode::CONFLICT
         } else {
             StatusCode::INTERNAL_SERVER_ERROR
         };
         return (
             status,
-            Json(json!({"error": if msg.contains("UNIQUE constraint") { format!("project '{}' already exists", payload.project_id) } else { format!("database error: {msg}") } })),
+            Json(json!({"error": if is_conflict { format!("project '{}' already exists", payload.project_id) } else { format!("database error: {e}") } })),
         ).into_response();
     }
 

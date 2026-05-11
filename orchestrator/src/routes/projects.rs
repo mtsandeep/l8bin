@@ -254,11 +254,10 @@ pub async fn create_project(
             Ok((StatusCode::CREATED, Json(response)))
         }
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("UNIQUE constraint") {
+            if crate::validation::is_unique_constraint(&e) {
                 Err((StatusCode::CONFLICT, Json(serde_json::json!({"error": "Project already exists"}))))
             } else {
-                Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": msg}))))
+                Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))
             }
         }
     }

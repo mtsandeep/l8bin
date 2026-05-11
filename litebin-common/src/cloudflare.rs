@@ -29,6 +29,7 @@ struct CfResponse<T> {
 
 #[derive(Debug, Deserialize)]
 struct CfError {
+    code: Option<i64>,
     message: String,
 }
 
@@ -251,6 +252,13 @@ impl CloudflareClient {
                 })?;
 
             if !cf_resp.success {
+                let is_duplicate = cf_resp.errors.as_ref().map_or(false, |errs| {
+                    errs.iter().any(|e| e.code == Some(81057))
+                });
+                if is_duplicate {
+                    tracing::info!(name, record_type, content, "DNS record already exists");
+                    return Ok(false);
+                }
                 let errors = cf_resp
                     .errors
                     .unwrap_or_default()
@@ -258,10 +266,6 @@ impl CloudflareClient {
                     .map(|e| e.message.clone())
                     .collect::<Vec<_>>()
                     .join(", ");
-                if errors.contains("An identical record already exists") {
-                    tracing::info!(name, record_type, content, "DNS record already exists");
-                    return Ok(false);
-                }
                 anyhow::bail!("cloudflare upsert POST failed: {}", errors);
             }
 

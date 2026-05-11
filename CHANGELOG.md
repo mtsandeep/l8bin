@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 - **Fix delete modal volume classification** — Relative bind mounts (`./data`) were incorrectly shown as "Absolute bind mounts — not removed". Scoped paths now use `projects/{id}/...` instead of container-internal `/app/projects/...`.
 - **Typed Docker error classification** — `DockerErrorKind` enum replaces fragile `e.to_string().contains("404")` checks with pattern-matching on bollard error variants. Agent blind spots fixed (all errors no longer treated as 404).
 - **Split `docker.rs` into modules** — `litebin-common/src/docker/` now has `mod.rs` (types + struct), `container.rs` (lifecycle), `image.rs` (images, networking, volumes, stats), `tests.rs`.
+- **Silent deserialization fixes** — Volume and metadata JSON serialization failures no longer silently produce empty strings (which destroyed data on disk/DB). Volume deserialization failures now log errors instead of silently dropping volumes. `serialize_volumes()` helper returns `None` on failure.
+- **Typed DB/Cloudflare error matching** — UNIQUE constraint detection uses SQLite error code 2067 instead of string matching. Cloudflare duplicate-record detection uses error code 81057 instead of message string.
+- **DNS sync safety** — DB failure during DNS sync now aborts instead of proceeding with empty project list (which would delete all DNS records). Master Caddy `/load` failure now returns error instead of silently continuing.
 
 ## [0.2.17] - 2026-05-08
 

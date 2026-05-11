@@ -219,7 +219,14 @@ pub fn write_project_metadata(project_id: &str, image: &str, internal_port: i64,
         volumes,
     };
     let path = metadata_path(project_id);
-    if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&meta).unwrap_or_default()) {
+    let meta_json = match serde_json::to_string_pretty(&meta) {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::error!(project = project_id, error = %e, "failed to serialize metadata.json");
+            return;
+        }
+    };
+    if let Err(e) = std::fs::write(&path, &meta_json) {
         tracing::warn!(project = project_id, error = %e, "failed to write metadata.json");
     } else {
         tracing::info!(project = project_id, "wrote metadata.json");
@@ -277,7 +284,7 @@ pub async fn run_container(
         memory_limit_mb: req.memory_limit_mb,
         cpu_limit: req.cpu_limit,
         custom_domain: None,
-        volumes: req.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
+        volumes: req.volumes.as_ref().and_then(|v| litebin_common::types::serialize_volumes(v)),
         auto_stop_enabled: false,
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,
@@ -343,7 +350,7 @@ pub async fn recreate_container(
         memory_limit_mb: req.memory_limit_mb,
         cpu_limit: req.cpu_limit,
         custom_domain: None,
-        volumes: req.volumes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
+        volumes: req.volumes.as_ref().and_then(|v| litebin_common::types::serialize_volumes(v)),
         auto_stop_enabled: false,
         auto_stop_timeout_mins: 0,
         auto_start_enabled: false,

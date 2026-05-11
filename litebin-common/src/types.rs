@@ -166,6 +166,12 @@ pub struct VolumeMount {
     pub name: Option<String>,
 }
 
+/// Serialize volume mounts to JSON string. Returns None on failure instead of
+/// silently producing an empty string that would destroy volume data.
+pub fn serialize_volumes(volumes: &[VolumeMount]) -> Option<String> {
+    serde_json::to_string(volumes).ok()
+}
+
 /// Resolve a volume source to its final form.
 /// - Named volumes: prefixed with `litebin_{project_id}_` (e.g. `pgdata` → `litebin_myproject_pgdata`)
 /// - Relative bind mounts (`./`): resolved relative to `projects/{project_id}/` (e.g. `./data` → `projects/myproject/data`)
@@ -342,7 +348,13 @@ impl RunServiceConfig {
     pub fn from_project(project: &Project, extra_env: Vec<String>) -> Self {
         // Build volume specs from project volumes (named volumes + bind mounts)
         let binds: Option<Vec<String>> = if let Some(ref vols_json) = project.volumes {
-            let mounts: Vec<VolumeMount> = serde_json::from_str(vols_json).unwrap_or_default();
+            let mounts: Vec<VolumeMount> = match serde_json::from_str(vols_json) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::error!(project = %project.id, error = %e, "failed to parse volumes JSON");
+                    Vec::new()
+                }
+            };
             let built: Vec<String> = mounts
                 .into_iter()
                 .filter_map(|v| {
