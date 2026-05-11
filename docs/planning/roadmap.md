@@ -652,6 +652,36 @@ All three use the same health check infrastructure but serve different purposes.
 
 ---
 
+## Growth Path & Graduation
+
+LiteBin covers a project from launch to when any single service outgrows one VPS. Beyond that point, the user needs replicas, auto-scaling, and load balancing — which is a fundamentally different problem class (Kubernetes, managed cloud).
+
+### Stage 1: Single VPS, All Services (Today)
+
+All services of a compose project run on one VPS. This is the default and works for most side projects through thousands of users.
+
+### Stage 2: One VPS Per Service (Distributed Services — Planned)
+
+As the app grows, individual services get their own dedicated VPS. A compose project with 6-8 services spreads across multiple VPS, each running one service. Still managed as a single project from the dashboard.
+
+This requires cross-VPS networking (WireGuard mesh between nodes) and per-service node assignment. Cross-node service discovery via Docker `extra_hosts` — transparent to the app.
+
+### Stage 3: Graduation (Out of LiteBin Scope)
+
+When any single service needs multiple VPS (replicas, auto-scaling, load balancing), the user has outgrown LiteBin. This means the app is successful enough to justify dedicated ops — a DevOps engineer, managed cloud services, or Kubernetes.
+
+This is not a limitation — it's the target. LiteBin takes you from day 0 to 100K+ users. The Eject feature (Phase 7) provides a clean exit path: export as standalone docker-compose and migrate to K8s or a managed platform.
+
+```
+Stage 1                    Stage 2                        Stage 3
+1 VPS, all services        1 VPS per service              Multiple VPS per service
+──────────────             ────────────────               ──────────────────────
+solo dev                   dev team + couple ops dev      dedicated ops team
+LiteBin today              LiteBin + WireGuard mesh       Graduate → K8s / Cloud
+```
+
+---
+
 ## Competitive Positioning
 
 ### Why LiteBin Over Vercel/Render
@@ -702,7 +732,8 @@ All three use the same health check infrastructure but serve different purposes.
 | 10 | Zero-downtime deploys | Phase 8 | Medium |
 | 11 | Liveness probes | Phase 9 | Low |
 | 12 | Master migration + promote | Phase 2 | Medium |
-| 12 | GitHub App (seamless repo connect) | Future | Medium |
+| 13 | GitHub App (seamless repo connect) | Future | Medium |
+| 14 | Distributed services (1 VPS per service) | Future | Medium |
 | 13 | Project backup (Rustic) | Planned | Medium |
 | 14 | Disaster recovery | Planned | Low |
 | 15 | Auto-update Docker images | Planned | Medium |
