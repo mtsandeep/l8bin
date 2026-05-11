@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use litebin_common::types::{ContainerStatus, ProjectStatus, VolumeMount};
+use litebin_common::docker::DockerErrorKind;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash as StdHash, Hasher};
 use std::collections::hash_map::DefaultHasher;
@@ -553,14 +554,18 @@ pub async fn container_status(
 ) -> impl IntoResponse {
     let inspect = match state.docker.inspect_container(&id).await {
         Ok(info) => info,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "container not found".to_string(),
-                }),
-            )
-                .into_response();
+        Err(e) => {
+            let (status, message) = match DockerErrorKind::from_anyhow(&e) {
+                DockerErrorKind::NotFound => (
+                    StatusCode::NOT_FOUND,
+                    "container not found".to_string(),
+                ),
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to inspect container: {e}"),
+                ),
+            };
+            return (status, Json(ErrorResponse { error: message })).into_response();
         }
     };
 

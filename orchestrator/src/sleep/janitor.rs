@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use litebin_common::types::{Node, ProjectStatus};
+use litebin_common::docker::DockerErrorKind;
 
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
@@ -162,11 +163,13 @@ async fn sweep(
 
 async fn stop_local_container(state: &AppState, project_id: &str, container_id: &str) {
     if let Err(e) = state.docker.stop_container(container_id).await {
-        let err_str = e.to_string();
-        if err_str.contains("404") || err_str.contains("No such container") {
-            tracing::warn!(project = %project_id, "janitor: container gone, already stopped");
-        } else {
-            tracing::error!(project = %project_id, error = %e, "janitor: failed to stop container (orphan — cleaned up on next wake)");
+        match DockerErrorKind::from_anyhow(&e) {
+            DockerErrorKind::NotFound => {
+                tracing::warn!(project = %project_id, "janitor: container gone, already stopped");
+            }
+            _ => {
+                tracing::error!(project = %project_id, error = %e, "janitor: failed to stop container (orphan — cleaned up on next wake)");
+            }
         }
     } else {
         tracing::info!(project = %project_id, "janitor: container stopped (idle)");

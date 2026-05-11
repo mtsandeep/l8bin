@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 - **Graceful shutdown** — Orchestrator and agent handle SIGTERM/SIGINT: stop accepting new connections, drain in-flight requests, cancel background tasks (janitor, heartbeat, activity tracker, route sync, periodic sync), close DB pool, and log each step.
 - **Startup complete log** — Single clear `"startup complete — accepting connections"` log with addr, domain, and version after all init is done (replaces the ambiguous `"starting server"` message).
 - **Fix delete modal volume classification** — Relative bind mounts (`./data`) were incorrectly shown as "Absolute bind mounts — not removed". Scoped paths now use `projects/{id}/...` instead of container-internal `/app/projects/...`.
+- **Typed Docker error classification** — `DockerErrorKind` enum replaces fragile `e.to_string().contains("404")` checks with pattern-matching on bollard error variants. Agent blind spots fixed (all errors no longer treated as 404).
+- **Split `docker.rs` into modules** — `litebin-common/src/docker/` now has `mod.rs` (types + struct), `container.rs` (lifecycle), `image.rs` (images, networking, volumes, stats), `tests.rs`.
 
 ## [0.2.17] - 2026-05-08
 

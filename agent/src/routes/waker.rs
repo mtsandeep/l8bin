@@ -12,7 +12,7 @@ use sha2::Sha256;
 use tokio::sync::Notify;
 
 use crate::{AgentState, WakeGuard};
-use litebin_common::docker::DockerManager;
+use litebin_common::docker::{DockerManager, DockerErrorKind};
 
 /// Hop-by-hop headers that must not be forwarded when proxying.
 const HOP_BY_HOP: &[&str] = &[
@@ -172,7 +172,15 @@ pub async fn wake(
         let prefix = format!("litebin-{}.", subdomain);
         match state.docker.list_containers_by_prefix(&prefix).await {
             Ok(containers) => containers.len() > 1,
-            Err(_) => false,
+            Err(e) => {
+                match DockerErrorKind::from_anyhow(&e) {
+                    DockerErrorKind::NotFound | DockerErrorKind::Connection => false,
+                    _ => {
+                        tracing::warn!(subdomain = %subdomain, error = %e, "waker: unexpected error listing containers for multi-service check");
+                        false
+                    }
+                }
+            }
         }
     };
 
@@ -204,7 +212,10 @@ pub async fn wake(
             let prefix = format!("litebin-{}.", subdomain);
             let container_names = match state.docker.list_containers_by_prefix(&prefix).await {
                 Ok(names) => names,
-                Err(_) => Vec::new(),
+                Err(e) => {
+                    tracing::warn!(subdomain = %subdomain, error = %e, "waker: failed to list containers for health check, skipping");
+                    Vec::new()
+                }
             };
 
             let mut stopped_services = Vec::new();
