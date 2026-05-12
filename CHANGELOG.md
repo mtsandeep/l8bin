@@ -4,23 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- "Allow raw ports" and "Allow Docker access" toggles to Deploy New App form (compose mode).
+- **Biome for linting + formatting** — Replaced ESLint with Biome (Rust-based, 10–25x faster). Single `biome.json` config, pre-commit hook via nano-staged.
+
+### Changed
+- **Frontend code cleanup** — Extracted `HomePage` from `App.tsx` into its own component with custom hooks (`useHomeData`, `useSettings`, `useNodes`).
 - **Typed status enums** — Replaced bare status strings with enums across backend and frontend.
-- **Silent failure logging** — DB errors and status transition failures that were silently discarded now produce `tracing::warn`/`error` logs. Existence guards (duplicate checks, TLS validation) return 500 on DB error instead of silently bypassing guards.
-- Added "Allow raw ports" and "Allow Docker access" toggles to Deploy New App form (compose mode).
 - **Graceful shutdown** — Orchestrator and agent handle SIGTERM/SIGINT: stop accepting new connections, drain in-flight requests, cancel background tasks (janitor, heartbeat, activity tracker, route sync, periodic sync), close DB pool, and log each step.
 - **Startup complete log** — Single clear `"startup complete — accepting connections"` log with addr, domain, and version after all init is done (replaces the ambiguous `"starting server"` message).
-- **Fix delete modal volume classification** — Relative bind mounts (`./data`) were incorrectly shown as "Absolute bind mounts — not removed". Scoped paths now use `projects/{id}/...` instead of container-internal `/app/projects/...`.
-- **Typed Docker error classification** — `DockerErrorKind` enum replaces fragile `e.to_string().contains("404")` checks with pattern-matching on bollard error variants. Agent blind spots fixed (all errors no longer treated as 404).
+- **Typed Docker error classification** — `DockerErrorKind` enum replaces fragile `e.to_string().contains("404")` checks with pattern-matching on bollard error variants.
 - **Split `docker.rs` into modules** — `litebin-common/src/docker/` now has `mod.rs` (types + struct), `container.rs` (lifecycle), `image.rs` (images, networking, volumes, stats), `tests.rs`.
-- **Silent deserialization fixes** — Volume and metadata JSON serialization failures no longer silently produce empty strings (which destroyed data on disk/DB). Volume deserialization failures now log errors instead of silently dropping volumes. `serialize_volumes()` helper returns `None` on failure.
 - **Typed DB/Cloudflare error matching** — UNIQUE constraint detection uses SQLite error code 2067 instead of string matching. Cloudflare duplicate-record detection uses error code 81057 instead of message string.
-- **DNS sync safety** — DB failure during DNS sync now aborts instead of proceeding with empty project list (which would delete all DNS records). Master Caddy `/load` failure now returns error instead of silently continuing.
-- **Silent agent HTTP call logging** — Container stop/remove/cleanup calls to remote agents now log errors instead of silently discarding them. Waker no longer transitions to "Running" on non-JSON agent response.
 - **Module splits** — Split large route files into directory modules: agent `containers.rs`, agent `waker.rs`, orchestrator `waker.rs`. Public APIs unchanged.
 - **Shared code** — Extracted proxy utilities (`HOP_BY_HOP`, `is_hop_by_hop`, `wants_json`) to `litebin-common`, deduplicated `COMPOSE_FILE_NAMES` across agent/orchestrator/CLI, extracted `is_windows_drive_path()` helper.
-- **Fix missing `docker-compose.yaml` in scan** — Docker scan now checks all compose file name variants.
-- **Docker socket handling** — Containers with `/var/run/docker.sock` mounts no longer fail deploy/recreate when "Allow Docker access" is disabled; socket is stripped silently with a warning toast. Proxy sidecar waits for network readiness before dependent services start. Import flow sends `allow_docker_access` flag to remote agents and creates proxy sidecar when enabled.
-- **Non-fatal port mapping** — `run_service_container` no longer fails when a container exits immediately (e.g. missing docker.sock); returns port=0 and lets status polling resolve it. Eliminates misleading "no mapped port found" errors.
+
+### Fixed
+- **All Biome lint errors** — Fixed 47 lint errors (a11y: button types, label associations, SVG titles, keyboard handlers; correctness: exhaustive deps, no-redeclare; suspicious: array index keys).
+- **Pre-existing TypeScript errors in `ProjectCard`** — API functions `redeployProject`, `stopProject`, `startProject`, `deleteProject` now return `Promise<string[] | undefined>` to match the `handleAction` signature.
+- **Silent failure logging** — DB errors and status transition failures that were silently discarded now produce `tracing::warn`/`error` logs. Existence guards (duplicate checks, TLS validation) return 500 on DB error instead of silently bypassing guards.
+- **Delete modal volume classification** — Relative bind mounts (`./data`) were incorrectly shown as "Absolute bind mounts — not removed". Scoped paths now use `projects/{id}/...` instead of container-internal `/app/projects/...`.
+- **Silent deserialization** — Volume and metadata JSON serialization failures no longer silently produce empty strings (which destroyed data on disk/DB). Volume deserialization failures now log errors instead of silently dropping volumes. `serialize_volumes()` helper returns `None` on failure.
+- **DNS sync safety** — DB failure during DNS sync now aborts instead of proceeding with empty project list (which would delete all DNS records). Master Caddy `/load` failure now returns error instead of silently continuing.
+- **Silent agent HTTP call logging** — Container stop/remove/cleanup calls to remote agents now log errors instead of silently discarding them. Waker no longer transitions to "Running" on non-JSON agent response.
+- **Missing `docker-compose.yaml` in scan** — Docker scan now checks all compose file name variants.
+- **Docker socket handling** — Containers with `/var/run/docker.sock` mounts no longer fail deploy/recreate when "Allow Docker access" is disabled; socket is stripped silently with a warning toast. Proxy sidecar waits for network readiness before dependent services start.
+- **Non-fatal port mapping** — `run_service_container` no longer fails when a container exits immediately (e.g. missing docker.sock); returns port=0 and lets status polling resolve it.
 
 ## [0.2.17] - 2026-05-08
 

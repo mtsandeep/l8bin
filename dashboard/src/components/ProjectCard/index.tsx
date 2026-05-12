@@ -152,7 +152,7 @@ export default function ProjectCard({
 
   const handleAction = async (
     action: 'stop' | 'start' | 'delete' | 'redeploy' | 'recreate',
-    fn: () => Promise<undefined | string[]>,
+    fn: () => Promise<string[] | undefined>,
   ) => {
     setLoading(action);
     try {

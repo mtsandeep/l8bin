@@ -244,7 +244,7 @@ export async function redeployProject(
   memoryLimitMb?: number | null,
   cpuLimit?: number | null,
   cleanupVolumes?: boolean,
-): Promise<void> {
+): Promise<string[] | undefined> {
   const res = await fetch(`${API_BASE}/deploy`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -268,6 +268,7 @@ export async function redeployProject(
     } catch {}
     throw new Error(msg);
   }
+  return undefined;
 }
 
 export async function recreateProject(projectId: string, services?: string[], pullImages?: boolean): Promise<string[]> {
@@ -286,7 +287,7 @@ export async function recreateProject(projectId: string, services?: string[], pu
   return data.warnings ?? [];
 }
 
-export async function stopProject(projectId: string): Promise<void> {
+export async function stopProject(projectId: string): Promise<string[] | undefined> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/stop`, {
     method: 'POST',
     credentials: 'include',
@@ -295,9 +296,10 @@ export async function stopProject(projectId: string): Promise<void> {
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Stop failed'));
   }
+  return undefined;
 }
 
-export async function startProject(projectId: string): Promise<void> {
+export async function startProject(projectId: string): Promise<string[] | undefined> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/start`, {
     method: 'POST',
     credentials: 'include',
@@ -306,6 +308,7 @@ export async function startProject(projectId: string): Promise<void> {
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Start failed'));
   }
+  return undefined;
 }
 
 export async function startService(projectId: string, serviceName: string): Promise<void> {
@@ -358,7 +361,7 @@ export async function updateServiceSettings(
   }
 }
 
-export async function deleteProject(projectId: string): Promise<void> {
+export async function deleteProject(projectId: string): Promise<string[] | undefined> {
   const res = await fetch(`${API_BASE}/projects/${projectId}`, {
     method: 'DELETE',
     credentials: 'include',
@@ -367,6 +370,7 @@ export async function deleteProject(projectId: string): Promise<void> {
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Delete failed'));
   }
+  return undefined;
 }
 
 export interface LogsResponse {

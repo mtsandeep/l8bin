@@ -26,12 +26,13 @@ import {
   type ImportedGroup,
   type ImportGroupPayload,
   importContainers,
-  type Node,
   type ScanContainer,
   type ScanGroup,
   scanContainers,
   updateProjectSettings,
 } from '../api';
+import { useNodes } from '../hooks/useNodes';
+import { useAuth } from './AuthContext';
 
 type Step = 'scan' | 'select' | 'review' | 'result';
 
@@ -58,7 +59,6 @@ interface EditableGroup {
 interface Props {
   onBack: () => void;
   onDone: () => void;
-  nodes: Node[];
 }
 
 function StateChip({ state }: { state: string }) {
@@ -86,7 +86,9 @@ function NodeBadge({ name, isLocal }: { name: string; isLocal: boolean }) {
   );
 }
 
-export default function ScanImportPage({ onBack, onDone, nodes }: Props) {
+export default function ScanImportPage({ onBack, onDone }: Props) {
+  const { user } = useAuth();
+  const { nodes } = useNodes(user);
   const [searchParams] = useSearchParams();
   const filterNodeId = searchParams.get('node') || undefined;
   const filterNodeName = filterNodeId

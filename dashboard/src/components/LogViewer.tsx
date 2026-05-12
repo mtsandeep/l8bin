@@ -1,7 +1,7 @@
 import { ArrowDown, Loader2, RefreshCw, Rocket, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchDeployLogs, fetchLogs, ProjectStatus, type ServiceInfo } from '../api';
-import { useIntervalWhileVisible } from '../hooks';
+import { useIntervalWhileVisible } from '../hooks/useIntervalWhileVisible';
 
 interface LogViewerProps {
   projectId: string;

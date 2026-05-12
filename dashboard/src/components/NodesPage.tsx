@@ -12,12 +12,14 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useCallback, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   addNode,
   connectNode,
   deleteNode,
   fetchNodeImageStats,
   fetchNodes,
+  fetchProjects,
   formatBytes,
   type Node,
   type NodeImageStats,
@@ -26,7 +28,7 @@ import {
   pruneNodeImages,
   timeAgo,
 } from '../api';
-import { useIntervalWhileVisible } from '../hooks';
+import { useIntervalWhileVisible } from '../hooks/useIntervalWhileVisible';
 
 function statusColor(status: NodeStatus) {
   if (status === NodeStatus.Online) return 'text-emerald-400';
@@ -477,12 +479,12 @@ function PruneModal({
 
 interface NodesPageProps {
   onBack: () => void;
-  projects: Project[];
-  onScanNode?: (nodeId: string) => void;
 }
 
-export default function NodesPage({ onBack, projects, onScanNode }: NodesPageProps) {
+export default function NodesPage({ onBack }: NodesPageProps) {
+  const navigate = useNavigate();
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [imageStats, setImageStats] = useState<NodeImageStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -508,9 +510,10 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
 
   const load = useCallback(async () => {
     try {
-      const [n, stats] = await Promise.all([fetchNodes(), fetchNodeImageStats().catch(() => [])]);
+      const [n, stats, p] = await Promise.all([fetchNodes(), fetchNodeImageStats().catch(() => []), fetchProjects()]);
       setNodes(n);
       setImageStats(stats);
+      setProjects(p);
     } catch {
       setError('Failed to load agents');
     } finally {
@@ -529,7 +532,13 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
       await load();
     } catch (e: unknown) {
       setDeleteModal((prev) =>
-        prev ? { ...prev, state: 'error', error: e instanceof Error ? e.message : 'Failed to remove agent' } : null,
+        prev
+          ? {
+              ...prev,
+              state: 'error',
+              error: e instanceof Error ? e.message : 'Failed to remove agent',
+            }
+          : null,
       );
     } finally {
       setRemoving(null);
@@ -560,7 +569,13 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
       await load();
     } catch (e: unknown) {
       setPruneModal((prev) =>
-        prev ? { ...prev, state: 'error', error: e instanceof Error ? e.message : 'Failed to prune images' } : null,
+        prev
+          ? {
+              ...prev,
+              state: 'error',
+              error: e instanceof Error ? e.message : 'Failed to prune images',
+            }
+          : null,
       );
     } finally {
       setPruning(null);
@@ -570,30 +585,39 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
       <header className="border-b border-slate-800/80 bg-slate-900/50 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onBack}
-              className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
-            >
-              ← Back
-            </button>
-            <div className="w-px h-4 bg-slate-700" />
-            <Server size={16} className="text-violet-400" />
-            <h1 className="text-sm font-semibold text-slate-100">Agents</h1>
-          </div>
-          <div className="flex items-center gap-2">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center justify-between w-full sm:w-auto">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onBack}
+                className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+              >
+                ← Back
+              </button>
+              <div className="w-px h-4 bg-slate-700" />
+              <Server size={16} className="text-violet-400" />
+              <h1 className="text-sm font-semibold text-slate-100">Agents</h1>
+            </div>
             <button
               type="button"
               onClick={load}
-              className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+              className="sm:hidden p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+            >
+              <RefreshCw size={14} />
+            </button>
+          </div>
+          <div className="flex items-center justify-end gap-2 sm:justify-start">
+            <button
+              type="button"
+              onClick={load}
+              className="hidden sm:inline-flex p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
             >
               <RefreshCw size={14} />
             </button>
             <button
               type="button"
-              onClick={() => onScanNode?.('')}
+              onClick={() => navigate('/manage/import')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700/60 transition-colors"
             >
               <Search size={13} />
@@ -696,7 +720,12 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
                         <button
                           type="button"
                           onClick={() =>
-                            setDeleteModal({ nodeId: node.id, nodeName: node.name, state: 'confirming', error: '' })
+                            setDeleteModal({
+                              nodeId: node.id,
+                              nodeName: node.name,
+                              state: 'confirming',
+                              error: '',
+                            })
                           }
                           disabled={removing === node.id}
                           className="p-1.5 rounded text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
@@ -762,10 +791,10 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      {onScanNode && node.status === NodeStatus.Online && (
+                      {node.status === NodeStatus.Online && (
                         <button
                           type="button"
-                          onClick={() => onScanNode(node.id)}
+                          onClick={() => navigate(`/manage/import?node=${node.id}`)}
                           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20 transition-colors cursor-pointer"
                           title="Scan for existing containers"
                         >
