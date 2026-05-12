@@ -9,6 +9,7 @@
 - [Networking & Firewalls](#networking--firewalls)
 - [Environment Variables (.env)](#environment-variables-env)
 - [Docker Compose / Multi-Service](#docker-compose--multi-service)
+- [Docker Socket Access](#docker-socket-access)
 - [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake)
 - [Volumes & Persistent Data](#volumes--persistent-data)
 - [Custom Routes Not Working](#custom-routes-not-working)
@@ -305,6 +306,17 @@ LiteBin routes traffic to one port per project (the public service's port). Othe
 ### Networks defined in my compose file are ignored
 
 LiteBin creates and manages a single Docker network per project (`litebin_<project_id>`), connects all services and the agent to it, and ignores any `networks` definitions in the compose file. If you have multiple networks for organizing services, they will not be created — all services communicate on the same network.
+
+### My app uses Docker socket (`/var/run/docker.sock`) but it's not working
+
+LiteBin strips Docker socket mounts from your compose by default for security. If your app needs Docker socket access:
+
+1. Open the project settings in the dashboard
+2. Enable **Allow Docker access**
+
+When enabled, LiteBin creates a `docker-socket-proxy` sidecar that filters Docker API access to only your project's containers. Your app's socket mount is redirected through this proxy — it never gets raw access to the host Docker daemon.
+
+If you deploy without enabling this setting, the socket mount is silently removed and your app won't have Docker access. The dashboard shows a warning when this happens.
 
 ### Non-HTTP ports and auto-wake
 

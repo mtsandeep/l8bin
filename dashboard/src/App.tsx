@@ -8,14 +8,15 @@ import ChangePasswordModal from './components/ChangePasswordModal';
 import NodesPage from './components/NodesPage';
 import GlobalSettingsModal from './components/GlobalSettingsModal';
 import ScanImportPage from './components/ScanImportPage';
+import Footer from './components/Footer';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { ToastProvider } from './components/ToastContext';
-import { type Project, type Node, type ProjectStats, type ServiceStats, ProjectStatus, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, fetchVersion, formatBytes } from './api';
+import { type Project, type Node, type ProjectStats, type ServiceStats, ProjectStatus, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, formatBytes } from './api';
 import { useIntervalWhileVisible } from './hooks';
 
 function HomePage({
   projects, stats, systemStats, nodes, projectsDir, domain, dnsTarget,
-  loading, version, statusFilter, setStatusFilter,
+  loading, statusFilter, setStatusFilter,
   loadProjectsAndStats, setShowDeploy, setShowGlobalSettings, setShowChangePassword,
   showDeploy, showGlobalSettings, showChangePassword,
   showUserMenu, setShowUserMenu, userMenuRefMobile, userMenuRefDesktop, user, logout, stackExpanded, setStackExpanded,
@@ -28,7 +29,6 @@ function HomePage({
   domain: string;
   dnsTarget: string;
   loading: boolean;
-  version: string;
   statusFilter: ProjectStatus | null;
   setStatusFilter: (f: ProjectStatus | null) => void;
   loadProjectsAndStats: () => void;
@@ -335,11 +335,6 @@ function HomePage({
         )}
       </main>
 
-      <footer className="text-center py-6 text-xs text-slate-600">
-        Powered by <a href="https://l8bin.com" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300 transition-colors">l8bin.com</a>
-        {version && <span className="ml-1.5 text-slate-700">v{version}</span>}
-      </footer>
-
       {/* Deploy modal */}
       {showDeploy && (
         <DeployForm
@@ -379,7 +374,6 @@ function AppContent() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [loading, setLoading] = useState(true);
   const [stackExpanded, setStackExpanded] = useState(false);
-  const [version, setVersion] = useState('');
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | null>(null);
   const { user, loading: authLoading, logout } = useAuth();
   const userMenuRefMobile = useRef<HTMLDivElement>(null);
@@ -390,12 +384,11 @@ function AppContent() {
     if (!user) return;
     (async () => {
       try {
-        const [nodeData, settings, ver] = await Promise.all([fetchNodes(), fetchGlobalSettings(), fetchVersion()]);
+        const [nodeData, settings] = await Promise.all([fetchNodes(), fetchGlobalSettings()]);
         setNodes(nodeData);
         setProjectsDir(settings.projects_dir);
         setDomain(settings.domain);
         setDnsTarget(settings.dns_target);
-        if (ver) setVersion(ver);
       } catch (e) {
         console.error('Failed to fetch nodes/settings:', e);
       }
@@ -454,13 +447,14 @@ function AppContent() {
 
   const homeProps = {
     projects, stats, systemStats, nodes, projectsDir, domain, dnsTarget,
-    loading, version, statusFilter, setStatusFilter,
+    loading, statusFilter, setStatusFilter,
     loadProjectsAndStats, setShowDeploy, setShowGlobalSettings, setShowChangePassword,
     showDeploy, showGlobalSettings, showChangePassword,
     showUserMenu, setShowUserMenu, userMenuRefMobile, userMenuRefDesktop, user, logout, stackExpanded, setStackExpanded,
   };
 
   return (
+    <>
     <Routes>
       <Route path="/manage" element={<Navigate to="/" replace />} />
       <Route path="/manage/nodes" element={
@@ -479,6 +473,8 @@ function AppContent() {
       } />
       <Route path="/" element={<HomePage {...homeProps} />} />
     </Routes>
+    <Footer />
+    </>
   );
 }
 

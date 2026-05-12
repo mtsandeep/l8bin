@@ -1,14 +1,14 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
-import { X, AlertCircle, CheckCircle } from 'lucide-react';
+import { X, AlertCircle, AlertTriangle, CheckCircle } from 'lucide-react';
 
 interface Toast {
   id: number;
   message: string;
-  type: 'success' | 'error';
+  type: 'success' | 'error' | 'warning';
 }
 
 interface ToastContextValue {
-  showToast: (message: string, type?: 'success' | 'error') => void;
+  showToast: (message: string, type?: 'success' | 'error' | 'warning') => void;
 }
 
 const ToastContext = createContext<ToastContextValue>({ showToast: () => {} });
@@ -22,7 +22,7 @@ let nextId = 0;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const showToast = useCallback((message: string, type: 'success' | 'error' = 'error') => {
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'warning' = 'error') => {
     const id = ++nextId;
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
@@ -43,12 +43,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={toast.id}
             className={`pointer-events-auto flex items-center gap-2 text-white text-xs font-medium px-4 py-2.5 rounded-lg shadow-lg backdrop-blur-sm animate-[slideUp_0.2s_ease-out] ${
-              toast.type === 'success' ? 'bg-emerald-500/90' : 'bg-red-500/90'
+              toast.type === 'success' ? 'bg-emerald-500/90'
+                : toast.type === 'warning' ? 'bg-amber-500/90'
+                : 'bg-red-500/90'
             }`}
           >
             {toast.type === 'success'
               ? <CheckCircle size={14} className="shrink-0" />
-              : <AlertCircle size={14} className="shrink-0" />
+              : toast.type === 'warning'
+                ? <AlertTriangle size={14} className="shrink-0" />
+                : <AlertCircle size={14} className="shrink-0" />
             }
             <span>{toast.message}</span>
             <button

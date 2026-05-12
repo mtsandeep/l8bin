@@ -655,9 +655,19 @@ pub async fn deploy_compose(
         // Trigger route sync
         let _ = state.route_sync_tx.send(());
 
+        // Collect warnings from agent response
+        let agent_warnings: Vec<String> = batch_result["warnings"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
         return (
             StatusCode::OK,
-            Json(json!({"status": "deployed", "project_id": project_id})),
+            Json(json!({
+                "status": "deployed",
+                "project_id": project_id,
+                "warnings": agent_warnings,
+            })),
         ).into_response();
     }
 
@@ -819,12 +829,20 @@ pub async fn deploy_compose(
         }
     });
 
+    // Check for docker.sock in compose when allow_docker_access is disabled
+    let sock_warnings: Vec<String> = if !project.allow_docker_access && compose_yaml.contains("/docker.sock") {
+        vec!["Docker socket mounts found but 'Allow Docker access' is disabled — socket will not be available".into()]
+    } else {
+        vec![]
+    };
+
     (
         StatusCode::OK,
         Json(json!({
             "status": "deploying",
             "project_id": project_id,
-            "message": "Compose deployment started in background"
+            "message": "Compose deployment started in background",
+            "warnings": sock_warnings,
         })),
     )
         .into_response()

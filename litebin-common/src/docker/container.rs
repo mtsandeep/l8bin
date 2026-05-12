@@ -1,5 +1,12 @@
 use std::collections::HashMap;
 
+/// Returns true if the bind source is the Docker daemon socket.
+/// Matches `/var/run/docker.sock`, `/run/docker.sock`, etc. — not other `.sock` files.
+#[inline]
+fn is_docker_sock(path: &str) -> bool {
+    path.ends_with("/docker.sock")
+}
+
 use bollard::models::{
     ContainerCreateBody, EndpointSettings, HostConfig, HostConfigLogConfig, NetworkingConfig,
     PortBinding, RestartPolicy, RestartPolicyNameEnum,
@@ -16,7 +23,9 @@ use super::{DockerManager, RunningContainer};
 
 impl DockerManager {
     /// Inspect a container and return the mapped host port.
-    pub async fn inspect_mapped_port(&self, container_id: &str) -> anyhow::Result<u16> {
+    /// Returns `None` if no port mapping is found (container may have exited
+    /// or port bindings haven't been applied yet).
+    pub async fn inspect_mapped_port(&self, container_id: &str) -> anyhow::Result<Option<u16>> {
         let info = self.docker.inspect_container(container_id, None).await?;
         let port = info
             .network_settings
@@ -28,8 +37,7 @@ impl DockerManager {
                         b.host_port.as_ref().and_then(|p| p.parse::<u16>().ok())
                     })
                 })
-            })
-            .ok_or_else(|| anyhow::anyhow!("no mapped port found for container {}", container_id))?;
+            });
         Ok(port)
     }
 
@@ -235,19 +243,37 @@ impl DockerManager {
             }
         }
 
-        // Block Docker socket mounts unless allow_docker_access is enabled
-        if !config.allow_docker_access {
-            if let Some(ref binds) = config.binds {
-                for bind in binds {
-                    let source = bind.split(':').next().unwrap_or("");
-                    if source.ends_with(".sock") {
-                        return Err(anyhow::anyhow!(
-                            "Docker socket access requires enabling 'Allow Docker access' in project settings"
-                        ));
+        // Strip Docker socket mounts when allow_docker_access is disabled.
+        // Log a warning so the user knows the mount was removed.
+        let filtered_binds: Option<Vec<String>> = if config.allow_docker_access {
+            config.binds.clone()
+        } else if let Some(ref binds) = config.binds {
+            let stripped: Vec<String> = binds
+                .iter()
+                .filter(|b| {
+                    let source = b.split(':').next().unwrap_or("");
+                    if is_docker_sock(source) {
+                        tracing::warn!(
+                            service = %config.service_name,
+                            project_id = %config.project_id,
+                            bind = %b,
+                            "stripped Docker socket mount: 'Allow Docker access' is disabled"
+                        );
+                        false
+                    } else {
+                        true
                     }
-                }
+                })
+                .map(|s| s.to_string())
+                .collect();
+            if stripped.len() != binds.len() {
+                Some(stripped)
+            } else {
+                config.binds.clone()
             }
-        }
+        } else {
+            config.binds.clone()
+        };
 
         // Per-service resource limits (fall back to global defaults when not specified)
         let default_mem = self.memory_limit.load(std::sync::atomic::Ordering::Relaxed);
@@ -304,8 +330,35 @@ impl DockerManager {
             // Compose path: use bollard config as base, apply LiteBin overrides
             lb_host_overrides(&mut host);
 
+            // Strip Docker socket mounts from bollard host config when disabled
+            if !config.allow_docker_access {
+                if let Some(ref binds) = host.binds {
+                    let filtered: Vec<String> = binds
+                        .iter()
+                        .filter(|b| {
+                            let source = b.split(':').next().unwrap_or("");
+                            if is_docker_sock(source) {
+                                tracing::warn!(
+                                    service = %config.service_name,
+                                    project_id = %config.project_id,
+                                    bind = %b,
+                                    "stripped Docker socket mount from compose config: 'Allow Docker access' is disabled"
+                                );
+                                false
+                            } else {
+                                true
+                            }
+                        })
+                        .cloned()
+                        .collect();
+                    if filtered.len() != binds.len() {
+                        host.binds = Some(filtered);
+                    }
+                }
+            }
+
             // Apply LiteBin binds (volume mounts)
-            if let Some(ref binds) = config.binds {
+            if let Some(ref binds) = filtered_binds {
                 let mut translated = binds.clone();
                 self.translate_bind_paths(&mut translated);
                 let mut existing = host.binds.unwrap_or_default();
@@ -356,7 +409,7 @@ impl DockerManager {
             // Label all containers with project_id for docker-socket-proxy filtering,
             // and standard Docker Compose labels for tooling compatibility.
             // Skip litebin-docker-proxy itself so it can't be managed through its own proxy.
-            if config.service_name != "litebin-docker-proxy" {
+            if config.service_name != crate::types::DOCKER_PROXY_SERVICE {
                 let mut labels = HashMap::new();
                 labels.insert("litebin.project_id".to_string(), config.project_id.clone());
                 labels.insert("com.docker.compose.service".to_string(), config.service_name.clone());
@@ -370,7 +423,7 @@ impl DockerManager {
             body
         } else {
             // Single-service path: build from RunServiceConfig fields
-            let mut translated_binds = config.binds.clone();
+            let mut translated_binds = filtered_binds;
             if let Some(ref mut binds) = translated_binds {
                 self.translate_bind_paths(binds);
             }
@@ -399,7 +452,7 @@ impl DockerManager {
                     .cmd
                     .as_deref()
                     .and_then(|c| shlex::split(c)),
-                labels: if config.service_name == "litebin-docker-proxy" {
+                labels: if config.service_name == crate::types::DOCKER_PROXY_SERVICE {
                     None
                 } else {
                     Some({
@@ -436,9 +489,36 @@ impl DockerManager {
             .start_container(&container_id, None::<StartContainerOptions>)
             .await?;
 
-        // Get the mapped port for public services
+        // Get the mapped port for public services (non-fatal).
+        // Containers that crash immediately (e.g. missing docker.sock) will
+        // have no port mapping — return 0 and let status polling resolve it.
         let mapped_port = if config.is_public && config.port.is_some() {
-            self.inspect_mapped_port(&container_id).await?
+            match self.inspect_mapped_port(&container_id).await {
+                Ok(Some(port)) => port,
+                Ok(None) => {
+                    // Port key exists but binding is empty — container likely exited
+                    let info = self.docker.inspect_container(&container_id, None).await?;
+                    let running = info.state.as_ref().and_then(|s| s.running).unwrap_or(false);
+                    let exit_code = info.state.as_ref().and_then(|s| s.exit_code);
+                    tracing::warn!(
+                        service = %config.service_name,
+                        container_id = %container_id,
+                        running,
+                        exit_code = ?exit_code,
+                        "no mapped port found — container may have exited"
+                    );
+                    0
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        service = %config.service_name,
+                        container_id = %container_id,
+                        error = %e,
+                        "failed to inspect mapped port"
+                    );
+                    0
+                }
+            }
         } else {
             0
         };

@@ -252,24 +252,16 @@ pub async fn start_container(
         tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
     }
 
-    // Inspect to return the mapped port
-    match state.docker.inspect_mapped_port(&req.container_id).await {
-        Ok(mapped_port) => (
-            StatusCode::OK,
-            Json(StartResponse { mapped_port }),
-        )
-            .into_response(),
+    // Inspect to return the mapped port (non-fatal — return 0 if not found)
+    let mapped_port = match state.docker.inspect_mapped_port(&req.container_id).await {
+        Ok(Some(port)) => port,
+        Ok(None) => 0,
         Err(e) => {
             tracing::warn!(container_id = %req.container_id, error = %e, "started container but failed to inspect port");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("container started but port inspection failed: {e}"),
-                }),
-            )
-                .into_response()
+            0
         }
-    }
+    };
+    (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
 }
 
 /// POST /containers/stop

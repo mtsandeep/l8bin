@@ -100,7 +100,7 @@ pub async fn stop_project(
             }
             // Also stop docker-socket-proxy if allow_docker_access is enabled
             if project.allow_docker_access {
-                let proxy_name = litebin_common::types::container_name(&project_id, "litebin-docker-proxy", None);
+                let proxy_name = litebin_common::types::container_name(&project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
                 if let Err(e) = client
                     .post(&format!("{}/containers/stop", base_url))
                     .json(&json!({"container_id": proxy_name}))
@@ -125,6 +125,7 @@ pub async fn stop_project(
 
     Ok(Json(MessageResponse {
         message: format!("project '{}' stopping", project_id),
+        ..Default::default()
     }))
 }
 
@@ -147,6 +148,7 @@ pub async fn start_project(
     if project.status == ProjectStatus::Running {
         return Ok(Json(MessageResponse {
             message: format!("project '{}' is already running", project_id),
+            ..Default::default()
         }));
     }
 
@@ -340,6 +342,7 @@ pub async fn start_project(
 
     Ok(Json(MessageResponse {
         message: format!("project '{}' started", project_id),
+        ..Default::default()
     }))
 }
 
@@ -451,6 +454,7 @@ pub async fn delete_project(
 
     Ok(Json(MessageResponse {
         message: format!("project '{}' deleted", project_id),
+        ..Default::default()
     }))
 }
 
@@ -594,8 +598,14 @@ pub async fn recreate_project(
 
             let _ = state.route_sync_tx.send(());
 
+            let agent_warnings: Vec<String> = batch_result["warnings"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
             return Ok(Json(MessageResponse {
                 message: format!("project '{}' recreated on node '{}'", project_id, node_id),
+                warnings: agent_warnings,
             }));
         }
         let pull = body.as_ref().and_then(|b| b.0.pull_images).unwrap_or(false);
@@ -708,6 +718,7 @@ pub async fn recreate_project(
 
     Ok(Json(MessageResponse {
         message: format!("project '{}' recreated", project_id),
+        ..Default::default()
     }))
 }
 
@@ -741,6 +752,7 @@ pub async fn start_service(
 
     Ok(Json(MessageResponse {
         message: format!("service '{}' started", service_name),
+        ..Default::default()
     }))
 }
 
@@ -770,6 +782,7 @@ pub async fn stop_service(
 
     Ok(Json(MessageResponse {
         message: format!("service '{}' stopped", service_name),
+        ..Default::default()
     }))
 }
 
@@ -804,5 +817,6 @@ pub async fn restart_service(
 
     Ok(Json(MessageResponse {
         message: format!("service '{}' restarted", service_name),
+        ..Default::default()
     }))
 }

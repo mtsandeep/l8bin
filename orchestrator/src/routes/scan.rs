@@ -375,9 +375,22 @@ async fn import_single_group(
         "containers": container_specs,
         "compose_yaml": compose_yaml,
         "env_content": env_content,
+        "allow_docker_access": group.allow_docker_access.unwrap_or(false),
     });
 
     let mut migrated_ids: Vec<String> = Vec::new();
+
+    // ── 3b. Warn if docker.sock present without allow_docker_access ───────
+    if !group.allow_docker_access.unwrap_or(false) {
+        let has_sock = group.containers.iter().any(|c| {
+            c.volumes.iter().any(|v| {
+                v.source.contains("/docker.sock") || v.destination.contains("/docker.sock")
+            })
+        });
+        if has_sock {
+            warnings.push("Containers have Docker socket mounts but 'Allow Docker access' is disabled — the socket will not be available after redeploy".into());
+        }
+    }
 
     // ── 4. Docker import ─────────────────────────────────────────────────
     if group.node_id == "local" {

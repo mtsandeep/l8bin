@@ -7,9 +7,11 @@ use litebin_common::types::Node;
 use crate::nodes;
 use crate::AppState;
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct MessageResponse {
     pub message: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Build the base URL for an agent node.

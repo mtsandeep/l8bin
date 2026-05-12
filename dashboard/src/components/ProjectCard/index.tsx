@@ -163,12 +163,15 @@ export default function ProjectCard({
 
   const handleAction = async (
     action: "stop" | "start" | "delete" | "redeploy" | "recreate",
-    fn: () => Promise<void>,
+    fn: () => Promise<void | string[]>,
   ) => {
     setLoading(action);
     try {
-      await fn();
+      const warnings = await fn();
       onRefresh();
+      if (warnings?.length) {
+        for (const w of warnings) showToast(w, "warning");
+      }
     } catch (e) {
       console.error(e);
       showToast(e instanceof Error ? e.message : `${action} failed`);
@@ -531,7 +534,7 @@ export default function ProjectCard({
                           setShowServiceSelectModal(true);
                         } else {
                           handleAction("recreate", () =>
-                            recreateProject(project.id).then(() => onRefresh()),
+                            recreateProject(project.id).then((warnings) => { onRefresh(); return warnings; }),
                           );
                         }
                       }}
@@ -681,7 +684,7 @@ export default function ProjectCard({
                 project.id,
                 selectedServices,
                 serviceSelectAction === "redeploy" ? true : undefined,
-              ).then(() => onRefresh()),
+              ).then((warnings) => { onRefresh(); return warnings; }),
             );
           }}
           onCancel={() => setShowServiceSelectModal(false)}

@@ -126,7 +126,7 @@ async fn sweep(
                 }
                 // Also stop docker-socket-proxy if allow_docker_access is enabled
                 if project.allow_docker_access {
-                    let proxy_name = litebin_common::types::container_name(&project.id, "litebin-docker-proxy", None);
+                    let proxy_name = litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
                     stop_local_container_by_name(state, &project.id, &proxy_name).await;
                 }
             } else {
@@ -141,7 +141,7 @@ async fn sweep(
                 }
                 // Also stop docker-socket-proxy if allow_docker_access is enabled
                 if project.allow_docker_access {
-                    let proxy_name = litebin_common::types::container_name(&project.id, "litebin-docker-proxy", None);
+                    let proxy_name = litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
                     stop_remote_container(state, &project.id, &node_id, &proxy_name).await;
                 }
             }

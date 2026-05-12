@@ -81,7 +81,8 @@ export default function AppSettingsPopover({
     setLoading(true);
     try {
       await updateProjectSettings(project.id, { cmd, memory_limit_mb: memMb, cpu_limit: cpuLimit });
-      await recreateProject(project.id);
+      const warnings = await recreateProject(project.id);
+      for (const w of warnings) showToast(w, "warning");
       onClose();
       onRefresh();
     } catch (e) {

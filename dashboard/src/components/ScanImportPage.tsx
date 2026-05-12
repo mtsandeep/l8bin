@@ -16,7 +16,7 @@ type Step = 'scan' | 'select' | 'review' | 'result';
 
 function hasDockerSock(containers: ScanContainer[]): boolean {
   return containers.some(c =>
-    c.volumes.some(v => v.source.includes('docker.sock') || v.destination.includes('docker.sock'))
+    c.volumes.some(v => v.source.endsWith('/docker.sock') || v.destination.endsWith('/docker.sock'))
   );
 }
 

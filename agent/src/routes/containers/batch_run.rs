@@ -52,6 +52,8 @@ pub struct ServiceResources {
 #[derive(Serialize)]
 pub struct BatchRunResponse {
     pub services: Vec<ServiceRunResult>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -220,6 +222,22 @@ pub async fn batch_run(
     let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
 
+    // Pre-check: warn if any service has docker.sock but allow_docker_access is disabled
+    let mut warnings: Vec<String> = Vec::new();
+    if !req.allow_docker_access.unwrap_or(false) {
+        let has_sock = plan.configs.iter().any(|c| {
+            c.binds.as_ref().map_or(false, |binds| {
+                binds.iter().any(|b| {
+                    let source = b.split(':').next().unwrap_or("");
+                    source.ends_with("/docker.sock")
+                })
+            })
+        });
+        if has_sock {
+            warnings.push("Docker socket mounts found but 'Allow Docker access' is disabled — socket will not be available".into());
+        }
+    }
+
     // Start services level by level — parallel within each level
     let mut results: Vec<ServiceRunResult> = Vec::new();
     for level in &plan.service_levels {
@@ -276,7 +294,20 @@ pub async fn batch_run(
         // Collect results from this level
         while let Some(result) = tasks.join_next().await {
             match result {
-                Ok(r) => results.push(r),
+                Ok(r) => {
+                    // If the docker-socket-proxy was started, wait for it to be
+                    // network-ready before starting the next level.
+                    if r.service_name == litebin_common::types::DOCKER_PROXY_SERVICE {
+                        if let Some(ref cid) = r.container_id {
+                            if let Err(e) = state.docker.wait_for_network_ready(cid).await {
+                                tracing::warn!(error = %e, "docker-socket-proxy network readiness timeout, continuing");
+                            } else {
+                                tracing::info!(container_id = %cid, "docker-socket-proxy is network-ready");
+                            }
+                        }
+                    }
+                    results.push(r)
+                }
                 Err(e) => {
                     tracing::error!(error = %e, "batch-run: service task panicked");
                 }
@@ -289,5 +320,5 @@ pub async fn batch_run(
         tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
     }
 
-    (StatusCode::OK, Json(BatchRunResponse { services: results })).into_response()
+    (StatusCode::OK, Json(BatchRunResponse { services: results, warnings })).into_response()
 }

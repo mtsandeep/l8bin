@@ -688,10 +688,6 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
         )}
       </main>
 
-      <footer className="text-center py-6 text-xs text-slate-600">
-        Powered by <a href="https://l8bin.com" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300 transition-colors">l8bin.com</a>
-      </footer>
-
       {showAdd && (
         <AddAgentWizard
           onClose={() => setShowAdd(false)}

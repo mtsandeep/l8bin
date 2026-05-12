@@ -16,6 +16,11 @@ All notable changes to this project will be documented in this file.
 - **Typed DB/Cloudflare error matching** — UNIQUE constraint detection uses SQLite error code 2067 instead of string matching. Cloudflare duplicate-record detection uses error code 81057 instead of message string.
 - **DNS sync safety** — DB failure during DNS sync now aborts instead of proceeding with empty project list (which would delete all DNS records). Master Caddy `/load` failure now returns error instead of silently continuing.
 - **Silent agent HTTP call logging** — Container stop/remove/cleanup calls to remote agents now log errors instead of silently discarding them. Waker no longer transitions to "Running" on non-JSON agent response.
+- **Module splits** — Split large route files into directory modules: agent `containers.rs`, agent `waker.rs`, orchestrator `waker.rs`. Public APIs unchanged.
+- **Shared code** — Extracted proxy utilities (`HOP_BY_HOP`, `is_hop_by_hop`, `wants_json`) to `litebin-common`, deduplicated `COMPOSE_FILE_NAMES` across agent/orchestrator/CLI, extracted `is_windows_drive_path()` helper.
+- **Fix missing `docker-compose.yaml` in scan** — Docker scan now checks all compose file name variants.
+- **Docker socket handling** — Containers with `/var/run/docker.sock` mounts no longer fail deploy/recreate when "Allow Docker access" is disabled; socket is stripped silently with a warning toast. Proxy sidecar waits for network readiness before dependent services start. Import flow sends `allow_docker_access` flag to remote agents and creates proxy sidecar when enabled.
+- **Non-fatal port mapping** — `run_service_container` no longer fails when a container exits immediately (e.g. missing docker.sock); returns port=0 and lets status polling resolve it. Eliminates misleading "no mapped port found" errors.
 
 ## [0.2.17] - 2026-05-08
 

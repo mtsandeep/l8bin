@@ -201,7 +201,7 @@ pub async fn wake_for_host(
             if !is_multi {
                 if let Some(ref container_id) = project.container_id {
                     if state.docker.is_container_running(container_id).await.unwrap_or(true) {
-                        if let Ok(actual_port) = state.docker.inspect_mapped_port(container_id).await {
+                        if let Ok(Some(actual_port)) = state.docker.inspect_mapped_port(container_id).await {
                             let db_port = project.mapped_port.unwrap_or(0) as u16;
                             if actual_port != db_port {
                                 let now = chrono::Utc::now().timestamp();

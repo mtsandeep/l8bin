@@ -69,7 +69,8 @@ export default function ServiceSettingsPopover({
         memory_limit_mb: memMb,
         cpu_limit: cpuLimit,
       });
-      await recreateProject(projectId, [service.service_name]);
+      const warnings = await recreateProject(projectId, [service.service_name]);
+      for (const w of warnings) showToast(w, "warning");
       onClose();
       onRefresh();
     } catch (e) {

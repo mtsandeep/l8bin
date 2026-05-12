@@ -11,6 +11,11 @@ pub const COMPOSE_FILE_NAMES: &[&str] = &[
     "compose.yml",
     "docker-compose.yaml",
 ];
+
+/// Service name for the docker-socket-proxy sidecar injected when
+/// "Allow Docker access" is enabled. Used across agent, orchestrator,
+/// and litebin-common for container naming, label filtering, and proxy detection.
+pub const DOCKER_PROXY_SERVICE: &str = "litebin-docker-proxy";
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Type};
 

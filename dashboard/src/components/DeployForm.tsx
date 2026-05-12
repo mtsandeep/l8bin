@@ -3,6 +3,7 @@ import { Rocket, Loader2, X, ChevronRight, ChevronLeft, Moon, Server } from 'luc
 import { deployProject, deployComposeProject, fetchNodes, fetchGlobalSettings, type Node, DeployType, NodeStatus } from '../api';
 import ResourceLimitInput from './ResourceLimitInput';
 import DeployProgressModal from './DeployProgressModal';
+import { useToast } from './ToastContext';
 
 interface DeployFormProps {
   onDeploy: () => void;
@@ -11,6 +12,7 @@ interface DeployFormProps {
 }
 
 export default function DeployForm({ onDeploy, onClose, domain: domainProp }: DeployFormProps) {
+  const { showToast } = useToast();
   const [showProgress, setShowProgress] = useState(false);
   const [deployProjectId, setDeployProjectId] = useState('');
   const [step, setStep] = useState<1 | 2>(1);
@@ -72,7 +74,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
 
     try {
       if (deployMode === DeployType.Compose) {
-        await deployComposeProject({
+        const warnings = await deployComposeProject({
           project_id: projectId.trim(),
           compose: composeYaml.trim(),
           name: projectName.trim() || undefined,
@@ -84,6 +86,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           allow_raw_ports: allowRawPorts,
           allow_docker_access: allowDockerAccess,
         });
+        for (const w of warnings) showToast(w, "warning");
       } else {
         await deployProject({
           project_id: projectId.trim(),

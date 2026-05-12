@@ -80,7 +80,7 @@ impl ComposeRunPlan {
     /// The proxy is placed at topological level 0 (no dependencies)
     /// and restricts Docker API access to only the project's own containers.
     pub fn inject_docker_proxy(&mut self, project_id: &str) {
-        let proxy_name = "litebin-docker-proxy".to_string();
+        let proxy_name = crate::types::DOCKER_PROXY_SERVICE.to_string();
 
         // Build a minimal bollard config to trigger the compose path in
         // run_service_container(), which connects to the per-project network.
@@ -98,7 +98,7 @@ impl ComposeRunPlan {
             ]),
             labels: Some(std::collections::HashMap::from([
                 ("com.docker.compose.project".into(), project_id.into()),
-                ("com.docker.compose.service".into(), "litebin-docker-proxy".into()),
+                ("com.docker.compose.service".into(), crate::types::DOCKER_PROXY_SERVICE.into()),
             ])),
             ..Default::default()
         };
@@ -132,9 +132,11 @@ impl ComposeRunPlan {
             allow_docker_access: true,
         };
 
-        // Insert at the beginning of service_order and first topological level
+        // Insert at the beginning of service_order and into its own topological
+        // level (level 0) so the proxy starts and becomes network-ready before
+        // any real services that might need docker.sock.
         self.service_order.insert(0, proxy_name.clone());
-        self.service_levels[0].insert(0, proxy_name.clone());
+        self.service_levels.insert(0, vec![proxy_name.clone()]);
         self.configs.insert(0, proxy_config);
     }
 

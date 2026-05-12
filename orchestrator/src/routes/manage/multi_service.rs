@@ -125,7 +125,7 @@ pub async fn start_services(
         // Ensure the proxy is always included in the service filter,
         // even when user selects specific services to recreate.
         if let Some(ref mut filter) = opts.services {
-            filter.insert("litebin-docker-proxy".to_string());
+            filter.insert(litebin_common::types::DOCKER_PROXY_SERVICE.to_string());
         }
         // Pre-pull the proxy image (skip if already local; it's not in project_services so the normal pull logic skips it)
         if let Err(e) = state.docker.pull_image_with_opts("tecnativa/docker-socket-proxy", false).await {
@@ -272,7 +272,7 @@ pub async fn start_services(
                                     any_started.store(true, std::sync::atomic::Ordering::Relaxed);
                                     // Re-resolve mapped port from Docker (may have been cleared on previous stop)
                                     let actual_port = if existing_port == 0 && run_config.is_public {
-                                        docker.inspect_mapped_port(existing_cid).await.unwrap_or(0)
+                                        docker.inspect_mapped_port(existing_cid).await.ok().flatten().unwrap_or(0)
                                     } else {
                                         existing_port
                                     };
@@ -304,9 +304,11 @@ pub async fn start_services(
 
                 tracing::info!(service = %svc, container_id = %container_id, port = %mapped_port, "service started");
 
-                // Wait for Docker network to assign a valid IP
-                if let Err(e) = docker.wait_for_network_ready(&container_id).await {
-                    tracing::warn!(service = %svc, error = %e, "network readiness timeout, continuing");
+                // Wait for Docker network to assign a valid IP (skip if container exited)
+                if docker.is_container_running(&container_id).await.unwrap_or(false) {
+                    if let Err(e) = docker.wait_for_network_ready(&container_id).await {
+                        tracing::warn!(service = %svc, error = %e, "network readiness timeout, continuing");
+                    }
                 }
 
                 // Wait for healthcheck if a downstream service depends on it
@@ -384,6 +386,20 @@ pub async fn start_services(
                     }
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, "service task panicked".to_string()));
                 }
+            }
+        }
+
+        // If the docker-socket-proxy was started in this level, wait for it
+        // to be network-ready before starting the next level. Services that
+        // mount docker.sock need the proxy to be accepting connections.
+        let proxy_cid = started_containers.lock()
+            .ok()
+            .and_then(|s| s.iter().find(|(name, _)| name == litebin_common::types::DOCKER_PROXY_SERVICE).map(|(_, cid)| cid.clone()));
+        if let Some(proxy_cid) = proxy_cid {
+            if let Err(e) = state.docker.wait_for_network_ready(&proxy_cid).await {
+                tracing::warn!(error = %e, "docker-socket-proxy network readiness timeout, continuing");
+            } else {
+                tracing::info!(container_id = %proxy_cid, "docker-socket-proxy is network-ready");
             }
         }
     }
@@ -488,7 +504,7 @@ pub async fn stop_services(
     };
 
     if allow_docker {
-        let proxy_name = litebin_common::types::container_name(project_id, "litebin-docker-proxy", None);
+        let proxy_name = litebin_common::types::container_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
         if let Ok(containers) = state.docker.list_containers_by_prefix(&format!("litebin-{}.", project_id)).await {
             for cid in &containers {
                 if let Ok(inspect) = state.docker.inspect_container(cid).await {
@@ -587,7 +603,21 @@ pub async fn recreate_services(
 
     let count = if service_count > 0 { service_count } else { services.len() };
     let action = if pull_images { "redeployed" } else { "recreated" };
+
+    let warnings = if !project.allow_docker_access {
+        let compose_path = std::path::PathBuf::from("projects").join(project_id).join("compose.yaml");
+        let compose_yaml = std::fs::read_to_string(&compose_path).unwrap_or_default();
+        if compose_yaml.contains("/docker.sock") {
+            vec!["Docker socket mounts found but 'Allow Docker access' is disabled — socket will not be available".into()]
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
     Ok(Json(MessageResponse {
         message: format!("{} service(s) {} for project '{}'", count, action, project_id),
+        warnings,
     }))
 }

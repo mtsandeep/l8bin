@@ -237,7 +237,7 @@ export async function redeployProject(projectId: string, image: string, port: nu
   }
 }
 
-export async function recreateProject(projectId: string, services?: string[], pullImages?: boolean): Promise<void> {
+export async function recreateProject(projectId: string, services?: string[], pullImages?: boolean): Promise<string[]> {
   const hasBody = services || pullImages;
   const res = await fetch(`${API_BASE}/projects/${projectId}/recreate`, {
     method: 'POST',
@@ -249,6 +249,8 @@ export async function recreateProject(projectId: string, services?: string[], pu
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Recreate failed'));
   }
+  const data = await res.json();
+  return data.warnings ?? [];
 }
 
 export async function stopProject(projectId: string): Promise<void> {
@@ -488,7 +490,7 @@ export interface ComposeDeployPayload {
   allow_docker_access?: boolean;
 }
 
-export async function deployComposeProject(payload: ComposeDeployPayload): Promise<void> {
+export async function deployComposeProject(payload: ComposeDeployPayload): Promise<string[]> {
   const form = new FormData();
   form.append('project_id', payload.project_id);
   form.append('compose', new Blob([payload.compose], { type: 'text/yaml' }), 'compose.yaml');
@@ -510,6 +512,8 @@ export async function deployComposeProject(payload: ComposeDeployPayload): Promi
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Compose deploy failed'));
   }
+  const data = await res.json();
+  return data.warnings ?? [];
 }
 
 // --- Image Stats ---

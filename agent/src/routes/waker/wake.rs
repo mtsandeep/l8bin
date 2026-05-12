@@ -370,8 +370,8 @@ pub async fn wake(
                         // Wait briefly for port assignment
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-                        // Get the mapped port
-                        let port = state_clone.docker.inspect_mapped_port(&container_id_clone).await?;
+                        // Get the mapped port (non-fatal — 0 if not found)
+                        let port = state_clone.docker.inspect_mapped_port(&container_id_clone).await?.unwrap_or(0);
                         tracing::info!(
                             project_id = %subdomain_clone,
                             port = %port,

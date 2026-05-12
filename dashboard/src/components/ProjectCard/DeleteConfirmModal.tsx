@@ -21,9 +21,13 @@ export default function DeleteConfirmModal({
 
   const namedVolumes = volumes.filter((v) => v.volume_name?.startsWith("litebin_"));
   const relativeBinds = volumes.filter((v) => v.volume_name?.startsWith("projects/"));
-  const absoluteBinds = volumes.filter((v) => v.volume_name?.startsWith("/") || !v.volume_name);
+  const absoluteBinds = volumes.filter((v) => {
+    const path = v.volume_name || v.container_path || "";
+    if (path.includes("/docker.sock")) return false;
+    return v.volume_name?.startsWith("/") || !v.volume_name;
+  });
 
-  const hasAnyVolumes = volumes.length > 0;
+  const hasAnyVolumes = namedVolumes.length > 0 || relativeBinds.length > 0 || absoluteBinds.length > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
