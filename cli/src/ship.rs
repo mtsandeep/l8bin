@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::{Confirm, Input, Select};
 use indicatif::HumanBytes;
-use litebin_common::types::ProjectStatus;
+use litebin_common::types::{COMPOSE_FILE_NAMES, ProjectStatus};
 use serde_json::json;
 
 use crate::auth;
@@ -599,8 +599,7 @@ async fn build_and_deploy(
     };
 
     // Check for docker-compose.yaml → use compose deploy endpoint
-    let compose_paths = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
-    let compose_file = compose_paths
+    let compose_file = COMPOSE_FILE_NAMES
         .iter()
         .find(|p| project_dir.join(p).exists());
 
@@ -1443,6 +1442,5 @@ pub async fn deploy_compose_noninteractive(
 
 /// Detect compose file in the given directory. Returns the filename or None.
 pub fn detect_compose_file(project_dir: &Path) -> Option<&'static str> {
-    const COMPOSE_FILES: [&str; 4] = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
-    COMPOSE_FILES.iter().find(|p| project_dir.join(p).exists()).copied()
+    COMPOSE_FILE_NAMES.iter().find(|p| project_dir.join(p).exists()).copied()
 }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::nodes;
-use litebin_common::types::ProjectStatus;
+use litebin_common::types::{DeployType, ProjectStatus};
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
@@ -151,9 +151,9 @@ pub async fn start_project(
     }
 
     let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
+    let is_compose = matches!(project.deploy_type, Some(DeployType::Compose));
 
     if is_local {
-        // Unified local path: start_services handles both single and multi-service.
         // It has fast-path (docker start existing) and fallback (recreate) built in.
         start_services(&state, &project, StartServicesOpts {
             force_recreate: false,
@@ -163,7 +163,7 @@ pub async fn start_project(
             connect_orchestrator: true,
             rollback_on_failure: false,
         }).await.map_err(|(s, e)| (s, e))?;
-    } else if project.service_count.unwrap_or(1) > 1 {
+    } else if project.service_count.unwrap_or(1) > 1 || is_compose {
         // Remote multi-service: use agent batch-run (same as deploy/recreate)
         let node_id = project.node_id.as_deref().unwrap();
         let client = nodes::client::get_node_client(&state.node_clients, node_id)
@@ -486,8 +486,11 @@ pub async fn recreate_project(
         ));
     }
 
-    // Multi-service: stop all, remove all, then re-deploy from compose.yaml
-    if project.service_count.unwrap_or(1) > 1 {
+    // Multi-service or compose: stop all, remove all, then re-deploy from compose.yaml.
+    // Single-service compose projects also need this path for docker-proxy injection
+    // and compose-based orchestration (env files, volumes, etc.).
+    let is_compose = matches!(project.deploy_type, Some(DeployType::Compose));
+    if project.service_count.unwrap_or(1) > 1 || is_compose {
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         if !is_local {
             // Remote multi-service recreate: call agent batch-run

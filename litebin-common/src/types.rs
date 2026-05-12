@@ -3,6 +3,14 @@ use std::fmt;
 use std::path::PathBuf;
 
 use bollard::models::{ContainerCreateBody, HostConfig};
+
+/// Well-known compose file names checked in priority order.
+pub const COMPOSE_FILE_NAMES: &[&str] = &[
+    "compose.yaml",
+    "docker-compose.yml",
+    "compose.yml",
+    "docker-compose.yaml",
+];
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Type};
 
@@ -15,6 +23,7 @@ pub enum ProjectStatus {
     Stopped,
     Running,
     Deploying,
+    Importing,
     Stopping,
     Error,
     Degraded,
@@ -25,7 +34,7 @@ impl ProjectStatus {
     /// Transient statuses are managed by their owning code paths and should
     /// not be overwritten by periodic Docker reconciliation.
     pub fn is_transient(&self) -> bool {
-        matches!(self, ProjectStatus::Deploying | ProjectStatus::Stopping | ProjectStatus::Error | ProjectStatus::Unconfigured)
+        matches!(self, ProjectStatus::Deploying | ProjectStatus::Importing | ProjectStatus::Stopping | ProjectStatus::Error | ProjectStatus::Unconfigured)
     }
 }
 
@@ -35,6 +44,7 @@ impl fmt::Display for ProjectStatus {
             ProjectStatus::Stopped => write!(f, "stopped"),
             ProjectStatus::Running => write!(f, "running"),
             ProjectStatus::Deploying => write!(f, "deploying"),
+            ProjectStatus::Importing => write!(f, "importing"),
             ProjectStatus::Stopping => write!(f, "stopping"),
             ProjectStatus::Error => write!(f, "error"),
             ProjectStatus::Degraded => write!(f, "degraded"),
@@ -172,12 +182,20 @@ pub fn serialize_volumes(volumes: &[VolumeMount]) -> Option<String> {
     serde_json::to_string(volumes).ok()
 }
 
+/// Returns true if `s` starts with a Windows drive-letter path (e.g. "D:/" or "C:\").
+pub fn is_windows_drive_path(s: &str) -> bool {
+    s.len() >= 2
+        && s.as_bytes()[0].is_ascii_alphabetic()
+        && s.as_bytes()[1] == b':'
+        && s.as_bytes().get(2).map(|&b| b == b'/' || b == b'\\').unwrap_or(false)
+}
+
 /// Resolve a volume source to its final form.
 /// - Named volumes: prefixed with `litebin_{project_id}_` (e.g. `pgdata` → `litebin_myproject_pgdata`)
 /// - Relative bind mounts (`./`): resolved relative to `projects/{project_id}/` (e.g. `./data` → `projects/myproject/data`)
-/// - Absolute bind mounts (`/`): passed through unchanged
+/// - Absolute bind mounts (`/` or Windows drive letter): passed through unchanged
 pub fn scope_volume_source(name: &str, project_id: &str) -> String {
-    if name.starts_with('/') {
+    if name.starts_with('/') || is_windows_drive_path(name) {
         name.to_string()
     } else if name.starts_with("./") {
         let relative = name.strip_prefix("./").unwrap();

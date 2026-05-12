@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use compose_bollard::{BollardMappingOptions, ComposeFile, ComposeParser};
 
-use crate::types::RunServiceConfig;
+use crate::types::{is_windows_drive_path, RunServiceConfig};
 
 /// Result of building service configs from a compose file.
 /// Contains everything needed to deploy/wake a multi-service project.
@@ -249,10 +249,28 @@ fn build_configs(
 /// - `pgdata:/var/lib/postgresql/data` -> `litebin_myproject_pgdata:/var/lib/postgresql/data`
 /// - `/host/path:/container/path` -> unchanged (absolute bind mount)
 /// - `./data:/container/path` -> `projects/myproject/data:/container/path` (bind mount under project dir)
+/// - `D:/host/path:/container/path` -> `/d/host/path:/container/path` (Windows path
+///   converted to MSYS-style so the colon doesn't conflict with Docker's bind separator)
 fn scope_volume_name(volume_spec: &str, project_id: &str) -> String {
-    let (source, rest) = match volume_spec.split_once(':') {
-        Some((src, rest)) => (src, format!(":{}", rest)),
-        None => return volume_spec.to_string(),
+    // Windows drive-letter paths like "D:/foo:/bar" — the first colon is the drive
+    // separator, not the mount separator.  Convert to /d/... format to avoid
+    // colon conflicts in Docker's bind mount parser.
+    let (source, rest) = if is_windows_drive_path(volume_spec) {
+        // Convert "D:/foo" to "/d/foo" (MSYS-style) to eliminate the drive colon
+        let drive = volume_spec.as_bytes()[0];
+        let sep = if volume_spec.as_bytes()[2] == b'\\' { '/' } else { volume_spec.as_bytes()[2] as char };
+        let converted = format!("/{}{}{}", drive as char, sep, &volume_spec[3..]);
+        // Find the mount separator in the converted path
+        match converted.split_once(':') {
+            Some((src, rest)) => (src.to_string(), rest.to_string()),
+            None => return converted,
+        }
+    } else {
+        match volume_spec.split_once(':') {
+            Some((src, rest)) => (src.to_string(), rest.to_string()),
+            None => return volume_spec.to_string(),
+        }
     };
-    format!("{}{}", crate::types::scope_volume_source(source, project_id), rest)
+
+    format!("{}:{}", crate::types::scope_volume_source(&source, project_id), rest)
 }

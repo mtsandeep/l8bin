@@ -9,6 +9,7 @@ pub mod images;
 pub mod manage;
 pub mod nodes;
 pub mod projects;
+pub mod scan;
 pub mod settings;
 pub mod stats;
 pub mod volumes;

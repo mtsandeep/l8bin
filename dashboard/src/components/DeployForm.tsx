@@ -182,7 +182,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
               <input
                 type="text"
                 value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
+                onChange={(e) => setProjectId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 63))}
                 placeholder="my-app"
                 required
                 className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"

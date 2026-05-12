@@ -355,6 +355,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
         .route("/settings/sync-dns", post(routes::global_settings::sync_dns))
         .route("/system/stats", get(routes::health::system_stats))
+        .route("/scan", get(routes::scan::scan_containers))
+        .route("/scan/import", post(routes::scan::import_containers))
         .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
 
     // Routes - Deploy + image upload (session OR deploy token auth)

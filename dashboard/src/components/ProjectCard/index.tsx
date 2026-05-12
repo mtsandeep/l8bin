@@ -180,6 +180,11 @@ export default function ProjectCard({
 
   const handleActionsRedeploy = (cleanupVolumes: boolean) => {
     setShowRedeployModal(false);
+    // Compose projects use recreate (reads stored compose.yaml) instead of single-service deploy
+    if (project.deploy_type === DeployType.Compose) {
+      handleAction("redeploy", () => recreateProject(project.id, undefined, true));
+      return;
+    }
     handleAction("redeploy", () =>
       redeployProject(
         project.id,

@@ -1,107 +1,53 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, RefreshCw, Container, LogOut, User, Settings, Server, ChevronDown, ChevronUp, KeyRound, MemoryStick, HardDrive, X } from 'lucide-react';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Plus, RefreshCw, Container, LogOut, User, Settings, Server, ChevronDown, ChevronUp, KeyRound, MemoryStick, HardDrive, X, Search } from 'lucide-react';
 import ProjectCard from './components/ProjectCard';
 import DeployForm from './components/DeployForm';
 import LoginScreen from './components/LoginScreen';
 import ChangePasswordModal from './components/ChangePasswordModal';
 import NodesPage from './components/NodesPage';
 import GlobalSettingsModal from './components/GlobalSettingsModal';
+import ScanImportPage from './components/ScanImportPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { ToastProvider } from './components/ToastContext';
 import { type Project, type Node, type ProjectStats, type ServiceStats, ProjectStatus, fetchProjects, fetchNodes, fetchGlobalSettings, fetchAllStats, fetchSystemStats, fetchVersion, formatBytes } from './api';
 import { useIntervalWhileVisible } from './hooks';
 
-function AppContent() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [stats, setStats] = useState<ProjectStats[]>([]);
-  const [systemStats, setSystemStats] = useState<ServiceStats[]>([]);
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [projectsDir, setProjectsDir] = useState('projects');
-  const [domain, setDomain] = useState('localhost');
-  const [dnsTarget, setDnsTarget] = useState('');
-  const [showDeploy, setShowDeploy] = useState(false);
-  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
-  const [showChangePassword, setShowChangePassword] = useState(false);
-  const [showNodes, setShowNodes] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [stackExpanded, setStackExpanded] = useState(false);
-  const [version, setVersion] = useState('');
-  const [statusFilter, setStatusFilter] = useState<ProjectStatus | null>(null);
-  const { user, loading: authLoading, logout } = useAuth();
-  const userMenuRefMobile = useRef<HTMLDivElement>(null);
-  const userMenuRefDesktop = useRef<HTMLDivElement>(null);
-
-  // Fetch nodes and settings once on mount
-  useEffect(() => {
-    if (!user) return;
-    (async () => {
-      try {
-        const [nodeData, settings, ver] = await Promise.all([fetchNodes(), fetchGlobalSettings(), fetchVersion()]);
-        setNodes(nodeData);
-        setProjectsDir(settings.projects_dir);
-        setDomain(settings.domain);
-        setDnsTarget(settings.dns_target);
-        if (ver) setVersion(ver);
-      } catch (e) {
-        console.error('Failed to fetch nodes/settings:', e);
-      }
-    })();
-  }, [user]);
-
-  const loadProjectsAndStats = useCallback(async () => {
-    if (!user) return;
-    try {
-      const [data, statsData, sysData] = await Promise.all([fetchProjects(), fetchAllStats(), fetchSystemStats()]);
-      setProjects(data);
-      setStats(statsData);
-      setSystemStats(sysData);
-    } catch (e) {
-      console.error('Failed to fetch projects/stats:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useIntervalWhileVisible(() => {
-    if (user) loadProjectsAndStats();
-  }, 5000);
-
-  // Fetch immediately once user is available (auth may resolve after mount)
-  useEffect(() => {
-    if (user) loadProjectsAndStats();
-  }, [loadProjectsAndStats, user]);
-
-  // Close user menu on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      const mobileEl = userMenuRefMobile.current;
-      const desktopEl = userMenuRefDesktop.current;
-      const target = e.target as unknown as globalThis.Node;
-      if (mobileEl && mobileEl.contains(target)) return;
-      if (desktopEl && desktopEl.contains(target)) return;
-      setShowUserMenu(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  // Show auth screens if not logged in
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-slate-700 border-t-violet-500 rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <LoginScreen />;
-  }
-
-  if (showNodes) {
-    return <NodesPage onBack={() => setShowNodes(false)} projects={projects} />;
-  }
+function HomePage({
+  projects, stats, systemStats, nodes, projectsDir, domain, dnsTarget,
+  loading, version, statusFilter, setStatusFilter,
+  loadProjectsAndStats, setShowDeploy, setShowGlobalSettings, setShowChangePassword,
+  showDeploy, showGlobalSettings, showChangePassword,
+  showUserMenu, setShowUserMenu, userMenuRefMobile, userMenuRefDesktop, user, logout, stackExpanded, setStackExpanded,
+}: {
+  projects: Project[];
+  stats: ProjectStats[];
+  systemStats: ServiceStats[];
+  nodes: Node[];
+  projectsDir: string;
+  domain: string;
+  dnsTarget: string;
+  loading: boolean;
+  version: string;
+  statusFilter: ProjectStatus | null;
+  setStatusFilter: (f: ProjectStatus | null) => void;
+  loadProjectsAndStats: () => void;
+  setShowDeploy: (v: boolean) => void;
+  setShowGlobalSettings: (v: boolean) => void;
+  setShowChangePassword: (v: boolean) => void;
+  showDeploy: boolean;
+  showGlobalSettings: boolean;
+  showChangePassword: boolean;
+  showUserMenu: boolean;
+  setShowUserMenu: (v: boolean) => void;
+  userMenuRefMobile: React.RefObject<HTMLDivElement | null>;
+  userMenuRefDesktop: React.RefObject<HTMLDivElement | null>;
+  user: { username: string; is_admin: boolean };
+  logout: () => void;
+  stackExpanded: boolean;
+  setStackExpanded: (v: boolean) => void;
+}) {
+  const navigate = useNavigate();
 
   const running = projects.filter((p) => p.status === ProjectStatus.Running).length;
   const stopped = projects.filter((p) => p.status === ProjectStatus.Stopped).length;
@@ -205,7 +151,7 @@ function AppContent() {
               )}
             </div>
             <button
-              onClick={() => setShowNodes(true)}
+              onClick={() => navigate('/manage/nodes')}
               className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
               title="Agents"
             >
@@ -353,13 +299,22 @@ function AppContent() {
             </div>
             <p className="text-sm text-slate-500 mb-4">{statusFilter ? `No ${statusFilter} projects` : 'No projects yet'}</p>
             {!statusFilter && (
-              <button
-                onClick={() => setShowDeploy(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors cursor-pointer"
-              >
-                <Plus size={14} />
-                Deploy your first app
-              </button>
+              <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
+                <button
+                  onClick={() => setShowDeploy(true)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors cursor-pointer"
+                >
+                  <Plus size={14} />
+                  Deploy your first app
+                </button>
+                <button
+                  onClick={() => navigate('/manage/import')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700/60 transition-colors cursor-pointer"
+                >
+                  <Search size={14} />
+                  Scan &amp; import existing
+                </button>
+              </div>
             )}
           </div>
         ) : (
@@ -406,6 +361,124 @@ function AppContent() {
         <GlobalSettingsModal onClose={() => setShowGlobalSettings(false)} />
       )}
     </div>
+  );
+}
+
+function AppContent() {
+  const navigate = useNavigate();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [stats, setStats] = useState<ProjectStats[]>([]);
+  const [systemStats, setSystemStats] = useState<ServiceStats[]>([]);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [projectsDir, setProjectsDir] = useState('projects');
+  const [domain, setDomain] = useState('localhost');
+  const [dnsTarget, setDnsTarget] = useState('');
+  const [showDeploy, setShowDeploy] = useState(false);
+  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [stackExpanded, setStackExpanded] = useState(false);
+  const [version, setVersion] = useState('');
+  const [statusFilter, setStatusFilter] = useState<ProjectStatus | null>(null);
+  const { user, loading: authLoading, logout } = useAuth();
+  const userMenuRefMobile = useRef<HTMLDivElement>(null);
+  const userMenuRefDesktop = useRef<HTMLDivElement>(null);
+
+  // Fetch nodes and settings once on mount
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const [nodeData, settings, ver] = await Promise.all([fetchNodes(), fetchGlobalSettings(), fetchVersion()]);
+        setNodes(nodeData);
+        setProjectsDir(settings.projects_dir);
+        setDomain(settings.domain);
+        setDnsTarget(settings.dns_target);
+        if (ver) setVersion(ver);
+      } catch (e) {
+        console.error('Failed to fetch nodes/settings:', e);
+      }
+    })();
+  }, [user]);
+
+  const loadProjectsAndStats = useCallback(async () => {
+    if (!user) return;
+    try {
+      const [data, statsData, sysData] = await Promise.all([fetchProjects(), fetchAllStats(), fetchSystemStats()]);
+      setProjects(data);
+      setStats(statsData);
+      setSystemStats(sysData);
+    } catch (e) {
+      console.error('Failed to fetch projects/stats:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useIntervalWhileVisible(() => {
+    if (user) loadProjectsAndStats();
+  }, 5000);
+
+  // Fetch immediately once user is available (auth may resolve after mount)
+  useEffect(() => {
+    if (user) loadProjectsAndStats();
+  }, [loadProjectsAndStats, user]);
+
+  // Close user menu on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const mobileEl = userMenuRefMobile.current;
+      const desktopEl = userMenuRefDesktop.current;
+      const target = e.target as unknown as globalThis.Node;
+      if (mobileEl && mobileEl.contains(target)) return;
+      if (desktopEl && desktopEl.contains(target)) return;
+      setShowUserMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Show auth screens if not logged in
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-slate-700 border-t-violet-500 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen />;
+  }
+
+  const homeProps = {
+    projects, stats, systemStats, nodes, projectsDir, domain, dnsTarget,
+    loading, version, statusFilter, setStatusFilter,
+    loadProjectsAndStats, setShowDeploy, setShowGlobalSettings, setShowChangePassword,
+    showDeploy, showGlobalSettings, showChangePassword,
+    showUserMenu, setShowUserMenu, userMenuRefMobile, userMenuRefDesktop, user, logout, stackExpanded, setStackExpanded,
+  };
+
+  return (
+    <Routes>
+      <Route path="/manage" element={<Navigate to="/" replace />} />
+      <Route path="/manage/nodes" element={
+        <NodesPage
+          onBack={() => navigate('/')}
+          projects={projects}
+          onScanNode={(nodeId) => navigate(nodeId ? `/manage/import?node=${nodeId}` : '/manage/import')}
+        />
+      } />
+      <Route path="/manage/import" element={
+        <ScanImportPage
+          onBack={() => navigate('/')}
+          onDone={() => { navigate('/'); loadProjectsAndStats(); }}
+          nodes={nodes}
+        />
+      } />
+      <Route path="/" element={<HomePage {...homeProps} />} />
+    </Routes>
   );
 }
 

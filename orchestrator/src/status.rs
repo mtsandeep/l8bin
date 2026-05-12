@@ -69,7 +69,7 @@ pub async fn transition(
 
     // 2. Update project_services table
     match &new_status {
-        ProjectStatus::Deploying | ProjectStatus::Running => {
+        ProjectStatus::Deploying | ProjectStatus::Importing | ProjectStatus::Running => {
             if let Some(services) = service_filter {
                 for svc_name in services {
                     sqlx::query(

@@ -139,7 +139,7 @@ pub async fn show_project_status(
     let status_colored = match &status {
         ProjectStatus::Running => status_str.green().bold(),
         ProjectStatus::Stopped => status_str.dimmed(),
-        ProjectStatus::Deploying => status_str.yellow().bold(),
+        ProjectStatus::Deploying | ProjectStatus::Importing => status_str.yellow().bold(),
         ProjectStatus::Error => status_str.red().bold(),
         _ => status_str.normal(),
     };

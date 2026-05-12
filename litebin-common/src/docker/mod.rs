@@ -8,6 +8,7 @@ use serde::{Serialize, Deserialize};
 
 mod container;
 mod image;
+mod scan;
 
 #[cfg(test)]
 mod tests;

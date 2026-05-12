@@ -17,6 +17,8 @@ export default defineConfig({
       '/settings': { target: 'http://localhost:5080', changeOrigin: true },
       '/nodes': { target: 'http://localhost:5080', changeOrigin: true },
       '/system': { target: 'http://localhost:5080', changeOrigin: true },
+      '/scan': { target: 'http://localhost:5080', changeOrigin: true },
+      '/status': { target: 'http://localhost:5080', changeOrigin: true },
     },
   },
 })

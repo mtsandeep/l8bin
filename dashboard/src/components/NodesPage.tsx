@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import {
   Server, Plus, Trash2, RefreshCw, CheckCircle, XCircle,
-  Clock, Copy, ChevronRight, Loader
+  Clock, Copy, ChevronRight, Loader, Search
 } from 'lucide-react';
 import { useIntervalWhileVisible } from '../hooks';
 import { type Node, NodeStatus, type NodeImageStats, type Project, fetchNodes, fetchNodeImageStats, pruneNodeImages, addNode, connectNode, deleteNode, timeAgo, formatBytes } from '../api';
@@ -394,9 +394,10 @@ function PruneModal({ nodeName, danglingCount, danglingSize, state, reclaimed, e
 interface NodesPageProps {
   onBack: () => void;
   projects: Project[];
+  onScanNode?: (nodeId: string) => void;
 }
 
-export default function NodesPage({ onBack, projects }: NodesPageProps) {
+export default function NodesPage({ onBack, projects, onScanNode }: NodesPageProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [imageStats, setImageStats] = useState<NodeImageStats[]>([]);
   const [loading, setLoading] = useState(true);
@@ -481,7 +482,7 @@ export default function NodesPage({ onBack, projects }: NodesPageProps) {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
       <header className="border-b border-slate-800/80 bg-slate-900/50 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="text-slate-500 hover:text-slate-300 text-sm transition-colors">
               ← Back
@@ -495,6 +496,13 @@ export default function NodesPage({ onBack, projects }: NodesPageProps) {
               <RefreshCw size={14} />
             </button>
             <button
+              onClick={() => onScanNode?.('')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700/60 transition-colors"
+            >
+              <Search size={13} />
+              Scan &amp; Import
+            </button>
+            <button
               onClick={() => setShowAdd(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors"
             >
@@ -505,7 +513,7 @@ export default function NodesPage({ onBack, projects }: NodesPageProps) {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-6">
+      <main className="max-w-6xl mx-auto px-6 py-6">
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400">
             {error}
@@ -620,8 +628,8 @@ export default function NodesPage({ onBack, projects }: NodesPageProps) {
                   </div>
                 </div>
 
-                {/* Last seen + images */}
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-y-1 gap-x-2">
+                {/* Last seen + images + scan button */}
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-y-2 gap-x-2">
                   <div className="flex flex-wrap items-center gap-2">
                     {node.last_seen_at && (
                       <span className="text-[10px] text-slate-600 flex items-center gap-1">
@@ -635,31 +643,43 @@ export default function NodesPage({ onBack, projects }: NodesPageProps) {
                       </span>
                     )}
                   </div>
-                  {stats && stats.dangling_count > 0 && (
-                    <span className="flex items-center gap-1.5">
-                      <span className="text-xs text-amber-400">
-                        {stats.dangling_count} dangling ({formatBytes(stats.dangling_size)})
-                      </span>
+                  <div className="flex items-center gap-2">
+                    {onScanNode && node.status === NodeStatus.Online && (
                       <button
-                        onClick={() =>
-                          setPruneModal({
-                            nodeId: node.id,
-                            nodeName: node.name,
-                            danglingCount: stats.dangling_count,
-                            danglingSize: stats.dangling_size,
-                            state: 'confirming',
-                            reclaimed: null,
-                            error: '',
-                          })
-                        }
-                        disabled={pruning === node.id}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 transition-colors cursor-pointer"
+                        onClick={() => onScanNode(node.id)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20 transition-colors cursor-pointer"
+                        title="Scan for existing containers"
                       >
-                        <Trash2 size={11} />
-                        {pruning === node.id ? 'Pruning…' : 'Prune'}
+                        <Search size={11} />
+                        Scan & Import
                       </button>
-                    </span>
-                  )}
+                    )}
+                    {stats && stats.dangling_count > 0 && (
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-xs text-amber-400">
+                          {stats.dangling_count} dangling ({formatBytes(stats.dangling_size)})
+                        </span>
+                        <button
+                          onClick={() =>
+                            setPruneModal({
+                              nodeId: node.id,
+                              nodeName: node.name,
+                              danglingCount: stats.dangling_count,
+                              danglingSize: stats.dangling_size,
+                              state: 'confirming',
+                              reclaimed: null,
+                              error: '',
+                            })
+                          }
+                          disabled={pruning === node.id}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 transition-colors cursor-pointer"
+                        >
+                          <Trash2 size={11} />
+                          {pruning === node.id ? 'Pruning…' : 'Prune'}
+                        </button>
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               );

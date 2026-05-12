@@ -2,7 +2,7 @@ const API_BASE = '';
 
 // ── Shared Types ──────────────────────────────────────────────────────────────
 
-export const ProjectStatus = { Running: 'running', Stopped: 'stopped', Deploying: 'deploying', Stopping: 'stopping', Error: 'error', Degraded: 'degraded', Unconfigured: 'unconfigured', Waking: 'waking' } as const;
+export const ProjectStatus = { Running: 'running', Stopped: 'stopped', Deploying: 'deploying', Importing: 'importing', Stopping: 'stopping', Error: 'error', Degraded: 'degraded', Unconfigured: 'unconfigured', Waking: 'waking' } as const;
 export type ProjectStatus = typeof ProjectStatus[keyof typeof ProjectStatus];
 
 export const NodeStatus = { Online: 'online', Offline: 'offline', PendingSetup: 'pending_setup', Decommissioned: 'decommissioned' } as const;
@@ -645,3 +645,95 @@ export async function deleteProjectRoute(projectId: string, routeId: string): Pr
   }
 }
 
+// ── Scan & Import ─────────────────────────────────────────────────────────────
+
+export interface ScannedPort {
+  internal: number;
+  external: number | null;
+  protocol: string;
+}
+
+export interface ScannedVolume {
+  source: string;
+  destination: string;
+  volume_type: 'bind' | 'volume' | 'other';
+}
+
+export interface ScanContainer {
+  container_id: string;
+  original_name: string;
+  service_name: string;
+  image: string;
+  state: string;
+  ports: ScannedPort[];
+  volumes: ScannedVolume[];
+  suggested_public: boolean;
+  image_is_local: boolean;
+}
+
+export interface ScanGroup {
+  group_key: string;
+  suggested_project_id: string;
+  deploy_type: DeployType;
+  compose_working_dir: string | null;
+  compose_file_found: boolean;
+  env_file_found: boolean;
+  containers: ScanContainer[];
+}
+
+export interface ScanResult {
+  local: ScanGroup[];
+  nodes: Record<string, ScanGroup[]>;
+}
+
+export async function scanContainers(nodeId?: string): Promise<ScanResult> {
+  const params = nodeId ? `?node_id=${encodeURIComponent(nodeId)}` : '';
+  const res = await fetch(`${API_BASE}/scan${params}`, { credentials: 'include' });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Scan failed'));
+  }
+  return res.json();
+}
+
+export interface ImportGroupPayload {
+  node_id: string;
+  project_id: string;
+  group_key: string;
+  public_service: string | null;
+  setup_routing: boolean;
+  containers: ScanContainer[];
+  deploy_type: DeployType;
+  compose_working_dir: string | null;
+  compose_file_found: boolean;
+  env_file_found: boolean;
+  name?: string;
+  description?: string;
+  allow_docker_access?: boolean;
+}
+
+export interface ImportedGroup {
+  project_id: string;
+  node_id: string;
+  containers_imported: string[];
+  warnings: string[];
+}
+
+export interface ImportResponse {
+  imported: ImportedGroup[];
+  errors: string[];
+}
+
+export async function importContainers(groups: ImportGroupPayload[]): Promise<ImportResponse> {
+  const res = await fetch(`${API_BASE}/scan/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ groups }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Import failed'));
+  }
+  return res.json();
+}

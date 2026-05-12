@@ -21,6 +21,8 @@ pub const ORCHESTRATOR_API_PATHS: &[&str] = &[
     "/status",
     "/system/*",
     "/caddy/*",
+    "/scan",
+    "/scan/*",
 ];
 
 /// Returns a Caddy route that redirects HTTP to HTTPS (308 permanent).

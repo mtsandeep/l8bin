@@ -23,6 +23,12 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string; labe
     dot: 'bg-amber-400 animate-pulse',
     label: 'Deploying',
   },
+  [ProjectStatus.Importing]: {
+    bg: 'bg-violet-500/10',
+    text: 'text-violet-400',
+    dot: 'bg-violet-400 animate-pulse',
+    label: 'Importing',
+  },
   [ProjectStatus.Stopping]: {
     bg: 'bg-orange-500/10',
     text: 'text-orange-400',
