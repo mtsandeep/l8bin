@@ -2,20 +2,35 @@ const API_BASE = '';
 
 // ── Shared Types ──────────────────────────────────────────────────────────────
 
-export const ProjectStatus = { Running: 'running', Stopped: 'stopped', Deploying: 'deploying', Importing: 'importing', Stopping: 'stopping', Error: 'error', Degraded: 'degraded', Unconfigured: 'unconfigured', Waking: 'waking' } as const;
-export type ProjectStatus = typeof ProjectStatus[keyof typeof ProjectStatus];
+export const ProjectStatus = {
+  Running: 'running',
+  Stopped: 'stopped',
+  Deploying: 'deploying',
+  Importing: 'importing',
+  Stopping: 'stopping',
+  Error: 'error',
+  Degraded: 'degraded',
+  Unconfigured: 'unconfigured',
+  Waking: 'waking',
+} as const;
+export type ProjectStatus = (typeof ProjectStatus)[keyof typeof ProjectStatus];
 
-export const NodeStatus = { Online: 'online', Offline: 'offline', PendingSetup: 'pending_setup', Decommissioned: 'decommissioned' } as const;
-export type NodeStatus = typeof NodeStatus[keyof typeof NodeStatus];
+export const NodeStatus = {
+  Online: 'online',
+  Offline: 'offline',
+  PendingSetup: 'pending_setup',
+  Decommissioned: 'decommissioned',
+} as const;
+export type NodeStatus = (typeof NodeStatus)[keyof typeof NodeStatus];
 
 export const DeployType = { Image: 'image', Compose: 'compose' } as const;
-export type DeployType = typeof DeployType[keyof typeof DeployType];
+export type DeployType = (typeof DeployType)[keyof typeof DeployType];
 
 export const RoutingMode = { MasterProxy: 'master_proxy', CloudflareDns: 'cloudflare_dns' } as const;
-export type RoutingMode = typeof RoutingMode[keyof typeof RoutingMode];
+export type RoutingMode = (typeof RoutingMode)[keyof typeof RoutingMode];
 
 export const RouteType = { Path: 'path', Alias: 'alias' } as const;
-export type RouteType = typeof RouteType[keyof typeof RouteType];
+export type RouteType = (typeof RouteType)[keyof typeof RouteType];
 
 function parseErrorMessage(text: string, fallback: string): string {
   try {
@@ -191,7 +206,12 @@ export async function cleanupDnsRecords(): Promise<{ deleted_count: number }> {
   return res.json();
 }
 
-export async function syncDnsRecords(): Promise<{ created: number; deleted: number; unchanged: number; errors: number }> {
+export async function syncDnsRecords(): Promise<{
+  created: number;
+  deleted: number;
+  unchanged: number;
+  errors: number;
+}> {
   const res = await fetch(`${API_BASE}/settings/sync-dns`, {
     method: 'POST',
     credentials: 'include',
@@ -203,10 +223,7 @@ export async function syncDnsRecords(): Promise<{ created: number; deleted: numb
   return res.json();
 }
 
-export async function updateProjectSettings(
-  projectId: string,
-  settings: ProjectSettings,
-): Promise<void> {
+export async function updateProjectSettings(projectId: string, settings: ProjectSettings): Promise<void> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -219,12 +236,28 @@ export async function updateProjectSettings(
   }
 }
 
-export async function redeployProject(projectId: string, image: string, port: number, cmd?: string | null, memoryLimitMb?: number | null, cpuLimit?: number | null, cleanupVolumes?: boolean): Promise<void> {
+export async function redeployProject(
+  projectId: string,
+  image: string,
+  port: number,
+  cmd?: string | null,
+  memoryLimitMb?: number | null,
+  cpuLimit?: number | null,
+  cleanupVolumes?: boolean,
+): Promise<void> {
   const res = await fetch(`${API_BASE}/deploy`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ project_id: projectId, image, port, cmd: cmd ?? undefined, memory_limit_mb: memoryLimitMb ?? undefined, cpu_limit: cpuLimit ?? undefined, cleanup_volumes: cleanupVolumes || undefined }),
+    body: JSON.stringify({
+      project_id: projectId,
+      image,
+      port,
+      cmd: cmd ?? undefined,
+      memory_limit_mb: memoryLimitMb ?? undefined,
+      cpu_limit: cpuLimit ?? undefined,
+      cleanup_volumes: cleanupVolumes || undefined,
+    }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -361,7 +394,7 @@ export function formatBytes(bytes: number): string {
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+  return `${(bytes / k ** i).toFixed(1)} ${sizes[i]}`;
 }
 
 // --- System Stats (LiteBin stack services) ---
@@ -498,10 +531,12 @@ export async function deployComposeProject(payload: ComposeDeployPayload): Promi
   if (payload.description) form.append('description', payload.description);
   if (payload.node_id) form.append('node_id', payload.node_id);
   if (payload.auto_stop_enabled !== undefined) form.append('auto_stop_enabled', String(payload.auto_stop_enabled));
-  if (payload.auto_stop_timeout_mins !== undefined) form.append('auto_stop_timeout_mins', String(payload.auto_stop_timeout_mins));
+  if (payload.auto_stop_timeout_mins !== undefined)
+    form.append('auto_stop_timeout_mins', String(payload.auto_stop_timeout_mins));
   if (payload.auto_start_enabled !== undefined) form.append('auto_start_enabled', String(payload.auto_start_enabled));
   if (payload.allow_raw_ports !== undefined) form.append('allow_raw_ports', String(payload.allow_raw_ports));
-  if (payload.allow_docker_access !== undefined) form.append('allow_docker_access', String(payload.allow_docker_access));
+  if (payload.allow_docker_access !== undefined)
+    form.append('allow_docker_access', String(payload.allow_docker_access));
 
   const res = await fetch(`${API_BASE}/deploy/compose`, {
     method: 'POST',
@@ -568,7 +603,9 @@ export interface CreateTokenResponse {
 }
 
 export async function fetchDeployTokens(projectId: string): Promise<DeployTokenInfo[]> {
-  const res = await fetch(`${API_BASE}/deploy-tokens?project_id=${encodeURIComponent(projectId)}`, { credentials: 'include' });
+  const res = await fetch(`${API_BASE}/deploy-tokens?project_id=${encodeURIComponent(projectId)}`, {
+    credentials: 'include',
+  });
   if (!res.ok) throw new Error('Failed to fetch deploy tokens');
   return res.json();
 }
@@ -624,7 +661,10 @@ export async function fetchProjectRoutes(projectId: string): Promise<ProjectRout
   return res.json();
 }
 
-export async function createProjectRoute(projectId: string, payload: { route_type: RouteType; path?: string; subdomain?: string; upstream: string; priority?: number }): Promise<ProjectRoute> {
+export async function createProjectRoute(
+  projectId: string,
+  payload: { route_type: RouteType; path?: string; subdomain?: string; upstream: string; priority?: number },
+): Promise<ProjectRoute> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/routes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

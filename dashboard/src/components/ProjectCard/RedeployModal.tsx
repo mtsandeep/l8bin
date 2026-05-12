@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { Project } from "../../api";
+import { useState } from 'react';
+import type { Project } from '../../api';
 
 interface RedeployModalProps {
   project: Project;
@@ -11,7 +11,7 @@ interface RedeployModalProps {
 }
 
 function shortImage(image: string): string {
-  const hash = image.startsWith("sha256:") ? image.slice(7) : image;
+  const hash = image.startsWith('sha256:') ? image.slice(7) : image;
   return hash.length > 12 ? hash.slice(0, 12) : hash;
 }
 
@@ -35,7 +35,8 @@ export default function RedeployModal({
         </div>
         <div className="px-5 py-4 space-y-3">
           <div className="text-xs text-slate-400">
-            Pull latest <span className="text-slate-300 font-mono">{shortImage(appImage)}</span> and restart on port <span className="text-slate-300">{appPort}</span>
+            Pull latest <span className="text-slate-300 font-mono">{shortImage(appImage)}</span> and restart on port{' '}
+            <span className="text-slate-300">{appPort}</span>
           </div>
           {volumes.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer">
@@ -51,12 +52,14 @@ export default function RedeployModal({
         </div>
         <div className="flex gap-2 px-5 py-3 border-t border-slate-700/50">
           <button
+            type="button"
             onClick={onCancel}
             className="flex-1 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors cursor-pointer"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={() => onRedeploy(cleanup)}
             disabled={isStopping || !appImage.trim()}
             className="flex-1 py-2 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"

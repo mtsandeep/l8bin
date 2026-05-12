@@ -1,8 +1,16 @@
-import { useState, useEffect } from 'react';
-import { Rocket, Loader2, X, ChevronRight, ChevronLeft, Moon, Server } from 'lucide-react';
-import { deployProject, deployComposeProject, fetchNodes, fetchGlobalSettings, type Node, DeployType, NodeStatus } from '../api';
-import ResourceLimitInput from './ResourceLimitInput';
+import { ChevronLeft, ChevronRight, Loader2, Moon, Rocket, Server, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  DeployType,
+  deployComposeProject,
+  deployProject,
+  fetchGlobalSettings,
+  fetchNodes,
+  type Node,
+  NodeStatus,
+} from '../api';
 import DeployProgressModal from './DeployProgressModal';
+import ResourceLimitInput from './ResourceLimitInput';
 import { useToast } from './ToastContext';
 
 interface DeployFormProps {
@@ -44,21 +52,27 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   // Fetch nodes + global settings when entering step 2
   useEffect(() => {
     if (step === 2) {
-      if (nodes.length === 0) fetchNodes().then(setNodes).catch(() => {});
-      fetchGlobalSettings().then(s => {
-        setGlobalMemMb(s.default_memory_limit_mb);
-        setGlobalCpu(s.default_cpu_limit);
-        setDomain(s.domain);
-        if (memMb === null) setMemMb(s.default_memory_limit_mb);
-        if (cpuLimit === null) setCpuLimit(s.default_cpu_limit);
-      }).catch(() => {});
+      if (nodes.length === 0)
+        fetchNodes()
+          .then(setNodes)
+          .catch(() => {});
+      fetchGlobalSettings()
+        .then((s) => {
+          setGlobalMemMb(s.default_memory_limit_mb);
+          setGlobalCpu(s.default_cpu_limit);
+          setDomain(s.domain);
+          if (memMb === null) setMemMb(s.default_memory_limit_mb);
+          if (cpuLimit === null) setCpuLimit(s.default_cpu_limit);
+        })
+        .catch(() => {});
     }
-  }, [step]);
+  }, [step, nodes.length, memMb, cpuLimit]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const step1Valid = projectId.trim() !== '' && (deployMode === DeployType.Image ? image.trim() !== '' : composeYaml.trim() !== '');
+  const step1Valid =
+    projectId.trim() !== '' && (deployMode === DeployType.Image ? image.trim() !== '' : composeYaml.trim() !== '');
   const timeoutValid = timeoutMins >= 1;
 
   const handleNext = (e: React.FormEvent) => {
@@ -86,7 +100,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           allow_raw_ports: allowRawPorts,
           allow_docker_access: allowDockerAccess,
         });
-        for (const w of warnings) showToast(w, "warning");
+        for (const w of warnings) showToast(w, 'warning');
       } else {
         await deployProject({
           project_id: projectId.trim(),
@@ -134,6 +148,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/50 shrink-0">
           <h2 className="text-sm font-semibold text-slate-100">Deploy New App</h2>
           <button
+            type="button"
             onClick={onClose}
             className="p-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors cursor-pointer"
           >
@@ -148,9 +163,17 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             <div className="flex items-center gap-1">
               {([1, 2] as const).map((s, i) => (
                 <div key={s} className="flex items-center gap-1">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
-                    step === s ? 'bg-violet-600 text-white' : step > s ? 'bg-violet-900/50 text-violet-400' : 'bg-slate-800 text-slate-500'
-                  }`}>{s}</div>
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
+                      step === s
+                        ? 'bg-violet-600 text-white'
+                        : step > s
+                          ? 'bg-violet-900/50 text-violet-400'
+                          : 'bg-slate-800 text-slate-500'
+                    }`}
+                  >
+                    {s}
+                  </div>
                   {i < 1 && <ChevronRight size={12} className="text-slate-700" />}
                 </div>
               ))}
@@ -179,27 +202,39 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="deploy-project-id" className="block text-xs font-medium text-slate-400 mb-1.5">
                 Project ID
               </label>
               <input
+                id="deploy-project-id"
                 type="text"
                 value={projectId}
-                onChange={(e) => setProjectId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 63))}
+                onChange={(e) =>
+                  setProjectId(
+                    e.target.value
+                      .toLowerCase()
+                      .replace(/[^a-z0-9-]/g, '')
+                      .slice(0, 63),
+                  )
+                }
                 placeholder="my-app"
                 required
                 className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
               />
               <p className="text-[11px] text-slate-500 mt-1">
-                Used as subdomain: <span className="text-slate-400">{projectId || 'my-app'}.{domain}</span>
+                Used as subdomain:{' '}
+                <span className="text-slate-400">
+                  {projectId || 'my-app'}.{domain}
+                </span>
               </p>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="deploy-display-name" className="block text-xs font-medium text-slate-400 mb-1.5">
                 Display Name <span className="text-slate-600 font-normal">(optional)</span>
               </label>
               <input
+                id="deploy-display-name"
                 type="text"
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
@@ -209,10 +244,11 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="deploy-description" className="block text-xs font-medium text-slate-400 mb-1.5">
                 Description <span className="text-slate-600 font-normal">(optional)</span>
               </label>
               <input
+                id="deploy-description"
                 type="text"
                 value={projectDescription}
                 onChange={(e) => setProjectDescription(e.target.value)}
@@ -222,48 +258,51 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             </div>
 
             {deployMode === DeployType.Image && (
-            <>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
-                Docker Image
-              </label>
-              <input
-                type="text"
-                value={image}
-                onChange={(e) => setImage(e.target.value)}
-                placeholder="nginx:alpine"
-                required
-                className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
-              />
-            </div>
+              <>
+                <div>
+                  <label htmlFor="deploy-docker-image" className="block text-xs font-medium text-slate-400 mb-1.5">
+                    Docker Image
+                  </label>
+                  <input
+                    id="deploy-docker-image"
+                    type="text"
+                    value={image}
+                    onChange={(e) => setImage(e.target.value)}
+                    placeholder="nginx:alpine"
+                    required
+                    className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
+                  />
+                </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
-                App Port
-              </label>
-              <input
-                type="number"
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                placeholder="80"
-                required
-                min={1}
-                max={65535}
-                className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Port your app listens on inside the container (e.g. 80 for nginx, 3000 for Node)
-              </p>
-            </div>
-            </>
+                <div>
+                  <label htmlFor="deploy-app-port" className="block text-xs font-medium text-slate-400 mb-1.5">
+                    App Port
+                  </label>
+                  <input
+                    id="deploy-app-port"
+                    type="number"
+                    value={port}
+                    onChange={(e) => setPort(e.target.value)}
+                    placeholder="80"
+                    required
+                    min={1}
+                    max={65535}
+                    className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Port your app listens on inside the container (e.g. 80 for nginx, 3000 for Node)
+                  </p>
+                </div>
+              </>
             )}
 
             {deployMode === DeployType.Compose && (
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <label htmlFor="deploy-docker-compose" className="block text-xs font-medium text-slate-400 mb-1.5">
                   Docker Compose
                 </label>
                 <textarea
+                  id="deploy-docker-compose"
                   value={composeYaml}
                   onChange={(e) => setComposeYaml(e.target.value)}
                   placeholder={`services:\n  app:\n    image: nginx:alpine\n    ports:\n      - "80:80"`}
@@ -271,9 +310,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                   rows={8}
                   className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-xs text-slate-200 font-mono placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors resize-none"
                 />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Paste your docker-compose YAML with prebuilt images
-                </p>
+                <p className="text-[11px] text-slate-500 mt-1">Paste your docker-compose YAML with prebuilt images</p>
               </div>
             )}
 
@@ -290,7 +327,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                     type="button"
                     role="switch"
                     aria-checked={allowRawPorts}
-                    onClick={() => setAllowRawPorts(v => !v)}
+                    onClick={() => setAllowRawPorts((v) => !v)}
                     className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
                       allowRawPorts ? 'bg-violet-500' : 'bg-slate-600'
                     }`}
@@ -314,7 +351,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                     type="button"
                     role="switch"
                     aria-checked={allowDockerAccess}
-                    onClick={() => setAllowDockerAccess(v => !v)}
+                    onClick={() => setAllowDockerAccess((v) => !v)}
                     className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
                       allowDockerAccess ? 'bg-violet-500' : 'bg-slate-600'
                     }`}
@@ -347,9 +384,17 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             <div className="flex items-center gap-1">
               {([1, 2] as const).map((s, i) => (
                 <div key={s} className="flex items-center gap-1">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
-                    step === s ? 'bg-violet-600 text-white' : step > s ? 'bg-violet-900/50 text-violet-400' : 'bg-slate-800 text-slate-500'
-                  }`}>{s}</div>
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
+                      step === s
+                        ? 'bg-violet-600 text-white'
+                        : step > s
+                          ? 'bg-violet-900/50 text-violet-400'
+                          : 'bg-slate-800 text-slate-500'
+                    }`}
+                  >
+                    {s}
+                  </div>
                   {i < 1 && <ChevronRight size={12} className="text-slate-700" />}
                 </div>
               ))}
@@ -417,18 +462,19 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
 
             {/* Command override — only for single image mode */}
             {deployMode === DeployType.Image && (
-            <div className="pt-1 border-t border-slate-700/50">
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
-                Command override <span className="text-slate-600 font-normal">(optional)</span>
-              </label>
-              <input
-                type="text"
-                value={cmd}
-                onChange={(e) => setCmd(e.target.value)}
-                placeholder="e.g. prefect server start --host 0.0.0.0"
-                className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-xs text-slate-200 font-mono placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
-              />
-            </div>
+              <div className="pt-1 border-t border-slate-700/50">
+                <label htmlFor="deploy-cmd-override" className="block text-xs font-medium text-slate-400 mb-1.5">
+                  Command override <span className="text-slate-600 font-normal">(optional)</span>
+                </label>
+                <input
+                  id="deploy-cmd-override"
+                  type="text"
+                  value={cmd}
+                  onChange={(e) => setCmd(e.target.value)}
+                  placeholder="e.g. prefect server start --host 0.0.0.0"
+                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-xs text-slate-200 font-mono placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
+                />
+              </div>
             )}
 
             {/* Resource limits */}
@@ -482,21 +528,25 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                   <span>Automatic</span>
                   {selectedNode === null && <span className="text-[10px] text-violet-400">selected</span>}
                 </button>
-                {nodes.filter(n => n.status === NodeStatus.Online).map(node => (
-                  <button
-                    key={node.id}
-                    type="button"
-                    onClick={() => setSelectedNode(node.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-md border text-xs transition-colors cursor-pointer ${
-                      selectedNode === node.id
-                        ? 'border-violet-500/50 bg-violet-500/10 text-violet-300'
-                        : 'border-slate-700/50 bg-slate-900/50 text-slate-400 hover:border-slate-600'
-                    }`}
-                  >
-                    <span className="font-mono">{node.name} <span className="text-slate-600">({node.id})</span></span>
-                    {selectedNode === node.id && <span className="text-[10px] text-violet-400">selected</span>}
-                  </button>
-                ))}
+                {nodes
+                  .filter((n) => n.status === NodeStatus.Online)
+                  .map((node) => (
+                    <button
+                      key={node.id}
+                      type="button"
+                      onClick={() => setSelectedNode(node.id)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-md border text-xs transition-colors cursor-pointer ${
+                        selectedNode === node.id
+                          ? 'border-violet-500/50 bg-violet-500/10 text-violet-300'
+                          : 'border-slate-700/50 bg-slate-900/50 text-slate-400 hover:border-slate-600'
+                      }`}
+                    >
+                      <span className="font-mono">
+                        {node.name} <span className="text-slate-600">({node.id})</span>
+                      </span>
+                      {selectedNode === node.id && <span className="text-[10px] text-violet-400">selected</span>}
+                    </button>
+                  ))}
               </div>
             </div>
 
@@ -527,11 +577,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                 disabled={loading || (autoStop && !timeoutValid)}
                 className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-                {loading ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Rocket size={14} />
-                )}
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />}
                 {loading ? 'Deploying...' : 'Deploy'}
               </button>
             </div>

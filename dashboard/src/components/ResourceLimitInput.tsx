@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 interface ResourceLimitInputProps {
   label: string;
@@ -42,23 +42,29 @@ export default function ResourceLimitInput({
   const sliderMax = over ? absoluteMax : normalMax;
   const sliderStep = over ? overStep : normalStep;
 
-  const animateTo = useCallback((target: number) => {
-    cancelAnimationFrame(animRef.current);
-    const start = displayValue;
-    const diff = target - start;
-    if (Math.abs(diff) < 0.01) { setDisplayValue(target); return; }
-    const duration = 600;
-    const startTime = performance.now();
-    const step = (now: number) => {
-      const elapsed = now - startTime;
-      const t = Math.min(elapsed / duration, 1);
-      // ease-out cubic
-      const eased = 1 - Math.pow(1 - t, 3);
-      setDisplayValue(start + diff * eased);
-      if (t < 1) animRef.current = requestAnimationFrame(step);
-    };
-    animRef.current = requestAnimationFrame(step);
-  }, [displayValue]);
+  const animateTo = useCallback(
+    (target: number) => {
+      cancelAnimationFrame(animRef.current);
+      const start = displayValue;
+      const diff = target - start;
+      if (Math.abs(diff) < 0.01) {
+        setDisplayValue(target);
+        return;
+      }
+      const duration = 600;
+      const startTime = performance.now();
+      const step = (now: number) => {
+        const elapsed = now - startTime;
+        const t = Math.min(elapsed / duration, 1);
+        // ease-out cubic
+        const eased = 1 - (1 - t) ** 3;
+        setDisplayValue(start + diff * eased);
+        if (t < 1) animRef.current = requestAnimationFrame(step);
+      };
+      animRef.current = requestAnimationFrame(step);
+    },
+    [displayValue],
+  );
 
   // Sync displayValue when value changes externally (e.g. slider drag)
   const prevValueRef = useRef(value);
@@ -76,11 +82,11 @@ export default function ResourceLimitInput({
             type="text"
             inputMode="numeric"
             value={rawInput !== undefined ? rawInput : String(value)}
-            onChange={e => {
+            onChange={(e) => {
               setRawInput(e.target.value);
               setError(false);
             }}
-            onFocus={e => e.target.select()}
+            onFocus={(e) => e.target.select()}
             onBlur={() => {
               if (rawInput === undefined) return;
               if (rawInput === '') {
@@ -90,7 +96,7 @@ export default function ResourceLimitInput({
                 return;
               }
               const v = Number(rawInput);
-              if (isNaN(v) || v < min) {
+              if (Number.isNaN(v) || v < min) {
                 setError(true);
                 setRawInput(undefined);
               } else {
@@ -116,7 +122,7 @@ export default function ResourceLimitInput({
         max={sliderMax}
         step={sliderStep}
         value={over ? Math.min(displayValue, absoluteMax) : displayValue}
-        onChange={e => {
+        onChange={(e) => {
           const v = Number(e.target.value);
           setDisplayValue(v);
           onChange(v);

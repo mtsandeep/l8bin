@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
-import { X, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
-import { fetchDeployLogs, fetchAllStats, ProjectStatus } from "../api";
+import { AlertCircle, CheckCircle2, Loader2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { fetchAllStats, fetchDeployLogs, ProjectStatus } from '../api';
 
 interface DeployProgressModalProps {
   projectId: string;
@@ -8,11 +8,7 @@ interface DeployProgressModalProps {
   onClose: () => void;
 }
 
-export default function DeployProgressModal({
-  projectId,
-  domain,
-  onClose,
-}: DeployProgressModalProps) {
+export default function DeployProgressModal({ projectId, domain, onClose }: DeployProgressModalProps) {
   const [deployLines, setDeployLines] = useState<string[]>([]);
   const hadLogs = useRef(false);
   const [status, setStatus] = useState<ProjectStatus>(ProjectStatus.Deploying);
@@ -76,9 +72,9 @@ export default function DeployProgressModal({
   // Auto-scroll
   useEffect(() => {
     if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [deployLines]);
+  }, []);
 
   const isSuccess = status === ProjectStatus.Running;
   const isError = status === ProjectStatus.Error;
@@ -106,19 +102,17 @@ export default function DeployProgressModal({
               <Loader2 size={16} className="text-amber-400 animate-spin" />
             )}
             <h2 className="text-sm font-semibold text-slate-100">
-              {isDone ? (isError ? "Deploy failed" : "Deployed") : "Deploying"}
+              {isDone ? (isError ? 'Deploy failed' : 'Deployed') : 'Deploying'}
             </h2>
-            <span className="text-xs text-slate-500 font-mono">
-              {projectId}
-            </span>
+            <span className="text-xs text-slate-500 font-mono">{projectId}</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-500 font-mono">
-              {formatTime(elapsed)}
-            </span>
+            <span className="text-xs text-slate-500 font-mono">{formatTime(elapsed)}</span>
             <button
+              type="button"
               onClick={onClose}
-              className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors cursor-pointer">
+              className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors cursor-pointer"
+            >
               <X size={14} />
             </button>
           </div>
@@ -138,13 +132,11 @@ export default function DeployProgressModal({
               <div className="w-5 h-5 border-2 border-slate-700 border-t-amber-500 rounded-full animate-spin" />
             </div>
           ) : (
-            deployLines.map((line, i) => (
+            deployLines.map((line) => (
               <div
-                key={i}
-                className="text-amber-200/80 hover:text-amber-100 hover:bg-slate-800/50 px-2 py-0.5 rounded-sm transition-colors whitespace-pre-wrap break-all">
-                <span className="text-amber-600/60 select-none mr-3 inline-block w-8 text-right">
-                  {i + 1}
-                </span>
+                key={line}
+                className="text-amber-200/80 hover:text-amber-100 hover:bg-slate-800/50 px-2 py-0.5 rounded-sm transition-colors whitespace-pre-wrap break-all"
+              >
                 {line}
               </div>
             ))
@@ -156,18 +148,19 @@ export default function DeployProgressModal({
         <div className="px-4 py-3 border-t border-slate-700/50 flex-shrink-0">
           {showTimeoutMsg && !isDone && (
             <div className="mb-2 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-400">
-              Deployment is taking longer than usual. You can continue waiting
-              or close to check status from the project card.
+              Deployment is taking longer than usual. You can continue waiting or close to check status from the project
+              card.
             </div>
           )}
           {isDone && isSuccess && (
             <div className="mb-2 px-3 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400">
-              Deployment complete. Your app is live at{" "}
+              Deployment complete. Your app is live at{' '}
               <a
                 href={`https://${projectId}.${domain}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-emerald-300 underline">
+                className="text-emerald-300 underline"
+              >
                 https://{projectId}.{domain}
               </a>
             </div>

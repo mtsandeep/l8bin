@@ -1,6 +1,6 @@
-import { useState } from "react";
-import type { ServiceInfo } from "../../api";
-import { ProjectStatus } from "../../api";
+import { useState } from 'react';
+import type { ServiceInfo } from '../../api';
+import { ProjectStatus } from '../../api';
 
 interface ServiceSelectModalProps {
   projectName: string;
@@ -19,9 +19,7 @@ export default function ServiceSelectModal({
   onConfirm,
   onCancel,
 }: ServiceSelectModalProps) {
-  const [selected, setSelected] = useState<Set<string>>(
-    new Set(services.map((s) => s.service_name)),
-  );
+  const [selected, setSelected] = useState<Set<string>>(new Set(services.map((s) => s.service_name)));
   const allSelected = selected.size === services.length;
 
   const toggle = (name: string) => {
@@ -51,6 +49,7 @@ export default function ServiceSelectModal({
         </div>
         <div className="px-5 py-3 space-y-1 max-h-60 overflow-y-auto">
           <button
+            type="button"
             onClick={toggleAll}
             className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-slate-400 hover:bg-slate-700/40 transition-colors cursor-pointer"
           >
@@ -60,9 +59,7 @@ export default function ServiceSelectModal({
               onChange={toggleAll}
               className="rounded border-slate-600 bg-slate-900 text-violet-500 focus:ring-violet-500/25 focus:ring-offset-0"
             />
-            <span className="font-medium">
-              {allSelected ? "Deselect all" : "Select all"}
-            </span>
+            <span className="font-medium">{allSelected ? 'Deselect all' : 'Select all'}</span>
           </button>
           {services.map((svc) => (
             <label
@@ -76,20 +73,17 @@ export default function ServiceSelectModal({
                 className="rounded border-slate-600 bg-slate-900 text-violet-500 focus:ring-violet-500/25 focus:ring-offset-0"
               />
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-xs text-slate-300 truncate">
-                  {svc.service_name}
-                </span>
+                <span className="text-xs text-slate-300 truncate">{svc.service_name}</span>
                 {svc.is_public && (
-                  <span className="text-[10px] px-1 py-0.5 rounded bg-sky-500/20 text-sky-400">
-                    public
-                  </span>
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-sky-500/20 text-sky-400">public</span>
                 )}
                 <span
                   className={`text-[10px] px-1 py-0.5 rounded ${
                     svc.status === ProjectStatus.Running
-                      ? "bg-emerald-500/20 text-emerald-400"
-                      : "bg-slate-700/60 text-slate-500"
-                  }`}>
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'bg-slate-700/60 text-slate-500'
+                  }`}
+                >
                   {svc.status}
                 </span>
               </div>
@@ -98,12 +92,14 @@ export default function ServiceSelectModal({
         </div>
         <div className="flex gap-2 px-5 py-3 border-t border-slate-700/50">
           <button
+            type="button"
             onClick={onCancel}
             className="flex-1 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors cursor-pointer"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={() => onConfirm(Array.from(selected))}
             disabled={selected.size === 0}
             className="flex-1 py-2 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"

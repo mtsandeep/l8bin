@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { X, Loader2, Lock } from 'lucide-react';
+import { Loader2, Lock, X } from 'lucide-react';
+import { type FormEvent, useState } from 'react';
 import { useAuth } from './AuthContext';
 
 interface ChangePasswordModalProps {
@@ -59,6 +59,7 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
             <h2 className="text-sm font-medium text-slate-200">Change Password</h2>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
           >
@@ -71,7 +72,15 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
           {success ? (
             <div className="text-center py-4">
               <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto mb-3">
-                <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg
+                  className="w-6 h-6 text-emerald-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  role="img"
+                  aria-label="Success checkmark"
+                >
+                  <title>Success checkmark</title>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
@@ -81,10 +90,11 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Current Password */}
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <label htmlFor="current-password" className="block text-xs font-medium text-slate-400 mb-1.5">
                   Current Password
                 </label>
                 <input
+                  id="current-password"
                   type="password"
                   value={currentPassword}
                   onChange={(e) => {
@@ -100,10 +110,11 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
 
               {/* New Password */}
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <label htmlFor="new-password" className="block text-xs font-medium text-slate-400 mb-1.5">
                   New Password
                 </label>
                 <input
+                  id="new-password"
                   type="password"
                   value={newPassword}
                   onChange={(e) => {
@@ -119,10 +130,11 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
 
               {/* Confirm Password */}
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <label htmlFor="confirm-password" className="block text-xs font-medium text-slate-400 mb-1.5">
                   Confirm New Password
                 </label>
                 <input
+                  id="confirm-password"
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => {

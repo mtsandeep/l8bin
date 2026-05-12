@@ -12,13 +12,23 @@ export function useIntervalWhileVisible(callback: () => void, ms: number) {
     cb.current();
     let id: ReturnType<typeof setInterval>;
 
-    const start = () => { cb.current(); id = setInterval(() => cb.current(), ms); };
-    const stop = () => { clearInterval(id); };
+    const start = () => {
+      cb.current();
+      id = setInterval(() => cb.current(), ms);
+    };
+    const stop = () => {
+      clearInterval(id);
+    };
 
     if (!document.hidden) start();
 
-    const onVis = () => { document.hidden ? stop() : start(); };
+    const onVis = () => {
+      document.hidden ? stop() : start();
+    };
     document.addEventListener('visibilitychange', onVis);
-    return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [ms]);
 }

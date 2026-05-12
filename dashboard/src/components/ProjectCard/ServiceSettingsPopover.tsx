@@ -1,12 +1,8 @@
-import { useState, useEffect, useRef } from "react";
-import { Info } from "lucide-react";
-import ResourceLimitInput from "../ResourceLimitInput";
-import { useToast } from "../ToastContext";
-import {
-  type ServiceInfo,
-  updateServiceSettings,
-  recreateProject,
-} from "../../api";
+import { Info } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { recreateProject, type ServiceInfo, updateServiceSettings } from '../../api';
+import ResourceLimitInput from '../ResourceLimitInput';
+import { useToast } from '../ToastContext';
 
 interface ServiceSettingsPopoverProps {
   projectId: string;
@@ -42,8 +38,8 @@ export default function ServiceSettingsPopover({
         onClose();
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [onClose]);
 
   const handleSave = async () => {
@@ -56,8 +52,8 @@ export default function ServiceSettingsPopover({
       onClose();
       onRefresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update settings");
-      showToast(e instanceof Error ? e.message : "Failed to update settings");
+      setError(e instanceof Error ? e.message : 'Failed to update settings');
+      showToast(e instanceof Error ? e.message : 'Failed to update settings');
     }
   };
 
@@ -70,12 +66,12 @@ export default function ServiceSettingsPopover({
         cpu_limit: cpuLimit,
       });
       const warnings = await recreateProject(projectId, [service.service_name]);
-      for (const w of warnings) showToast(w, "warning");
+      for (const w of warnings) showToast(w, 'warning');
       onClose();
       onRefresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save and recreate");
-      showToast(e instanceof Error ? e.message : "Failed to save and recreate");
+      setError(e instanceof Error ? e.message : 'Failed to save and recreate');
+      showToast(e instanceof Error ? e.message : 'Failed to save and recreate');
     } finally {
       setLoading(false);
     }
@@ -84,18 +80,17 @@ export default function ServiceSettingsPopover({
   return (
     <div
       ref={ref}
-      className="absolute top-[30px] right-0 w-full mt-1 z-30 w-full bg-slate-800 border border-slate-700/70 rounded-md shadow-xl px-3 py-3 space-y-3">
+      className="absolute top-[30px] right-0 w-full mt-1 z-30 w-full bg-slate-800 border border-slate-700/70 rounded-md shadow-xl px-3 py-3 space-y-3"
+    >
       {error && (
-        <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1.5">
-          {error}
-        </div>
+        <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1.5">{error}</div>
       )}
 
       <div>
         <span className="text-[10px] text-slate-500 block mb-1">Image</span>
         <input
           type="text"
-          value={service.image ? service.image : "—"}
+          value={service.image ? service.image : '—'}
           readOnly
           className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1 text-[11px] text-slate-500 font-mono cursor-default"
           title={service.image}
@@ -106,9 +101,7 @@ export default function ServiceSettingsPopover({
         <span className="text-[10px] text-slate-500 block mb-1">Port</span>
         <input
           type="text"
-          value={
-            service.port ? `${service.mapped_port ?? ""}:${service.port}` : "—"
-          }
+          value={service.port ? `${service.mapped_port ?? ''}:${service.port}` : '—'}
           readOnly
           className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1 text-[11px] text-slate-500 font-mono cursor-default"
         />
@@ -148,16 +141,20 @@ export default function ServiceSettingsPopover({
 
       <div className="flex gap-2">
         <button
+          type="button"
           onClick={handleSave}
           disabled={loading}
-          className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-50 cursor-pointer">
+          className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-50 cursor-pointer"
+        >
           Save
         </button>
         <button
+          type="button"
           onClick={handleSaveAndRecreate}
           disabled={loading}
-          className="flex-1 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer">
-          {loading ? "Recreating..." : "Save & Recreate"}
+          className="flex-1 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
+        >
+          {loading ? 'Recreating...' : 'Save & Recreate'}
         </button>
       </div>
 

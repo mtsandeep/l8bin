@@ -6,8 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "lint": "biome lint .",
+    "format": "biome format . --write",
+    "check": "biome check .",
+    "prepare": "simple-git-hooks"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "nano-staged"
+  },
+  "nano-staged": {
+    "*.{ts,tsx,js,jsx,json,css}": "biome check --write --no-errors-on-unmatched"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
@@ -18,17 +26,15 @@
     "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
+    "@biomejs/biome": "^2.0.0",
+    "@biomejs/cli-win32-x64": "^2.4.15",
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "eslint": "^9.39.4",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
-    "globals": "^17.4.0",
+    "nano-staged": "^0.8.0",
+    "simple-git-hooks": "^2.12.0",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.57.0",
     "vite": "^8.0.1"
   }
 }

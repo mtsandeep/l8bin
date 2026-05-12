@@ -1,25 +1,17 @@
-import { useState, useEffect, useRef } from "react";
+import { ExternalLink, Loader2, Plus, Route, Settings, Trash2, X as XIcon } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Loader2,
-  Settings,
-  Plus,
-  Route,
-  Trash2,
-  X as XIcon,
-  ExternalLink,
-} from "lucide-react";
-import { useToast } from "../ToastContext";
-import {
+  createProjectRoute,
+  DeployType,
+  deleteProjectRoute,
+  fetchProjectRoutes,
   type Project,
   type ProjectRoute,
-  type ServiceInfo,
-  DeployType,
   RouteType,
-  fetchProjectRoutes,
-  createProjectRoute,
-  deleteProjectRoute,
+  type ServiceInfo,
   updateProjectSettings,
-} from "../../api";
+} from '../../api';
+import { useToast } from '../ToastContext';
 
 interface SettingsPopoverProps {
   project: Project;
@@ -66,17 +58,15 @@ export default function SettingsPopover({
   onRefresh,
   onClose,
 }: SettingsPopoverProps) {
-  const [settingsTab, setSettingsTab] = useState<"general" | "routes">(
-    "general",
-  );
+  const [settingsTab, setSettingsTab] = useState<'general' | 'routes'>('general');
 
   // Routes state
   const [routes, setRoutes] = useState<ProjectRoute[]>([]);
   const [routesLoading, setRoutesLoading] = useState(false);
   const [newRouteType, setNewRouteType] = useState<RouteType>(RouteType.Path);
-  const [newRoutePath, setNewRoutePath] = useState("");
-  const [newRouteSubdomain, setNewRouteSubdomain] = useState("");
-  const [newRouteUpstream, setNewRouteUpstream] = useState("");
+  const [newRoutePath, setNewRoutePath] = useState('');
+  const [newRouteSubdomain, setNewRouteSubdomain] = useState('');
+  const [newRouteUpstream, setNewRouteUpstream] = useState('');
   const [newRoutePriority, setNewRoutePriority] = useState(100);
   const [addingRoute, setAddingRoute] = useState(false);
   const [deletingRouteId, setDeletingRouteId] = useState<string | null>(null);
@@ -90,22 +80,22 @@ export default function SettingsPopover({
         onClose();
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   });
 
-  const loadRoutes = async () => {
+  const loadRoutes = useCallback(async () => {
     setRoutesLoading(true);
     try {
       const r = await fetchProjectRoutes(project.id);
       r.sort((a, b) => a.priority - b.priority);
       setRoutes(r);
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to load routes");
+      showToast(e instanceof Error ? e.message : 'Failed to load routes');
     } finally {
       setRoutesLoading(false);
     }
-  };
+  }, [project.id, showToast]);
 
   const handleAddRoute = async () => {
     if (newRouteType === RouteType.Path && !newRoutePath.trim()) return;
@@ -120,14 +110,14 @@ export default function SettingsPopover({
         upstream: newRouteUpstream,
         priority: newRoutePriority,
       });
-      setNewRoutePath("");
-      setNewRouteSubdomain("");
-      setNewRouteUpstream("");
+      setNewRoutePath('');
+      setNewRouteSubdomain('');
+      setNewRouteUpstream('');
       setNewRoutePriority(100);
       await loadRoutes();
       onRefresh();
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to create route");
+      showToast(e instanceof Error ? e.message : 'Failed to create route');
     } finally {
       setAddingRoute(false);
     }
@@ -140,7 +130,7 @@ export default function SettingsPopover({
       await loadRoutes();
       onRefresh();
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to delete route");
+      showToast(e instanceof Error ? e.message : 'Failed to delete route');
     } finally {
       setDeletingRouteId(null);
     }
@@ -148,10 +138,10 @@ export default function SettingsPopover({
 
   // Load routes when switching to routes tab
   useEffect(() => {
-    if (settingsTab === "routes") {
+    if (settingsTab === 'routes') {
       loadRoutes();
     }
-  }, [settingsTab]);
+  }, [settingsTab, loadRoutes]);
 
   const [saving, setSaving] = useState(false);
 
@@ -165,11 +155,11 @@ export default function SettingsPopover({
         allow_raw_ports: allowRawPorts,
         allow_docker_access: allowDockerAccess,
       });
-      showToast("Settings saved", 'success');
+      showToast('Settings saved', 'success');
       onClose();
     } catch (e) {
-      onSettingsErrorChange(e instanceof Error ? e.message : "Failed to save");
-      showToast(e instanceof Error ? e.message : "Failed to save");
+      onSettingsErrorChange(e instanceof Error ? e.message : 'Failed to save');
+      showToast(e instanceof Error ? e.message : 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -184,10 +174,8 @@ export default function SettingsPopover({
       await updateProjectSettings(project.id, { custom_domain: d });
       onRefresh();
     } catch (e) {
-      onSettingsErrorChange(
-        e instanceof Error ? e.message : "Failed to set domain",
-      );
-      showToast(e instanceof Error ? e.message : "Failed to set domain");
+      onSettingsErrorChange(e instanceof Error ? e.message : 'Failed to set domain');
+      showToast(e instanceof Error ? e.message : 'Failed to set domain');
     } finally {
       onCustomDomainSavingChange(false);
     }
@@ -197,14 +185,12 @@ export default function SettingsPopover({
     onCustomDomainSavingChange(true);
     onSettingsErrorChange(null);
     try {
-      await updateProjectSettings(project.id, { custom_domain: "" });
-      onCustomDomainChange("");
+      await updateProjectSettings(project.id, { custom_domain: '' });
+      onCustomDomainChange('');
       onRefresh();
     } catch (e) {
-      onSettingsErrorChange(
-        e instanceof Error ? e.message : "Failed to remove domain",
-      );
-      showToast(e instanceof Error ? e.message : "Failed to remove domain");
+      onSettingsErrorChange(e instanceof Error ? e.message : 'Failed to remove domain');
+      showToast(e instanceof Error ? e.message : 'Failed to remove domain');
     } finally {
       onCustomDomainSavingChange(false);
     }
@@ -213,9 +199,11 @@ export default function SettingsPopover({
   return (
     <div ref={ref}>
       <button
+        type="button"
         onClick={(e) => e.stopPropagation()}
-        className={`flex items-center justify-center px-2.5 py-2 rounded-md border transition-colors cursor-pointer ${"bg-slate-900/80 border-violet-500/40 text-slate-300"}`}
-        title="Project settings">
+        className={`flex items-center justify-center px-2.5 py-2 rounded-md border transition-colors cursor-pointer ${'bg-slate-900/80 border-violet-500/40 text-slate-300'}`}
+        title="Project settings"
+      >
         <Settings size={12} />
       </button>
       <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-slate-800 border border-slate-700/70 rounded-md shadow-xl px-3 py-3">
@@ -227,31 +215,33 @@ export default function SettingsPopover({
         {/* Tabs */}
         <div className="flex border-b border-slate-700/50 -mx-3 -mt-1 mb-3">
           <button
-            onClick={() => setSettingsTab("general")}
+            type="button"
+            onClick={() => setSettingsTab('general')}
             className={`flex-1 px-3 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
-              settingsTab === "general"
-                ? "text-violet-300 border-b-2 border-violet-500"
-                : "text-slate-400 hover:text-slate-200"
-            }`}>
+              settingsTab === 'general'
+                ? 'text-violet-300 border-b-2 border-violet-500'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
             General
           </button>
           <button
-            onClick={() => setSettingsTab("routes")}
+            type="button"
+            onClick={() => setSettingsTab('routes')}
             className={`flex-1 px-3 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
-              settingsTab === "routes"
-                ? "text-violet-300 border-b-2 border-violet-500"
-                : "text-slate-400 hover:text-slate-200"
-            }`}>
+              settingsTab === 'routes'
+                ? 'text-violet-300 border-b-2 border-violet-500'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
             Routes
           </button>
         </div>
 
-        {settingsTab === "general" && (
+        {settingsTab === 'general' && (
           <div className="space-y-3">
             <div>
-              <span className="text-xs text-slate-400 block mb-1.5">
-                Project name
-              </span>
+              <span className="text-xs text-slate-400 block mb-1.5">Project name</span>
               <input
                 type="text"
                 value={projectName}
@@ -261,9 +251,7 @@ export default function SettingsPopover({
               />
             </div>
             <div>
-              <span className="text-xs text-slate-400 block mb-1.5">
-                Description
-              </span>
+              <span className="text-xs text-slate-400 block mb-1.5">Description</span>
               <input
                 type="text"
                 value={projectDescription}
@@ -284,16 +272,17 @@ export default function SettingsPopover({
                     </p>
                   </div>
                   <button
+                    type="button"
                     role="switch"
                     aria-checked={allowRawPorts}
                     onClick={() => onAllowRawPortsChange(!allowRawPorts)}
                     className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                      allowRawPorts ? "bg-violet-500" : "bg-slate-600"
+                      allowRawPorts ? 'bg-violet-500' : 'bg-slate-600'
                     }`}
                   >
                     <span
                       className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                        allowRawPorts ? "translate-x-3.5" : "translate-x-0.5"
+                        allowRawPorts ? 'translate-x-3.5' : 'translate-x-0.5'
                       }`}
                     />
                   </button>
@@ -312,16 +301,17 @@ export default function SettingsPopover({
                     </p>
                   </div>
                   <button
+                    type="button"
                     role="switch"
                     aria-checked={allowDockerAccess}
                     onClick={() => onAllowDockerAccessChange(!allowDockerAccess)}
                     className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                      allowDockerAccess ? "bg-violet-500" : "bg-slate-600"
+                      allowDockerAccess ? 'bg-violet-500' : 'bg-slate-600'
                     }`}
                   >
                     <span
                       className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                        allowDockerAccess ? "translate-x-3.5" : "translate-x-0.5"
+                        allowDockerAccess ? 'translate-x-3.5' : 'translate-x-0.5'
                       }`}
                     />
                   </button>
@@ -330,17 +320,18 @@ export default function SettingsPopover({
             )}
 
             <button
+              type="button"
               onClick={handleSaveNameDesc}
               disabled={saving}
               className="w-full py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
-              {saving ? "Saving..." : "Save"}
+              {saving ? 'Saving...' : 'Save'}
             </button>
 
             {/* Custom domain */}
             <div className="border-t border-slate-700/50 pt-3 space-y-2">
               <div className="text-[11px] text-slate-500">
-                Subdomain:{" "}
+                Subdomain:{' '}
                 <span className="text-slate-300 font-mono">
                   {project.id}.{domain}
                 </span>
@@ -355,71 +346,58 @@ export default function SettingsPopover({
                 />
                 {project.custom_domain && (
                   <button
+                    type="button"
                     onClick={handleRemoveCustomDomain}
                     disabled={customDomainSaving}
                     className="p-1.5 text-slate-400 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-50"
-                    title="Remove custom domain">
+                    title="Remove custom domain"
+                  >
                     <XIcon size={14} />
                   </button>
                 )}
                 <button
+                  type="button"
                   onClick={handleSetCustomDomain}
                   disabled={customDomainSaving || !customDomainInput.trim()}
-                  className="px-2.5 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer">
-                  {customDomainSaving ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    "Set"
-                  )}
+                  className="px-2.5 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  {customDomainSaving ? <Loader2 size={12} className="animate-spin" /> : 'Set'}
                 </button>
               </div>
               {project.custom_domain && (
                 <div className="flex items-center gap-1 text-[10px] text-slate-600">
                   <span className="text-slate-500">Active:</span>
-                  <span className="text-slate-400 font-mono">
-                    {project.custom_domain}
-                  </span>
+                  <span className="text-slate-400 font-mono">{project.custom_domain}</span>
                 </div>
               )}
               <div className="text-[10px] text-slate-600 space-y-0.5">
                 {(() => {
                   const cd = customDomainInput.trim() || project.custom_domain;
                   if (!cd) return null;
-                  const parts = cd.split(".");
+                  const parts = cd.split('.');
                   const isApex = parts.length <= 2;
                   if (isApex) {
                     return (
                       <>
                         {dnsTarget && (
                           <div>
-                            A record{" "}
-                            <span className="text-slate-400 font-mono">
-                              {cd}
-                            </span>{" "}
-                            →{" "}
-                            <span className="text-slate-400 font-mono">
-                              {dnsTarget}
-                            </span>
+                            A record <span className="text-slate-400 font-mono">{cd}</span> →{' '}
+                            <span className="text-slate-400 font-mono">{dnsTarget}</span>
                           </div>
                         )}
                         <div>
-                          CNAME{" "}
-                          <span className="text-slate-400 font-mono">{cd}</span>{" "}
-                          →{" "}
+                          CNAME <span className="text-slate-400 font-mono">{cd}</span> →{' '}
                           <span className="text-slate-400 font-mono">
                             {project.id}.{domain}
-                          </span>{" "}
-                          <span className="text-slate-500">
-                            (Cloudflare only)
-                          </span>
+                          </span>{' '}
+                          <span className="text-slate-500">(Cloudflare only)</span>
                         </div>
                       </>
                     );
                   }
                   return (
                     <div>
-                      CNAME{" "}
-                      <span className="text-slate-400 font-mono">{cd}</span> →{" "}
+                      CNAME <span className="text-slate-400 font-mono">{cd}</span> →{' '}
                       <span className="text-slate-400 font-mono">
                         {project.id}.{domain}
                       </span>
@@ -428,11 +406,10 @@ export default function SettingsPopover({
                 })()}
               </div>
             </div>
-
           </div>
         )}
 
-        {settingsTab === "routes" && (
+        {settingsTab === 'routes' && (
           <div className="space-y-3">
             {routesLoading ? (
               <div className="flex items-center justify-center py-4">
@@ -441,53 +418,50 @@ export default function SettingsPopover({
             ) : routes.length === 0 ? (
               <div className="text-center py-1">
                 <Route size={20} className="mx-auto text-slate-600 mb-2" />
-                <p className="text-xs text-slate-500">
-                  No custom routes configured
-                </p>
+                <p className="text-xs text-slate-500">No custom routes configured</p>
               </div>
             ) : (
               <div className="space-y-1.5">
                 {routes.map((route) => (
-                  <div
-                    key={route.id}
-                    className="bg-slate-900/50 rounded px-2 py-1.5">
+                  <div key={route.id} className="bg-slate-900/50 rounded px-2 py-1.5">
                     <div className="flex items-center gap-2">
                       <span
                         className={`text-[9px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
                           route.route_type === RouteType.Path
-                            ? "bg-sky-500/15 text-sky-400"
-                            : "bg-violet-500/15 text-violet-400"
-                        }`}>
-                        {route.route_type === RouteType.Path ? "PATH" : "ALIAS"}
+                            ? 'bg-sky-500/15 text-sky-400'
+                            : 'bg-violet-500/15 text-violet-400'
+                        }`}
+                      >
+                        {route.route_type === RouteType.Path ? 'PATH' : 'ALIAS'}
                       </span>
                       {route.route_type === RouteType.Path ? (
                         <>
-                          <span className="text-xs text-slate-300 font-mono truncate min-w-0">
-                            {route.path}
-                          </span>
+                          <span className="text-xs text-slate-300 font-mono truncate min-w-0">{route.path}</span>
                           <span
                             className="text-[10px] text-slate-500 font-mono truncate min-w-0"
-                            title={route.upstream}>
+                            title={route.upstream}
+                          >
                             {route.upstream}
                           </span>
                         </>
                       ) : (
                         <>
-                          <span className="text-xs text-slate-300 font-mono truncate min-w-0">
-                            {route.subdomain}
-                          </span>
+                          <span className="text-xs text-slate-300 font-mono truncate min-w-0">{route.subdomain}</span>
                           <span className="text-[10px] text-slate-600">→</span>
                           <span
                             className="text-[10px] text-slate-500 font-mono truncate min-w-0"
-                            title={route.upstream}>
+                            title={route.upstream}
+                          >
                             {route.upstream}
                           </span>
                         </>
                       )}
                       <button
+                        type="button"
                         onClick={() => handleDeleteRoute(route.id)}
                         disabled={deletingRouteId === route.id}
-                        className="p-1 text-slate-500 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-50 shrink-0 ml-auto">
+                        className="p-1 text-slate-500 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-50 shrink-0 ml-auto"
+                      >
                         {deletingRouteId === route.id ? (
                           <Loader2 size={11} className="animate-spin" />
                         ) : (
@@ -504,7 +478,8 @@ export default function SettingsPopover({
                           href={`https://${route.subdomain}.${domain}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1 font-mono hover:text-sky-400 transition-colors">
+                          className="flex items-center gap-1 font-mono hover:text-sky-400 transition-colors"
+                        >
                           {route.subdomain}.{domain}
                           <ExternalLink size={10} />
                         </a>
@@ -525,9 +500,10 @@ export default function SettingsPopover({
                   onClick={() => setNewRouteType(RouteType.Path)}
                   className={`flex-1 py-1.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
                     newRouteType === RouteType.Path
-                      ? "bg-sky-500/20 text-sky-400"
-                      : "bg-slate-900/50 text-slate-500 hover:text-slate-300"
-                  }`}>
+                      ? 'bg-sky-500/20 text-sky-400'
+                      : 'bg-slate-900/50 text-slate-500 hover:text-slate-300'
+                  }`}
+                >
                   Path
                 </button>
                 <button
@@ -535,9 +511,10 @@ export default function SettingsPopover({
                   onClick={() => setNewRouteType(RouteType.Alias)}
                   className={`flex-1 py-1.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
                     newRouteType === RouteType.Alias
-                      ? "bg-violet-500/20 text-violet-400"
-                      : "bg-slate-900/50 text-slate-500 hover:text-slate-300"
-                  }`}>
+                      ? 'bg-violet-500/20 text-violet-400'
+                      : 'bg-slate-900/50 text-slate-500 hover:text-slate-300'
+                  }`}
+                >
                   Alias
                 </button>
               </div>
@@ -560,8 +537,7 @@ export default function SettingsPopover({
                   />
                   {newRouteSubdomain && (
                     <div className="text-[10px] text-slate-600 mt-1 font-mono">
-                      {newRouteSubdomain}.{project.id}.{domain} &middot;{" "}
-                      {newRouteSubdomain}.{domain}
+                      {newRouteSubdomain}.{project.id}.{domain} &middot; {newRouteSubdomain}.{domain}
                     </div>
                   )}
                 </div>
@@ -576,27 +552,24 @@ export default function SettingsPopover({
                 />
                 {services.length > 0 && (
                   <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex gap-0.5">
-                    {services.filter(s => s.port != null).map(s => (
-                      <button
-                        key={s.service_name}
-                        type="button"
-                        onClick={() =>
-                          setNewRouteUpstream(
-                            `litebin-${project.id}.${s.service_name}:${s.port}`,
-                          )
-                        }
-                        className="px-1.5 py-0.5 rounded text-[9px] bg-slate-600 text-slate-300 hover:bg-slate-500 transition-colors cursor-pointer"
-                        title={`${s.service_name}:${s.port}`}>
-                        {s.port}
-                      </button>
-                    ))}
+                    {services
+                      .filter((s) => s.port != null)
+                      .map((s) => (
+                        <button
+                          key={s.service_name}
+                          type="button"
+                          onClick={() => setNewRouteUpstream(`litebin-${project.id}.${s.service_name}:${s.port}`)}
+                          className="px-1.5 py-0.5 rounded text-[9px] bg-slate-600 text-slate-300 hover:bg-slate-500 transition-colors cursor-pointer"
+                          title={`${s.service_name}:${s.port}`}
+                        >
+                          {s.port}
+                        </button>
+                      ))}
                   </div>
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-500 shrink-0">
-                  Priority
-                </span>
+                <span className="text-[10px] text-slate-500 shrink-0">Priority</span>
                 <input
                   type="number"
                   value={newRoutePriority}
@@ -604,6 +577,7 @@ export default function SettingsPopover({
                   className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 text-right focus:outline-none focus:border-violet-500"
                 />
                 <button
+                  type="button"
                   onClick={handleAddRoute}
                   disabled={
                     addingRoute ||
@@ -611,7 +585,8 @@ export default function SettingsPopover({
                     (newRouteType === RouteType.Path && !newRoutePath.trim()) ||
                     (newRouteType === RouteType.Alias && !newRouteSubdomain.trim())
                   }
-                  className="ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer">
+                  className="ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
+                >
                   {addingRoute ? (
                     <Loader2 size={11} className="animate-spin" />
                   ) : (

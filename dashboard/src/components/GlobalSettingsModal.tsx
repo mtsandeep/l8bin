@@ -1,10 +1,19 @@
-import { useState, useEffect } from 'react';
-import { X, Settings, Key, Trash2, Copy, Check, AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Key, Settings, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  fetchGlobalSettings, updateGlobalSettings, fetchProjects,
-  createDeployToken, revokeDeployToken, createProject,
-  cleanupDnsRecords, syncDnsRecords,
-  timeAgo, type GlobalSettings, type Project, type DeployTokenInfo, RoutingMode,
+  cleanupDnsRecords,
+  createDeployToken,
+  createProject,
+  type DeployTokenInfo,
+  fetchGlobalSettings,
+  fetchProjects,
+  type GlobalSettings,
+  type Project,
+  RoutingMode,
+  revokeDeployToken,
+  syncDnsRecords,
+  timeAgo,
+  updateGlobalSettings,
 } from '../api';
 import { useToast } from './ToastContext';
 
@@ -27,7 +36,11 @@ export default function GlobalSettingsModal({ onClose }: Props) {
             <Settings size={14} className="text-violet-400" />
             <h2 className="text-sm font-semibold text-slate-100">Settings</h2>
           </div>
-          <button onClick={onClose} className="p-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors cursor-pointer">
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors cursor-pointer"
+          >
             <X size={16} />
           </button>
         </div>
@@ -35,6 +48,7 @@ export default function GlobalSettingsModal({ onClose }: Props) {
         {/* Tabs */}
         <div className="flex border-b border-slate-700/50 shrink-0">
           <button
+            type="button"
             onClick={() => setTab('general')}
             className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
               tab === 'general'
@@ -45,6 +59,7 @@ export default function GlobalSettingsModal({ onClose }: Props) {
             General
           </button>
           <button
+            type="button"
             onClick={() => setTab('tokens')}
             className={`flex items-center justify-center gap-1.5 flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
               tab === 'tokens'
@@ -57,9 +72,7 @@ export default function GlobalSettingsModal({ onClose }: Props) {
           </button>
         </div>
 
-        <div className="p-5 overflow-y-auto">
-          {tab === 'general' ? <GeneralTab /> : <TokensTab />}
-        </div>
+        <div className="p-5 overflow-y-auto">{tab === 'general' ? <GeneralTab /> : <TokensTab />}</div>
       </div>
     </div>
   );
@@ -78,34 +91,41 @@ function GeneralTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const hasUnsavedChanges = settings && (
-    cfToken !== (settings.cloudflare_api_token || '') ||
-    cfZoneId !== (settings.cloudflare_zone_id || '') ||
-    routingMode !== (settings.routing_mode || RoutingMode.MasterProxy) ||
-    domain !== settings.domain ||
-    dnsTarget !== settings.dns_target ||
-    memMb !== settings.default_memory_limit_mb ||
-    cpu !== settings.default_cpu_limit ||
-    dashboardSubdomain !== (settings.dashboard_subdomain || 'l8bin')
-  );
+  const hasUnsavedChanges =
+    settings &&
+    (cfToken !== (settings.cloudflare_api_token || '') ||
+      cfZoneId !== (settings.cloudflare_zone_id || '') ||
+      routingMode !== (settings.routing_mode || RoutingMode.MasterProxy) ||
+      domain !== settings.domain ||
+      dnsTarget !== settings.dns_target ||
+      memMb !== settings.default_memory_limit_mb ||
+      cpu !== settings.default_cpu_limit ||
+      dashboardSubdomain !== (settings.dashboard_subdomain || 'l8bin'));
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ created: number; deleted: number; unchanged: number; errors: number } | null>(null);
+  const [syncResult, setSyncResult] = useState<{
+    created: number;
+    deleted: number;
+    unchanged: number;
+    errors: number;
+  } | null>(null);
   const [removing, setRemoving] = useState(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
-    fetchGlobalSettings().then(s => {
-      setSettings(s);
-      setMemMb(s.default_memory_limit_mb);
-      setCpu(s.default_cpu_limit);
-      setDomain(s.domain);
-      setDnsTarget(s.dns_target);
-      setRoutingMode(s.routing_mode || RoutingMode.MasterProxy);
-      setCfToken(s.cloudflare_api_token || '');
-      setCfZoneId(s.cloudflare_zone_id || '');
-      setDashboardSubdomain(s.dashboard_subdomain || 'l8bin');
-    }).catch(() => setError('Failed to load settings'));
+    fetchGlobalSettings()
+      .then((s) => {
+        setSettings(s);
+        setMemMb(s.default_memory_limit_mb);
+        setCpu(s.default_cpu_limit);
+        setDomain(s.domain);
+        setDnsTarget(s.dns_target);
+        setRoutingMode(s.routing_mode || RoutingMode.MasterProxy);
+        setCfToken(s.cloudflare_api_token || '');
+        setCfZoneId(s.cloudflare_zone_id || '');
+        setDashboardSubdomain(s.dashboard_subdomain || 'l8bin');
+      })
+      .catch(() => setError('Failed to load settings'));
   }, []);
 
   const handleSave = async () => {
@@ -163,11 +183,12 @@ function GeneralTab() {
           max={4096}
           step={64}
           value={memMb}
-          onChange={e => setMemMb(Number(e.target.value))}
+          onChange={(e) => setMemMb(Number(e.target.value))}
           className="w-full accent-violet-500"
         />
         <div className="flex justify-between text-[10px] text-slate-600 mt-1">
-          <span>64 MB</span><span>4096 MB</span>
+          <span>64 MB</span>
+          <span>4096 MB</span>
         </div>
       </div>
 
@@ -183,55 +204,78 @@ function GeneralTab() {
           max={4}
           step={0.1}
           value={cpu}
-          onChange={e => setCpu(Number(e.target.value))}
+          onChange={(e) => setCpu(Number(e.target.value))}
           className="w-full accent-violet-500"
         />
         <div className="flex justify-between text-[10px] text-slate-600 mt-1">
-          <span>0.1</span><span>4.0</span>
+          <span>0.1</span>
+          <span>4.0</span>
         </div>
       </div>
 
       {/* Domain */}
       <div>
-        <label className="block text-xs text-slate-300 mb-1.5">Platform Domain</label>
+        <label htmlFor="global-domain" className="block text-xs text-slate-300 mb-1.5">
+          Platform Domain
+        </label>
         <input
+          id="global-domain"
           type="text"
           value={domain}
-          onChange={e => setDomain(e.target.value)}
+          onChange={(e) => setDomain(e.target.value)}
           placeholder="l8b.in"
           className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
         />
-        <p className="text-[10px] text-slate-600 mt-1">Projects get subdomains like <span className="text-slate-400 font-mono">{'{id}'}.{domain || 'example.com'}</span></p>
+        <p className="text-[10px] text-slate-600 mt-1">
+          Projects get subdomains like{' '}
+          <span className="text-slate-400 font-mono">
+            {'{id}'}.{domain || 'example.com'}
+          </span>
+        </p>
       </div>
 
       {/* Dashboard Subdomain */}
       <div>
-        <label className="block text-xs text-slate-300 mb-1.5">Dashboard Subdomain</label>
+        <label htmlFor="global-dashboard-subdomain" className="block text-xs text-slate-300 mb-1.5">
+          Dashboard Subdomain
+        </label>
         <input
+          id="global-dashboard-subdomain"
           type="text"
           value={dashboardSubdomain}
-          onChange={e => setDashboardSubdomain(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+          onChange={(e) => setDashboardSubdomain(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
           placeholder="l8bin"
           className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
         />
-        <p className="text-[10px] text-slate-600 mt-1">Dashboard served at <span className="text-slate-400 font-mono">{dashboardSubdomain || 'l8bin'}.{domain || 'example.com'}</span></p>
+        <p className="text-[10px] text-slate-600 mt-1">
+          Dashboard served at{' '}
+          <span className="text-slate-400 font-mono">
+            {dashboardSubdomain || 'l8bin'}.{domain || 'example.com'}
+          </span>
+        </p>
       </div>
 
       {/* DNS Target */}
       <div>
-        <label className="block text-xs text-slate-300 mb-1.5">DNS Target (server IP or hostname)</label>
+        <label htmlFor="global-dns-target" className="block text-xs text-slate-300 mb-1.5">
+          DNS Target (server IP or hostname)
+        </label>
         <input
+          id="global-dns-target"
           type="text"
           value={dnsTarget}
-          onChange={e => setDnsTarget(e.target.value)}
+          onChange={(e) => setDnsTarget(e.target.value)}
           placeholder="203.0.113.5"
           className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
         />
-        <p className="text-[10px] text-slate-600 mt-1">Shown in custom domain setup instructions. For apex domains, users need an A record pointing here.</p>
+        <p className="text-[10px] text-slate-600 mt-1">
+          Shown in custom domain setup instructions. For apex domains, users need an A record pointing here.
+        </p>
       </div>
 
       {/* Routing Mode */}
       <div>
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: section label for button group */}
         <label className="block text-xs text-slate-300 mb-1.5">Routing Mode</label>
         <div className="flex gap-2">
           <button
@@ -268,89 +312,108 @@ function GeneralTab() {
       {routingMode === RoutingMode.CloudflareDns && (
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-slate-300 mb-1.5">Cloudflare API Token</label>
+            <label htmlFor="global-cf-token" className="block text-xs text-slate-300 mb-1.5">
+              Cloudflare API Token
+            </label>
             <input
+              id="global-cf-token"
               type="password"
               value={cfToken}
-              onChange={e => setCfToken(e.target.value)}
+              onChange={(e) => setCfToken(e.target.value)}
               placeholder="Enter Cloudflare API token"
               className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
             />
             <p className="text-[10px] text-slate-600 mt-1">Needs Zone:DNS:Edit and Zone:Zone:Read permissions.</p>
           </div>
           <div>
-            <label className="block text-xs text-slate-300 mb-1.5">Cloudflare Zone ID</label>
+            <label htmlFor="global-cf-zone-id" className="block text-xs text-slate-300 mb-1.5">
+              Cloudflare Zone ID
+            </label>
             <input
+              id="global-cf-zone-id"
               type="text"
               value={cfZoneId}
-              onChange={e => setCfZoneId(e.target.value)}
+              onChange={(e) => setCfZoneId(e.target.value)}
               placeholder="Enter Cloudflare Zone ID"
               className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
             />
-            <p className="text-[10px] text-slate-600 mt-1">Found in your Cloudflare dashboard under the domain overview.</p>
+            <p className="text-[10px] text-slate-600 mt-1">
+              Found in your Cloudflare dashboard under the domain overview.
+            </p>
           </div>
           {cfToken && cfZoneId && (
-          <div className="pt-2 space-y-2">
-            {/* Sync DNS Records */}
-            <button
-              onClick={async () => {
-                if (hasUnsavedChanges) {
-                  showToast('Save your changes before syncing DNS');
-                  return;
-                }
-                setSyncing(true);
-                setSyncResult(null);
-                try {
-                  const result = await syncDnsRecords();
-                  setSyncResult(result);
-                  if (result.errors === 0) {
-                    const parts = [];
-                    if (result.created > 0) parts.push(`${result.created} added`);
-                    if (result.unchanged > 0) parts.push(`${result.unchanged} already exist`);
-                    if (result.deleted > 0) parts.push(`${result.deleted} removed`);
-                    showToast(parts.length > 0 ? `DNS synced: ${parts.join(', ')}` : 'DNS already up to date', 'success');
-                  } else {
-                    showToast(`DNS sync: ${result.created} added, ${result.errors} failed`);
+            <div className="pt-2 space-y-2">
+              {/* Sync DNS Records */}
+              <button
+                type="button"
+                onClick={async () => {
+                  if (hasUnsavedChanges) {
+                    showToast('Save your changes before syncing DNS');
+                    return;
                   }
-                } catch (e) {
-                  const msg = e instanceof Error ? e.message : 'Sync failed';
-                  setError(msg);
-                  showToast(msg);
-                } finally {
-                  setSyncing(false);
-                }
-              }}
-              disabled={syncing}
-              className="w-full py-2 rounded-md text-xs font-medium bg-cyan-600/80 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {syncing ? 'Syncing...' : 'Sync DNS Records'}
-            </button>
-            {syncResult !== null && (
-              <p className={`text-[10px] ${syncResult.errors > 0 ? 'text-amber-400' : 'text-green-400'}`}>
-                {syncResult.created > 0 && `${syncResult.created} added`}
-                {syncResult.created > 0 && syncResult.unchanged > 0 && ', '}
-                {syncResult.unchanged > 0 && `${syncResult.unchanged} already exist`}
-                {syncResult.deleted > 0 && `${syncResult.created > 0 || syncResult.unchanged > 0 ? ', ' : ''}${syncResult.deleted} removed`}
-                {syncResult.errors > 0 && `, ${syncResult.errors} failed`}
-                {(syncResult.created === 0 && syncResult.unchanged === 0 && syncResult.deleted === 0 && syncResult.errors === 0) && 'No records to sync'}
+                  setSyncing(true);
+                  setSyncResult(null);
+                  try {
+                    const result = await syncDnsRecords();
+                    setSyncResult(result);
+                    if (result.errors === 0) {
+                      const parts = [];
+                      if (result.created > 0) parts.push(`${result.created} added`);
+                      if (result.unchanged > 0) parts.push(`${result.unchanged} already exist`);
+                      if (result.deleted > 0) parts.push(`${result.deleted} removed`);
+                      showToast(
+                        parts.length > 0 ? `DNS synced: ${parts.join(', ')}` : 'DNS already up to date',
+                        'success',
+                      );
+                    } else {
+                      showToast(`DNS sync: ${result.created} added, ${result.errors} failed`);
+                    }
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : 'Sync failed';
+                    setError(msg);
+                    showToast(msg);
+                  } finally {
+                    setSyncing(false);
+                  }
+                }}
+                disabled={syncing}
+                className="w-full py-2 rounded-md text-xs font-medium bg-cyan-600/80 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {syncing ? 'Syncing...' : 'Sync DNS Records'}
+              </button>
+              {syncResult !== null && (
+                <p className={`text-[10px] ${syncResult.errors > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                  {syncResult.created > 0 && `${syncResult.created} added`}
+                  {syncResult.created > 0 && syncResult.unchanged > 0 && ', '}
+                  {syncResult.unchanged > 0 && `${syncResult.unchanged} already exist`}
+                  {syncResult.deleted > 0 &&
+                    `${syncResult.created > 0 || syncResult.unchanged > 0 ? ', ' : ''}${syncResult.deleted} removed`}
+                  {syncResult.errors > 0 && `, ${syncResult.errors} failed`}
+                  {syncResult.created === 0 &&
+                    syncResult.unchanged === 0 &&
+                    syncResult.deleted === 0 &&
+                    syncResult.errors === 0 &&
+                    'No records to sync'}
+                </p>
+              )}
+              <p className="text-[10px] text-slate-600">
+                Recreates DNS records for all projects, dashboard, and poke domains in Cloudflare.
               </p>
-            )}
-            <p className="text-[10px] text-slate-600">
-              Recreates DNS records for all projects, dashboard, and poke domains in Cloudflare.
-            </p>
 
-            {/* Remove Cloudflare & Cleanup */}
-            <button
-              onClick={() => setShowRemoveConfirm(true)}
-              disabled={removing}
-              className="w-full py-2 rounded-md text-xs font-medium bg-red-600/80 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              Remove Cloudflare &amp; Cleanup DNS
-            </button>
-            <p className="text-[10px] text-slate-600">
-              Deletes all A records matching <span className="text-slate-400 font-mono">*.{domain}</span> and clears credentials.
-            </p>
-          </div>
+              {/* Remove Cloudflare & Cleanup */}
+              <button
+                type="button"
+                onClick={() => setShowRemoveConfirm(true)}
+                disabled={removing}
+                className="w-full py-2 rounded-md text-xs font-medium bg-red-600/80 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Remove Cloudflare &amp; Cleanup DNS
+              </button>
+              <p className="text-[10px] text-slate-600">
+                Deletes all A records matching <span className="text-slate-400 font-mono">*.{domain}</span> and clears
+                credentials.
+              </p>
+            </div>
           )}
 
           {/* Remove confirmation modal */}
@@ -363,13 +426,17 @@ function GeneralTab() {
                 </div>
                 <p className="text-xs text-slate-300 mb-1">This will:</p>
                 <ul className="text-xs text-slate-400 list-disc list-inside mb-4 space-y-1">
-                  <li>Delete all A records matching <span className="font-mono text-slate-300">*.{domain}</span> from Cloudflare</li>
+                  <li>
+                    Delete all A records matching <span className="font-mono text-slate-300">*.{domain}</span> from
+                    Cloudflare
+                  </li>
                   <li>Clear your Cloudflare API token and Zone ID</li>
                   <li>Switch routing mode to Local (master proxy)</li>
                 </ul>
                 <p className="text-xs text-red-400 mb-4">This cannot be undone.</p>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={() => setShowRemoveConfirm(false)}
                     disabled={removing}
                     className="flex-1 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 transition-colors cursor-pointer"
@@ -377,6 +444,7 @@ function GeneralTab() {
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={async () => {
                       setRemoving(true);
                       try {
@@ -416,6 +484,7 @@ function GeneralTab() {
       </p>
 
       <button
+        type="button"
         onClick={handleSave}
         disabled={saving}
         className="w-full py-2 rounded-md text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
@@ -444,22 +513,24 @@ function TokensTab() {
   const [copied, setCopied] = useState(false);
   const { showToast } = useToast();
 
-  const loadTokens = () => {
+  const loadTokens = useCallback(() => {
     setLoading(true);
     fetch(`${API_BASE}/deploy-tokens`, { credentials: 'include' })
-      .then(res => res.ok ? res.json() : Promise.reject())
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then(setTokens)
       .catch(() => setError('Failed to load tokens'))
       .finally(() => setLoading(false));
-  };
+  }, []);
 
   useEffect(() => {
-    fetchProjects().then(ps => {
-      setProjects(ps);
-      if (ps.length > 0) setSelectedProject(ps[0].id);
-    }).catch(() => setError('Failed to load projects'));
+    fetchProjects()
+      .then((ps) => {
+        setProjects(ps);
+        if (ps.length > 0) setSelectedProject(ps[0].id);
+      })
+      .catch(() => setError('Failed to load projects'));
     loadTokens();
-  }, []);
+  }, [loadTokens]);
 
   const handleCreate = async () => {
     let projectId: string | null = null;
@@ -473,7 +544,7 @@ function TokensTab() {
         try {
           const p = await createProject(newProjectId.trim());
           projectId = p.id;
-          setProjects(prev => [p, ...prev]);
+          setProjects((prev) => [p, ...prev]);
           setSelectedProject(p.id);
           setNewProjectId('');
         } catch (e) {
@@ -498,7 +569,7 @@ function TokensTab() {
       const resp = await createDeployToken(projectId, newTokenName || undefined);
       setCreatedToken(resp.token);
       setNewTokenName('');
-      setTokens(prev => [resp.token_info, ...prev]);
+      setTokens((prev) => [resp.token_info, ...prev]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to create token';
       setError(msg);
@@ -512,7 +583,7 @@ function TokensTab() {
     setRevokingId(tokenId);
     try {
       await revokeDeployToken(tokenId);
-      setTokens(prev => prev.filter(t => t.id !== tokenId));
+      setTokens((prev) => prev.filter((t) => t.id !== tokenId));
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to revoke token';
       setError(msg);
@@ -537,6 +608,7 @@ function TokensTab() {
 
       {/* Token list */}
       <div>
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: section label, not associated with a single input */}
         <label className="block text-xs text-slate-400 mb-1.5">Active Tokens</label>
         {loading ? (
           <div className="flex justify-center py-4">
@@ -546,16 +618,19 @@ function TokensTab() {
           <p className="text-xs text-slate-500 py-3 text-center">No deploy tokens yet</p>
         ) : (
           <div className="space-y-1.5">
-            {tokens.map(token => (
-              <div key={token.id} className="flex items-center justify-between bg-slate-900/50 border border-slate-700/30 rounded-md px-3 py-2">
+            {tokens.map((token) => (
+              <div
+                key={token.id}
+                className="flex items-center justify-between bg-slate-900/50 border border-slate-700/30 rounded-md px-3 py-2"
+              >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-slate-200 truncate">{token.name || 'Unnamed'}</span>
-                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-medium ${
-                      token.project_id
-                        ? 'bg-slate-700/50 text-slate-400'
-                        : 'bg-violet-500/15 text-violet-400'
-                    }`}>
+                    <span
+                      className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                        token.project_id ? 'bg-slate-700/50 text-slate-400' : 'bg-violet-500/15 text-violet-400'
+                      }`}
+                    >
                       {token.project_id ? token.project_id : 'Global'}
                     </span>
                   </div>
@@ -565,6 +640,7 @@ function TokensTab() {
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => handleRevoke(token.id)}
                   disabled={revokingId === token.id}
                   className="ml-3 p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-50"
@@ -580,6 +656,7 @@ function TokensTab() {
 
       {/* Create token */}
       <div className="border-t border-slate-700/50 pt-4 space-y-3">
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: section label, not associated with a single input */}
         <label className="block text-xs text-slate-400">Create new token</label>
 
         {/* Name */}
@@ -587,13 +664,14 @@ function TokensTab() {
           type="text"
           placeholder="Name (optional)"
           value={newTokenName}
-          onChange={e => setNewTokenName(e.target.value)}
+          onChange={(e) => setNewTokenName(e.target.value)}
           className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
         />
 
         {/* Scope selector */}
         <div className="flex gap-2">
           <button
+            type="button"
             onClick={() => setTokenScope('global')}
             className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
               tokenScope === 'global'
@@ -604,6 +682,7 @@ function TokensTab() {
             Global
           </button>
           <button
+            type="button"
             onClick={() => setTokenScope('project')}
             className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
               tokenScope === 'project'
@@ -645,12 +724,16 @@ function TokensTab() {
             {projectSource === 'existing' ? (
               <select
                 value={selectedProject}
-                onChange={e => setSelectedProject(e.target.value)}
+                onChange={(e) => setSelectedProject(e.target.value)}
                 className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
               >
-                <option value="" disabled>Select project...</option>
-                {projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.id}</option>
+                <option value="" disabled>
+                  Select project...
+                </option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.id}
+                  </option>
                 ))}
               </select>
             ) : (
@@ -658,7 +741,7 @@ function TokensTab() {
                 type="text"
                 placeholder="Project name (a-z, 0-9, -, _)"
                 value={newProjectId}
-                onChange={e => setNewProjectId(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+                onChange={(e) => setNewProjectId(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
                 className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
               />
             )}
@@ -666,6 +749,7 @@ function TokensTab() {
         )}
 
         <button
+          type="button"
           onClick={handleCreate}
           disabled={creating}
           className="w-full py-2 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
@@ -686,6 +770,7 @@ function TokensTab() {
               {createdToken}
             </code>
             <button
+              type="button"
               onClick={handleCopy}
               className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors cursor-pointer"
               title={copied ? 'Copied!' : 'Copy to clipboard'}
@@ -693,7 +778,9 @@ function TokensTab() {
               {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
             </button>
           </div>
-          <p className="text-[10px] text-slate-500">Use with: <code className="text-slate-400">L8B_TOKEN=&lt;token&gt;</code></p>
+          <p className="text-[10px] text-slate-500">
+            Use with: <code className="text-slate-400">L8B_TOKEN=&lt;token&gt;</code>
+          </p>
         </div>
       )}
     </div>

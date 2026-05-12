@@ -1,46 +1,46 @@
-import { useState, useEffect, useRef } from "react";
 import {
-  Play,
-  Square,
-  Trash2,
-  Clock,
-  ExternalLink,
-  Loader2,
-  ScrollText,
-  RotateCcw,
-  RefreshCw,
-  MoreHorizontal,
-  Copy,
   ChevronRight,
-  Moon,
-  Terminal,
-  Settings,
+  Clock,
+  Copy,
+  ExternalLink,
   Layers,
-} from "lucide-react";
-import StatusBadge from "../StatusBadge";
-import LogViewer from "../LogViewer";
-import { useToast } from "../ToastContext";
+  Loader2,
+  Moon,
+  MoreHorizontal,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  ScrollText,
+  Settings,
+  Square,
+  Terminal,
+  Trash2,
+} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  type Project,
   type Node as ApiNode,
-  type ProjectStats,
-  stopProject,
-  startProject,
+  DeployType,
   deleteProject,
+  type Project,
+  type ProjectStats,
+  ProjectStatus,
   recreateProject,
   redeployProject,
+  startProject,
+  stopProject,
   timeAgo,
-  ProjectStatus,
-  DeployType,
-} from "../../api";
-import SleepPopover from "./SleepPopover";
-import StatsGrid from "./ProjectStats";
-import AppSettingsPopover from "./AppSettingsPopover";
-import SettingsPopover from "./SettingsPopover";
-import RedeployModal from "./RedeployModal";
-import ServiceSelectModal from "./ServiceSelectModal";
-import ServicesModal from "./ServicesModal";
-import DeleteConfirmModal from "./DeleteConfirmModal";
+} from '../../api';
+import LogViewer from '../LogViewer';
+import StatusBadge from '../StatusBadge';
+import { useToast } from '../ToastContext';
+import AppSettingsPopover from './AppSettingsPopover';
+import DeleteConfirmModal from './DeleteConfirmModal';
+import StatsGrid from './ProjectStats';
+import RedeployModal from './RedeployModal';
+import ServiceSelectModal from './ServiceSelectModal';
+import ServicesModal from './ServicesModal';
+import SettingsPopover from './SettingsPopover';
+import SleepPopover from './SleepPopover';
 
 interface ProjectCardProps {
   project: Project;
@@ -53,8 +53,8 @@ interface ProjectCardProps {
 }
 
 function shortImage(image: string | null): string {
-  if (!image) return "—";
-  const hash = image.startsWith("sha256:") ? image.slice(7) : image;
+  if (!image) return '—';
+  const hash = image.startsWith('sha256:') ? image.slice(7) : image;
   return hash.length > 12 ? hash.slice(0, 12) : hash;
 }
 
@@ -80,21 +80,15 @@ export default function ProjectCard({
 
   // Sleep badge display values — updated by SleepPopover onChange
   const [autoStop, setAutoStop] = useState(project.auto_stop_enabled);
-  const [timeoutMins, setTimeoutMins] = useState(
-    project.auto_stop_timeout_mins,
-  );
+  const [timeoutMins, setTimeoutMins] = useState(project.auto_stop_timeout_mins);
   const [autoStart, setAutoStart] = useState(project.auto_start_enabled);
 
   // Settings state for gear popover
-  const [projectName, setProjectName] = useState(project.name ?? "");
-  const [projectDescription, setProjectDescription] = useState(
-    project.description ?? "",
-  );
+  const [projectName, setProjectName] = useState(project.name ?? '');
+  const [projectDescription, setProjectDescription] = useState(project.description ?? '');
   const [allowRawPorts, setAllowRawPorts] = useState(project.allow_raw_ports);
   const [allowDockerAccess, setAllowDockerAccess] = useState(project.allow_docker_access);
-  const [customDomainInput, setCustomDomainInput] = useState(
-    project.custom_domain ?? "",
-  );
+  const [customDomainInput, setCustomDomainInput] = useState(project.custom_domain ?? '');
   const [customDomainSaving, setCustomDomainSaving] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
@@ -103,7 +97,7 @@ export default function ProjectCard({
 
   // Service select modal for multi-service recreate/redeploy
   const [showServiceSelectModal, setShowServiceSelectModal] = useState(false);
-  const [serviceSelectAction, setServiceSelectAction] = useState<"recreate" | "redeploy">("recreate");
+  const [serviceSelectAction, setServiceSelectAction] = useState<'recreate' | 'redeploy'>('recreate');
   const isMultiService = (project.service_count ?? 0) > 1;
 
   // Services popover (data comes from stats)
@@ -115,15 +109,12 @@ export default function ProjectCard({
   useEffect(() => {
     if (!showServicesPopover) return;
     const handler = (e: MouseEvent) => {
-      if (
-        servicesRef.current &&
-        !servicesRef.current.contains(e.target as Node)
-      ) {
+      if (servicesRef.current && !servicesRef.current.contains(e.target as Node)) {
         setShowServicesPopover(false);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [showServicesPopover]);
 
   // Keep badge + settings state in sync when project prop changes
@@ -133,9 +124,9 @@ export default function ProjectCard({
     setAutoStart(project.auto_start_enabled);
     setAllowRawPorts(project.allow_raw_ports);
     setAllowDockerAccess(project.allow_docker_access);
-    setProjectName(project.name ?? "");
-    setProjectDescription(project.description ?? "");
-    setCustomDomainInput(project.custom_domain ?? "");
+    setProjectName(project.name ?? '');
+    setProjectDescription(project.description ?? '');
+    setCustomDomainInput(project.custom_domain ?? '');
   }, [
     project.auto_stop_enabled,
     project.auto_stop_timeout_mins,
@@ -144,33 +135,31 @@ export default function ProjectCard({
     project.name,
     project.description,
     project.custom_domain,
+    project.allow_docker_access,
   ]);
 
   // Close actions dropdown on outside click
   useEffect(() => {
     if (!showActions) return;
     const handler = (e: MouseEvent) => {
-      if (
-        actionsRef.current &&
-        !actionsRef.current.contains(e.target as unknown as globalThis.Node)
-      ) {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as unknown as globalThis.Node)) {
         setShowActions(false);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [showActions]);
 
   const handleAction = async (
-    action: "stop" | "start" | "delete" | "redeploy" | "recreate",
-    fn: () => Promise<void | string[]>,
+    action: 'stop' | 'start' | 'delete' | 'redeploy' | 'recreate',
+    fn: () => Promise<undefined | string[]>,
   ) => {
     setLoading(action);
     try {
       const warnings = await fn();
       onRefresh();
       if (warnings?.length) {
-        for (const w of warnings) showToast(w, "warning");
+        for (const w of warnings) showToast(w, 'warning');
       }
     } catch (e) {
       console.error(e);
@@ -185,13 +174,13 @@ export default function ProjectCard({
     setShowRedeployModal(false);
     // Compose projects use recreate (reads stored compose.yaml) instead of single-service deploy
     if (project.deploy_type === DeployType.Compose) {
-      handleAction("redeploy", () => recreateProject(project.id, undefined, true));
+      handleAction('redeploy', () => recreateProject(project.id, undefined, true));
       return;
     }
-    handleAction("redeploy", () =>
+    handleAction('redeploy', () =>
       redeployProject(
         project.id,
-        project.public_stats?.image ?? "",
+        project.public_stats?.image ?? '',
         project.public_stats?.port ?? 3000,
         project.public_stats?.cmd,
         project.public_stats?.memory_limit_mb,
@@ -216,30 +205,28 @@ export default function ProjectCard({
         <div className="min-w-0">
           <div className="relative flex items-center gap-2 mb-1">
             <div className="flex items-center gap-1.5 min-w-0">
-              <h3
-                className="text-sm font-semibold text-slate-100 truncate"
-                title={project.description || undefined}>
+              <h3 className="text-sm font-semibold text-slate-100 truncate" title={project.description || undefined}>
                 {project.name || project.id}
               </h3>
               <StatusBadge status={stats?.status || project.status} />
               {(services.length > 1 || project.deploy_type === DeployType.Compose) && (
-                <span
+                <button
+                  type="button"
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer border transition-colors ${
                     showServicesPopover
-                      ? "bg-violet-500/30 border-violet-400/50"
-                      : "bg-violet-500/15 border-violet-500/40 hover:bg-violet-500/25"
+                      ? 'bg-violet-500/30 border-violet-400/50'
+                      : 'bg-violet-500/15 border-violet-500/40 hover:bg-violet-500/25'
                   }`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowServicesPopover(!showServicesPopover);
                     setOpenPopover(null);
                   }}
-                  title="Services">
+                  title="Services"
+                >
                   <Layers size={11} className="text-violet-300" />
-                  <span className="text-violet-200 text-[10px] font-medium">
-                    {services.length}
-                  </span>
-                </span>
+                  <span className="text-violet-200 text-[10px] font-medium">{services.length}</span>
+                </button>
               )}
             </div>
             <div className="flex items-center gap-1 ml-auto flex-shrink-0">
@@ -248,7 +235,8 @@ export default function ProjectCard({
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-slate-400 hover:text-sky-400 transition-colors"
-                title="Open app">
+                title="Open app"
+              >
                 <ExternalLink size={14} />
               </a>
             </div>
@@ -256,11 +244,10 @@ export default function ProjectCard({
             {showServicesPopover && (
               <div
                 ref={servicesRef}
-                className="absolute left-0 right-0 top-full mt-1 z-20 bg-slate-800 border border-slate-700/70 rounded-md shadow-xl px-1 py-1">
+                className="absolute left-0 right-0 top-full mt-1 z-20 bg-slate-800 border border-slate-700/70 rounded-md shadow-xl px-1 py-1"
+              >
                 {services.length === 0 ? (
-                  <div className="px-3 py-2 text-xs text-slate-500">
-                    No services
-                  </div>
+                  <div className="px-3 py-2 text-xs text-slate-500">No services</div>
                 ) : (
                   <>
                     {services.map((svc) => (
@@ -268,39 +255,35 @@ export default function ProjectCard({
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span
                             className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                              svc.status === ProjectStatus.Running
-                                ? "bg-emerald-400"
-                                : "bg-slate-600"
+                              svc.status === ProjectStatus.Running ? 'bg-emerald-400' : 'bg-slate-600'
                             }`}
                           />
-                          <span className="text-xs font-medium text-slate-300 truncate">
-                            {svc.service_name}
-                          </span>
+                          <span className="text-xs font-medium text-slate-300 truncate">{svc.service_name}</span>
                           {svc.is_public && (
-                            <span className="text-[10px] px-1 py-0.5 rounded bg-sky-500/20 text-sky-400">
-                              public
-                            </span>
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-sky-500/20 text-sky-400">public</span>
                           )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className={`text-[10px] ${svc.status === ProjectStatus.Running ? "text-emerald-400" : "text-slate-500"}`}>
+                          <span
+                            className={`text-[10px] ${svc.status === ProjectStatus.Running ? 'text-emerald-400' : 'text-slate-500'}`}
+                          >
                             {svc.status}
                           </span>
                           {svc.cpu_percent !== undefined && (
-                            <span className="text-[10px] text-slate-500 font-mono">
-                              {svc.cpu_percent.toFixed(1)}%
-                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">{svc.cpu_percent.toFixed(1)}%</span>
                           )}
                         </div>
                       </div>
                     ))}
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowServicesPopover(false);
                         setShowServicesModal(true);
                       }}
-                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 mt-0.5 text-[10px] font-medium text-violet-300 hover:bg-violet-500/10 rounded transition-colors cursor-pointer">
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 mt-0.5 text-[10px] font-medium text-violet-300 hover:bg-violet-500/10 rounded transition-colors cursor-pointer"
+                    >
                       <Layers size={10} />
                       Explore services
                       <ChevronRight size={10} />
@@ -310,56 +293,47 @@ export default function ProjectCard({
               </div>
             )}
           </div>
-          <p
-            className="text-xs text-slate-500 truncate font-mono"
-            title={project.public_stats?.image ?? ""}>
+          <p className="text-xs text-slate-500 truncate font-mono" title={project.public_stats?.image ?? ''}>
             {isMultiService
               ? `${shortImage(project.public_stats?.image ?? null)} +${services.length - 1}`
               : shortImage(project.public_stats?.image ?? null)}
             {isMultiService
-              ? services.filter(s => s.mapped_port && s.mapped_port > 0).length > 0
-                ? ` | ports: ${services.filter(s => s.mapped_port && s.mapped_port > 0).map(s => s.mapped_port).join(", ")}`
-                : ""
+              ? services.filter((s) => s.mapped_port && s.mapped_port > 0).length > 0
+                ? ` | ports: ${services
+                    .filter((s) => s.mapped_port && s.mapped_port > 0)
+                    .map((s) => s.mapped_port)
+                    .join(', ')}`
+                : ''
               : project.public_stats?.mapped_port
                 ? ` | port: ${project.public_stats.mapped_port}`
-                : ""}
+                : ''}
           </p>
           <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
             <span
               className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-                autoStop ? "bg-slate-700/60" : "bg-slate-800/40"
-              }`}>
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${autoStop ? "bg-emerald-400" : "bg-slate-600"}`}
-              />
-              <span className="text-slate-400">
-                Auto-stop{autoStop && ` · ${timeoutMins}m`}
-              </span>
+                autoStop ? 'bg-slate-700/60' : 'bg-slate-800/40'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${autoStop ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+              <span className="text-slate-400">Auto-stop{autoStop && ` · ${timeoutMins}m`}</span>
             </span>
             <span
               className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-                autoStart ? "bg-slate-700/60" : "bg-slate-800/40"
-              }`}>
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${autoStart ? "bg-emerald-400" : "bg-slate-600"}`}
-              />
+                autoStart ? 'bg-slate-700/60' : 'bg-slate-800/40'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${autoStart ? 'bg-emerald-400' : 'bg-slate-600'}`} />
               <span className="text-slate-400">Auto-start</span>
             </span>
           </div>
         </div>
       </div>
 
-      <StatsGrid
-        stats={stats}
-        isRunning={isRunning}
-        isUnconfigured={isUnconfigured}
-      />
+      <StatsGrid stats={stats} isRunning={isRunning} isUnconfigured={isUnconfigured} />
 
       {/* Node */}
       <div className="mb-4 px-3 py-2 bg-slate-900/50 rounded-md flex items-center gap-2 min-w-0">
-        <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">
-          Node
-        </span>
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">Node</span>
         {project.node_id ? (
           (() => {
             const node = nodes.find((n) => n.id === project.node_id);
@@ -379,7 +353,7 @@ export default function ProjectCard({
         <div className="flex gap-2">
           {/* Sleep button */}
           <div className="flex-1">
-            {openPopover === "sleep" ? (
+            {openPopover === 'sleep' ? (
               <SleepPopover
                 project={project}
                 onChange={(as, tm, astart) => {
@@ -391,13 +365,13 @@ export default function ProjectCard({
               />
             ) : (
               <button
-                onClick={() => setOpenPopover("sleep")}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer bg-slate-900/50 border-slate-700/50 text-slate-400 hover:bg-slate-900/80">
+                type="button"
+                onClick={() => setOpenPopover('sleep')}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer bg-slate-900/50 border-slate-700/50 text-slate-400 hover:bg-slate-900/80"
+              >
                 <div className="flex items-center gap-1.5">
                   <Moon size={12} />
-                  <span className="text-[10px] uppercase tracking-wider">
-                    Sleep
-                  </span>
+                  <span className="text-[10px] uppercase tracking-wider">Sleep</span>
                 </div>
                 <ChevronRight size={12} className="text-slate-500" />
               </button>
@@ -406,7 +380,7 @@ export default function ProjectCard({
 
           {/* App Settings button */}
           <div className="flex-1">
-            {openPopover === "app" ? (
+            {openPopover === 'app' ? (
               <AppSettingsPopover
                 project={project}
                 isStopping={isStopping}
@@ -416,13 +390,13 @@ export default function ProjectCard({
               />
             ) : (
               <button
-                onClick={() => setOpenPopover("app")}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer bg-slate-900/50 border-slate-700/50 text-slate-400 hover:bg-slate-900/80">
+                type="button"
+                onClick={() => setOpenPopover('app')}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer bg-slate-900/50 border-slate-700/50 text-slate-400 hover:bg-slate-900/80"
+              >
                 <div className="flex items-center gap-1.5">
                   <Terminal size={12} />
-                  <span className="text-[10px] uppercase tracking-wider">
-                    App
-                  </span>
+                  <span className="text-[10px] uppercase tracking-wider">App</span>
                 </div>
                 <ChevronRight size={12} className="text-slate-500" />
               </button>
@@ -431,7 +405,7 @@ export default function ProjectCard({
 
           {/* Settings gear button */}
           <div className="flex-none">
-            {openPopover === "settings" ? (
+            {openPopover === 'settings' ? (
               <SettingsPopover
                 project={project}
                 domain={domain}
@@ -454,22 +428,24 @@ export default function ProjectCard({
                 onRefresh={onRefresh}
                 onClose={() => {
                   setOpenPopover(null);
-                  setProjectName(project.name ?? "");
-                  setProjectDescription(project.description ?? "");
-                  setCustomDomainInput(project.custom_domain ?? "");
+                  setProjectName(project.name ?? '');
+                  setProjectDescription(project.description ?? '');
+                  setCustomDomainInput(project.custom_domain ?? '');
                   setSettingsError(null);
                   setCustomDomainSaving(false);
                 }}
               />
             ) : (
               <button
-                onClick={() => setOpenPopover("settings")}
+                type="button"
+                onClick={() => setOpenPopover('settings')}
                 className={`flex items-center justify-center px-2.5 py-2 rounded-md border transition-colors cursor-pointer ${
                   project.custom_domain || project.name
-                    ? "bg-slate-900/50 border-violet-500/20 text-violet-400 hover:bg-slate-900/80"
-                    : "bg-slate-900/50 border-slate-700/50 text-slate-400 hover:bg-slate-900/80"
+                    ? 'bg-slate-900/50 border-violet-500/20 text-violet-400 hover:bg-slate-900/80'
+                    : 'bg-slate-900/50 border-slate-700/50 text-slate-400 hover:bg-slate-900/80'
                 }`}
-                title="Project settings">
+                title="Project settings"
+              >
                 <Settings size={12} />
               </button>
             )}
@@ -486,18 +462,22 @@ export default function ProjectCard({
 
         <div className="flex items-center gap-1.5">
           <button
+            type="button"
             onClick={() => setShowLogs(true)}
             className="inline-flex items-center gap-1 p-1.5 rounded-md text-slate-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors cursor-pointer"
-            title="Logs">
+            title="Logs"
+          >
             <ScrollText size={13} />
           </button>
           <div ref={actionsRef} className="relative">
             <button
+              type="button"
               onClick={() => setShowActions(!showActions)}
               disabled={loading !== null || isStopping}
               className="inline-flex items-center gap-1 p-1.5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
-              title="Actions">
-              {loading === "redeploy" || loading === "recreate" ? (
+              title="Actions"
+            >
+              {loading === 'redeploy' || loading === 'recreate' ? (
                 <Loader2 size={13} className="animate-spin" />
               ) : (
                 <MoreHorizontal size={13} />
@@ -508,43 +488,46 @@ export default function ProjectCard({
                 {!isUnconfigured && (
                   <>
                     <button
+                      type="button"
                       onClick={() => {
                         setShowActions(false);
                         if (isMultiService) {
-                          setServiceSelectAction("redeploy");
+                          setServiceSelectAction('redeploy');
                           setShowServiceSelectModal(true);
                         } else {
                           setShowRedeployModal(true);
                         }
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer">
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer"
+                    >
                       <RotateCcw size={13} className="text-sky-400" />
                       <div className="text-left">
                         <div>Redeploy</div>
-                        <div className="text-[10px] text-slate-500">
-                          Pull latest image &amp; restart
-                        </div>
+                        <div className="text-[10px] text-slate-500">Pull latest image &amp; restart</div>
                       </div>
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setShowActions(false);
                         if (isMultiService) {
-                          setServiceSelectAction("recreate");
+                          setServiceSelectAction('recreate');
                           setShowServiceSelectModal(true);
                         } else {
-                          handleAction("recreate", () =>
-                            recreateProject(project.id).then((warnings) => { onRefresh(); return warnings; }),
+                          handleAction('recreate', () =>
+                            recreateProject(project.id).then((warnings) => {
+                              onRefresh();
+                              return warnings;
+                            }),
                           );
                         }
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer">
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer"
+                    >
                       <RefreshCw size={13} className="text-emerald-400" />
                       <div className="text-left">
                         <div>Recreate</div>
-                        <div className="text-[10px] text-slate-500">
-                          Restart with updated env/config
-                        </div>
+                        <div className="text-[10px] text-slate-500">Restart with updated env/config</div>
                       </div>
                     </button>
                     <div className="mx-2 my-1 border-t border-slate-700/50" />
@@ -552,22 +535,18 @@ export default function ProjectCard({
                 )}
                 <div className="px-3 py-2">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] text-slate-500">
-                      Env file on node:
-                    </span>
+                    <span className="text-[10px] text-slate-500">Env file on node:</span>
                     <button
+                      type="button"
                       onClick={() => {
-                        navigator.clipboard.writeText(
-                          `${projectsDir}/${project.id}/.env`,
-                        );
+                        navigator.clipboard.writeText(`${projectsDir}/${project.id}/.env`);
                         setEnvCopied(true);
                         setTimeout(() => setEnvCopied(false), 1500);
                       }}
-                      className="rounded text-slate-500 hover:text-slate-300 transition-colors flex cursor-pointer">
+                      className="rounded text-slate-500 hover:text-slate-300 transition-colors flex cursor-pointer"
+                    >
                       {envCopied ? (
-                        <span className="text-[10px] text-emerald-400">
-                          Copied
-                        </span>
+                        <span className="text-[10px] text-emerald-400">Copied</span>
                       ) : (
                         <span className="p-0.5">
                           <Copy size={11} />
@@ -584,13 +563,11 @@ export default function ProjectCard({
                     />
                   </div>
                   {project.node_id &&
-                    project.node_id !== "local" &&
+                    project.node_id !== 'local' &&
                     (() => {
                       const node = nodes.find((n) => n.id === project.node_id);
                       return node ? (
-                        <div className="text-[10px] text-slate-600 mt-1.5 font-mono truncate">
-                          SSH → {node.host}
-                        </div>
+                        <div className="text-[10px] text-slate-600 mt-1.5 font-mono truncate">SSH → {node.host}</div>
                       ) : null;
                     })()}
                 </div>
@@ -599,31 +576,29 @@ export default function ProjectCard({
           </div>
           {isStopped && (
             <button
-              onClick={() =>
-                handleAction("start", () => startProject(project.id))
-              }
+              type="button"
+              onClick={() => handleAction('start', () => startProject(project.id))}
               disabled={loading !== null}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50 cursor-pointer"
-              title="Start">
-              {loading === "start" ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <Play size={12} />
-              )}
+              title="Start"
+            >
+              {loading === 'start' ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
               Start
             </button>
           )}
-          {(isRunning || isDegraded) && loading !== "stop" && (
+          {(isRunning || isDegraded) && loading !== 'stop' && (
             <button
-              onClick={() => handleAction("stop", () => stopProject(project.id))}
+              type="button"
+              onClick={() => handleAction('stop', () => stopProject(project.id))}
               disabled={loading !== null}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50 cursor-pointer"
-              title={isDegraded ? "Stop remaining services" : "Stop"}>
+              title={isDegraded ? 'Stop remaining services' : 'Stop'}
+            >
               <Square size={12} />
               Stop
             </button>
           )}
-          {(isStopping || loading === "stop") && (
+          {(isStopping || loading === 'stop') && (
             <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-orange-500/10 text-orange-400">
               <Loader2 size={12} className="animate-spin" />
               Stopping
@@ -631,27 +606,32 @@ export default function ProjectCard({
           )}
 
           <button
+            type="button"
             onClick={() => setShowDeleteConfirm(true)}
             disabled={loading !== null}
             className="inline-flex items-center gap-1 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer"
-            title="Delete">
+            title="Delete"
+          >
             <Trash2 size={13} />
           </button>
         </div>
       </div>
       {showLogs && (
-        <LogViewer projectId={project.id} services={services} status={effectiveStatus} onClose={() => setShowLogs(false)} />
+        <LogViewer
+          projectId={project.id}
+          services={services}
+          status={effectiveStatus}
+          onClose={() => setShowLogs(false)}
+        />
       )}
 
       {/* Delete confirmation modal */}
       {showDeleteConfirm && (
         <DeleteConfirmModal
           project={project}
-          isDeleting={loading === "delete"}
+          isDeleting={loading === 'delete'}
           onConfirm={() =>
-            handleAction("delete", () => deleteProject(project.id)).then(() =>
-              setShowDeleteConfirm(false),
-            )
+            handleAction('delete', () => deleteProject(project.id)).then(() => setShowDeleteConfirm(false))
           }
           onCancel={() => setShowDeleteConfirm(false)}
         />
@@ -661,7 +641,7 @@ export default function ProjectCard({
       {showRedeployModal && (
         <RedeployModal
           project={project}
-          appImage={project.public_stats?.image ?? ""}
+          appImage={project.public_stats?.image ?? ''}
           appPort={project.public_stats?.port ?? 3000}
           isStopping={isStopping}
           onRedeploy={handleActionsRedeploy}
@@ -674,17 +654,17 @@ export default function ProjectCard({
         <ServiceSelectModal
           projectName={project.name || project.id}
           services={services}
-          title={serviceSelectAction === "redeploy" ? "Redeploy services" : "Recreate services"}
-          confirmLabel={serviceSelectAction === "redeploy" ? "Redeploy" : "Recreate"}
+          title={serviceSelectAction === 'redeploy' ? 'Redeploy services' : 'Recreate services'}
+          confirmLabel={serviceSelectAction === 'redeploy' ? 'Redeploy' : 'Recreate'}
           onConfirm={(selectedServices) => {
             setShowServiceSelectModal(false);
-            handleAction(
-              serviceSelectAction === "redeploy" ? "redeploy" : "recreate",
-              () => recreateProject(
-                project.id,
-                selectedServices,
-                serviceSelectAction === "redeploy" ? true : undefined,
-              ).then((warnings) => { onRefresh(); return warnings; }),
+            handleAction(serviceSelectAction === 'redeploy' ? 'redeploy' : 'recreate', () =>
+              recreateProject(project.id, selectedServices, serviceSelectAction === 'redeploy' ? true : undefined).then(
+                (warnings) => {
+                  onRefresh();
+                  return warnings;
+                },
+              ),
             );
           }}
           onCancel={() => setShowServiceSelectModal(false)}

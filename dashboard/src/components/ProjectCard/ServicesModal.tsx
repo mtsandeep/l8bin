@@ -1,25 +1,8 @@
-import { useState } from "react";
-import {
-  X,
-  Play,
-  Square,
-  RotateCcw,
-  Loader2,
-  Cpu,
-  MemoryStick,
-  HardDrive,
-  Database,
-  Terminal,
-} from "lucide-react";
-import type { Project, ServiceInfo } from "../../api";
-import {
-  formatBytes,
-  startService,
-  stopService,
-  restartService,
-  ProjectStatus,
-} from "../../api";
-import ServiceSettingsPopover from "./ServiceSettingsPopover";
+import { Cpu, Database, HardDrive, Loader2, MemoryStick, Play, RotateCcw, Square, Terminal, X } from 'lucide-react';
+import { useState } from 'react';
+import type { Project, ServiceInfo } from '../../api';
+import { formatBytes, ProjectStatus, restartService, startService, stopService } from '../../api';
+import ServiceSettingsPopover from './ServiceSettingsPopover';
 
 interface ServicesModalProps {
   project: Project;
@@ -29,31 +12,22 @@ interface ServicesModalProps {
 }
 
 function shortImage(image: string): string {
-  if (!image) return "—";
-  const hash = image.startsWith("sha256:") ? image.slice(7) : image;
+  if (!image) return '—';
+  const hash = image.startsWith('sha256:') ? image.slice(7) : image;
   return hash.length > 12 ? hash.slice(0, 12) : hash;
 }
 
-export default function ServicesModal({
-  project,
-  services,
-  onClose,
-  onRefresh,
-}: ServicesModalProps) {
+export default function ServicesModal({ project, services, onClose, onRefresh }: ServicesModalProps) {
   const [loadingService, setLoadingService] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openSettingsService, setOpenSettingsService] = useState<string | null>(
-    null,
-  );
+  const [openSettingsService, setOpenSettingsService] = useState<string | null>(null);
 
   const handleAction = (name: string, fn: () => Promise<void>) => {
     setLoadingService(name);
     setError(null);
     fn()
       .then(() => onRefresh())
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Action failed"),
-      )
+      .catch((err) => setError(err instanceof Error ? err.message : 'Action failed'))
       .finally(() => setLoadingService(null));
   };
 
@@ -65,16 +39,16 @@ export default function ServicesModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/50">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-slate-100">
-              {project.name || project.id}
-            </span>
+            <span className="text-sm font-semibold text-slate-100">{project.name || project.id}</span>
             <span className="text-xs text-slate-500">
               {runningCount}/{services.length} running
             </span>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 transition-colors p-1 cursor-pointer">
+            className="text-slate-400 hover:text-slate-200 transition-colors p-1 cursor-pointer"
+          >
             <X size={16} />
           </button>
         </div>
@@ -101,85 +75,70 @@ export default function ServicesModal({
                   {/* Service header */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-xs font-medium text-slate-200 truncate">
-                        {svc.service_name}
-                      </span>
+                      <span className="text-xs font-medium text-slate-200 truncate">{svc.service_name}</span>
                       {svc.is_public && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400">
-                          public
-                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400">public</span>
                       )}
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded ${
-                          isRunning
-                            ? "bg-emerald-500/20 text-emerald-400"
-                            : "bg-slate-700/60 text-slate-500"
-                        }`}>
+                          isRunning ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700/60 text-slate-500'
+                        }`}
+                      >
                         {svc.status}
                       </span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
+                        type="button"
                         onClick={() =>
-                          setOpenSettingsService(
-                            openSettingsService === svc.service_name
-                              ? null
-                              : svc.service_name,
-                          )
+                          setOpenSettingsService(openSettingsService === svc.service_name ? null : svc.service_name)
                         }
                         disabled={isLoading}
                         className={`transition-colors disabled:opacity-50 cursor-pointer p-1 ${
                           openSettingsService === svc.service_name
-                            ? "text-violet-400 bg-violet-500/20"
-                            : "text-slate-500 hover:text-slate-300 hover:bg-slate-700/50"
+                            ? 'text-violet-400 bg-violet-500/20'
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-slate-700/50'
                         }`}
-                        title="Settings">
+                        title="Settings"
+                      >
                         <Terminal size={12} />
                       </button>
                       {isRunning ? (
                         <>
                           <button
+                            type="button"
                             onClick={() =>
-                              handleAction(svc.service_name, () =>
-                                stopService(project.id, svc.service_name),
-                              )
+                              handleAction(svc.service_name, () => stopService(project.id, svc.service_name))
                             }
                             disabled={isLoading}
                             className="text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
-                            title="Stop">
-                            {isLoading ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : (
-                              <Square size={12} />
-                            )}
+                            title="Stop"
+                          >
+                            {isLoading ? <Loader2 size={12} className="animate-spin" /> : <Square size={12} />}
                           </button>
                           <button
+                            type="button"
                             onClick={() =>
-                              handleAction(svc.service_name, () =>
-                                restartService(project.id, svc.service_name),
-                              )
+                              handleAction(svc.service_name, () => restartService(project.id, svc.service_name))
                             }
                             disabled={isLoading}
                             className="text-slate-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
-                            title="Restart">
+                            title="Restart"
+                          >
                             <RotateCcw size={12} />
                           </button>
                         </>
                       ) : (
                         <button
+                          type="button"
                           onClick={() =>
-                            handleAction(svc.service_name, () =>
-                              startService(project.id, svc.service_name),
-                            )
+                            handleAction(svc.service_name, () => startService(project.id, svc.service_name))
                           }
                           disabled={isLoading}
                           className="text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50 cursor-pointer p-1"
-                          title="Start">
-                          {isLoading ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <Play size={12} />
-                          )}
+                          title="Start"
+                        >
+                          {isLoading ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
                         </button>
                       )}
                     </div>
@@ -194,15 +153,13 @@ export default function ServicesModal({
                   </div>
 
                   {/* Image + port */}
-                  <p
-                    className="text-[10px] text-slate-500 truncate font-mono mt-1.5"
-                    title={svc.image}>
+                  <p className="text-[10px] text-slate-500 truncate font-mono mt-1.5" title={svc.image}>
                     {shortImage(svc.image)}
                     {svc.port
                       ? svc.mapped_port && svc.mapped_port > 0
                         ? ` | ${svc.mapped_port}:${svc.port}`
                         : ` | :${svc.port}`
-                      : ""}
+                      : ''}
                   </p>
 
                   {/* Stats grid */}
@@ -211,25 +168,19 @@ export default function ServicesModal({
                     <div className="bg-slate-800/60 rounded px-2 py-1.5">
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <Cpu size={10} />
-                        <span className="text-[9px] uppercase tracking-wider">
-                          CPU
-                        </span>
+                        <span className="text-[9px] uppercase tracking-wider">CPU</span>
                       </div>
                       {isRunning && svc.cpu_percent !== undefined ? (
                         <p className="text-[11px] font-medium text-slate-300">
                           {svc.cpu_percent.toFixed(1)}
                           <span className="text-slate-500">%</span>
                           {svc.cpu_limit !== undefined && (
-                            <span className="text-slate-600 ml-1">
-                              / {svc.cpu_limit.toFixed(1)}
-                            </span>
+                            <span className="text-slate-600 ml-1">/ {svc.cpu_limit.toFixed(1)}</span>
                           )}
                         </p>
                       ) : (
                         <p className="text-[11px] text-slate-600">
-                          {svc.cpu_limit !== undefined
-                            ? `— / ${svc.cpu_limit.toFixed(1)}`
-                            : "—"}
+                          {svc.cpu_limit !== undefined ? `— / ${svc.cpu_limit.toFixed(1)}` : '—'}
                         </p>
                       )}
                     </div>
@@ -238,9 +189,7 @@ export default function ServicesModal({
                     <div className="bg-slate-800/60 rounded px-2 py-1.5">
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <MemoryStick size={10} />
-                        <span className="text-[9px] uppercase tracking-wider">
-                          Mem
-                        </span>
+                        <span className="text-[9px] uppercase tracking-wider">Mem</span>
                       </div>
                       {isRunning && svc.memory_usage !== undefined ? (
                         <p className="text-[11px] font-medium text-slate-300">
@@ -253,9 +202,7 @@ export default function ServicesModal({
                         </p>
                       ) : (
                         <p className="text-[11px] text-slate-600">
-                          {svc.memory_limit_mb != null
-                            ? `— / ${formatBytes(svc.memory_limit_mb * 1024 * 1024)}`
-                            : "—"}
+                          {svc.memory_limit_mb != null ? `— / ${formatBytes(svc.memory_limit_mb * 1024 * 1024)}` : '—'}
                         </p>
                       )}
                       {isRunning && svc.memory_limit_mb && memPercent > 0 && (
@@ -274,9 +221,7 @@ export default function ServicesModal({
                     <div className="bg-slate-800/60 rounded px-2 py-1.5">
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <HardDrive size={10} />
-                        <span className="text-[9px] uppercase tracking-wider">
-                          Disk
-                        </span>
+                        <span className="text-[9px] uppercase tracking-wider">Disk</span>
                       </div>
                       {svc.disk_gb !== undefined && svc.disk_gb > 0 ? (
                         <p className="text-[11px] font-medium text-slate-300">
@@ -292,22 +237,12 @@ export default function ServicesModal({
                   {/* Volumes */}
                   {svc.volumes && svc.volumes.length > 0 && (
                     <div className="mt-2 flex items-start gap-1.5">
-                      <Database
-                        size={10}
-                        className="text-slate-600 mt-0.5 shrink-0"
-                      />
+                      <Database size={10} className="text-slate-600 mt-0.5 shrink-0" />
                       <div className="text-[10px] font-mono">
-                        {svc.volumes.map((v, i) => (
-                          <span key={i} className="inline-block mr-3 last:mr-0">
-                            <span className="text-slate-500">
-                              {v.container_path}
-                            </span>
-                            {v.volume_name && (
-                              <span className="text-slate-600">
-                                {" "}
-                                &larr; {v.volume_name}
-                              </span>
-                            )}
+                        {svc.volumes.map((v) => (
+                          <span key={v.container_path} className="inline-block mr-3 last:mr-0">
+                            <span className="text-slate-500">{v.container_path}</span>
+                            {v.volume_name && <span className="text-slate-600"> &larr; {v.volume_name}</span>}
                           </span>
                         ))}
                       </div>

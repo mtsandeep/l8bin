@@ -1,10 +1,32 @@
-import { useState, useCallback } from 'react';
 import {
-  Server, Plus, Trash2, RefreshCw, CheckCircle, XCircle,
-  Clock, Copy, ChevronRight, Loader, Search
+  CheckCircle,
+  ChevronRight,
+  Clock,
+  Copy,
+  Loader,
+  Plus,
+  RefreshCw,
+  Search,
+  Server,
+  Trash2,
+  XCircle,
 } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import {
+  addNode,
+  connectNode,
+  deleteNode,
+  fetchNodeImageStats,
+  fetchNodes,
+  formatBytes,
+  type Node,
+  type NodeImageStats,
+  NodeStatus,
+  type Project,
+  pruneNodeImages,
+  timeAgo,
+} from '../api';
 import { useIntervalWhileVisible } from '../hooks';
-import { type Node, NodeStatus, type NodeImageStats, type Project, fetchNodes, fetchNodeImageStats, pruneNodeImages, addNode, connectNode, deleteNode, timeAgo, formatBytes } from '../api';
 
 function statusColor(status: NodeStatus) {
   if (status === NodeStatus.Online) return 'text-emerald-400';
@@ -14,8 +36,7 @@ function statusColor(status: NodeStatus) {
 
 function StatusDot({ status }: { status: NodeStatus }) {
   const color =
-    status === NodeStatus.Online ? 'bg-emerald-400' :
-    status === NodeStatus.Offline ? 'bg-rose-400' : 'bg-slate-600';
+    status === NodeStatus.Online ? 'bg-emerald-400' : status === NodeStatus.Offline ? 'bg-rose-400' : 'bg-slate-600';
   return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
 }
 
@@ -65,7 +86,7 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
         const node = await addNode({
           name,
           host,
-          agent_port: parseInt(port) || 5083,
+          agent_port: parseInt(port, 10) || 5083,
           region: region || undefined,
         });
         nodeId = node.id;
@@ -115,24 +136,38 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
             <Server size={16} className="text-violet-400" />
             <h2 className="text-sm font-semibold text-slate-100">Add Agent</h2>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-lg leading-none">×</button>
+          <button type="button" onClick={onClose} className="text-slate-500 hover:text-slate-300 text-lg leading-none">
+            ×
+          </button>
         </div>
 
         {/* Step indicator */}
         <div className="flex items-center gap-1 px-6 pt-4">
           {(['form', 'instructions', 'connecting'] as WizardStep[]).map((s, i) => (
             <div key={s} className="flex items-center gap-1">
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium
-                ${step === s || (step === 'result' && s === 'connecting') ? 'bg-violet-600 text-white' :
-                  (step === 'instructions' && s === 'form') || step === 'connecting' || step === 'result'
-                    ? 'bg-violet-900/50 text-violet-400' : 'bg-slate-800 text-slate-500'}`}>
+              <div
+                className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium
+                ${
+                  step === s || (step === 'result' && s === 'connecting')
+                    ? 'bg-violet-600 text-white'
+                    : (step === 'instructions' && s === 'form') || step === 'connecting' || step === 'result'
+                      ? 'bg-violet-900/50 text-violet-400'
+                      : 'bg-slate-800 text-slate-500'
+                }`}
+              >
                 {i + 1}
               </div>
               {i < 2 && <ChevronRight size={12} className="text-slate-700" />}
             </div>
           ))}
           <span className="ml-2 text-xs text-slate-500">
-            {step === 'form' ? 'Server details' : step === 'instructions' ? 'Install agent' : step === 'connecting' ? 'Connecting…' : 'Verify'}
+            {step === 'form'
+              ? 'Server details'
+              : step === 'instructions'
+                ? 'Install agent'
+                : step === 'connecting'
+                  ? 'Connecting…'
+                  : 'Verify'}
           </span>
         </div>
 
@@ -142,43 +177,56 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs text-slate-400 mb-1">Agent server name</label>
+                  <label htmlFor="agent-name" className="block text-xs text-slate-400 mb-1">
+                    Agent server name
+                  </label>
                   <input
+                    id="agent-name"
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-violet-500"
                     placeholder="server-eu-1"
                     value={name}
-                    onChange={e => setName(e.target.value)}
+                    onChange={(e) => setName(e.target.value)}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">Server IP / hostname</label>
+                  <label htmlFor="agent-host" className="block text-xs text-slate-400 mb-1">
+                    Server IP / hostname
+                  </label>
                   <input
+                    id="agent-host"
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-violet-500"
                     placeholder="10.0.0.5"
                     value={host}
-                    onChange={e => setHost(e.target.value)}
+                    onChange={(e) => setHost(e.target.value)}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">Agent port</label>
+                  <label htmlFor="agent-port" className="block text-xs text-slate-400 mb-1">
+                    Agent port
+                  </label>
                   <input
+                    id="agent-port"
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-violet-500"
                     placeholder="5083"
                     value={port}
-                    onChange={e => setPort(e.target.value)}
+                    onChange={(e) => setPort(e.target.value)}
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs text-slate-400 mb-1">Region <span className="text-slate-600">(optional)</span></label>
+                  <label htmlFor="agent-region" className="block text-xs text-slate-400 mb-1">
+                    Region <span className="text-slate-600">(optional)</span>
+                  </label>
                   <input
+                    id="agent-region"
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-violet-500"
                     placeholder="eu-west"
                     value={region}
-                    onChange={e => setRegion(e.target.value)}
+                    onChange={(e) => setRegion(e.target.value)}
                   />
                 </div>
               </div>
               <button
+                type="button"
                 disabled={!name || !host}
                 onClick={() => setStep('instructions')}
                 className="w-full py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -192,13 +240,15 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
           {step === 'instructions' && (
             <>
               <p className="text-xs text-slate-400">
-                SSH into <span className="text-slate-200 font-mono">{host}</span> and run this command to install the LiteBin agent:
+                SSH into <span className="text-slate-200 font-mono">{host}</span> and run this command to install the
+                LiteBin agent:
               </p>
               <div className="relative bg-slate-950 border border-slate-700/60 rounded-lg p-3">
                 <pre className="text-xs text-emerald-400 font-mono whitespace-pre-wrap break-all pr-8">
                   {installCommand}
                 </pre>
                 <button
+                  type="button"
                   onClick={copyCommand}
                   className="absolute top-2 right-2 p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
                   title="Copy"
@@ -207,8 +257,9 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
                 </button>
               </div>
               <p className="text-xs text-slate-500">
-                The script installs Docker, configures the firewall, and starts the agent on port <span className="text-slate-300">{port}</span>.
-                Once it's running, click <span className="text-slate-300">Connect</span> to verify and register the agent.
+                The script installs Docker, configures the firewall, and starts the agent on port{' '}
+                <span className="text-slate-300">{port}</span>. Once it's running, click{' '}
+                <span className="text-slate-300">Connect</span> to verify and register the agent.
               </p>
               {error && (
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400">
@@ -218,12 +269,14 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
               )}
               <div className="flex gap-2">
                 <button
+                  type="button"
                   onClick={() => setStep('form')}
                   className="flex-1 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 transition-colors"
                 >
                   Back
                 </button>
                 <button
+                  type="button"
                   onClick={handleAdd}
                   disabled={connecting}
                   className="flex-1 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
@@ -238,7 +291,13 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
           {step === 'connecting' && (
             <div className="flex flex-col items-center py-6 gap-3">
               <Loader size={24} className="text-violet-400 animate-spin" />
-              <p className="text-sm text-slate-400">Adding and connecting to <span className="text-slate-200">{host}:{port}</span>…</p>
+              <p className="text-sm text-slate-400">
+                Adding and connecting to{' '}
+                <span className="text-slate-200">
+                  {host}:{port}
+                </span>
+                …
+              </p>
               <p className="text-xs text-slate-600">Verifying mTLS health check</p>
             </div>
           )}
@@ -262,12 +321,17 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => { onAdded(); onClose(); }}
+                  type="button"
+                  onClick={() => {
+                    onAdded();
+                    onClose();
+                  }}
                   className="flex-1 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 transition-colors"
                 >
                   Close
                 </button>
                 <button
+                  type="button"
                   onClick={handleRetryConnect}
                   disabled={connecting}
                   className="flex-1 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -298,7 +362,16 @@ interface PruneModalProps {
   onClose: () => void;
 }
 
-function PruneModal({ nodeName, danglingCount, danglingSize, state, reclaimed, error, onConfirm, onClose }: PruneModalProps) {
+function PruneModal({
+  nodeName,
+  danglingCount,
+  danglingSize,
+  state,
+  reclaimed,
+  error,
+  onConfirm,
+  onClose,
+}: PruneModalProps) {
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-slate-900 border border-slate-700/60 rounded-xl w-full max-w-sm shadow-2xl">
@@ -315,17 +388,23 @@ function PruneModal({ nodeName, danglingCount, danglingSize, state, reclaimed, e
                 </div>
               </div>
               <p className="text-xs text-slate-400">
-                This will remove <span className="text-amber-400 font-medium">{danglingCount} dangling image{danglingCount !== 1 ? 's' : ''}</span> and free up{' '}
-                <span className="text-amber-400 font-medium">{formatBytes(danglingSize)}</span> of disk space. This action cannot be undone.
+                This will remove{' '}
+                <span className="text-amber-400 font-medium">
+                  {danglingCount} dangling image{danglingCount !== 1 ? 's' : ''}
+                </span>{' '}
+                and free up <span className="text-amber-400 font-medium">{formatBytes(danglingSize)}</span> of disk
+                space. This action cannot be undone.
               </p>
               <div className="flex gap-2">
                 <button
+                  type="button"
                   onClick={onClose}
                   className="flex-1 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={onConfirm}
                   className="flex-1 py-2 rounded-lg text-sm font-medium bg-amber-500/80 text-white hover:bg-amber-500 transition-colors"
                 >
@@ -338,7 +417,9 @@ function PruneModal({ nodeName, danglingCount, danglingSize, state, reclaimed, e
           {state === 'pruning' && (
             <div className="flex flex-col items-center py-4 gap-3">
               <Loader size={24} className="text-amber-400 animate-spin" />
-              <p className="text-sm text-slate-400">Pruning images on <span className="text-slate-200">{nodeName}</span>…</p>
+              <p className="text-sm text-slate-400">
+                Pruning images on <span className="text-slate-200">{nodeName}</span>…
+              </p>
             </div>
           )}
 
@@ -351,11 +432,13 @@ function PruneModal({ nodeName, danglingCount, danglingSize, state, reclaimed, e
                 <div className="text-center">
                   <h3 className="text-sm font-semibold text-slate-100">Prune complete</h3>
                   <p className="text-xs text-slate-400 mt-1">
-                    Reclaimed <span className="text-emerald-400 font-medium">{formatBytes(reclaimed!)}</span> from {danglingCount} image{danglingCount !== 1 ? 's' : ''}
+                    Reclaimed <span className="text-emerald-400 font-medium">{formatBytes(reclaimed ?? 0)}</span> from{' '}
+                    {danglingCount} image{danglingCount !== 1 ? 's' : ''}
                   </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={onClose}
                 className="w-full py-2 rounded-lg text-sm font-medium bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
               >
@@ -376,6 +459,7 @@ function PruneModal({ nodeName, danglingCount, danglingSize, state, reclaimed, e
                 </div>
               </div>
               <button
+                type="button"
                 onClick={onClose}
                 className="w-full py-2 rounded-lg text-sm font-medium bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
               >
@@ -438,13 +522,15 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
 
   async function handleRemove(id: string) {
     setRemoving(id);
-    setDeleteModal(prev => prev ? { ...prev, state: 'deleting' } : null);
+    setDeleteModal((prev) => (prev ? { ...prev, state: 'deleting' } : null));
     try {
       await deleteNode(id);
       setDeleteModal(null);
       await load();
     } catch (e: unknown) {
-      setDeleteModal(prev => prev ? { ...prev, state: 'error', error: e instanceof Error ? e.message : 'Failed to remove agent' } : null);
+      setDeleteModal((prev) =>
+        prev ? { ...prev, state: 'error', error: e instanceof Error ? e.message : 'Failed to remove agent' } : null,
+      );
     } finally {
       setRemoving(null);
     }
@@ -467,13 +553,15 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
     if (!pruneModal) return;
     const { nodeId } = pruneModal;
     setPruning(nodeId);
-    setPruneModal(prev => prev ? { ...prev, state: 'pruning' } : null);
+    setPruneModal((prev) => (prev ? { ...prev, state: 'pruning' } : null));
     try {
       const result = await pruneNodeImages(nodeId);
-      setPruneModal(prev => prev ? { ...prev, state: 'success', reclaimed: result.bytes_reclaimed } : null);
+      setPruneModal((prev) => (prev ? { ...prev, state: 'success', reclaimed: result.bytes_reclaimed } : null));
       await load();
     } catch (e: unknown) {
-      setPruneModal(prev => prev ? { ...prev, state: 'error', error: e instanceof Error ? e.message : 'Failed to prune images' } : null);
+      setPruneModal((prev) =>
+        prev ? { ...prev, state: 'error', error: e instanceof Error ? e.message : 'Failed to prune images' } : null,
+      );
     } finally {
       setPruning(null);
     }
@@ -484,7 +572,11 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
       <header className="border-b border-slate-800/80 bg-slate-900/50 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={onBack} className="text-slate-500 hover:text-slate-300 text-sm transition-colors">
+            <button
+              type="button"
+              onClick={onBack}
+              className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+            >
               ← Back
             </button>
             <div className="w-px h-4 bg-slate-700" />
@@ -492,10 +584,15 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
             <h1 className="text-sm font-semibold text-slate-100">Agents</h1>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={load} className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors">
+            <button
+              type="button"
+              onClick={load}
+              className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+            >
               <RefreshCw size={14} />
             </button>
             <button
+              type="button"
               onClick={() => onScanNode?.('')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700/60 transition-colors"
             >
@@ -503,6 +600,7 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
               Scan &amp; Import
             </button>
             <button
+              type="button"
               onClick={() => setShowAdd(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors"
             >
@@ -526,174 +624,191 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
           </div>
         ) : (
           <div className="space-y-3">
-            {nodes.map(node => {
-              const stats = imageStats.find(s => s.node_id === node.id)?.image_stats;
+            {nodes.map((node) => {
+              const stats = imageStats.find((s) => s.node_id === node.id)?.image_stats;
               return (
-              <div
-                key={node.id}
-                className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/60 hover:border-slate-700/60 transition-colors"
-              >
-                {/* Top row: icon + name + badges | status */}
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center shrink-0 mt-0.5">
-                    <Server size={16} className="text-slate-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-sm font-medium text-slate-100">{node.name}</span>
-                      {node.id === 'local' && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400">local</span>
-                      )}
-                      {node.recommended && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">recommended</span>
-                      )}
-                      {node.architecture && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">{node.architecture}</span>
-                      )}
-                      {node.version && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-600">v{node.version}</span>
-                      )}
-                      {node.region && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">{node.region}</span>
-                      )}
+                <div
+                  key={node.id}
+                  className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/60 hover:border-slate-700/60 transition-colors"
+                >
+                  {/* Top row: icon + name + badges | status */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center shrink-0 mt-0.5">
+                      <Server size={16} className="text-slate-400" />
                     </div>
-                    <span className="text-xs font-mono text-slate-600 truncate">{node.id}</span>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <div className="flex items-center gap-1.5">
-                      <StatusDot status={node.status} />
-                      <span className={`text-xs ${statusColor(node.status)}`}>{node.status}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-sm font-medium text-slate-100">{node.name}</span>
+                        {node.id === 'local' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400">
+                            local
+                          </span>
+                        )}
+                        {node.recommended && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">
+                            recommended
+                          </span>
+                        )}
+                        {node.architecture && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">
+                            {node.architecture}
+                          </span>
+                        )}
+                        {node.version && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-600">
+                            v{node.version}
+                          </span>
+                        )}
+                        {node.region && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">
+                            {node.region}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs font-mono text-slate-600 truncate">{node.id}</span>
                     </div>
-                    {node.fail_count > 0 && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">
-                        {node.fail_count} fail{node.fail_count > 1 ? 's' : ''}
-                      </span>
-                    )}
-                    {node.status === NodeStatus.PendingSetup && (
-                      <button
-                        onClick={() => handleConnect(node.id)}
-                        disabled={connecting === node.id}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-500/15 text-violet-400 border border-violet-500/25 hover:bg-violet-500/25 disabled:opacity-40 transition-colors"
-                      >
-                        {connecting === node.id
-                          ? <Loader size={11} className="animate-spin" />
-                          : <RefreshCw size={11} />}
-                        {connecting === node.id ? 'Connecting…' : 'Connect'}
-                      </button>
-                    )}
-                    {node.id !== 'local' && (
-                      <button
-                        onClick={() => setDeleteModal({ nodeId: node.id, nodeName: node.name, state: 'confirming', error: '' })}
-                        disabled={removing === node.id}
-                        className="p-1.5 rounded text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
-                        title="Remove agent"
-                      >
-                        {removing === node.id
-                          ? <Loader size={14} className="animate-spin" />
-                          : <Trash2 size={14} />}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Details grid */}
-                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
-                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Address</span>
-                    <span className="text-xs text-slate-400 font-mono truncate">
-                      {node.id === 'local' ? node.host : `${node.host}:${node.agent_port}`}
-                    </span>
-                  </div>
-                  <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
-                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Resources</span>
-                    <span className="text-xs text-slate-400">
-                      {node.total_memory
-                        ? `${node.available_memory != null ? `${formatMem(node.available_memory)}/` : ''}${formatMem(node.total_memory)}`
-                        : '—'}
-                      {node.total_cpu ? ` · ${Math.round(node.total_cpu)} vCPU` : ''}
-                    </span>
-                  </div>
-                  <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
-                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Projects</span>
-                    <span className="text-xs text-slate-400">
-                      {projects.filter(p => p.node_id === node.id).length}
-                      <span className="text-slate-600 ml-1">({projects.filter(p => p.node_id === node.id).reduce((sum, p) => sum + (p.service_count || 0), 0)} services)</span>
-                    </span>
-                  </div>
-                  <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
-                    <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Disk</span>
-                    <span className="text-xs text-slate-400">
-                      {node.disk_free != null ? `${formatBytes(node.disk_free)} free` : '—'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Last seen + images + scan button */}
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-y-2 gap-x-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {node.last_seen_at && (
-                      <span className="text-[10px] text-slate-600 flex items-center gap-1">
-                        <Clock size={10} />
-                        Last seen {timeAgo(node.last_seen_at)}
-                      </span>
-                    )}
-                    {stats && stats.total_count > 0 && (
-                      <span className="text-xs text-slate-500">
-                        Images: {stats.total_count} ({formatBytes(stats.total_size)})
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {onScanNode && node.status === NodeStatus.Online && (
-                      <button
-                        onClick={() => onScanNode(node.id)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20 transition-colors cursor-pointer"
-                        title="Scan for existing containers"
-                      >
-                        <Search size={11} />
-                        Scan & Import
-                      </button>
-                    )}
-                    {stats && stats.dangling_count > 0 && (
-                      <span className="flex items-center gap-1.5">
-                        <span className="text-xs text-amber-400">
-                          {stats.dangling_count} dangling ({formatBytes(stats.dangling_size)})
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex items-center gap-1.5">
+                        <StatusDot status={node.status} />
+                        <span className={`text-xs ${statusColor(node.status)}`}>{node.status}</span>
+                      </div>
+                      {node.fail_count > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400">
+                          {node.fail_count} fail{node.fail_count > 1 ? 's' : ''}
                         </span>
+                      )}
+                      {node.status === NodeStatus.PendingSetup && (
                         <button
-                          onClick={() =>
-                            setPruneModal({
-                              nodeId: node.id,
-                              nodeName: node.name,
-                              danglingCount: stats.dangling_count,
-                              danglingSize: stats.dangling_size,
-                              state: 'confirming',
-                              reclaimed: null,
-                              error: '',
-                            })
-                          }
-                          disabled={pruning === node.id}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 transition-colors cursor-pointer"
+                          type="button"
+                          onClick={() => handleConnect(node.id)}
+                          disabled={connecting === node.id}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-500/15 text-violet-400 border border-violet-500/25 hover:bg-violet-500/25 disabled:opacity-40 transition-colors"
                         >
-                          <Trash2 size={11} />
-                          {pruning === node.id ? 'Pruning…' : 'Prune'}
+                          {connecting === node.id ? (
+                            <Loader size={11} className="animate-spin" />
+                          ) : (
+                            <RefreshCw size={11} />
+                          )}
+                          {connecting === node.id ? 'Connecting…' : 'Connect'}
                         </button>
+                      )}
+                      {node.id !== 'local' && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDeleteModal({ nodeId: node.id, nodeName: node.name, state: 'confirming', error: '' })
+                          }
+                          disabled={removing === node.id}
+                          className="p-1.5 rounded text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
+                          title="Remove agent"
+                        >
+                          {removing === node.id ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Details grid */}
+                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
+                      <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Address</span>
+                      <span className="text-xs text-slate-400 font-mono truncate">
+                        {node.id === 'local' ? node.host : `${node.host}:${node.agent_port}`}
                       </span>
-                    )}
+                    </div>
+                    <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
+                      <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Resources</span>
+                      <span className="text-xs text-slate-400">
+                        {node.total_memory
+                          ? `${node.available_memory != null ? `${formatMem(node.available_memory)}/` : ''}${formatMem(node.total_memory)}`
+                          : '—'}
+                        {node.total_cpu ? ` · ${Math.round(node.total_cpu)} vCPU` : ''}
+                      </span>
+                    </div>
+                    <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
+                      <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Projects</span>
+                      <span className="text-xs text-slate-400">
+                        {projects.filter((p) => p.node_id === node.id).length}
+                        <span className="text-slate-600 ml-1">
+                          (
+                          {projects
+                            .filter((p) => p.node_id === node.id)
+                            .reduce((sum, p) => sum + (p.service_count || 0), 0)}{' '}
+                          services)
+                        </span>
+                      </span>
+                    </div>
+                    <div className="bg-slate-800/40 rounded-md px-2.5 py-1.5">
+                      <span className="text-[10px] text-slate-600 uppercase tracking-wider block">Disk</span>
+                      <span className="text-xs text-slate-400">
+                        {node.disk_free != null ? `${formatBytes(node.disk_free)} free` : '—'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Last seen + images + scan button */}
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-y-2 gap-x-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {node.last_seen_at && (
+                        <span className="text-[10px] text-slate-600 flex items-center gap-1">
+                          <Clock size={10} />
+                          Last seen {timeAgo(node.last_seen_at)}
+                        </span>
+                      )}
+                      {stats && stats.total_count > 0 && (
+                        <span className="text-xs text-slate-500">
+                          Images: {stats.total_count} ({formatBytes(stats.total_size)})
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {onScanNode && node.status === NodeStatus.Online && (
+                        <button
+                          type="button"
+                          onClick={() => onScanNode(node.id)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20 transition-colors cursor-pointer"
+                          title="Scan for existing containers"
+                        >
+                          <Search size={11} />
+                          Scan & Import
+                        </button>
+                      )}
+                      {stats && stats.dangling_count > 0 && (
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-xs text-amber-400">
+                            {stats.dangling_count} dangling ({formatBytes(stats.dangling_size)})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPruneModal({
+                                nodeId: node.id,
+                                nodeName: node.name,
+                                danglingCount: stats.dangling_count,
+                                danglingSize: stats.dangling_size,
+                                state: 'confirming',
+                                reclaimed: null,
+                                error: '',
+                              })
+                            }
+                            disabled={pruning === node.id}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 disabled:opacity-40 transition-colors cursor-pointer"
+                          >
+                            <Trash2 size={11} />
+                            {pruning === node.id ? 'Pruning…' : 'Prune'}
+                          </button>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
               );
             })}
           </div>
         )}
       </main>
 
-      {showAdd && (
-        <AddAgentWizard
-          onClose={() => setShowAdd(false)}
-          onAdded={load}
-        />
-      )}
+      {showAdd && <AddAgentWizard onClose={() => setShowAdd(false)} onAdded={load} />}
 
       {deleteModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -711,16 +826,19 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
                     </div>
                   </div>
                   <p className="text-xs text-slate-400">
-                    This will remove <span className="text-rose-400 font-medium">{deleteModal.nodeName}</span> from the dashboard. Any containers running on this agent will not be affected. This action cannot be undone.
+                    This will remove <span className="text-rose-400 font-medium">{deleteModal.nodeName}</span> from the
+                    dashboard. Any containers running on this agent will not be affected. This action cannot be undone.
                   </p>
                   <div className="flex gap-2">
                     <button
+                      type="button"
                       onClick={() => setDeleteModal(null)}
                       className="flex-1 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 transition-colors"
                     >
                       Cancel
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleRemove(deleteModal.nodeId)}
                       className="flex-1 py-2 rounded-lg text-sm font-medium bg-rose-500/80 text-white hover:bg-rose-500 transition-colors"
                     >
@@ -733,7 +851,9 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
               {deleteModal.state === 'deleting' && (
                 <div className="flex flex-col items-center py-4 gap-3">
                   <Loader size={24} className="text-rose-400 animate-spin" />
-                  <p className="text-sm text-slate-400">Removing <span className="text-slate-200">{deleteModal.nodeName}</span>…</p>
+                  <p className="text-sm text-slate-400">
+                    Removing <span className="text-slate-200">{deleteModal.nodeName}</span>…
+                  </p>
                 </div>
               )}
 
@@ -749,6 +869,7 @@ export default function NodesPage({ onBack, projects, onScanNode }: NodesPagePro
                     </div>
                   </div>
                   <button
+                    type="button"
                     onClick={() => setDeleteModal(null)}
                     className="w-full py-2 rounded-lg text-sm font-medium bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
                   >

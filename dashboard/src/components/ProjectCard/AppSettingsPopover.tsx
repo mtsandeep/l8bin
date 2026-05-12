@@ -1,13 +1,8 @@
-import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Terminal, Layers, ChevronRight, Info, FileCode } from "lucide-react";
-import ResourceLimitInput from "../ResourceLimitInput";
-import { useToast } from "../ToastContext";
-import {
-  type Project,
-  updateProjectSettings,
-  recreateProject,
-  DeployType,
-} from "../../api";
+import { ChevronDown, ChevronRight, FileCode, Info, Layers, Terminal } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { DeployType, type Project, recreateProject, updateProjectSettings } from '../../api';
+import ResourceLimitInput from '../ResourceLimitInput';
+import { useToast } from '../ToastContext';
 
 interface AppSettingsPopoverProps {
   project: Project;
@@ -28,9 +23,9 @@ export default function AppSettingsPopover({
   const isCompose = project.deploy_type === DeployType.Compose;
   const isMultiService = (project.service_count ?? 0) > 1;
 
-  const [appImage, setAppImage] = useState(ps?.image ?? "");
+  const [appImage, setAppImage] = useState(ps?.image ?? '');
   const [appPort, setAppPort] = useState(ps?.port ?? 3000);
-  const [cmd, setCmd] = useState(ps?.cmd ?? "");
+  const [cmd, setCmd] = useState(ps?.cmd ?? '');
   const [memMb, setMemMb] = useState(ps?.memory_limit_mb ?? 256);
   const [cpuLimit, setCpuLimit] = useState(ps?.cpu_limit ?? 0.5);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -41,9 +36,9 @@ export default function AppSettingsPopover({
 
   // Sync from project prop (e.g. after refresh)
   useEffect(() => {
-    setAppImage(ps?.image ?? "");
+    setAppImage(ps?.image ?? '');
     setAppPort(ps?.port ?? 3000);
-    setCmd(ps?.cmd ?? "");
+    setCmd(ps?.cmd ?? '');
     setMemMb(ps?.memory_limit_mb ?? 256);
     setCpuLimit(ps?.cpu_limit ?? 0.5);
   }, [ps?.image, ps?.port, ps?.cmd, ps?.memory_limit_mb, ps?.cpu_limit]);
@@ -55,8 +50,8 @@ export default function AppSettingsPopover({
         onClose();
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [onClose]);
 
   const handleSave = async () => {
@@ -71,8 +66,8 @@ export default function AppSettingsPopover({
       setCmd(prev.cmd);
       setMemMb(prev.memMb);
       setCpuLimit(prev.cpuLimit);
-      setSettingsError(e instanceof Error ? e.message : "Failed to update settings");
-      showToast(e instanceof Error ? e.message : "Failed to update settings");
+      setSettingsError(e instanceof Error ? e.message : 'Failed to update settings');
+      showToast(e instanceof Error ? e.message : 'Failed to update settings');
     }
   };
 
@@ -82,12 +77,12 @@ export default function AppSettingsPopover({
     try {
       await updateProjectSettings(project.id, { cmd, memory_limit_mb: memMb, cpu_limit: cpuLimit });
       const warnings = await recreateProject(project.id);
-      for (const w of warnings) showToast(w, "warning");
+      for (const w of warnings) showToast(w, 'warning');
       onClose();
       onRefresh();
     } catch (e) {
-      setSettingsError(e instanceof Error ? e.message : "Failed to save and recreate");
-      showToast(e instanceof Error ? e.message : "Failed to save and recreate");
+      setSettingsError(e instanceof Error ? e.message : 'Failed to save and recreate');
+      showToast(e instanceof Error ? e.message : 'Failed to save and recreate');
     } finally {
       setLoading(false);
     }
@@ -96,10 +91,9 @@ export default function AppSettingsPopover({
   return (
     <div ref={ref}>
       <button
+        type="button"
         onClick={(e) => e.stopPropagation()}
-        className={`w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer ${
-          "bg-slate-900/80 border-violet-500/40 text-slate-300"
-        }`}
+        className={`w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer ${'bg-slate-900/80 border-violet-500/40 text-slate-300'}`}
       >
         <div className="flex items-center gap-1.5">
           <Terminal size={12} />
@@ -123,13 +117,20 @@ export default function AppSettingsPopover({
               <FileCode size={11} />
               Docker Compose
               {project.service_count != null && project.service_count > 0 && (
-                <span className="text-slate-500">({project.service_count} service{project.service_count > 1 ? "s" : ""})</span>
+                <span className="text-slate-500">
+                  ({project.service_count} service{project.service_count > 1 ? 's' : ''})
+                </span>
               )}
             </span>
           </div>
         )}
         <div>
-          <span className="text-xs text-slate-400 block mb-1.5">Docker image {(isMultiService || isCompose) && ps?.service_name && <span className="text-slate-500">({ps.service_name})</span>}</span>
+          <span className="text-xs text-slate-400 block mb-1.5">
+            Docker image{' '}
+            {(isMultiService || isCompose) && ps?.service_name && (
+              <span className="text-slate-500">({ps.service_name})</span>
+            )}
+          </span>
           {isCompose ? (
             <input
               type="text"
@@ -211,6 +212,7 @@ export default function AppSettingsPopover({
         />
         <div className="flex gap-2">
           <button
+            type="button"
             onClick={handleSave}
             disabled={loading}
             className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-50 cursor-pointer"
@@ -218,6 +220,7 @@ export default function AppSettingsPopover({
             Save
           </button>
           <button
+            type="button"
             onClick={handleSaveAndRecreate}
             disabled={loading || isStopping}
             className="flex-1 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
@@ -228,15 +231,14 @@ export default function AppSettingsPopover({
         {isCompose && (
           <div className="flex items-start gap-1.5 text-[10px] text-slate-500">
             <Info size={10} className="mt-0.5 shrink-0" />
-            <span>
-              Image and port are managed via compose.yaml. Update it and use Redeploy to apply changes.
-            </span>
+            <span>Image and port are managed via compose.yaml. Update it and use Redeploy to apply changes.</span>
           </div>
         )}
         {isMultiService && onViewServices && (
           <>
             <div className="border-t border-slate-700/50" />
             <button
+              type="button"
               onClick={() => {
                 onClose();
                 onViewServices();

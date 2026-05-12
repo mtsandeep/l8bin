@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Moon } from "lucide-react";
-import { useToast } from "../ToastContext";
-import { type Project, updateProjectSettings } from "../../api";
+import { ChevronDown, Moon } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { type Project, updateProjectSettings } from '../../api';
+import { useToast } from '../ToastContext';
 
 interface SleepPopoverProps {
   project: Project;
@@ -9,11 +9,7 @@ interface SleepPopoverProps {
   onClose: () => void;
 }
 
-export default function SleepPopover({
-  project,
-  onChange,
-  onClose,
-}: SleepPopoverProps) {
+export default function SleepPopover({ project, onChange, onClose }: SleepPopoverProps) {
   const [autoStop, setAutoStop] = useState(project.auto_stop_enabled);
   const [timeoutMins, setTimeoutMins] = useState(project.auto_stop_timeout_mins);
   const [autoStart, setAutoStart] = useState(project.auto_start_enabled);
@@ -29,8 +25,8 @@ export default function SleepPopover({
         handleSaveAndClose();
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   });
 
   const handleSaveAndClose = async () => {
@@ -47,8 +43,8 @@ export default function SleepPopover({
         await updateProjectSettings(project.id, patch);
         onChange(autoStop, timeoutMins, autoStart);
       } catch (e) {
-        setSettingsError(e instanceof Error ? e.message : "Failed to update settings");
-        showToast(e instanceof Error ? e.message : "Failed to update settings");
+        setSettingsError(e instanceof Error ? e.message : 'Failed to update settings');
+        showToast(e instanceof Error ? e.message : 'Failed to update settings');
         return; // don't close on error
       }
     }
@@ -58,10 +54,9 @@ export default function SleepPopover({
   return (
     <div ref={ref}>
       <button
+        type="button"
         onClick={(e) => e.stopPropagation()}
-        className={`w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer ${
-          "bg-slate-900/80 border-violet-500/40 text-slate-300"
-        }`}
+        className={`w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer ${'bg-slate-900/80 border-violet-500/40 text-slate-300'}`}
       >
         <div className="flex items-center gap-1.5">
           <Moon size={12} />
@@ -78,12 +73,15 @@ export default function SleepPopover({
         <label className="flex items-center justify-between gap-2 cursor-pointer">
           <span className="text-xs text-slate-300">Auto-stop when idle</span>
           <button
+            type="button"
             role="switch"
             aria-checked={autoStop}
             onClick={() => setAutoStop(!autoStop)}
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStop ? "bg-violet-500" : "bg-slate-600"}`}
+            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStop ? 'bg-violet-500' : 'bg-slate-600'}`}
           >
-            <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStop ? "translate-x-3.5" : "translate-x-0.5"}`} />
+            <span
+              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStop ? 'translate-x-3.5' : 'translate-x-0.5'}`}
+            />
           </button>
         </label>
         {autoStop && (
@@ -101,12 +99,15 @@ export default function SleepPopover({
         <label className="flex items-center justify-between gap-2 cursor-pointer">
           <span className="text-xs text-slate-300">Auto-start on visit</span>
           <button
+            type="button"
             role="switch"
             aria-checked={autoStart}
             onClick={() => setAutoStart(!autoStart)}
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStart ? "bg-violet-500" : "bg-slate-600"}`}
+            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStart ? 'bg-violet-500' : 'bg-slate-600'}`}
           >
-            <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStart ? "translate-x-3.5" : "translate-x-0.5"}`} />
+            <span
+              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStart ? 'translate-x-3.5' : 'translate-x-0.5'}`}
+            />
           </button>
         </label>
       </div>

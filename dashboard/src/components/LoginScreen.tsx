@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
 import { Container, Loader2 } from 'lucide-react';
+import { type FormEvent, useState } from 'react';
 import { useAuth } from './AuthContext';
 
 export default function LoginScreen() {
@@ -51,18 +51,17 @@ export default function LoginScreen() {
           <h2 className="text-sm font-medium text-slate-200 mb-1">
             {needsSetup ? 'Create admin account' : 'Sign in to your account'}
           </h2>
-          {needsSetup && (
-            <p className="text-xs text-slate-500 mb-5">Set up the initial admin user for LiteBin</p>
-          )}
+          {needsSetup && <p className="text-xs text-slate-500 mb-5">Set up the initial admin user for LiteBin</p>}
           {!needsSetup && <div className="mb-5" />}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Username */}
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="login-username" className="block text-xs font-medium text-slate-400 mb-1.5">
                 Username
               </label>
               <input
+                id="login-username"
                 type="text"
                 value={username}
                 onChange={(e) => {
@@ -77,10 +76,11 @@ export default function LoginScreen() {
 
             {/* Password */}
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="login-password" className="block text-xs font-medium text-slate-400 mb-1.5">
                 Password
               </label>
               <input
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={(e) => {
@@ -96,10 +96,11 @@ export default function LoginScreen() {
             {/* Confirm Password (setup only) */}
             {needsSetup && (
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <label htmlFor="login-confirm-password" className="block text-xs font-medium text-slate-400 mb-1.5">
                   Confirm password
                 </label>
                 <input
+                  id="login-confirm-password"
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => {
@@ -123,7 +124,9 @@ export default function LoginScreen() {
             {/* Submit */}
             <button
               type="submit"
-              disabled={isSubmitting || !username.trim() || !password.trim() || (needsSetup && password !== confirmPassword)}
+              disabled={
+                isSubmitting || !username.trim() || !password.trim() || (needsSetup && password !== confirmPassword)
+              }
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {isSubmitting ? (
@@ -131,15 +134,25 @@ export default function LoginScreen() {
                   <Loader2 size={14} className="animate-spin" />
                   {needsSetup ? 'Creating...' : 'Signing in...'}
                 </>
+              ) : needsSetup ? (
+                'Create admin'
               ) : (
-                needsSetup ? 'Create admin' : 'Sign in'
+                'Sign in'
               )}
             </button>
           </form>
         </div>
 
         <footer className="text-center mt-8 text-xs text-slate-600">
-          Powered by <a href="https://l8bin.com" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300 transition-colors">l8bin.com</a>
+          Powered by{' '}
+          <a
+            href="https://l8bin.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            l8bin.com
+          </a>
         </footer>
       </div>
     </div>
