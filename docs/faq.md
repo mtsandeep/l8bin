@@ -13,6 +13,7 @@
 - [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake)
 - [Volumes & Persistent Data](#volumes--persistent-data)
 - [Custom Routes Not Working](#custom-routes-not-working)
+- [Docker Images & Disk Space](#docker-images--disk-space)
 
 For a comprehensive view of how LiteBin handles failures at every layer, see [Failure Model](failure-model.md). For why these architectural choices were made, see [Design Decisions](decisions.md).
 
@@ -393,4 +394,35 @@ curl -X POST https://l8bin.example.com/projects/myapp/routes \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"route_type": "path", "path": "/api", "upstream": "litebin-myapp.backend:9090"}'
+```
+
+---
+
+## Docker Images & Disk Space
+
+### Does LiteBin clean up old Docker images?
+
+Yes. LiteBin automatically removes old images in two scenarios:
+
+- **On redeploy** — the previous image is removed by its sha256 digest after the new container starts successfully. This includes same-tag updates (e.g. redeploying `nginx:latest` when a new version is available). If the image is still used by another project, it is skipped.
+- **On project deletion** — all images used by the project's services are removed, not just the public service. Images shared with other running projects are skipped.
+
+### What about images that can't be removed?
+
+If an image is still in use by another container (e.g. two projects share `postgres:16`), it is left in place. LiteBin only removes images that are no longer referenced by any container.
+
+### What are dangling images?
+
+Dangling images are untagged images left behind by Docker when a tag is reassigned to a newer version. LiteBin's digest-based cleanup prevents this from happening during normal operations. You can also manually prune any remaining dangling images from the dashboard (Nodes → Prune Images).
+
+### My disk is full of Docker images
+
+LiteBin cleans up automatically on redeploy and delete. If you still need to reclaim space:
+
+```bash
+# Prune all dangling images on the host
+docker image prune
+
+# Prune ALL unused images (not just dangling)
+docker image prune -a
 ```

@@ -260,6 +260,26 @@ pub async fn deploy_compose(
         .clone();
     let _permit = semaphore.acquire().await.unwrap();
 
+    // Capture old per-service image digests for cleanup after redeploy
+    let existing_node_id: Option<String> = if is_update {
+        sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
+            .bind(&project_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+
+    let old_service_digests = if is_update {
+        crate::routes::manage::capture_service_digests(
+            &state, &project_id, existing_node_id.as_deref(), None,
+        ).await
+    } else {
+        std::collections::HashMap::new()
+    };
+
     // Ensure project directory exists and write compose.yaml to disk
     crate::routes::manage::ensure_project_dir_and_env(&project_id);
 
@@ -655,6 +675,17 @@ pub async fn deploy_compose(
         // Trigger route sync
         let _ = state.route_sync_tx.send(());
 
+        // Clean up old per-service images by digest
+        for (svc_name, digest) in &old_service_digests {
+            let should_cleanup = target_services.as_ref()
+                .map_or(true, |targets| targets.contains(svc_name));
+            if should_cleanup {
+                crate::routes::manage::cleanup_unused_image(
+                    &state, existing_node_id.as_deref(), digest,
+                ).await;
+            }
+        }
+
         // Collect warnings from agent response
         let agent_warnings: Vec<String> = batch_result["warnings"]
             .as_array()
@@ -681,6 +712,8 @@ pub async fn deploy_compose(
     let target_services_clone = target_services.clone();
     let _public_service_clone = public_service.clone();
     let _custom_domain_clone = custom_domain.clone();
+    let old_service_digests_clone = old_service_digests.clone();
+    let existing_node_id_clone = existing_node_id.clone();
 
     tokio::spawn(async move {
         crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, "Compose deployment started");
@@ -816,6 +849,17 @@ pub async fn deploy_compose(
 
             // Trigger route sync for downstream consumers
             let _ = state_clone.route_sync_tx.send(());
+
+            // Clean up old per-service images by digest
+            for (svc_name, digest) in &old_service_digests_clone {
+                let should_cleanup = target_services_clone.as_ref()
+                    .map_or(true, |targets| targets.contains(svc_name));
+                if should_cleanup {
+                    crate::routes::manage::cleanup_unused_image(
+                        &state_clone, existing_node_id_clone.as_deref(), digest,
+                    ).await;
+                }
+            }
 
             Ok(())
         }.await;

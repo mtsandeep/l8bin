@@ -432,8 +432,17 @@ pub async fn delete_project(
         }
     }
 
-    // Clean up the project's image if no longer in use
-    if let Some(ref image) = project.image {
+    // Clean up all per-service images if no longer in use
+    let service_images: Vec<String> = sqlx::query_scalar(
+        "SELECT image FROM project_services WHERE project_id = ?"
+    )
+    .bind(&project_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let unique_images: std::collections::HashSet<String> = service_images.into_iter().collect();
+    for image in &unique_images {
         cleanup_unused_image(&state, project.node_id.as_deref(), image).await;
     }
 
@@ -550,6 +559,15 @@ pub async fn recreate_project(
 
             let pull = body.as_ref().and_then(|b| b.0.pull_images).unwrap_or(false);
 
+            // Capture old image digests before batch-run (for cleanup after redeploy with pull)
+            let old_digests: std::collections::HashMap<String, String> = if pull {
+                crate::routes::manage::capture_service_digests(
+                    &state, &project_id, Some(node_id), None,
+                ).await
+            } else {
+                std::collections::HashMap::new()
+            };
+
             let resp = match client
                 .post(format!("{}/containers/batch-run", base_url))
                 .json(&json!({
@@ -597,6 +615,15 @@ pub async fn recreate_project(
             }
 
             let _ = state.route_sync_tx.send(());
+
+            // Clean up old images by digest after successful recreate with pull
+            if !old_digests.is_empty() {
+                for (_svc_name, digest) in &old_digests {
+                    crate::routes::manage::cleanup_unused_image(
+                        &state, Some(node_id), digest,
+                    ).await;
+                }
+            }
 
             let agent_warnings: Vec<String> = batch_result["warnings"]
                 .as_array()

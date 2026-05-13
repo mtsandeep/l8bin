@@ -566,6 +566,16 @@ pub async fn recreate_services(
     let target_set: Option<HashSet<String>> = target_services.map(|v| v.into_iter().collect());
     let service_count = target_set.as_ref().map(|s| s.len()).unwrap_or(0);
 
+    // Capture old image digests before stopping containers (for cleanup after recreate with pull)
+    let old_digests: std::collections::HashMap<String, String> = if pull_images {
+        let node_id = project.node_id.as_deref().unwrap_or("local");
+        crate::routes::manage::capture_service_digests(
+            &state, project_id, Some(node_id), target_set.as_ref(),
+        ).await
+    } else {
+        std::collections::HashMap::new()
+    };
+
     // Stop and remove targeted service containers
     let services: Vec<litebin_common::types::ProjectService> = sqlx::query_as(
         "SELECT * FROM project_services WHERE project_id = ?",
@@ -600,6 +610,16 @@ pub async fn recreate_services(
         connect_orchestrator: true,
         rollback_on_failure: false,
     }).await?;
+
+    // Clean up old images by digest after successful recreate with pull
+    if !old_digests.is_empty() {
+        let node_id = project.node_id.as_deref().unwrap_or("local");
+        for (_svc_name, digest) in &old_digests {
+            crate::routes::manage::cleanup_unused_image(
+                state, Some(node_id), digest,
+            ).await;
+        }
+    }
 
     let count = if service_count > 0 { service_count } else { services.len() };
     let action = if pull_images { "redeployed" } else { "recreated" };

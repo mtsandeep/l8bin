@@ -197,13 +197,16 @@ async fn execute_deploy(
         .clone();
     let _permit = semaphore.acquire().await.unwrap();
 
-    // 2. Capture old image before upsert (for cleanup after deploy)
-    let old_image = sqlx::query_scalar::<_, String>("SELECT image FROM projects WHERE id = ?")
-        .bind(&payload.project_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
+    // 2. Capture old image and node before upsert (for cleanup after deploy)
+    let (old_image, old_node_id) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT image, node_id FROM projects WHERE id = ?"
+    )
+    .bind(&payload.project_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or((None, None));
 
     // 3. Insert or upsert project in DB with status='deploying'
     // Capture old volumes for orphan detection
@@ -348,12 +351,22 @@ async fn execute_deploy(
     let project_clone = project.clone();
     let node_id_clone = node_id.clone();
     let old_image_clone = old_image.clone();
+    let old_node_id_clone = old_node_id.clone();
     let old_volumes_clone = old_volumes.clone();
 
     tokio::spawn(async move {
         crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Deployment started");
 
         let result: Result<(), anyhow::Error> = async {
+            // Capture old image digest before any destructive operations
+            let old_digest = if let Some(ref old) = old_image_clone {
+                crate::routes::manage::get_image_digest(
+                    &state_clone, old_node_id_clone.as_deref(), old,
+                ).await
+            } else {
+                None
+            };
+
             // 5a. Pull image / start container
             let (container_id, mapped_port) = if node_id_clone == "local" {
                 // --- Local path ---
@@ -496,12 +509,20 @@ async fn execute_deploy(
                 anyhow::bail!("failed to configure routing: {}", e);
             }
 
-            // 8. Clean up old image if it changed
+            // 8. Clean up old image by digest (handles same-tag redeploy)
+            if let Some(ref digest) = old_digest {
+                crate::routes::manage::cleanup_unused_image(
+                    &state_clone,
+                    old_node_id_clone.as_deref(),
+                    digest,
+                ).await;
+            }
+            // Fallback: clean up by old tag if it changed (in case digest lookup failed)
             if let Some(ref old) = old_image_clone {
-                if old != &payload_clone.image {
+                if old != &payload_clone.image && old_digest.is_none() {
                     crate::routes::manage::cleanup_unused_image(
                         &state_clone,
-                        Some(&node_id_clone),
+                        old_node_id_clone.as_deref(),
                         old,
                     ).await;
                 }

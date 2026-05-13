@@ -308,6 +308,7 @@ async fn main() -> Result<()> {
         .route("/containers/import", post(routes::containers::import_containers))
         .route("/containers/compose-file", get(routes::containers::get_compose_file))
         .route("/images/load", post(routes::images::load_image))
+        .route("/images/inspect", get(routes::images::inspect_image))
         .route("/images/remove-unused", post(routes::images::remove_unused_image))
         .route("/images/prune", post(routes::images::prune_images))
         .route("/volumes/export", post(routes::volumes::export_volume))

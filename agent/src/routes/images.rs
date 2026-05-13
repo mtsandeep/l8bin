@@ -39,6 +39,16 @@ pub struct LoadImageQueryParams {
     pub image_id: String,
 }
 
+#[derive(Deserialize)]
+pub struct InspectQueryParams {
+    pub image: String,
+}
+
+#[derive(Serialize)]
+pub struct InspectResponse {
+    pub image_id: String,
+}
+
 /// POST /images/load
 /// Accepts a raw tar body (docker save output) and loads it into Docker.
 /// Streams the body directly to Docker without buffering.
@@ -89,6 +99,25 @@ pub async fn remove_unused_image(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: e.to_string() }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// GET /images/inspect
+/// Resolves an image reference (tag, digest, or ID) to its sha256 image ID.
+pub async fn inspect_image(
+    State(state): State<AgentState>,
+    Query(params): Query<InspectQueryParams>,
+) -> impl IntoResponse {
+    match state.docker.inspect_image_id(&params.image).await {
+        Ok(image_id) => (StatusCode::OK, Json(InspectResponse { image_id })).into_response(),
+        Err(e) => {
+            tracing::debug!(error = %e, image = %params.image, "image inspect failed");
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse { error: format!("image not found: {e}") }),
             )
                 .into_response()
         }

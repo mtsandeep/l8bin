@@ -1,4 +1,5 @@
 use axum::http::StatusCode;
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use std::hash::Hasher;
@@ -182,6 +183,100 @@ pub async fn cleanup_unused_image(state: &AppState, node_id: Option<&str>, image
             }
         }
     }
+}
+
+/// Resolve an image reference (tag, digest, or ID) to its sha256 digest on the given node.
+/// Returns None on any failure (image not found, node unreachable) — best-effort, never blocks.
+pub async fn get_image_digest(
+    state: &AppState,
+    node_id: Option<&str>,
+    image: &str,
+) -> Option<String> {
+    let node_id = node_id.unwrap_or("local");
+    if node_id == "local" {
+        match state.docker.inspect_image_id(image).await {
+            Ok(digest) => Some(digest),
+            Err(e) => {
+                tracing::debug!(image = %image, error = %e, "could not resolve local image digest");
+                None
+            }
+        }
+    } else {
+        let client = match nodes::client::get_node_client(&state.node_clients, node_id) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!(node_id = %node_id, error = %e, "inspect: node client unavailable");
+                return None;
+            }
+        };
+        let node = match get_node_from_db(&state.db, node_id).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::debug!(node_id = %node_id, error = ?e, "inspect: node not found");
+                return None;
+            }
+        };
+        let base_url = agent_base_url(&state.config, &node);
+        #[derive(Deserialize)]
+        struct InspectResponse {
+            image_id: String,
+        }
+        match client
+            .get(format!("{}/images/inspect?image={}", base_url, image))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<InspectResponse>().await {
+                    Ok(body) => Some(body.image_id),
+                    Err(e) => {
+                        tracing::debug!(image = %image, error = %e, "inspect: failed to parse agent response");
+                        None
+                    }
+                }
+            }
+            Ok(resp) => {
+                tracing::debug!(image = %image, status = %resp.status(), "inspect: agent returned non-success");
+                None
+            }
+            Err(e) => {
+                tracing::debug!(image = %image, error = %e, "inspect: agent unreachable");
+                None
+            }
+        }
+    }
+}
+
+/// Capture image digests for per-service images from the DB.
+/// Optionally filters to only `target_services`. Skips `sha256:` prefixed images.
+pub async fn capture_service_digests(
+    state: &AppState,
+    project_id: &str,
+    node_id: Option<&str>,
+    target_services: Option<&std::collections::HashSet<String>>,
+) -> std::collections::HashMap<String, String> {
+    let services: Vec<(String, String)> = sqlx::query_as(
+        "SELECT service_name, image FROM project_services WHERE project_id = ?",
+    )
+    .bind(project_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut digests = std::collections::HashMap::new();
+    for (svc_name, image) in &services {
+        if let Some(ref filter) = target_services {
+            if !filter.contains(svc_name) {
+                continue;
+            }
+        }
+        if !image.starts_with("sha256:") {
+            if let Some(d) = get_image_digest(state, node_id, image).await {
+                digests.insert(svc_name.clone(), d);
+            }
+        }
+    }
+    digests
 }
 
 pub async fn sync_caddy(state: &AppState) {

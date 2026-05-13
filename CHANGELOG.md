@@ -7,8 +7,12 @@ All notable changes to this project will be documented in this file.
 ### Added
 - "Allow raw ports" and "Allow Docker access" toggles to Deploy New App form (compose mode).
 - **Biome for linting + formatting** — Replaced ESLint with Biome (Rust-based, 10–25x faster). Single `biome.json` config, pre-commit hook via nano-staged.
+- **Agent image inspect endpoint** — `GET /images/inspect` resolves any image reference to its sha256 digest. Used by orchestrator for digest-based cleanup on remote nodes.
 
 ### Changed
+- **Digest-based image cleanup on redeploy** — Old Docker images are now removed by their sha256 digest after redeploy, including same-tag updates (e.g. `nginx:latest` → `nginx:latest`). Previously, same-tag redeploys left the old version as a dangling image forever.
+- **Per-service image cleanup on project deletion** — Deleting a multi-service project now cleans up all service images (not just the public service). Images shared with other projects are skipped automatically.
+- Extracted `capture_service_digests()` helper to deduplicate digest capture logic across deploy, compose, and recreate flows.
 - **Frontend code cleanup** — Extracted `HomePage` from `App.tsx` into its own component with custom hooks (`useHomeData`, `useSettings`, `useNodes`).
 - **Typed status enums** — Replaced bare status strings with enums across backend and frontend.
 - **Graceful shutdown** — Orchestrator and agent handle SIGTERM/SIGINT: stop accepting new connections, drain in-flight requests, cancel background tasks (janitor, heartbeat, activity tracker, route sync, periodic sync), close DB pool, and log each step.

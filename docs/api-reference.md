@@ -176,6 +176,7 @@ All agent endpoints are mTLS-protected (no application-level auth). The orchestr
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/images/load` | Load image from tar body. Returns `{image_id}` |
+| `GET` | `/images/inspect?image=<ref>` | Resolve image reference (tag, digest, ID) to sha256 digest. Returns `{image_id}` |
 | `POST` | `/images/remove-unused` | Remove image if not used by any container |
 | `POST` | `/images/prune` | Prune all dangling images. Returns `{bytes_reclaimed}` |
 
