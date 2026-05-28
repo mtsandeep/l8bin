@@ -135,7 +135,7 @@ if (termEl) termObs.observe(termEl.parentElement);
 // Wake cycle
 const WS_MSGS = [
   'Container is running and serving traffic.',
-  'No requests for 10m — idle timer started.',
+  'No requests for 15m — idle timer started.',
   'Container stopped. Memory freed. Routes removed.',
   'Request received → Waker is starting the container…',
 ];
@@ -252,6 +252,7 @@ if (glitchEl) {
 
   const statusText = document.getElementById('live-status');
   const statusDot = document.getElementById('live-dot');
+  const statusChip = document.getElementById('status-chip');
   const compLabel = document.getElementById('mv-comparison');
   const cardLabel = document.getElementById('memory-card-label');
   const stackLabel = document.getElementById('stack-total-label');
@@ -315,8 +316,9 @@ if (glitchEl) {
     const loadNote = document.getElementById('under-load-note');
     if (loadNote) loadNote.style.display = isOver ? 'block' : 'none';
 
-    if (statusText) statusText.textContent = 'LIVE';
-    if (statusDot) statusDot.classList.add('bg-emerald-500', 'animate-pulse');
+    if (statusText) { statusText.textContent = 'LIVE'; statusText.classList.remove('text-zinc-500'); statusText.classList.add('text-emerald-400'); }
+    if (statusDot) { statusDot.classList.remove('hidden', 'bg-zinc-500'); statusDot.classList.add('bg-emerald-500', 'animate-pulse'); }
+    if (statusChip) { statusChip.classList.remove('border-zinc-700', 'text-zinc-500'); statusChip.classList.add('border-emerald-500/30', 'text-emerald-400'); }
     if (cardLabel) cardLabel.textContent = 'Active Memory Footprint';
     if (stackLabel) stackLabel.textContent = 'Total Active Stack';
     if (sleepNote) sleepNote.style.display = 'none';
@@ -334,8 +336,9 @@ if (glitchEl) {
     if (compLabel) compLabel.style.display = 'inline';
     const loadNote = document.getElementById('under-load-note');
     if (loadNote) loadNote.style.display = 'none';
-    if (statusText) statusText.textContent = 'MEASURED';
-    if (statusDot) statusDot.classList.remove('animate-pulse');
+    if (statusText) { statusText.textContent = 'idle snapshot'; statusText.classList.remove('text-emerald-400'); statusText.classList.add('text-zinc-500'); }
+    if (statusDot) { statusDot.classList.add('hidden'); statusDot.classList.remove('animate-pulse'); statusDot.classList.add('bg-zinc-500'); }
+    if (statusChip) { statusChip.classList.remove('border-emerald-500/30', 'text-emerald-400'); statusChip.classList.add('border-zinc-700', 'text-zinc-500'); }
     if (cardLabel) cardLabel.textContent = 'Idle Memory Footprint';
     if (stackLabel) stackLabel.textContent = 'Total Resting Stack';
     if (sleepNote) sleepNote.style.display = '';

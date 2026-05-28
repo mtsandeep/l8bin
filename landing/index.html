@@ -32,7 +32,7 @@
       <div class="flex items-center gap-3">
         <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
         <a href="#start" class="hidden sm:inline-flex text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Get Started</a>
-        <button id="mobile-menu-btn" class="md:hidden flex flex-col justify-center items-center w-8 h-8 gap-1.5 rounded hover:bg-white/5 transition" aria-label="Toggle menu">
+        <button type="button" id="mobile-menu-btn" class="md:hidden flex flex-col justify-center items-center w-8 h-8 gap-1.5 rounded hover:bg-white/5 transition" aria-label="Toggle menu">
           <span id="mhb-1" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
           <span id="mhb-2" class="block w-5 h-px bg-zinc-400 transition-all"></span>
           <span id="mhb-3" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
@@ -60,14 +60,9 @@
       <div class="grid lg:grid-cols-2 gap-10 items-center">
         <!-- Left: headline + CTA -->
         <div class="text-center lg:text-left">
-          <div class="flex flex-wrap gap-2 justify-center lg:justify-start mb-5">
-            <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-violet-500/25 bg-violet-500/8 text-violet-400 text-xs font-mono">
-              <span class="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse"></span>
-              RUNNING ON 512MB
-            </span>
-            <span class="inline-flex items-center px-3 py-1 rounded-full border border-emerald-500/25 bg-emerald-500/8 text-emerald-400 text-xs font-mono">#selfHosted</span>
-            <span class="inline-flex items-center px-3 py-1 rounded-full border border-cyan-500/25 bg-cyan-500/8 text-cyan-400 text-xs font-mono">Open Source</span>
-          </div>
+          <p class="font-mono text-xs tracking-wide text-zinc-500 mb-5 flex flex-wrap gap-x-3 gap-y-1 justify-center lg:justify-start">
+            <span class="text-emerald-400">#selfHosted</span><span class="text-zinc-700">/</span><span class="text-cyan-400">Open Source</span><span class="text-zinc-700">/</span><span class="text-amber-400">Lightweight</span>
+          </p>
           <h1 id="glitch-title" data-variants="LITEBIN|L8BIN|L8B.IN|L8=50+8|L8BIN"
             class="text-6xl lg:text-8xl font-black text-white tracking-tighter leading-none mb-5"></h1>
           <p class="text-lg text-zinc-400 leading-relaxed mb-4">
@@ -87,7 +82,7 @@
         <div id="memory-card" class="glass rounded-2xl p-7 glow">
           <div class="flex justify-between items-center mb-5">
             <p id="memory-card-label" class="text-xs font-mono text-zinc-500 uppercase tracking-widest">Idle Memory Footprint</p>
-            <span class="text-xs font-mono text-emerald-400 flex items-center gap-1.5"><span id="live-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span><span id="live-status">MEASURED</span></span>
+            <span id="status-chip" class="text-xs font-mono flex items-center gap-1.5 rounded-md border px-2 py-0.5 border-zinc-700 text-zinc-500"><span id="live-dot" class="w-1.5 h-1.5 rounded-full bg-zinc-500 hidden"></span><span id="live-status">idle snapshot</span></span>
           </div>
           <div class="space-y-4">
             <div>
@@ -149,9 +144,9 @@
       <div class="grid md:grid-cols-3 gap-6">
         <div class="p-7 glass rounded-2xl hover:border-violet-500/30 hover:-translate-y-1 transition group">
           <div class="text-3xl mb-4">📂</div>
-          <h3 class="text-lg font-bold text-white mb-2">The "Live" Resume</h3>
+          <h3 class="text-lg font-bold text-white mb-2">The "Live" Resume/Portfolio</h3>
           <p class="text-sm text-zinc-400 leading-relaxed">Stop sending recruiters dead GitHub links. Host your entire project history. They click, the app wakes, and you look like a pro.</p>
-          <p class="mt-5 text-xs font-mono text-zinc-600 uppercase tracking-widest">Portfolios & Resumes</p>
+          <p class="mt-5 text-xs font-mono text-zinc-600 uppercase tracking-widest">Resumes & Portfolios</p>
         </div>
         <div class="p-7 glass rounded-2xl hover:border-fuchsia-500/30 hover:-translate-y-1 transition group">
           <div class="text-3xl mb-4">🚇</div>
@@ -211,24 +206,24 @@
       <div class="mb-12 fade-in">
         <div class="glass rounded-2xl p-6">
           <p class="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-5">Container Lifecycle</p>
-          <div class="grid md:grid-cols-2 gap-5 items-center">
+          <div class="grid md:grid-cols-[2fr_3fr] gap-5 items-center">
             <!-- State rows -->
             <div class="space-y-1.5">
               <div id="si-0" class="ws-row flex items-center gap-3 p-3 rounded-xl border border-transparent">
                 <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0"></div>
-                <div><div class="text-xs font-mono font-semibold text-zinc-300">RUNNING</div><div class="text-xs text-zinc-600">Serving traffic · memory in use</div></div>
+                <div><div class="text-xs font-mono font-semibold text-zinc-300">RUNNING</div><div class="text-xs text-zinc-400">Serving traffic · memory in use</div></div>
               </div>
               <div id="si-1" class="ws-row flex items-center gap-3 p-3 rounded-xl border border-transparent">
                 <div class="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0"></div>
-                <div><div class="text-xs font-mono font-semibold text-zinc-500">IDLE</div><div class="text-xs text-zinc-600">No requests · sleep timer ticking</div></div>
+                <div><div class="text-xs font-mono font-semibold text-zinc-500">IDLE</div><div class="text-xs text-zinc-400">No requests · sleep timer ticking</div></div>
               </div>
               <div id="si-2" class="ws-row flex items-center gap-3 p-3 rounded-xl border border-transparent">
                 <div class="w-2.5 h-2.5 rounded-full bg-zinc-600 shrink-0"></div>
-                <div><div class="text-xs font-mono font-semibold text-zinc-500">SLEEPING</div><div class="text-xs text-zinc-600">Stopped · 0 MB · route removed</div></div>
+                <div><div class="text-xs font-mono font-semibold text-zinc-500">SLEEPING</div><div class="text-xs text-zinc-400">Stopped · 0 MB · route removed</div></div>
               </div>
               <div id="si-3" class="ws-row flex items-center gap-3 p-3 rounded-xl border border-transparent">
                 <div class="w-2.5 h-2.5 rounded-full bg-violet-500 shrink-0"></div>
-                <div><div class="text-xs font-mono font-semibold text-zinc-500">WAKING</div><div class="text-xs text-zinc-600">Request in · container starting</div></div>
+                <div><div class="text-xs font-mono font-semibold text-zinc-500">WAKING</div><div class="text-xs text-zinc-400">Request in · container starting</div></div>
               </div>
             </div>
             <!-- Mini browser preview -->
@@ -237,7 +232,7 @@
                 <div class="flex gap-1"><span class="w-2 h-2 rounded-full bg-red-500/50"></span><span class="w-2 h-2 rounded-full bg-amber-500/50"></span><span class="w-2 h-2 rounded-full bg-emerald-500/50"></span></div>
                 <div class="flex-1 flex justify-center"><div class="bg-zinc-700/40 rounded px-2 py-0.5"><span id="ap-url" class="text-xs font-mono text-zinc-400">myapp.l8b.in</span></div></div>
               </div>
-              <div class="relative bg-night-800" style="height:148px">
+              <div class="relative bg-night-800" style="height:220px">
                 <!-- RUNNING -->
                 <div id="ap-0" class="absolute inset-0 p-4 flex flex-col gap-2" style="opacity:1;transition:opacity .4s">
                   <div class="h-3.5 bg-violet-500/25 rounded-md w-3/5"></div>
@@ -285,7 +280,7 @@
               </div>
             </div>
           </div>
-          <p id="wake-msg" class="text-xs text-zinc-600 mt-5 font-mono text-center">Container is running and serving traffic.</p>
+          <p id="wake-msg" class="text-xs text-zinc-400 mt-5 font-mono text-center">Container is running and serving traffic.</p>
         </div>
       </div>
       <!-- Demo links -->
@@ -317,8 +312,8 @@
         <div class="fade-in">
           <h2 class="text-3xl font-black text-white uppercase tracking-tight mb-3">Deploy in <span class="text-violet-400">one command.</span></h2>
           <div class="flex gap-1 mb-6 bg-night-800 rounded-lg p-1 inline-flex">
-            <button onclick="switchDeployTab('cli')" id="dtab-cli" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition bg-white/10 text-white shadow-sm">With CLI</button>
-            <button onclick="switchDeployTab('gh')" id="dtab-gh" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition text-zinc-500 hover:text-zinc-300 cursor-pointer">With GitHub Actions</button>
+            <button type="button" onclick="switchDeployTab('cli')" id="dtab-cli" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition bg-white/10 text-white shadow-sm">With CLI</button>
+            <button type="button" onclick="switchDeployTab('gh')" id="dtab-gh" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition text-zinc-500 hover:text-zinc-300 cursor-pointer">With GitHub Actions</button>
           </div>
           <div id="dcontent-cli">
             <p class="text-zinc-500 text-sm leading-relaxed mb-6">No YAML. No CI config. No Dockerfile needed. Point the CLI at any directory and ship. Railpack auto-detects Node, Python, Go, PHP, and more.</p>
@@ -503,16 +498,16 @@
       <p class="text-zinc-500 mb-10 text-sm">Things I might build. No promises.</p>
       <div class="glass rounded-2xl overflow-hidden flex flex-col md:flex-row min-h-[280px]">
         <div class="md:w-52 border-b md:border-b-0 md:border-r border-white/8 grid grid-cols-2 md:flex md:flex-col">
-          <button onclick="switchTab('handover')" id="tab-handover" class="tab-btn p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-emerald-500 bg-white/5">
+          <button type="button" onclick="switchTab('handover')" id="tab-handover" class="tab-btn p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-emerald-500 bg-white/5">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span><span class="font-semibold text-white text-xs">Client Handover</span>
           </button>
-          <button onclick="switchTab('migrations')" id="tab-migrations" class="tab-btn p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
+          <button type="button" onclick="switchTab('migrations')" id="tab-migrations" class="tab-btn p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
             <span class="w-1.5 h-1.5 rounded-full bg-cyan-500 shrink-0"></span><span class="font-semibold text-white text-xs">App Migrations</span>
           </button>
-          <button onclick="switchTab('backup')" id="tab-backup" class="tab-btn p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
+          <button type="button" onclick="switchTab('backup')" id="tab-backup" class="tab-btn p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
             <span class="w-1.5 h-1.5 rounded-full bg-fuchsia-500 shrink-0"></span><span class="font-semibold text-white text-xs">Backup &amp; Restore</span>
           </button>
-          <button onclick="switchTab('duplicate')" id="tab-duplicate" class="tab-btn p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
+          <button type="button" onclick="switchTab('duplicate')" id="tab-duplicate" class="tab-btn p-4 text-left hover:bg-white/5 transition flex items-center gap-3 border-l-2 border-transparent">
             <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span><span class="font-semibold text-white text-xs">App Duplication</span>
           </button>
         </div>
@@ -557,7 +552,7 @@
       </div>
       <div class="mt-8 flex flex-wrap justify-center gap-3">
         <a href="https://github.com/mtsandeep/l8bin" target="_blank" class="inline-flex items-center gap-2 px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm font-semibold text-white hover:bg-white/10 transition">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="GitHub"><title>GitHub</title><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
           ⭐ Star on GitHub
         </a>
         <a href="https://github.com/mtsandeep/l8bin/issues" target="_blank" class="inline-flex items-center gap-2 px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm font-semibold text-zinc-400 hover:text-white hover:bg-white/10 transition">
@@ -575,8 +570,8 @@
       <div class="inline-block p-px bg-gradient-to-r from-violet-500 to-fuchsia-600 rounded-xl mb-4">
         <div class="bg-night-900 px-6 py-4 rounded-[11px] flex items-center gap-4">
           <code class="text-white font-mono text-sm">curl -fsSL l8b.in | bash</code>
-          <button onclick="copyInstall()" id="copy-btn" class="text-zinc-500 hover:text-violet-400 transition" title="Copy">
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <button type="button" onclick="copyInstall()" id="copy-btn" class="text-zinc-500 hover:text-violet-400 transition" title="Copy">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Copy"><title>Copy</title><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>
         </div>
       </div>
