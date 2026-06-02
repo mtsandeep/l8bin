@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Volume permission handling for non-root containers** — Automatically chowns relative bind mount directories before starting a container, based on the image's `USER` directive.
 - "Allow raw ports" and "Allow Docker access" toggles to Deploy New App form (compose mode).
 - **Biome for linting + formatting** — Replaced ESLint with Biome (Rust-based, 10–25x faster). Single `biome.json` config, pre-commit hook via nano-staged.
 - **Agent image inspect endpoint** — `GET /images/inspect` resolves any image reference to its sha256 digest. Used by orchestrator for digest-based cleanup on remote nodes.

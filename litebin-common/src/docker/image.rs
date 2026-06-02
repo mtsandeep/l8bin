@@ -474,6 +474,13 @@ impl DockerManager {
             .ok_or_else(|| anyhow::anyhow!("image inspect returned no id"))
     }
 
+    /// Inspect an image and return its configured user (from Dockerfile USER directive).
+    /// Returns None if the image has no USER or on any error (image not found, etc.).
+    pub async fn inspect_image_user(&self, image_ref: &str) -> Option<String> {
+        let info = self.docker.inspect_image(image_ref).await.ok()?;
+        info.config?.user
+    }
+
     /// Compute image statistics: dangling count/size, in-use count/size, total.
     /// A "dangling" image is one with no repo tags (untagged).
     pub async fn image_stats(&self) -> crate::types::ImageStats {

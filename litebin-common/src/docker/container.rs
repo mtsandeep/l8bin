@@ -275,6 +275,10 @@ impl DockerManager {
             config.binds.clone()
         };
 
+        // Fix volume permissions for non-root containers.
+        let image_user = self.inspect_image_user(&config.image).await;
+        self.chown_bind_mounts(config, filtered_binds.as_ref(), image_user.as_deref());
+
         // Per-service resource limits (fall back to global defaults when not specified)
         let default_mem = self.memory_limit.load(std::sync::atomic::Ordering::Relaxed);
         let default_cpu = f64::from_bits(self.cpu_limit.load(std::sync::atomic::Ordering::Relaxed));
@@ -533,6 +537,118 @@ impl DockerManager {
         );
 
         Ok((container_id, mapped_port))
+    }
+
+    /// Prepare bind mount directories for non-root containers.
+    /// Creates directories and chowns them to the container's user:group
+    /// so that non-root processes can write to them.
+    #[cfg(unix)]
+    fn chown_bind_mounts(
+        &self,
+        config: &RunServiceConfig,
+        filtered_binds: Option<&Vec<String>>,
+        image_user: Option<&str>,
+    ) {
+        // Resolve effective user: compose override > image default
+        let effective_user = config.user.as_deref()
+            .or_else(|| config.bollard_create_body.as_ref().and_then(|b| b.user.as_deref()))
+            .or(image_user);
+
+        let Some(user_str) = effective_user else {
+            return;
+        };
+
+        // Skip root user (handles "0", "0:0", "root")
+        if user_str == "0" || user_str == "0:0" || user_str == "root" {
+            return;
+        }
+
+        // Collect binds from both sources:
+        // - config.binds: single-service path and litebin-scoped volumes
+        // - bollard_host_config.binds: compose-mapped volumes (e.g., ./data:/app/data)
+        let mut all_binds: Vec<&str> = Vec::new();
+        if let Some(ref binds) = filtered_binds {
+            all_binds.extend(binds.iter().map(|s| s.as_str()));
+        }
+        if let Some(ref hc) = config.bollard_host_config {
+            if let Some(ref binds) = hc.binds {
+                all_binds.extend(binds.iter().map(|s| s.as_str()));
+            }
+        }
+
+        let host_dir = self.host_projects_dir.as_deref();
+        let project_base = host_dir.map(|hd| std::path::Path::new(hd).canonicalize().ok())
+            .flatten()
+            .or_else(|| std::path::Path::new("projects").canonicalize().ok());
+
+        for bind in &all_binds {
+            let source = match bind.split(':').next() {
+                Some(s) if s.starts_with("projects/") && !s.contains("..") => s,
+                _ => continue,
+            };
+
+            let host_path = if let Some(hd) = host_dir {
+                format!("{}/{}", hd, &source["projects/".len()..])
+            } else {
+                source.to_string()
+            };
+
+            if let Err(e) = std::fs::create_dir_all(path) {
+                tracing::warn!(path = %host_path, error = %e, "failed to create bind mount directory for non-root container");
+                continue;
+            }
+
+            // Verify the resolved path stays within the project directory
+            if let Some(ref base) = project_base {
+                if let Ok(resolved) = path.canonicalize() {
+                    if !resolved.starts_with(base) {
+                        tracing::warn!(path = %host_path, resolved = %resolved.display(), base = %base.display(), "bind mount path escapes project directory, skipping chown");
+                        continue;
+                    }
+                }
+            }
+
+            // Try chown first (works for numeric UIDs and usernames that exist on host).
+            // Fall back to chmod 777 if chown fails (string username not on host).
+            let chowned = std::process::Command::new("chown")
+                .arg("-R")
+                .arg(user_str)
+                .arg(&host_path)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            if chowned {
+                tracing::info!(path = %host_path, user = %user_str, "chowned bind mount directory for non-root container");
+            } else {
+                // chown failed (likely string username not on host) — make writable instead
+                match std::process::Command::new("chmod")
+                    .arg("-R")
+                    .arg("a+rw")
+                    .arg(&host_path)
+                    .output()
+                {
+                    Ok(output) if output.status.success() => {
+                        tracing::info!(path = %host_path, user = %user_str, "chmod bind mount directory (could not resolve user)");
+                    }
+                    Ok(output) => {
+                        tracing::warn!(path = %host_path, error = %String::from_utf8_lossy(&output.stderr), "failed to chmod bind mount directory");
+                    }
+                    Err(e) => {
+                        tracing::warn!(path = %host_path, error = %e, "failed to chmod bind mount directory");
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn chown_bind_mounts(
+        &self,
+        _config: &RunServiceConfig,
+        _filtered_binds: Option<&Vec<String>>,
+        _image_user: Option<&str>,
+    ) {
     }
 
     pub async fn ping(&self) -> anyhow::Result<()> {

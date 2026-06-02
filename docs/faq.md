@@ -343,6 +343,47 @@ api:
 
 ## Volumes & Persistent Data
 
+### "Permission denied" when my app writes to a volume
+
+Some Docker images run as non-root users (e.g., `USER 1000:1000` or `USER appuser`). When LiteBin creates bind mount directories (`./data`) on the host, Docker creates them as root. The container process then can't write to them.
+
+**How LiteBin handles this:**
+
+LiteBin automatically fixes permissions before starting the container:
+
+1. Inspects the image's `USER` directive via the Docker API
+2. For numeric UIDs (`1000:1000`) — runs `chown` on the bind mount directory
+3. For string usernames (`appuser`) — falls back to `chmod a+rw` (since the username may not exist on the host)
+4. Skips entirely for root users and images with no `USER` directive
+
+This works for both single-service and compose deployments, on **Linux hosts**.
+
+**Windows Docker Desktop limitation:**
+
+Bind mounts on Windows Docker Desktop go through a virtiofs/9p filesystem layer that ignores Linux `chown`/`chmod` calls. If you see "Permission denied" on Windows, add `user: "0:0"` to your compose file:
+
+```yaml
+services:
+  myapp:
+    image: example/app:latest
+    user: "0:0"
+    volumes:
+      - ./data:/app/data
+```
+
+**Recommended for production:**
+
+On Linux hosts, the automatic fix works for most images. If your image uses a string username and you want precise ownership instead of the `chmod` fallback, set the numeric `user` in your compose:
+
+```yaml
+services:
+  myapp:
+    image: example/app:latest
+    user: "1000:1000"
+    volumes:
+      - ./data:/app/data
+```
+
 ### My data disappears when I redeploy
 
 By default, container data is ephemeral. To persist data across recreations and redeployments, add volumes to your compose file:
