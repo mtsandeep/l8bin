@@ -3,6 +3,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
 COPY . .
+# Copy docs files (populated by CI or manual build step)
+COPY public/docs/ public/docs/
 RUN pnpm build
 
 FROM nginx:alpine

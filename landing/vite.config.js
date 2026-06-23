@@ -11,6 +11,7 @@ export default defineConfig({
         quickstart: resolve(__dirname, 'quickstart.html'),
         live: resolve(__dirname, 'live/index.html'),
         'logo-demo': resolve(__dirname, 'logo.html'),
+        docs: resolve(__dirname, 'docs/index.html'),
       },
     },
   },

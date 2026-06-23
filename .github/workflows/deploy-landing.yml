@@ -13,6 +13,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download latest release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download --pattern 'openapi.json' --output docs/openapi.json --clobber
+          gh release download --pattern 'cli-reference.md' --output docs/cli-reference.md --clobber
+          gh release download --pattern 'llms-full.txt' --output llms-full.txt --clobber
+
+      - name: Copy docs into landing
+        run: |
+          cp docs/openapi.json landing/public/docs/openapi.json
+          cp docs/cli-reference.md landing/public/docs/guides/cli-reference.md
+          cp llms-full.txt landing/public/llms-full.txt
+          for f in multi-service multi-server volumes env-secrets configuration local-testing security faq; do
+            if [ -f "docs/${f}.md" ]; then
+              cp "docs/${f}.md" "landing/public/docs/guides/${f}.md"
+            fi
+          done
+
       - uses: mtsandeep/l8bin-action@v1
         with:
           server: ${{ secrets.L8B_SERVER }}
