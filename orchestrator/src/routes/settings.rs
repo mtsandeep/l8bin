@@ -11,7 +11,7 @@ use crate::auth::backend::PasswordBackend;
 use crate::db::models::Project;
 use crate::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateSettingsRequest {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -26,6 +26,23 @@ pub struct UpdateSettingsRequest {
     pub cpu_limit: Option<f64>,
 }
 
+#[utoipa::path(
+    patch,
+    path = "/projects/{id}/settings",
+    params(
+        ("id" = String, Path)
+    ),
+    request_body = UpdateSettingsRequest,
+    responses(
+        (status = 200, body = crate::db::models::Project),
+        (status = 400),
+        (status = 404),
+        (status = 409),
+        (status = 500),
+    ),
+    tag = "settings",
+    security(("session_auth" = []))
+)]
 pub async fn update_project_settings(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -247,13 +264,30 @@ pub async fn update_project_settings(
 
 // ── Per-Service Settings ──────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateServiceSettingsRequest {
     pub memory_limit_mb: Option<Option<i64>>,
     pub cpu_limit: Option<Option<f64>>,
 }
 
 /// PATCH /projects/:id/services/:name/settings
+#[utoipa::path(
+    patch,
+    path = "/projects/{id}/services/{name}/settings",
+    params(
+        ("id" = String, Path),
+        ("name" = String, Path)
+    ),
+    request_body = UpdateServiceSettingsRequest,
+    responses(
+        (status = 200),
+        (status = 401),
+        (status = 404),
+        (status = 500),
+    ),
+    tag = "settings",
+    security(("session_auth" = []))
+)]
 pub async fn update_service_settings(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,

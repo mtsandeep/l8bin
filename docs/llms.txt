@@ -1,0 +1,57 @@
+# LiteBin
+
+> LiteBin is a self-hosted Platform-as-a-Service (PaaS) for deploying and managing containerized applications. Think Railway/Fly.io but self-hosted on your own server. Deploy web apps, APIs, and multi-service stacks with a single API call or CLI command.
+
+## Instructions
+
+When helping users deploy to LiteBin, follow these patterns:
+
+1. **Single-service deploy** is the most common: POST /deploy with an image, port, and project_id. Use PUT /deploy for redeploy/update.
+2. **Multi-service deploy** uses POST /deploy/compose with a docker-compose.yaml file.
+3. **Authentication**: Most endpoints require a session cookie (obtained via POST /auth/login). For CI/CD, use deploy tokens (POST /deploy-tokens) passed as `Authorization: Bearer <token>`.
+4. **Project lifecycle**: Projects go through: unconfigured → deploying → running → stopped. Check GET /projects/{id}/stats for live status.
+5. **Custom domains**: Set via PATCH /projects/{id}/settings with `custom_domain`. LiteBin auto-configures TLS via Caddy.
+6. **Volumes**: Specify in the deploy request. Named volumes are scoped per-project. Bind mounts use `./` prefix for relative paths.
+7. **Multi-server**: LiteBin supports remote nodes via mTLS-connected agents. POST /nodes to register, POST /nodes/{id}/connect to onboard.
+
+## API
+
+- OpenAPI 3.1 spec: /openapi.json (version-matched to this instance)
+- All endpoints are relative to the orchestrator base URL (default: port 5080)
+
+## CLI
+
+Install via: `curl -sSf https://... | sh` or build from source.
+
+Commands:
+- `l8b deploy` — Deploy a Docker image
+- `l8b ship` — Package and deploy a compose project
+- `l8b login` — Authenticate CLI session
+- `l8b status` — Show project status
+- `l8b cleanup` — Clean unused images
+
+## Architecture
+
+- [Architecture overview](architecture.md) — Orchestrator + Agent + Caddy reverse proxy
+- [Multi-server setup](multi-server.md) — Remote node configuration via mTLS
+- [Multi-service projects](multi-service.md) — Compose-based deployments
+- [Volumes](volumes.md) — Named volumes, bind mounts, and cleanup
+
+## Configuration
+
+- [Environment variables](configuration.md) — All LITEBIN_* config options
+- [Env & secrets](env-secrets.md) — Per-project .env files and injection
+
+## Guides
+
+- [Getting started](cli.md) — First deployment walkthrough
+- [Multi-service deployment](multi-service.md) — Compose projects
+- [Local testing](local-testing.md) — Dev environment setup
+- [Security internals](security.md) — Auth, mTLS, deploy tokens
+
+## Optional
+
+- [Failure model](failure-model.md) — How LiteBin handles failures
+- [Janitor](janitor.md) — Auto-stop and resource cleanup
+- [Waker](waker.md) — Wake-on-traffic
+- [API reference](api-reference.md) — Full endpoint documentation

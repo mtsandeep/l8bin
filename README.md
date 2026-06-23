@@ -343,3 +343,15 @@ docker compose --profile master up -d --build
 ```
 
 See [Development Guide](docs/development.md) for build scripts, local testing, Windows development, cross-compilation, and more.
+
+---
+
+## Resources
+
+| Resource | Link |
+|----------|------|
+| Website | [l8bin.com](https://l8bin.com) |
+| API Docs (Scalar) | [l8bin.com/docs](https://l8bin.com/docs) |
+| OpenAPI Spec | [l8bin.com/docs/openapi.json](https://l8bin.com/docs/openapi.json) |
+| llms.txt | [l8bin.com/llms.txt](https://l8bin.com/llms.txt) |
+| Full llms.txt (with API spec) | [l8bin.com/llms-full.txt](https://l8bin.com/llms-full.txt) |

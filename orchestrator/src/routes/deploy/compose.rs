@@ -12,6 +12,19 @@ use crate::AppState;
 use litebin_common::types::{ProjectStatus, DeployType};
 use crate::status::{self, ProjectUpdateFields};
 
+#[utoipa::path(
+    post,
+    path = "/deploy/compose",
+    request_body(content = String, description = "Multipart form with project_id and compose file"),
+    responses(
+        (status = 200, description = "Compose deployment started"),
+        (status = 400, description = "Missing project_id"),
+        (status = 401, description = "Authentication required"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "deploy",
+    security(("session_auth" = []), ("bearer_token" = [])),
+)]
 /// POST /deploy/compose — Deploy a multi-service project via compose file.
 ///
 /// Accepts multipart form data with:

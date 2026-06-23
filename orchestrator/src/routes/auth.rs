@@ -11,18 +11,18 @@ use crate::auth::{backend::Credentials, backend::PasswordBackend};
 use crate::db::models::User;
 use crate::AppState;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LoginResponse {
     pub user: UserResponse,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserResponse {
     pub id: String,
     pub username: String,
@@ -41,6 +41,17 @@ impl From<User> for UserResponse {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/login",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = LoginResponse),
+        (status = 401, description = "Invalid credentials"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "auth",
+)]
 pub async fn login(
     mut auth_session: AuthSession<PasswordBackend>,
     Json(creds): Json<LoginRequest>,
@@ -78,6 +89,16 @@ pub async fn login(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/logout",
+    responses(
+        (status = 200, description = "Logged out successfully"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "auth",
+    security(("session_auth" = [])),
+)]
 pub async fn logout(mut auth_session: AuthSession<PasswordBackend>) -> impl IntoResponse {
     match auth_session.logout().await {
         Ok(_) => StatusCode::OK,
@@ -85,13 +106,24 @@ pub async fn logout(mut auth_session: AuthSession<PasswordBackend>) -> impl Into
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RegisterRequest {
     pub username: String,
     pub password: String,
     pub email: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/register",
+    request_body = RegisterRequest,
+    responses(
+        (status = 200, description = "Registration successful", body = LoginResponse),
+        (status = 403, description = "Registration forbidden"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "auth",
+)]
 pub async fn register(
     mut auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -131,11 +163,20 @@ pub async fn register(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SetupResponse {
     pub needs_setup: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/setup",
+    responses(
+        (status = 200, description = "Setup check response", body = SetupResponse),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "auth",
+)]
 pub async fn setup_check(
     State(state): State<AppState>,
 ) -> Result<Json<SetupResponse>, StatusCode> {
@@ -149,6 +190,16 @@ pub async fn setup_check(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/me",
+    responses(
+        (status = 200, description = "Current user info", body = UserResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    tag = "auth",
+    security(("session_auth" = [])),
+)]
 pub async fn me(auth_session: AuthSession<PasswordBackend>) -> Result<Json<UserResponse>, StatusCode> {
     match auth_session.user {
         Some(user) => Ok(Json(user.into())),
@@ -156,20 +207,20 @@ pub async fn me(auth_session: AuthSession<PasswordBackend>) -> Result<Json<UserR
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChangePasswordResponse {
     pub success: bool,
 }
 
 // --- Status endpoint ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StatusNode {
     pub name: String,
     pub status: String,
@@ -177,7 +228,7 @@ pub struct StatusNode {
     pub architecture: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StatusResponse {
     pub version: String,
     pub user: UserResponse,
@@ -185,6 +236,16 @@ pub struct StatusResponse {
     pub project_count: i64,
 }
 
+#[utoipa::path(
+    get,
+    path = "/status",
+    responses(
+        (status = 200, description = "System status", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    tag = "auth",
+    security(("session_auth" = [])),
+)]
 pub async fn status(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -225,6 +286,18 @@ pub async fn status(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/change-password",
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 200, description = "Password changed successfully", body = ChangePasswordResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "auth",
+    security(("session_auth" = [])),
+)]
 pub async fn change_password(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,

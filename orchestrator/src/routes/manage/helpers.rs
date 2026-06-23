@@ -8,7 +8,7 @@ use litebin_common::types::Node;
 use crate::nodes;
 use crate::AppState;
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, utoipa::ToSchema)]
 pub struct MessageResponse {
     pub message: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]

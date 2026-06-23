@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod caddy;
+pub mod docs;
 pub mod deploy;
 pub mod deploy_tokens;
 pub mod global_settings;
@@ -8,6 +9,7 @@ pub mod heartbeat;
 pub mod images;
 pub mod manage;
 pub mod nodes;
+pub mod openapi;
 pub mod projects;
 pub mod scan;
 pub mod settings;

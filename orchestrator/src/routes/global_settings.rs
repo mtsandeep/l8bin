@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{AppState, config::Config};
 use litebin_common::types::RoutingMode;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct GlobalSettings {
     pub default_memory_limit_mb: i64,
     pub default_cpu_limit: f64,
@@ -22,7 +22,7 @@ pub fn resolve_projects_dir() -> String {
     "projects".to_string()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateGlobalSettings {
     pub default_memory_limit_mb: Option<i64>,
     pub default_cpu_limit: Option<f64>,
@@ -35,6 +35,16 @@ pub struct UpdateGlobalSettings {
     pub poke_subdomain: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/settings",
+    responses(
+        (status = 200, body = GlobalSettings),
+        (status = 500),
+    ),
+    tag = "global-settings",
+    security(("session_auth" = []))
+)]
 pub async fn get_settings(
     State(state): State<AppState>,
 ) -> Result<Json<GlobalSettings>, (StatusCode, String)> {
@@ -42,6 +52,18 @@ pub async fn get_settings(
     Ok(Json(settings))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/settings",
+    request_body = UpdateGlobalSettings,
+    responses(
+        (status = 200, body = GlobalSettings),
+        (status = 400),
+        (status = 500),
+    ),
+    tag = "global-settings",
+    security(("session_auth" = []))
+)]
 pub async fn update_settings(
     State(state): State<AppState>,
     Json(payload): Json<UpdateGlobalSettings>,
@@ -202,11 +224,22 @@ async fn upsert_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Result
     Ok(())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CleanupDnsResponse {
     pub deleted_count: usize,
 }
 
+#[utoipa::path(
+    post,
+    path = "/settings/cleanup-dns",
+    responses(
+        (status = 200, body = CleanupDnsResponse),
+        (status = 400),
+        (status = 500),
+    ),
+    tag = "global-settings",
+    security(("session_auth" = []))
+)]
 pub async fn cleanup_dns(
     State(state): State<AppState>,
 ) -> Result<Json<CleanupDnsResponse>, (StatusCode, String)> {
@@ -247,7 +280,7 @@ pub async fn cleanup_dns(
     Ok(Json(CleanupDnsResponse { deleted_count }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SyncDnsResponse {
     pub created: usize,
     pub deleted: usize,
@@ -255,6 +288,17 @@ pub struct SyncDnsResponse {
     pub errors: usize,
 }
 
+#[utoipa::path(
+    post,
+    path = "/settings/sync-dns",
+    responses(
+        (status = 200, body = SyncDnsResponse),
+        (status = 400),
+        (status = 500),
+    ),
+    tag = "global-settings",
+    security(("session_auth" = []))
+)]
 pub async fn sync_dns(
     State(state): State<AppState>,
 ) -> Result<Json<SyncDnsResponse>, (StatusCode, String)> {

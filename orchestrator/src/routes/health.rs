@@ -3,11 +3,19 @@ use serde::Serialize;
 
 use crate::AppState;
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct HealthResponse {
     pub status: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Health check response", body = HealthResponse),
+    ),
+    tag = "health",
+)]
 pub async fn health_check(
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Json<HealthResponse> {
@@ -28,7 +36,7 @@ const STACK_CONTAINERS: &[&str] = &[
     "litebin-caddy",
 ];
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ServiceStats {
     pub name: String,
     pub memory_usage: u64,
@@ -36,7 +44,7 @@ pub struct ServiceStats {
     pub disk_usage: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SystemStatsResponse {
     pub services: Vec<ServiceStats>,
 }
@@ -68,6 +76,15 @@ async fn fetch_service_stats(
     })
 }
 
+#[utoipa::path(
+    get,
+    path = "/system/stats",
+    responses(
+        (status = 200, description = "System stats response", body = SystemStatsResponse),
+    ),
+    tag = "health",
+    security(("session_auth" = [])),
+)]
 pub async fn system_stats(
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Json<SystemStatsResponse> {

@@ -12,24 +12,37 @@ use crate::auth::backend::PasswordBackend;
 use crate::db::models::{DeployToken, DeployTokenResponse};
 use crate::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateTokenRequest {
     pub project_id: Option<String>,
     pub name: Option<String>,
     pub expires_at: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CreateTokenResponse {
     pub token: String,
     pub token_info: DeployTokenResponse,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ListTokensQuery {
     pub project_id: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/deploy-tokens",
+    request_body = CreateTokenRequest,
+    responses(
+        (status = 201, description = "Token created", body = CreateTokenResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Project not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "deploy-tokens",
+    security(("session_auth" = [])),
+)]
 pub async fn create_token(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -109,6 +122,19 @@ pub async fn create_token(
     (StatusCode::CREATED, Json(CreateTokenResponse { token, token_info })).into_response()
 }
 
+#[utoipa::path(
+    get,
+    path = "/deploy-tokens",
+    params(
+        ("project_id" = Option<String>, Query, description = "Filter by project ID"),
+    ),
+    responses(
+        (status = 200, description = "List of deploy tokens", body = Vec<crate::db::models::DeployTokenResponse>),
+        (status = 401, description = "Unauthorized"),
+    ),
+    tag = "deploy-tokens",
+    security(("session_auth" = [])),
+)]
 pub async fn list_tokens(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -150,6 +176,21 @@ pub async fn list_tokens(
     Json(response).into_response()
 }
 
+#[utoipa::path(
+    delete,
+    path = "/deploy-tokens/{id}",
+    params(
+        ("id" = String, Path, description = "Token ID"),
+    ),
+    responses(
+        (status = 204, description = "Token revoked"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Token not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "deploy-tokens",
+    security(("session_auth" = [])),
+)]
 pub async fn revoke_token(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,

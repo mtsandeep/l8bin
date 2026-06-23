@@ -10,6 +10,21 @@ use serde_json::json;
 use crate::auth::backend::PasswordBackend;
 use crate::AppState;
 
+#[utoipa::path(
+    delete,
+    path = "/projects/{project_id}/volumes/{name}",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+        ("name" = String, Path, description = "Volume name"),
+    ),
+    responses(
+        (status = 200, description = "Volume deleted"),
+        (status = 401, description = "Authentication required"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "volumes",
+    security(("session_auth" = [])),
+)]
 /// DELETE /projects/:id/volumes/:name — Remove a specific volume.
 pub async fn delete_volume(
     auth_session: AuthSession<PasswordBackend>,
@@ -33,6 +48,20 @@ pub async fn delete_volume(
     (StatusCode::OK, Json(json!({"deleted": scoped}))).into_response()
 }
 
+#[utoipa::path(
+    delete,
+    path = "/projects/{project_id}/volumes",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+    ),
+    responses(
+        (status = 200, description = "All volumes deleted"),
+        (status = 401, description = "Authentication required"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "volumes",
+    security(("session_auth" = [])),
+)]
 /// DELETE /projects/:id/volumes — Remove all volumes for a project.
 pub async fn delete_all_volumes(
     auth_session: AuthSession<PasswordBackend>,

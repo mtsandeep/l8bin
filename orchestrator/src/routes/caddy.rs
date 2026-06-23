@@ -3,11 +3,24 @@ use serde::Deserialize;
 
 use crate::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AskQuery {
     pub domain: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/caddy/ask",
+    params(
+        ("domain" = String, Query, description = "Domain to check"),
+    ),
+    responses(
+        (status = 200, description = "Domain approved"),
+        (status = 404, description = "Domain not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "health",
+)]
 /// Caddy On-Demand TLS validation endpoint.
 /// Returns 200 if the domain belongs to a known project, 404 otherwise.
 /// Checks: 1) subdomain match (project_id), 2) custom_domain match, 3) www variant of custom_domain.

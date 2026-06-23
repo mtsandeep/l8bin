@@ -45,6 +45,10 @@ dashmap = "6"
 rustls-pemfile = "2"
 rustls = { version = "0.23", features = ["ring"] }
 
+# OpenAPI
+utoipa = { version = "5", features = ["axum_extras"] }
+schemars = "0.8"
+
 # Misc
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }

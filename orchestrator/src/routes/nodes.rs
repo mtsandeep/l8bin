@@ -12,7 +12,7 @@ use crate::AppState;
 use crate::nodes::client::build_node_client;
 use litebin_common::types::{HealthReport, ImageStats, Node, NodeStatus};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateNodeRequest {
     pub name: String,
     pub host: String,
@@ -21,18 +21,18 @@ pub struct CreateNodeRequest {
     pub public_ip: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ConflictResponse {
     pub error: String,
     pub project_ids: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct NodeResponse {
     #[serde(flatten)]
     pub node: Node,
@@ -59,6 +59,16 @@ fn recommended_node_id(nodes: &[Node]) -> Option<String> {
     best.map(|n| n.id.clone())
 }
 
+#[utoipa::path(
+    get,
+    path = "/nodes",
+    responses(
+        (status = 200, description = "List of nodes", body = Vec<NodeResponse>),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "nodes",
+    security(("session_auth" = [])),
+)]
 pub async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
     match sqlx::query_as::<_, Node>("SELECT * FROM nodes ORDER BY created_at ASC")
         .fetch_all(&state.db)
@@ -85,6 +95,17 @@ pub async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/nodes",
+    request_body = CreateNodeRequest,
+    responses(
+        (status = 201, description = "Node created"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "nodes",
+    security(("session_auth" = [])),
+)]
 pub async fn create_node(
     State(state): State<AppState>,
     Json(req): Json<CreateNodeRequest>,
@@ -162,6 +183,22 @@ pub async fn create_node(
     (StatusCode::CREATED, Json(response)).into_response()
 }
 
+#[utoipa::path(
+    post,
+    path = "/nodes/{id}/connect",
+    params(
+        ("id" = String, Path, description = "Node ID"),
+    ),
+    responses(
+        (status = 200, description = "Node connected", body = Node),
+        (status = 404, description = "Node not found"),
+        (status = 409, description = "Node status conflict"),
+        (status = 422, description = "Unprocessable entity"),
+        (status = 503, description = "Service unavailable"),
+    ),
+    tag = "nodes",
+    security(("session_auth" = [])),
+)]
 /// POST /nodes/{id}/connect — health check + push config to agent via mTLS.
 /// Transitions node from pending_setup → online.
 pub async fn connect_node(
@@ -385,6 +422,22 @@ pub fn format_heartbeat_url(state: &AppState) -> String {
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/nodes/{id}",
+    params(
+        ("id" = String, Path, description = "Node ID"),
+    ),
+    responses(
+        (status = 204, description = "Node deleted"),
+        (status = 400, description = "Bad request"),
+        (status = 409, description = "Conflict"),
+        (status = 404, description = "Node not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "nodes",
+    security(("session_auth" = [])),
+)]
 pub async fn delete_node(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -455,13 +508,23 @@ pub async fn delete_node(
 
 // ── Image Stats ───────────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct NodeImageStatsResponse {
     pub node_id: String,
     pub node_name: String,
     pub image_stats: ImageStats,
 }
 
+#[utoipa::path(
+    get,
+    path = "/nodes/image-stats",
+    responses(
+        (status = 200, description = "Image statistics per node", body = Vec<NodeImageStatsResponse>),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "nodes",
+    security(("session_auth" = [])),
+)]
 /// GET /nodes/image-stats — returns image statistics for each node.
 pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoResponse {
     let mut results = Vec::new();
@@ -528,6 +591,21 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
     (StatusCode::OK, Json(results)).into_response()
 }
 
+#[utoipa::path(
+    post,
+    path = "/nodes/{id}/images/prune",
+    params(
+        ("id" = String, Path, description = "Node ID"),
+    ),
+    responses(
+        (status = 200, description = "Images pruned"),
+        (status = 404, description = "Node not found"),
+        (status = 500, description = "Internal server error"),
+        (status = 503, description = "Service unavailable"),
+    ),
+    tag = "nodes",
+    security(("session_auth" = [])),
+)]
 /// POST /nodes/{id}/images/prune — prune dangling images on a specific node.
 pub async fn prune_node_images(
     State(state): State<AppState>,

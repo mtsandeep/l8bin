@@ -26,7 +26,7 @@ use crate::{
 
 // ── Scan ──────────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct ScanQuery {
     pub node_id: Option<String>,
 }
@@ -35,6 +35,17 @@ pub struct ScanQuery {
 ///
 /// Returns foreign container groups from the requested node(s).
 /// Default (no node_id) = "all".
+#[utoipa::path(
+    get,
+    path = "/scan",
+    params(ScanQuery),
+    responses(
+        (status = 200, body = litebin_common::scan::ScanResult),
+        (status = 404, description = "Node not found"),
+    ),
+    tag = "scan",
+    security(("session_auth" = []))
+)]
 pub async fn scan_containers(
     State(state): State<AppState>,
     Query(q): Query<ScanQuery>,
@@ -125,7 +136,7 @@ pub async fn scan_containers(
 
 // ── Import ────────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ImportGroupRequest {
     pub node_id: String,
     pub project_id: String,
@@ -145,12 +156,12 @@ pub struct ImportGroupRequest {
     pub allow_docker_access: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ImportRequest {
     pub groups: Vec<ImportGroupRequest>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ImportedGroup {
     pub project_id: String,
     pub node_id: String,
@@ -158,7 +169,7 @@ pub struct ImportedGroup {
     pub warnings: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ImportResponse {
     pub imported: Vec<ImportedGroup>,
     pub errors: Vec<String>,
@@ -172,6 +183,18 @@ pub struct ImportResponse {
 /// 3. Rewrite relative bind mounts to absolute paths
 /// 4. Execute Docker import (local or via agent)
 /// 5. Trigger route sync if setup_routing=true
+#[utoipa::path(
+    post,
+    path = "/scan/import",
+    request_body = ImportRequest,
+    responses(
+        (status = 200, body = ImportResponse),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    tag = "scan",
+    security(("session_auth" = []))
+)]
 pub async fn import_containers(
     State(state): State<AppState>,
     auth_session: AuthSession<PasswordBackend>,

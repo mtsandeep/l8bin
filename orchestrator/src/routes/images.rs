@@ -13,18 +13,30 @@ use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
 pub struct UploadQueryParams {
     pub project_id: String,
     pub image_id: String,
     pub node_id: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct UploadResponse {
     pub image_id: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/images/upload",
+    params(UploadQueryParams),
+    responses(
+        (status = 200, description = "Image uploaded", body = UploadResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "deploy",
+    security(("session_auth" = []), ("bearer_token" = [])),
+)]
 pub async fn upload_image(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,

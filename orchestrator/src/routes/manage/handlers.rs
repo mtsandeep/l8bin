@@ -14,6 +14,21 @@ use super::helpers::{MessageResponse, agent_base_url, cleanup_unused_image, get_
 use super::multi_service::{StartServicesOpts, start_services, stop_services, recreate_services};
 
 /// POST /projects/:id/stop
+#[utoipa::path(
+    post,
+    path = "/projects/{project_id}/stop",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+    ),
+    responses(
+        (status = 200, body = MessageResponse),
+        (status = 400, description = "Bad request"),
+        (status = 404, description = "Project not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "manage",
+    security(("session_auth" = []))
+)]
 pub async fn stop_project(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
@@ -132,6 +147,21 @@ pub async fn stop_project(
 /// POST /projects/:id/start
 /// Starts all services for a project. Uses unified start_services() which handles
 /// fast-path (docker start existing) and fallback (recreate) automatically.
+#[utoipa::path(
+    post,
+    path = "/projects/{project_id}/start",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+    ),
+    responses(
+        (status = 200, body = MessageResponse),
+        (status = 400, description = "Bad request"),
+        (status = 404, description = "Project not found"),
+        (status = 503, description = "Service unavailable"),
+    ),
+    tag = "manage",
+    security(("session_auth" = []))
+)]
 pub async fn start_project(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
@@ -372,6 +402,20 @@ fn build_volume_list(project: &crate::db::models::Project) -> Vec<String> {
 }
 
 /// DELETE /projects/:id
+#[utoipa::path(
+    delete,
+    path = "/projects/{project_id}",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+    ),
+    responses(
+        (status = 200, body = MessageResponse),
+        (status = 404, description = "Project not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "manage",
+    security(("session_auth" = []))
+)]
 pub async fn delete_project(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
@@ -472,12 +516,28 @@ pub async fn delete_project(
 /// Picks up updated env files from the agent's project directory.
 /// For multi-service: accepts optional `services` array in JSON body for selective recreate.
 /// Set `pull_images: true` to pull latest images before recreating (redeploy).
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, utoipa::ToSchema)]
 pub struct RecreateRequest {
     pub services: Option<Vec<String>>,
     pub pull_images: Option<bool>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/projects/{project_id}/recreate",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+    ),
+    request_body = Option<RecreateRequest>,
+    responses(
+        (status = 200, body = MessageResponse),
+        (status = 400, description = "Bad request"),
+        (status = 404, description = "Project not found"),
+        (status = 503, description = "Service unavailable"),
+    ),
+    tag = "manage",
+    security(("session_auth" = []))
+)]
 pub async fn recreate_project(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
@@ -750,6 +810,21 @@ pub async fn recreate_project(
 }
 
 /// POST /projects/:id/services/:name/start
+#[utoipa::path(
+    post,
+    path = "/projects/{project_id}/services/{name}/start",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+        ("name" = String, Path, description = "Service name"),
+    ),
+    responses(
+        (status = 200, body = MessageResponse),
+        (status = 404, description = "Not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "manage",
+    security(("session_auth" = []))
+)]
 pub async fn start_service(
     State(state): State<AppState>,
     Path((project_id, service_name)): Path<(String, String)>,
@@ -784,6 +859,21 @@ pub async fn start_service(
 }
 
 /// POST /projects/:id/services/:name/stop
+#[utoipa::path(
+    post,
+    path = "/projects/{project_id}/services/{name}/stop",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+        ("name" = String, Path, description = "Service name"),
+    ),
+    responses(
+        (status = 200, body = MessageResponse),
+        (status = 404, description = "Not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "manage",
+    security(("session_auth" = []))
+)]
 pub async fn stop_service(
     State(state): State<AppState>,
     Path((project_id, service_name)): Path<(String, String)>,
@@ -814,6 +904,21 @@ pub async fn stop_service(
 }
 
 /// POST /projects/:id/services/:name/restart
+#[utoipa::path(
+    post,
+    path = "/projects/{project_id}/services/{name}/restart",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+        ("name" = String, Path, description = "Service name"),
+    ),
+    responses(
+        (status = 200, body = MessageResponse),
+        (status = 404, description = "Not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "manage",
+    security(("session_auth" = []))
+)]
 pub async fn restart_service(
     State(state): State<AppState>,
     Path((project_id, service_name)): Path<(String, String)>,

@@ -2,8 +2,10 @@ mod activity;
 mod auth;
 mod cloudflare_router;
 mod config;
+use utoipa::OpenApi;
 mod db;
 mod nodes;
+mod openapi;
 mod routing_helpers;
 mod routes;
 mod sleep;
@@ -63,6 +65,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Load .env if present
     dotenvy::dotenv().ok();
+
+    // --dump-openapi: print OpenAPI spec to stdout and exit (for docs generation)
+    if std::env::args().any(|a| a == "--dump-openapi") {
+        println!("{}", serde_json::to_string_pretty(&openapi::ApiDoc::openapi()).unwrap());
+        return Ok(());
+    }
 
     // Init tracing
     tracing_subscriber::fmt()
@@ -327,17 +335,17 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/stats", get(routes::stats::all_project_stats))
         .route("/projects/{id}", get(routes::projects::get_project))
         .route("/projects/{id}/settings", patch(routes::settings::update_project_settings))
-        .route("/projects/{id}/stop", post(routes::manage::stop_project))
-        .route("/projects/{id}/start", post(routes::manage::start_project))
-        .route("/projects/{id}", delete(routes::manage::delete_project))
+        .route("/projects/{id}/stop", post(routes::manage::handlers::stop_project))
+        .route("/projects/{id}/start", post(routes::manage::handlers::start_project))
+        .route("/projects/{id}", delete(routes::manage::handlers::delete_project))
         .route("/projects/{id}/stats", get(routes::stats::project_stats))
         .route("/projects/{id}/disk-usage", get(routes::stats::project_disk_usage))
         .route("/projects/{id}/logs", get(routes::stats::project_logs))
         .route("/projects/{id}/deploy-logs", get(routes::stats::deploy_logs))
-        .route("/projects/{id}/recreate", post(routes::manage::recreate_project))
-        .route("/projects/{id}/services/{name}/start", post(routes::manage::start_service))
-        .route("/projects/{id}/services/{name}/stop", post(routes::manage::stop_service))
-        .route("/projects/{id}/services/{name}/restart", post(routes::manage::restart_service))
+        .route("/projects/{id}/recreate", post(routes::manage::handlers::recreate_project))
+        .route("/projects/{id}/services/{name}/start", post(routes::manage::handlers::start_service))
+        .route("/projects/{id}/services/{name}/stop", post(routes::manage::handlers::stop_service))
+        .route("/projects/{id}/services/{name}/restart", post(routes::manage::handlers::restart_service))
         .route("/projects/{id}/services/{name}/settings", patch(routes::settings::update_service_settings))
         .route("/projects/{id}/volumes/{name}", delete(routes::volumes::delete_volume))
         .route("/projects/{id}/volumes", delete(routes::volumes::delete_all_volumes))
@@ -361,9 +369,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Routes - Deploy + image upload (session OR deploy token auth)
     let deploy_routes = Router::new()
-        .route("/deploy", post(routes::deploy::deploy_create))
-        .route("/deploy", put(routes::deploy::deploy_update))
-        .route("/deploy/compose", post(routes::deploy::deploy_compose))
+        .route("/deploy", post(routes::deploy::single::deploy_create))
+        .route("/deploy", put(routes::deploy::single::deploy_update))
+        .route("/deploy/compose", post(routes::deploy::compose::deploy_compose))
         .route("/images/upload", post(routes::images::upload_image));
 
     // Routes - Deploy token management (session auth)
@@ -380,6 +388,9 @@ async fn main() -> anyhow::Result<()> {
         .merge(deploy_routes)
         .merge(token_routes)
         .route("/health", get(routes::health::health_check))
+        .route("/openapi.json", get(routes::openapi::openapi_json))
+        .route("/docs", get(routes::docs::serve_docs))
+        .route("/llms.txt", get(routes::openapi::llms_txt))
         .route("/caddy/ask", get(routes::caddy::ask))
         .route("/internal/wake-report", post(routes::wake_report::wake_report))
         .route("/internal/heartbeat", post(routes::heartbeat::heartbeat))

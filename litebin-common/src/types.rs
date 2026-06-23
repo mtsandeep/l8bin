@@ -21,7 +21,7 @@ use sqlx::{FromRow, Type};
 
 // ── Status Enums ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "TEXT", rename_all = "snake_case")]
 pub enum ProjectStatus {
@@ -58,7 +58,7 @@ impl fmt::Display for ProjectStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "TEXT", rename_all = "snake_case")]
 pub enum NodeStatus {
@@ -79,7 +79,7 @@ impl fmt::Display for NodeStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "TEXT", rename_all = "snake_case")]
 pub enum RoutingMode {
@@ -96,7 +96,7 @@ impl fmt::Display for RoutingMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "TEXT", rename_all = "snake_case")]
 pub enum DeployType {
@@ -115,7 +115,7 @@ impl fmt::Display for DeployType {
 
 // ── Domain Types ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct Node {
     pub id: String,
     pub name: String,
@@ -140,7 +140,7 @@ pub struct Node {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct Project {
     pub id: String,
     pub user_id: String,
@@ -171,7 +171,7 @@ pub struct Project {
 }
 
 /// A volume mount for a container (Docker named volume or host bind mount).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct VolumeMount {
     /// Path inside the container, e.g. "/app/uploads"
     pub path: String,
@@ -244,7 +244,7 @@ pub struct User {
 }
 
 /// Docker image statistics for a node
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ImageStats {
     pub dangling_count: u64,
     pub dangling_size: u64,
@@ -268,7 +268,7 @@ impl Default for ImageStats {
 }
 
 /// Agent health response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HealthReport {
     pub version: String,
     pub architecture: String,
@@ -283,7 +283,7 @@ pub struct HealthReport {
 }
 
 /// Agent container status response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ContainerStatus {
     pub state: String,
     pub mapped_port: Option<u16>,
@@ -295,7 +295,7 @@ pub struct ContainerStatus {
 // ── Multi-Service Types ─────────────────────────────────────────────────────
 
 /// A service within a project (one row per service in `project_services`).
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct ProjectService {
     pub project_id: String,
     pub service_name: String,
@@ -313,7 +313,7 @@ pub struct ProjectService {
 }
 
 /// A volume definition for a service (one row per mount in `project_volumes`).
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct ProjectVolume {
     pub project_id: String,
     pub service_name: String,

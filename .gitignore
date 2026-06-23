@@ -46,5 +46,10 @@ test-apps/load-tests/k6.exe
 #others
 local-release/
 
+# Generated docs (built via --dump-openapi / --generate-markdown)
+docs/openapi.json
+docs/cli-reference.md
+docs/llms-full.txt
+
 # Docker compose local overrides
 docker-compose.override.yml

@@ -147,9 +147,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/projects", get(routes::projects::list_projects))
         .route("/projects/{id}", get(routes::projects::get_project))
         .route("/projects/{id}/settings", patch(routes::settings::update_project_settings))
-        .route("/projects/{id}/stop", post(routes::manage::stop_project))
-        .route("/projects/{id}/start", post(routes::manage::start_project))
-        .route("/projects/{id}", delete(routes::manage::delete_project))
+        .route("/projects/{id}/stop", post(routes::manage::handlers::stop_project))
+        .route("/projects/{id}/start", post(routes::manage::handlers::start_project))
+        .route("/projects/{id}", delete(routes::manage::handlers::delete_project))
         .route("/projects/{id}/stats", get(routes::stats::project_stats))
         .route("/projects/{id}/logs", get(routes::stats::project_logs))
         .route("/nodes", get(routes::nodes::list_nodes))
@@ -164,8 +164,8 @@ pub fn build_router(state: AppState) -> Router {
 
     // Deploy + image upload (session OR deploy token auth — no login_required layer)
     let deploy_routes = Router::new()
-        .route("/deploy", post(routes::deploy::deploy_create))
-        .route("/deploy", put(routes::deploy::deploy_update))
+        .route("/deploy", post(routes::deploy::single::deploy_create))
+        .route("/deploy", put(routes::deploy::single::deploy_update))
         .route("/images/upload", post(routes::images::upload_image));
 
     // Deploy token management (session auth)

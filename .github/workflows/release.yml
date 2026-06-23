@@ -46,6 +46,31 @@ jobs:
       - name: Build Agent (linux aarch64)
         run: cargo build --release --bin litebin-agent --target aarch64-unknown-linux-gnu
 
+      - name: Generate docs
+        run: |
+          # Dump OpenAPI spec
+          ./target/x86_64-unknown-linux-gnu/release/litebin-orchestrator --dump-openapi > openapi.json
+
+          # Generate CLI docs
+          ./target/x86_64-unknown-linux-gnu/release/l8b --generate-markdown > cli-reference.md
+
+          # Assemble llms-full.txt from llms.txt + docs
+          {
+            cat docs/llms.txt
+            echo ""
+            echo "## OpenAPI Reference"
+            echo ""
+            echo "Auto-generated from source code via utoipa."
+            echo ""
+            echo '```json'
+            cat openapi.json
+            echo '```'
+            echo ""
+            echo "## CLI Reference"
+            echo ""
+            cat cli-reference.md
+          } > llms-full.txt
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -171,4 +196,6 @@ jobs:
             artifacts/linux/l8b-dashboard.tar.gz
             artifacts/linux/l8b-dashboard.zip
             artifacts/checksums.txt
+            openapi.json
+            llms-full.txt
           body_path: CHANGELOG.md

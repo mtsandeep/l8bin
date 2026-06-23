@@ -8,13 +8,13 @@ use crate::AppState;
 use litebin_common::types::ProjectStatus;
 use super::manage::{agent_base_url, get_node_from_db, sync_caddy};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ServiceVolumeInfo {
     pub volume_name: Option<String>,
     pub container_path: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, utoipa::ToSchema)]
 pub struct ServiceInfo {
     pub service_name: String,
     pub image: String,
@@ -40,7 +40,7 @@ pub struct ServiceInfo {
     pub volumes: Vec<ServiceVolumeInfo>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct StatsResponse {
     pub project_id: String,
     pub status: String,
@@ -50,24 +50,24 @@ pub struct StatsResponse {
     pub services: Vec<ServiceInfo>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct BatchStatsResponse {
     pub stats: Vec<StatsResponse>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DiskUsageResponse {
     pub project_id: String,
     pub size_gb: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
 pub struct LogsQuery {
     pub tail: Option<usize>,
     pub service: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct LogsResponse {
     pub project_id: String,
     pub service_name: Option<String>,
@@ -246,6 +246,16 @@ fn make_stats_response(project_id: String, status: ProjectStatus, last_active_at
 }
 
 /// GET /projects/stats — returns stats + disk + services for all projects in one call
+#[utoipa::path(
+    get,
+    path = "/projects/stats",
+    responses(
+        (status = 200, body = BatchStatsResponse),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "stats",
+    security(("session_auth" = []))
+)]
 pub async fn all_project_stats(
     State(state): State<AppState>,
 ) -> Result<Json<BatchStatsResponse>, (StatusCode, String)> {
@@ -673,6 +683,20 @@ pub async fn all_project_stats(
 }
 
 /// GET /projects/:id/stats
+#[utoipa::path(
+    get,
+    path = "/projects/{project_id}/stats",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+    ),
+    responses(
+        (status = 200, body = StatsResponse),
+        (status = 404, description = "Project not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "stats",
+    security(("session_auth" = []))
+)]
 pub async fn project_stats(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
@@ -778,6 +802,22 @@ pub async fn project_stats(
 }
 
 /// GET /projects/:id/disk-usage
+#[utoipa::path(
+    get,
+    path = "/projects/{project_id}/disk-usage",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+    ),
+    responses(
+        (status = 200, body = DiskUsageResponse),
+        (status = 404, description = "Project not found"),
+        (status = 400, description = "Bad request"),
+        (status = 500, description = "Internal server error"),
+        (status = 503, description = "Service unavailable"),
+    ),
+    tag = "stats",
+    security(("session_auth" = []))
+)]
 pub async fn project_disk_usage(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
@@ -843,6 +883,23 @@ pub async fn project_disk_usage(
 /// GET /projects/:id/logs?tail=100&service=frontend
 /// For multi-service projects, `service` selects a specific service's logs.
 /// Defaults to the public service if not specified.
+#[utoipa::path(
+    get,
+    path = "/projects/{project_id}/logs",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+        ("tail" = Option<usize>, Query, description = "Number of log lines to return"),
+        ("service" = Option<String>, Query, description = "Service name to filter logs"),
+    ),
+    responses(
+        (status = 200, body = LogsResponse),
+        (status = 404, description = "Project not found"),
+        (status = 500, description = "Internal server error"),
+        (status = 503, description = "Service unavailable"),
+    ),
+    tag = "stats",
+    security(("session_auth" = []))
+)]
 pub async fn project_logs(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
@@ -956,6 +1013,18 @@ pub async fn project_logs(
 }
 
 /// GET /projects/:id/deploy-logs — Returns in-memory deploy log lines for a project.
+#[utoipa::path(
+    get,
+    path = "/projects/{project_id}/deploy-logs",
+    params(
+        ("project_id" = String, Path, description = "Project ID"),
+    ),
+    responses(
+        (status = 200, description = "Deploy log lines"),
+    ),
+    tag = "stats",
+    security(("session_auth" = []))
+)]
 pub async fn deploy_logs(
     State(state): State<AppState>,
     Path(project_id): Path<String>,

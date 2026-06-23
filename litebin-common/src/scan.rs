@@ -4,7 +4,7 @@ use crate::types::DeployType;
 
 /// A group of foreign (non-LiteBin-managed) containers discovered during a scan.
 /// Either a Docker Compose project (all its services) or a single standalone container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ScanGroup {
     /// Docker Compose project name, or container name for standalone containers.
     pub group_key: String,
@@ -21,7 +21,7 @@ pub struct ScanGroup {
 }
 
 /// A single container within a `ScanGroup`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ScanContainer {
     pub container_id: String,
     pub original_name: String,
@@ -41,7 +41,7 @@ pub struct ScanContainer {
 }
 
 /// A port binding on a scanned container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ScannedPort {
     /// Container-side port.
     pub internal: u16,
@@ -51,7 +51,7 @@ pub struct ScannedPort {
 }
 
 /// A volume mount on a scanned container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ScannedVolume {
     /// Resolved host-side source path (bind mount) or Docker volume name.
     pub source: String,
@@ -93,7 +93,7 @@ pub fn is_local_image(image: &str) -> bool {
 }
 
 /// The combined result from `GET /scan?node_id=all`.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ScanResult {
     pub local: Vec<ScanGroup>,
     /// Map of node_id → groups found on that agent node.

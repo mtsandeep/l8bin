@@ -1,8 +1,7 @@
-mod handlers;
+pub(crate) mod handlers;
 pub mod helpers;
-mod multi_service;
+pub(crate) mod multi_service;
 
-pub use handlers::{delete_project, recreate_project, restart_service, start_project, start_service, stop_project, stop_service};
 pub use helpers::{
     agent_base_url, capture_service_digests, cleanup_unused_image, ensure_project_dir_and_env,
     get_image_digest, get_node_from_db, read_local_project_env, sync_caddy,

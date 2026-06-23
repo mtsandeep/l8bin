@@ -15,7 +15,7 @@ use crate::AppState;
 use super::stats::{ServiceInfo, ServiceVolumeInfo};
 use litebin_common::types::{VolumeMount, DeployType, ProjectStatus, scope_volume_source};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateProjectRequest {
     pub id: String,
     pub name: Option<String>,
@@ -28,7 +28,7 @@ pub struct CreateProjectRequest {
 /// Project response for the API — project metadata + public_stats.
 /// The internal `Project` struct (with all DB columns) is used by backend code;
 /// this struct is the API-facing shape.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProjectResponse {
     pub id: String,
     pub user_id: String,
@@ -174,6 +174,20 @@ async fn to_project_response(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/projects",
+    request_body = CreateProjectRequest,
+    responses(
+        (status = 201, body = ProjectResponse),
+        (status = 401),
+        (status = 400),
+        (status = 409),
+        (status = 500),
+    ),
+    tag = "projects",
+    security(("session_auth" = []))
+)]
 pub async fn create_project(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -263,6 +277,20 @@ pub async fn create_project(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/projects/{id}",
+    params(
+        ("id" = String, Path)
+    ),
+    responses(
+        (status = 200, body = ProjectResponse),
+        (status = 404),
+        (status = 500),
+    ),
+    tag = "projects",
+    security(("session_auth" = []))
+)]
 pub async fn get_project(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -287,6 +315,16 @@ pub async fn get_project(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/projects",
+    responses(
+        (status = 200, body = Vec<ProjectResponse>),
+        (status = 500),
+    ),
+    tag = "projects",
+    security(("session_auth" = []))
+)]
 pub async fn list_projects(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ProjectResponse>>, (StatusCode, String)> {
@@ -311,7 +349,7 @@ pub async fn list_projects(
 
 // ── Custom Routes ──────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateRouteRequest {
     pub route_type: String,       // "path" or "alias"
     pub path: Option<String>,
@@ -320,7 +358,7 @@ pub struct CreateRouteRequest {
     pub priority: Option<i64>,
 }
 
-#[derive(Serialize, Deserialize, FromRow)]
+#[derive(Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct ProjectRouteResponse {
     pub id: String,
     pub project_id: String,
@@ -333,6 +371,20 @@ pub struct ProjectRouteResponse {
 }
 
 /// GET /projects/:id/routes — List custom routes for a project.
+#[utoipa::path(
+    get,
+    path = "/projects/{project_id}/routes",
+    params(
+        ("project_id" = String, Path)
+    ),
+    responses(
+        (status = 200, body = Vec<ProjectRouteResponse>),
+        (status = 401),
+        (status = 500),
+    ),
+    tag = "projects",
+    security(("session_auth" = []))
+)]
 pub async fn list_routes(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -359,6 +411,23 @@ pub async fn list_routes(
 }
 
 /// POST /projects/:id/routes — Create a custom route.
+#[utoipa::path(
+    post,
+    path = "/projects/{project_id}/routes",
+    params(
+        ("project_id" = String, Path)
+    ),
+    request_body = CreateRouteRequest,
+    responses(
+        (status = 200, body = ProjectRouteResponse),
+        (status = 400),
+        (status = 409),
+        (status = 401),
+        (status = 500),
+    ),
+    tag = "projects",
+    security(("session_auth" = []))
+)]
 pub async fn create_route(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -457,6 +526,22 @@ pub async fn create_route(
 }
 
 /// DELETE /projects/:id/routes/:route_id — Delete a custom route.
+#[utoipa::path(
+    delete,
+    path = "/projects/{project_id}/routes/{route_id}",
+    params(
+        ("project_id" = String, Path),
+        ("route_id" = String, Path)
+    ),
+    responses(
+        (status = 200),
+        (status = 401),
+        (status = 404),
+        (status = 500),
+    ),
+    tag = "projects",
+    security(("session_auth" = []))
+)]
 pub async fn delete_route(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,

@@ -143,6 +143,13 @@ enum ConfigAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // --generate-markdown: print CLI docs and exit (for docs generation)
+    // Check before clap parsing to avoid requiring a subcommand
+    if std::env::args().any(|a| a == "--generate-markdown") {
+        println!("{}", clap_markdown::help_markdown::<Cli>());
+        return Ok(());
+    }
+
     let cli = Cli::parse();
     let ci_mode = ci::CiMode::from_flag(cli.ci);
 

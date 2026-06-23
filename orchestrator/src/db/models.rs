@@ -29,7 +29,7 @@ pub struct DeployToken {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct DeployTokenResponse {
     pub id: String,
     pub name: Option<String>,

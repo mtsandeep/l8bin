@@ -1,6 +1,6 @@
 use axum::{extract::State, http::{HeaderMap, StatusCode}, response::IntoResponse, Json};
 use axum_login::AuthSession;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -13,7 +13,14 @@ use litebin_common::types::ProjectStatus;
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DeployResponse {
+    pub status: String,
+    pub project_id: String,
+    pub message: String,
+}
+
+#[derive(Deserialize, Clone, utoipa::ToSchema)]
 pub struct DeployRequest {
     pub project_id: String,
     pub image: String,
@@ -32,6 +39,20 @@ pub struct DeployRequest {
     pub cleanup_volumes: Option<bool>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/deploy",
+    request_body = DeployRequest,
+    responses(
+        (status = 200, description = "Deployment started", body = DeployResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 400, description = "Invalid request"),
+        (status = 409, description = "Project already exists"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "deploy",
+    security(("session_auth" = []), ("bearer_token" = [])),
+)]
 /// POST /deploy — Create a new project deployment (fails with 409 if project already exists).
 pub async fn deploy_create(
     auth_session: AuthSession<PasswordBackend>,
@@ -71,6 +92,19 @@ pub async fn deploy_create(
     execute_deploy(state, user_id, payload, false).await
 }
 
+#[utoipa::path(
+    put,
+    path = "/deploy",
+    request_body = DeployRequest,
+    responses(
+        (status = 200, description = "Deployment started", body = DeployResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "deploy",
+    security(("session_auth" = []), ("bearer_token" = [])),
+)]
 /// PUT /deploy — Redeploy an existing project (upserts, creating if missing).
 pub async fn deploy_update(
     auth_session: AuthSession<PasswordBackend>,
