@@ -1,5 +1,6 @@
 mod activity;
 mod auth;
+mod cli;
 mod cloudflare_router;
 mod config;
 use utoipa::OpenApi;
@@ -70,6 +71,21 @@ async fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--dump-openapi") {
         println!("{}", serde_json::to_string_pretty(&openapi::ApiDoc::openapi()).unwrap());
         return Ok(());
+    }
+
+    // Subcommand dispatch (runs entirely offline, no HTTP server is started).
+    // This is unreachable from the network: no route is registered, no socket
+    // is opened. The only way to reach this branch is via the process argv.
+    let first_arg = std::env::args().nth(1);
+    match first_arg.as_deref() {
+        Some("reset-password") => return cli::reset_password().await,
+        Some(other) if !other.starts_with('-') => {
+            eprintln!("unknown subcommand: {other}");
+            eprintln!("available subcommands: reset-password");
+            eprintln!("run with no arguments to start the orchestrator server");
+            std::process::exit(2);
+        }
+        _ => {}
     }
 
     // Init tracing

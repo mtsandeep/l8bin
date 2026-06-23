@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - "Allow raw ports" and "Allow Docker access" toggles to Deploy New App form (compose mode).
 - **Biome for linting + formatting** — Replaced ESLint with Biome (Rust-based, 10–25x faster). Single `biome.json` config, pre-commit hook via nano-staged.
 - **Agent image inspect endpoint** — `GET /images/inspect` resolves any image reference to its sha256 digest. Used by orchestrator for digest-based cleanup on remote nodes.
+- **Admin password reset subcommand** — `litebin-orchestrator reset-password` for recovering from a forgotten admin password (run via `docker exec`); not exposed via HTTP.
 
 ### Changed
 - **Digest-based image cleanup on redeploy** — Old Docker images are now removed by their sha256 digest after redeploy, including same-tag updates (e.g. `nginx:latest` → `nginx:latest`). Previously, same-tag redeploys left the old version as a dangling image forever.

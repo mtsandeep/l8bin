@@ -27,6 +27,24 @@ LiteBin runs untrusted user code (Docker containers) on shared infrastructure. T
 
 The deploy endpoint supports two-tier auth: session cookie checked first, then `Authorization: Bearer <token>` fallback.
 
+### Password recovery
+
+There is no in-app "forgot password" flow (no email infrastructure is assumed). Operators recover from a forgotten admin password with the out-of-band CLI:
+
+```bash
+docker exec -it <orchestrator-container> /app/litebin-orchestrator reset-password
+```
+
+The command prompts for a username and a new password (hidden input), then writes a fresh bcrypt hash to the `users` table using the same code path as the live `change_password` endpoint.
+
+**Why this is not a security hole:**
+
+- The handler runs as an early branch in `main()` before the HTTP server starts. No route is registered, no socket is opened — it is unreachable from the network.
+- Invoking it requires `docker exec` on the orchestrator container, which is the same trust level as direct filesystem/DB access. An attacker with that access can already read or modify the SQLite DB directly.
+- Resetting the password also invalidates all existing sessions for that user, because `session_auth_hash` is derived from `password_hash`.
+
+This matches the model used by Grafana (`grafana-cli admin reset-admin-password`), Gitea, Nextcloud, and other self-hosted tools.
+
 ---
 
 ## Network Isolation
