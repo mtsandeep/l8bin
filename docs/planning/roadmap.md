@@ -741,6 +741,12 @@ LiteBin today              LiteBin + WireGuard mesh       Graduate → K8s / Clo
 
 ---
 
+## Future Considerations
+
+- **Security hardening** — core-network isolation, per-project networks for single-service apps, read-only FS docs, seccomp/AppArmor profiles, userns-remap, audit logging, disk quotas. Not on the active roadmap; captured with cost/benefit analysis in [security-hardening.md](security-hardening.md). The current baseline (volume translation + `cap_drop ALL` + multi-service per-project networks) is sufficient for litebin's compromised-app containment threat model.
+
+---
+
 ## CLI Scope (Deferred Decision)
 
 As features grow, the CLI has 40+ planned commands across all planning docs. This is too many — most users use the dashboard, CLI is for CI/CD and occasional terminal ops. CLI-only users are a tiny minority for a self-hosted PaaS.

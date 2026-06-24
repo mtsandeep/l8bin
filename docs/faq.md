@@ -304,6 +304,30 @@ l8b deploy --project myapp --service api --service worker
 
 LiteBin routes traffic to one port per project (the public service's port). Other ports are exposed on the container and accessible for inter-service communication via the Docker network. To expose additional ports externally, enable **Allow raw ports** in the dashboard (Settings → General) — this binds all compose-declared ports directly on the host, including non-HTTP protocols like UDP. See [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake) for caveats.
 
+The public service is detected automatically — no labels or config needed:
+
+1. If a service has `litebin.public=true`, it wins (error if multiple have it)
+2. Otherwise, a service exposing container port 80 or 443 is picked (if exactly one)
+3. Otherwise, if only one service exposes any port, that one is picked
+4. Otherwise, the project has no public service (internal-only — useful for databases, workers, etc.)
+
+### LiteBin-reserved ports (even with Allow raw ports)
+
+The host side of your compose `ports:` is always ignored — LiteBin never lets an app choose which host port to bind. When `Allow raw ports` is enabled, LiteBin reads only the *container* port and binds it to the same number on the host (e.g., `ports: - "25565:25565/udp"` works for a Minecraft server).
+
+The following ports are reserved for LiteBin's own services and are **never bound on the host**, even with `Allow raw ports` enabled:
+
+| Port | Used by | Source |
+|---|---|---|
+| 80 | Caddy HTTP | Fixed (Caddyfile) |
+| 443 | Caddy HTTPS / HTTP/3 | Fixed (Caddyfile) |
+| 2019 | Caddy admin API | Fixed (Caddyfile) |
+| 5080 | Orchestrator HTTP | `PORT` env var, default 5080 |
+| 5083 | Agent host port | Conventional install-script mapping |
+| 8443 | Agent internal HTTPS | `AGENT_PORT` env var, default 8443 |
+
+If your compose declares one of these (e.g., `ports: - "8282:80/tcp"` for a web app), the binding is silently skipped with a warning log. Web apps on container port 80 or 443 are accessible via their Caddy route (the project subdomain), not via direct host port. Apps that genuinely need raw external access (game servers, non-HTTP databases) should pick a container port outside the reserved list.
+
 ### Networks defined in my compose file are ignored
 
 LiteBin creates and manages a single Docker network per project (`litebin_<project_id>`), connects all services and the agent to it, and ignores any `networks` definitions in the compose file. If you have multiple networks for organizing services, they will not be created — all services communicate on the same network.

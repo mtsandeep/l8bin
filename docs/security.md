@@ -2,7 +2,7 @@
 
 ## Threat Model
 
-LiteBin runs untrusted user code (Docker containers) on shared infrastructure. The primary threats:
+LiteBin runs many app containers on shared infrastructure. Apps are treated as untrusted — they may be compromised via CVEs, supply-chain attacks, or misconfiguration. Each app must be isolated from other apps and from the host. The primary threats:
 
 | Threat | Source | Impact |
 |---|---|---|
@@ -43,7 +43,7 @@ The command prompts for a username and a new password (hidden input), then write
 - Invoking it requires `docker exec` on the orchestrator container, which is the same trust level as direct filesystem/DB access. An attacker with that access can already read or modify the SQLite DB directly.
 - Resetting the password also invalidates all existing sessions for that user, because `session_auth_hash` is derived from `password_hash`.
 
-This matches the model used by Grafana (`grafana-cli admin reset-admin-password`), Gitea, Nextcloud, and other self-hosted tools.
+This matches the model used by other self-hosted tools (out-of-band CLI for password recovery).
 
 ---
 
@@ -86,7 +86,7 @@ Root CA (self-signed, ECDSA P-256)
 | Control | Value |
 |---|---|
 | `cap_drop` | `ALL` |
-| `cap_add` | `CHOWN`, `DAC_OVERRIDE`, `SETGID`, `SETUID`, `NET_BIND_SERVICE`, `KILL` |
+| `cap_add` | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `SETGID`, `SETUID`, `NET_BIND_SERVICE`, `KILL` |
 | `security_opt` | `no-new-privileges` |
 | `pids_limit` | 4096 |
 | `log_config` | max-size 10m, max-file 3 |
@@ -97,18 +97,22 @@ Root CA (self-signed, ECDSA P-256)
 
 ### Capability strategy
 
-All 14 default Linux capabilities are dropped, then 6 are added back for app compatibility. `no-new-privileges` ensures these cannot be escalated further.
+All 14 default Linux capabilities are dropped, then 8 are added back for app compatibility. `no-new-privileges` ensures these cannot be escalated further.
 
 | Capability | Reason |
 |---|---|
 | `CHOWN` | Frameworks and build tools need to change file ownership |
 | `DAC_OVERRIDE` | Apps need to read/write files they don't own |
+| `FOWNER` | Required for `chmod`/`chown` on files not owned by the caller (PHP/Apache entrypoints, log rotation) |
+| `FSETID` | Required to set the sticky bit on directories (e.g. `chmod 1777 /tmp`) — needed by many image entrypoints during initialization |
 | `SETGID` | Required by many runtimes and package managers |
 | `SETUID` | Required by many frameworks for user switching |
 | `NET_BIND_SERVICE` | Some apps bind to privileged ports |
 | `KILL` | Process management within the container |
 
-Capabilities still blocked (not added back): `CAP_NET_RAW` (no packet sniffing), `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, and others.
+`FOWNER` and `FSETID` were added because a large class of PHP/Apache-style image entrypoints run `chmod 1777 /tmp` during init, which requires `FSETID`. Neither capability enables container escape or lateral movement — they only affect operations *inside* the container's own filesystem namespace.
+
+Capabilities still blocked (not added back): `CAP_NET_RAW` (no packet sniffing or ARP spoofing of neighbor containers), `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_SYS_MODULE`, `CAP_NET_ADMIN`, `CAP_DAC_READ_SEARCH`, and others. These are the capabilities that enable container escape or cross-app attack paths.
 
 ---
 

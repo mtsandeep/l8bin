@@ -1,4 +1,5 @@
 use anyhow::Result;
+use litebin_common::types::DEFAULT_AGENT_PORT;
 use serde::{Deserialize, Serialize};
 
 pub struct Config {
@@ -39,7 +40,7 @@ impl Config {
 
         Ok(Config {
             agent_port: std::env::var("AGENT_PORT")
-                .unwrap_or_else(|_| "8443".to_string())
+                .unwrap_or_else(|_| DEFAULT_AGENT_PORT.to_string())
                 .parse()?,
             cert_path,
             key_path,

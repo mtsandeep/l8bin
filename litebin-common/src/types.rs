@@ -16,6 +16,29 @@ pub const COMPOSE_FILE_NAMES: &[&str] = &[
 /// "Allow Docker access" is enabled. Used across agent, orchestrator,
 /// and litebin-common for container naming, label filtering, and proxy detection.
 pub const DOCKER_PROXY_SERVICE: &str = "litebin-docker-proxy";
+
+// ── Port constants ───────────────────────────────────────────────────────────
+
+pub const CADDY_HTTP_PORT: &str = "80";
+pub const CADDY_HTTPS_PORT: &str = "443";
+pub const CADDY_ADMIN_PORT: &str = "2019";
+pub const DEFAULT_ORCHESTRATOR_PORT: &str = "5080";
+pub const DEFAULT_AGENT_PORT: &str = "8443";
+/// Conventional agent host-side mapping (`-p 5083:8443`); not env-discoverable.
+pub const DEFAULT_AGENT_HOST_PORT: &str = "5083";
+
+/// Host ports reserved by LiteBin's own services — never bound by app containers,
+/// even with `allow_raw_ports` enabled.
+pub fn litebin_reserved_host_ports() -> Vec<String> {
+    vec![
+        CADDY_HTTP_PORT.into(),
+        CADDY_HTTPS_PORT.into(),
+        CADDY_ADMIN_PORT.into(),
+        std::env::var("PORT").unwrap_or_else(|_| DEFAULT_ORCHESTRATOR_PORT.into()),
+        std::env::var("AGENT_PORT").unwrap_or_else(|_| DEFAULT_AGENT_PORT.into()),
+        DEFAULT_AGENT_HOST_PORT.into(),
+    ]
+}
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Type};
 

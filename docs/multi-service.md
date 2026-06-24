@@ -212,7 +212,7 @@ Denormalized fields on `projects` for the fast health-check path (no JOINs neede
 | `image` / `build` | String or object form |
 | `command` / `entrypoint` | String or list form |
 | `environment` | Map or list form (compose env takes precedence over LiteBin env overrides) |
-| `ports` | List of strings (`"8080"`, `"80:3000"`, `"9090/udp"`) |
+| `ports` | List of strings (`"8080"`, `"80:3000"`, `"9090/udp"`). The host side is ignored — LiteBin uses only the container port for routing and (with Allow raw ports enabled) binds it to the same number on the host. See [FAQ: LiteBin-reserved ports](faq.md#litebin-reserved-ports-even-with-allow-raw-ports) for the list of host ports that are always refused. |
 | `depends_on` | List form or map form with conditions |
 | `volumes` | Supported |
 | `healthcheck` | List form and string form (`CMD`/`CMD-SHELL`) |

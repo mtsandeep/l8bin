@@ -26,6 +26,7 @@ RUN cargo build --release -p litebin-orchestrator 2>/dev/null || true
 COPY litebin-common/src litebin-common/src
 COPY orchestrator/src orchestrator/src
 COPY compose-bollard/src compose-bollard/src
+COPY docs/llms.txt docs/llms.txt
 
 RUN touch litebin-common/src/lib.rs orchestrator/src/main.rs compose-bollard/src/lib.rs \
     && cargo build --release -p litebin-orchestrator

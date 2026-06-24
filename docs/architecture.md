@@ -193,7 +193,7 @@ Root CA (self-signed, ECDSA P-256)
 
 | Control | Value |
 |---|---|
-| Capabilities | `cap_drop: ALL`, `cap_add: CHOWN, DAC_OVERRIDE, SETGID, SETUID, NET_BIND_SERVICE, KILL` |
+| Capabilities | `cap_drop: ALL`, `cap_add: CHOWN, DAC_OVERRIDE, FOWNER, FSETID, SETGID, SETUID, NET_BIND_SERVICE, KILL` |
 | Privilege escalation | `no-new-privileges` |
 | Process limit | 4096 (fork bomb prevention) |
 | Log rotation | 10 MB max, 3 files |

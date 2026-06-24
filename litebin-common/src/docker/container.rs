@@ -17,7 +17,10 @@ use bollard::query_parameters::{
 };
 use futures_util::StreamExt;
 
-use crate::types::{container_name, parse_container_name, project_network_name, RunServiceConfig};
+use crate::types::{
+    RunServiceConfig, container_name, litebin_reserved_host_ports, parse_container_name,
+    project_network_name,
+};
 
 use super::{DockerManager, RunningContainer};
 
@@ -33,9 +36,10 @@ impl DockerManager {
             .and_then(|ns| ns.ports.as_ref())
             .and_then(|ports| {
                 ports.values().find_map(|bindings| {
-                    bindings.as_ref()?.first().and_then(|b| {
-                        b.host_port.as_ref().and_then(|p| p.parse::<u16>().ok())
-                    })
+                    bindings
+                        .as_ref()?
+                        .first()
+                        .and_then(|b| b.host_port.as_ref().and_then(|p| p.parse::<u16>().ok()))
                 })
             });
         Ok(port)
@@ -152,7 +156,8 @@ impl DockerManager {
         let single_name = format!("litebin-{}", project_id);
         if let Ok(single_ids) = self.list_containers_by_prefix(&single_name).await {
             for cid in &single_ids {
-                if !cid.starts_with(&prefix) { // avoid double-remove
+                if !cid.starts_with(&prefix) {
+                    // avoid double-remove
                     let _ = self.stop_container(cid).await;
                     let _ = self.remove_container(cid).await;
                 }
@@ -218,9 +223,10 @@ impl DockerManager {
             }
         }
 
-        // When allow_raw_ports is set, bind all non-public compose-declared ports directly
-        // on the host (e.g., UDP for game servers, TCP for databases). The public HTTP
-        // port is already handled by Caddy and is skipped above.
+        // When allow_raw_ports is set, bind compose-declared ports directly on the host
+        // (e.g., UDP for game servers, TCP for databases). LiteBin-reserved ports are
+        // always refused to avoid conflicts with Caddy/orchestrator/agent.
+        let reserved_ports = litebin_reserved_host_ports();
         if config.allow_raw_ports {
             if let Some(ref bollard_body) = config.bollard_create_body {
                 if let Some(ref compose_exposed) = bollard_body.exposed_ports {
@@ -231,6 +237,15 @@ impl DockerManager {
                         }
                         // Parse the port number from spec (e.g. "5432/udp" -> "5432")
                         let host_port = port_spec.split('/').next().unwrap_or("0");
+                        if reserved_ports.iter().any(|p| p == host_port) {
+                            tracing::warn!(
+                                service = %config.service_name,
+                                project_id = %config.project_id,
+                                port = %host_port,
+                                "skipping host bind for litebin-reserved port even with allow_raw_ports"
+                            );
+                            continue;
+                        }
                         port_bindings.insert(
                             port_spec.clone(),
                             Some(vec![PortBinding {
@@ -309,6 +324,8 @@ impl DockerManager {
             host.cap_add = Some(vec![
                 "CHOWN".to_string(),
                 "DAC_OVERRIDE".to_string(),
+                "FOWNER".to_string(),
+                "FSETID".to_string(),
                 "SETGID".to_string(),
                 "SETUID".to_string(),
                 "NET_BIND_SERVICE".to_string(),
@@ -399,10 +416,13 @@ impl DockerManager {
             body.networking_config = Some(NetworkingConfig {
                 endpoints_config: Some({
                     let mut map = HashMap::new();
-                    map.insert(net_name, EndpointSettings {
-                        aliases: Some(vec![config.service_name.clone()]),
-                        ..Default::default()
-                    });
+                    map.insert(
+                        net_name,
+                        EndpointSettings {
+                            aliases: Some(vec![config.service_name.clone()]),
+                            ..Default::default()
+                        },
+                    );
                     map
                 }),
             });
@@ -416,8 +436,14 @@ impl DockerManager {
             if config.service_name != crate::types::DOCKER_PROXY_SERVICE {
                 let mut labels = HashMap::new();
                 labels.insert("litebin.project_id".to_string(), config.project_id.clone());
-                labels.insert("com.docker.compose.service".to_string(), config.service_name.clone());
-                labels.insert("com.docker.compose.project".to_string(), config.project_id.clone());
+                labels.insert(
+                    "com.docker.compose.service".to_string(),
+                    config.service_name.clone(),
+                );
+                labels.insert(
+                    "com.docker.compose.project".to_string(),
+                    config.project_id.clone(),
+                );
                 if let Some(ref existing_labels) = body.labels {
                     labels.extend(existing_labels.clone());
                 }
@@ -452,18 +478,21 @@ impl DockerManager {
                 },
                 host_config: Some(host_config),
                 env: if env.is_empty() { None } else { Some(env) },
-                cmd: config
-                    .cmd
-                    .as_deref()
-                    .and_then(|c| shlex::split(c)),
+                cmd: config.cmd.as_deref().and_then(|c| shlex::split(c)),
                 labels: if config.service_name == crate::types::DOCKER_PROXY_SERVICE {
                     None
                 } else {
                     Some({
                         let mut labels = HashMap::new();
                         labels.insert("litebin.project_id".to_string(), config.project_id.clone());
-                        labels.insert("com.docker.compose.service".to_string(), config.service_name.clone());
-                        labels.insert("com.docker.compose.project".to_string(), config.project_id.clone());
+                        labels.insert(
+                            "com.docker.compose.service".to_string(),
+                            config.service_name.clone(),
+                        );
+                        labels.insert(
+                            "com.docker.compose.project".to_string(),
+                            config.project_id.clone(),
+                        );
                         labels
                     })
                 },
@@ -550,8 +579,15 @@ impl DockerManager {
         image_user: Option<&str>,
     ) {
         // Resolve effective user: compose override > image default
-        let effective_user = config.user.as_deref()
-            .or_else(|| config.bollard_create_body.as_ref().and_then(|b| b.user.as_deref()))
+        let effective_user = config
+            .user
+            .as_deref()
+            .or_else(|| {
+                config
+                    .bollard_create_body
+                    .as_ref()
+                    .and_then(|b| b.user.as_deref())
+            })
             .or(image_user);
 
         let Some(user_str) = effective_user else {
@@ -577,7 +613,8 @@ impl DockerManager {
         }
 
         let host_dir = self.host_projects_dir.as_deref();
-        let project_base = host_dir.map(|hd| std::path::Path::new(hd).canonicalize().ok())
+        let project_base = host_dir
+            .map(|hd| std::path::Path::new(hd).canonicalize().ok())
             .flatten()
             .or_else(|| std::path::Path::new("projects").canonicalize().ok());
 
@@ -593,14 +630,14 @@ impl DockerManager {
                 source.to_string()
             };
 
-            if let Err(e) = std::fs::create_dir_all(path) {
+            if let Err(e) = std::fs::create_dir_all(&host_path) {
                 tracing::warn!(path = %host_path, error = %e, "failed to create bind mount directory for non-root container");
                 continue;
             }
 
             // Verify the resolved path stays within the project directory
             if let Some(ref base) = project_base {
-                if let Ok(resolved) = path.canonicalize() {
+                if let Ok(resolved) = std::path::Path::new(&host_path).canonicalize() {
                     if !resolved.starts_with(base) {
                         tracing::warn!(path = %host_path, resolved = %resolved.display(), base = %base.display(), "bind mount path escapes project directory, skipping chown");
                         continue;
@@ -662,7 +699,9 @@ impl DockerManager {
         &self,
         container_name: &str,
         since: Option<i64>,
-    ) -> impl StreamExt<Item = Result<bollard::container::LogOutput, bollard::errors::Error>> + Send + Unpin {
+    ) -> impl StreamExt<Item = Result<bollard::container::LogOutput, bollard::errors::Error>>
+    + Send
+    + Unpin {
         let options = LogsOptions {
             follow: true,
             stdout: true,
@@ -694,7 +733,11 @@ impl DockerManager {
     /// Returns Ok if healthy, or the last error if it becomes unhealthy or times out.
     /// When `expect_healthcheck` is true, keeps polling even if health is None (first
     /// check hasn't run yet). When false, returns immediately if no healthcheck exists.
-    pub async fn wait_for_healthy(&self, container_id: &str, expect_healthcheck: bool) -> anyhow::Result<()> {
+    pub async fn wait_for_healthy(
+        &self,
+        container_id: &str,
+        expect_healthcheck: bool,
+    ) -> anyhow::Result<()> {
         use bollard::models::HealthStatusEnum;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
@@ -710,14 +753,16 @@ impl DockerManager {
                 Some(h) => match &h.status {
                     Some(HealthStatusEnum::HEALTHY) => return Ok(()),
                     Some(HealthStatusEnum::UNHEALTHY) => {
-                        let log_msg = h.log.as_ref()
+                        let log_msg = h
+                            .log
+                            .as_ref()
                             .and_then(|logs| logs.last())
                             .and_then(|l| l.output.as_deref())
                             .unwrap_or("");
                         anyhow::bail!("container unhealthy: {}", log_msg);
                     }
                     _ => {} // EMPTY, NONE, STARTING — keep polling
-                }
+                },
             }
             if tokio::time::Instant::now() >= deadline {
                 anyhow::bail!("healthcheck timeout after 60s");
@@ -733,12 +778,16 @@ impl DockerManager {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             let info = self.docker.inspect_container(container_id, None).await?;
-            let has_valid_ip = info.network_settings.as_ref()
+            let has_valid_ip = info
+                .network_settings
+                .as_ref()
                 .and_then(|ns| ns.networks.as_ref())
-                .map(|nets| nets.values().any(|net| {
-                    let ip = net.ip_address.as_deref().unwrap_or("");
-                    !ip.is_empty() && ip != "invalid"
-                }))
+                .map(|nets| {
+                    nets.values().any(|net| {
+                        let ip = net.ip_address.as_deref().unwrap_or("");
+                        !ip.is_empty() && ip != "invalid"
+                    })
+                })
                 .unwrap_or(false);
 
             if has_valid_ip {
@@ -757,9 +806,10 @@ impl DockerManager {
     pub async fn find_container_by_name(&self, name: &str) -> anyhow::Result<Option<String>> {
         let options = ListContainersOptions {
             all: true,
-            filters: Some(std::collections::HashMap::from([
-                ("name".to_string(), vec![name.to_string()]),
-            ])),
+            filters: Some(std::collections::HashMap::from([(
+                "name".to_string(),
+                vec![name.to_string()],
+            )])),
             ..Default::default()
         };
         let containers = self.docker.list_containers(Some(options)).await?;
@@ -793,7 +843,10 @@ impl DockerManager {
     pub async fn list_containers_by_prefix(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
         let options = ListContainersOptions {
             all: true,
-            filters: Some(HashMap::from([("name".to_string(), vec![prefix.to_string()])])),
+            filters: Some(HashMap::from([(
+                "name".to_string(),
+                vec![prefix.to_string()],
+            )])),
             ..Default::default()
         };
         let containers = self.docker.list_containers(Some(options)).await?;
@@ -817,17 +870,16 @@ impl DockerManager {
             };
             for name in names {
                 let trimmed = name.trim_start_matches('/');
-                if let Some((project_id, service_name, instance_id)) =
-                    parse_container_name(trimmed)
+                if let Some((project_id, service_name, instance_id)) = parse_container_name(trimmed)
                 {
                     // Extract ports from list response
                     let ports = c.ports.as_ref().and_then(|ports| {
-                        ports.iter().find_map(|p| {
-                            match (p.private_port, p.public_port) {
+                        ports
+                            .iter()
+                            .find_map(|p| match (p.private_port, p.public_port) {
                                 (internal, Some(public)) => Some((internal, public)),
                                 _ => None,
-                            }
-                        })
+                            })
                     });
                     if let Some((internal_port, mapped_port)) = ports {
                         result.push(RunningContainer {

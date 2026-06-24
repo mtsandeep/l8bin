@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Reserved-port check for `allow_raw_ports`** — LiteBin service ports (80, 443, 2019, 5080, 5083, 8443) are silently skipped instead of crashing on "port already allocated".
+- **Port constants in `litebin-common`** — Single source of truth for Caddy (80/443/2019), orchestrator (5080), and agent (8443/5083) ports. Orchestrator and agent config fallbacks now reference these constants instead of inline string literals.
 - **Volume permission handling for non-root containers** — Automatically chowns relative bind mount directories before starting a container, based on the image's `USER` directive.
 - **OpenAPI spec** — Auto-generated via utoipa, served at `/openapi.json` and `/llms.txt`.
 - **Scalar API docs** — Interactive API reference at `/docs` (orchestrator and landing site).
@@ -38,6 +40,7 @@ All notable changes to this project will be documented in this file.
 - **Missing `docker-compose.yaml` in scan** — Docker scan now checks all compose file name variants.
 - **Docker socket handling** — Containers with `/var/run/docker.sock` mounts no longer fail deploy/recreate when "Allow Docker access" is disabled; socket is stripped silently with a warning toast. Proxy sidecar waits for network readiness before dependent services start.
 - **Non-fatal port mapping** — `run_service_container` no longer fails when a container exits immediately (e.g. missing docker.sock); returns port=0 and lets status polling resolve it.
+- **PHP-style entrypoint init** — Added `FOWNER` + `FSETID` to the capability whitelist. Fixes PHP/Apache images that fail with `chmod: /tmp: Operation not permitted` during init.
 
 ## [0.2.17] - 2026-05-08
 
