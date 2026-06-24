@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Landing docs site** — Sticky sidebar, mobile drawer, hash-routed cross-doc links, and full markdown rendering (tables, CRLF, lists, blockquotes); synced architecture deep-dives into sidebar and deploy workflow.
 - **Release docs assets** — Upload `openapi.json`, `cli-reference.md`, and `llms-full.txt` as an artifact so they reach the release job (and add the missing `cli-reference.md` to the release file list).
 
 ## [0.3.0] - 2026-06-24

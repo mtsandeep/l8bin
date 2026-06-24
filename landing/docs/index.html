@@ -10,23 +10,24 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/docs/src/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
   <script type="module" src="/docs/src/main.js"></script>
 </head>
 <body class="bg-night-950 text-zinc-300 antialiased min-h-screen">
   <!-- Nav -->
   <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
-    <div class="max-w-[1400px] mx-auto px-6 h-14 flex items-center justify-between">
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
       <a href="/" class="flex items-center gap-1"><img src="/logo.png" alt="" class="h-[30px]" /><span class="font-black text-white tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
       <div class="flex items-center gap-3">
-        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub</a>
-        <a href="/" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Home</a>
+        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
+        <a href="/" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Back to Home</a>
       </div>
     </div>
   </nav>
 
-  <div id="layout" class="max-w-[1400px] mx-auto flex min-h-[calc(100vh-56px)]">
+  <div id="layout" class="flex min-h-[calc(100vh-56px)]">
     <!-- Sidebar -->
-    <aside id="sidebar" class="w-64 shrink-0 border-r border-white/5 bg-night-950/50 p-6 sticky top-14 h-[calc(100vh-56px)] overflow-y-auto hidden lg:block">
+    <aside id="sidebar" class="w-64 shrink-0 border-r border-white/5 bg-night-950/50 p-6 fixed left-0 top-14 h-[calc(100vh-56px)] overflow-y-auto z-30">
       <div class="mb-8">
         <h2 class="text-[0.65rem] font-bold text-zinc-500 uppercase tracking-widest mb-4">Reference</h2>
         <ul class="space-y-1">
@@ -39,20 +40,32 @@
         <h2 class="text-[0.65rem] font-bold text-zinc-500 uppercase tracking-widest mb-4">Guides</h2>
         <ul class="space-y-1">
           <li><a href="#quickstart" data-nav="quickstart" class="nav-item">Quick Start</a></li>
+        </ul>
+      </div>
+
+      <div class="mb-8">
+        <h2 class="text-[0.65rem] font-bold text-zinc-500 uppercase tracking-widest mb-4">Docs</h2>
+        <ul class="space-y-1">
           <li><a href="#multi-service" data-nav="multi-service" class="nav-item">Multi-Service</a></li>
           <li><a href="#multi-server" data-nav="multi-server" class="nav-item">Multi-Server</a></li>
           <li><a href="#volumes" data-nav="volumes" class="nav-item">Volumes</a></li>
           <li><a href="#env-secrets" data-nav="env-secrets" class="nav-item">Env &amp; Secrets</a></li>
           <li><a href="#configuration" data-nav="configuration" class="nav-item">Configuration</a></li>
+          <li><a href="#local-testing" data-nav="local-testing" class="nav-item">Local Testing</a></li>
+          <li><a href="#security" data-nav="security" class="nav-item">Security</a></li>
+          <li><a href="#faq" data-nav="faq" class="nav-item">FAQ</a></li>
         </ul>
       </div>
 
       <div>
-        <h2 class="text-[0.65rem] font-bold text-zinc-500 uppercase tracking-widest mb-4">Self-Hosting</h2>
+        <h2 class="text-[0.65rem] font-bold text-zinc-500 uppercase tracking-widest mb-4">Architecture</h2>
         <ul class="space-y-1">
-          <li><a href="#local-testing" data-nav="local-testing" class="nav-item">Local Testing</a></li>
-          <li><a href="#security" data-nav="security" class="nav-item">Security</a></li>
-          <li><a href="#faq" data-nav="faq" class="nav-item">FAQ</a></li>
+          <li><a href="#architecture" data-nav="architecture" class="nav-item">Overview</a></li>
+          <li><a href="#decisions" data-nav="decisions" class="nav-item">Design Decisions</a></li>
+          <li><a href="#failure-model" data-nav="failure-model" class="nav-item">Failure Model</a></li>
+          <li><a href="#waker" data-nav="waker" class="nav-item">Waker</a></li>
+          <li><a href="#janitor" data-nav="janitor" class="nav-item">Janitor</a></li>
+          <li><a href="#user-flows" data-nav="user-flows" class="nav-item">User Flows</a></li>
         </ul>
       </div>
     </aside>
@@ -63,7 +76,7 @@
     </button>
 
     <!-- Main content -->
-    <main id="content" class="flex-1 min-w-0">
+    <main id="content" class="flex-1 min-w-0 lg:ml-64">
       <!-- Scalar API docs (default view) -->
       <div id="view-api" class="h-[calc(100vh-56px)]">
         <div id="scalar-app"></div>

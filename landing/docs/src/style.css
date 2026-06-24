@@ -157,6 +157,58 @@
   font-size: 0.82em;
 }
 
+/* Tables */
+.prose-docs .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
+  display: block;
+  overflow-x: auto;
+}
+
+.prose-docs .md-table th,
+.prose-docs .md-table td {
+  text-align: left;
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+
+.prose-docs .md-table thead th {
+  background: rgba(124, 58, 237, 0.1);
+  color: #e9d5ff;
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid rgba(124, 58, 237, 0.25);
+}
+
+.prose-docs .md-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Ordered lists */
+.prose-docs ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.prose-docs ol li {
+  margin-bottom: 0.35rem;
+}
+
+/* Blockquotes */
+.prose-docs blockquote {
+  border-left: 3px solid rgba(124, 58, 237, 0.5);
+  background: rgba(124, 58, 237, 0.06);
+  padding: 0.6rem 1rem;
+  margin: 0 0 1rem 0;
+  border-radius: 0 6px 6px 0;
+  color: #d4d4d8;
+}
+
 /* Mobile sidebar overlay */
 @media (max-width: 1023px) {
   #sidebar {

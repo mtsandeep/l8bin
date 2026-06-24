@@ -9,6 +9,7 @@
 - [Networking & Firewalls](#networking--firewalls)
 - [Environment Variables (.env)](#environment-variables-env)
 - [Docker Compose / Multi-Service](#docker-compose--multi-service)
+- [Build Context & .dockerignore](#build-context--dockerignore)
 - [Docker Socket Access](#docker-socket-access)
 - [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake)
 - [Volumes & Persistent Data](#volumes--persistent-data)
@@ -365,7 +366,45 @@ api:
 
 ---
 
-## Volumes & Persistent Data
+## Build Context & .dockerignore
+
+### How does `l8b` decide what to exclude from the Docker build context?
+
+The CLI generates a `<Dockerfile>.dockerignore` next to your Dockerfile (Docker auto-detects it via the naming convention). The base content is taken from the **first** of these files that exists **in the project directory** (the folder passed to `--path`, or the current dir):
+
+1. `.dockerignore`
+2. `.gitignore` (fallback)
+
+If `.dockerignore` is present, `.gitignore` is **ignored entirely** — they are not merged. This means a stray pattern in `.gitignore` (like a generated folder you need at build time) won't leak into the Docker context once you add a `.dockerignore`.
+
+### My `COPY` fails with "excluded by .dockerignore" for a file that's only in `.gitignore`
+
+This happens when there's no `.dockerignore` in the project dir, so the CLI falls back to `.gitignore` and copies its rules into the generated ignore file. Fix it by adding a `.dockerignore` that lists only what should actually be excluded from the Docker build.
+
+Example — a project where generated docs live in `public/docs/` (gitignored), but the Dockerfile needs them:
+
+```gitignore
+# .gitignore
+public/docs/
+```
+
+```dockerignore
+# .dockerignore (now used instead of .gitignore)
+node_modules
+dist
+.git
+*.log
+```
+
+With `.dockerignore` in place, `public/docs/` is no longer excluded from the Docker context and `COPY public/docs/ public/docs/` works.
+
+### The CLI always creates a `<Dockerfile>.dockerignore` — even when `.dockerignore` exists
+
+Yes. The CLI never reuses `.dockerignore` directly — it always writes a new `<Dockerfile>.dockerignore` whose content is the chosen base (`.dockerignore` if present, else `.gitignore`), optionally followed by `!.env*` when secrets are injected. The original `.dockerignore` is left untouched.
+
+---
+
+
 
 ### "Permission denied" when my app writes to a volume
 

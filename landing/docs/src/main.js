@@ -12,10 +12,23 @@ const DOC_MAP = {
   'local-testing': '/docs/guides/local-testing.md',
   'security': '/docs/guides/security.md',
   'faq': '/docs/guides/faq.md',
+  'architecture': '/docs/guides/architecture.md',
+  'decisions': '/docs/guides/decisions.md',
+  'failure-model': '/docs/guides/failure-model.md',
+  'janitor': '/docs/guides/janitor.md',
+  'user-flows': '/docs/guides/user-flows.md',
+  'waker': '/docs/guides/waker.md',
 };
 
 let currentView = 'api';
 let scalarApp = null;
+
+// Reverse lookup: filename → DOC_MAP key (for rewriting .md links to SPA routes)
+const DOC_KEY_BY_FILE = Object.fromEntries(
+  Object.entries(DOC_MAP)
+    .filter(([, url]) => url?.endsWith('.md'))
+    .map(([key, url]) => [url.split('/').pop(), key])
+);
 
 // Init Scalar
 function initScalar() {
@@ -25,12 +38,15 @@ function initScalar() {
     theme: 'purple',
     darkMode: true,
     layout: 'modern',
+    showDeveloperTools: 'never',
+    hiddenClients: true,
+    hideTestRequestButton: true,
     customCss: `.scalar-app { --scalar-color-1: #7c3aed; --scalar-background: #030308; --scalar-sidebar-background: #030308; }`,
   });
 }
 
 // Switch view
-async function showView(name) {
+async function showView(name, anchor) {
   const url = DOC_MAP[name];
   // External links (full page navigation)
   if (url && !url.endsWith('.md')) {
@@ -54,8 +70,8 @@ async function showView(name) {
   } else {
     apiView.classList.add('hidden');
     docsView.classList.remove('hidden');
-    history.replaceState(null, '', '#' + name);
-    await loadMarkdown(name);
+    history.replaceState(null, '', '#' + name + (anchor ? '/' + anchor : ''));
+    await loadMarkdown(name, anchor);
   }
 
   // Close mobile sidebar
@@ -63,7 +79,7 @@ async function showView(name) {
 }
 
 // Load and render markdown
-async function loadMarkdown(name) {
+async function loadMarkdown(name, anchor) {
   const url = DOC_MAP[name];
   if (!url) return;
 
@@ -73,9 +89,20 @@ async function loadMarkdown(name) {
   try {
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    // Vite SPA fallback can return index.html (200) for missing files — reject it
+    const ct = resp.headers.get('content-type') || '';
+    if (ct.includes('text/html')) throw new Error(`Document not found: ${url}`);
     const md = await resp.text();
+    if (!md.trim() || md.trimStart().startsWith('<!')) throw new Error(`Document not found: ${url}`);
     content.innerHTML = renderMarkdown(md);
-    // Scroll to top of content
+    // Scroll to anchor if provided, otherwise top of content
+    if (anchor) {
+      const target = document.getElementById(anchor);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+    }
     content.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
     content.innerHTML = `<p class="text-red-400">Failed to load document: ${e.message}</p>`;
@@ -84,40 +111,91 @@ async function loadMarkdown(name) {
 
 // Simple markdown → HTML (no dependency, covers common patterns)
 function renderMarkdown(md) {
-  let html = md
-    // Code blocks (fenced)
+  // Extract fenced code blocks first so later replacements (especially the
+  // paragraph wrap) can't mangle their contents. Placeholders look like HTML
+  // tags so the paragraph regex skips them.
+  const codeBlocks = [];
+  let html = md.replace(/\r\n/g, '\n')
     .replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
       const escaped = escapeHtml(code.trimEnd());
-      return `<pre class="code-block"><code class="lang-${lang || 'text'}">${escaped}</code></pre>`;
+      codeBlocks.push(`<pre class="code-block"><code class="lang-${lang || 'text'}">${escaped}</code></pre>`);
+      return `<div data-cb="${codeBlocks.length - 1}"></div>`;
+    });
+
+  html = html
+    // GFM tables: header row | separator | body rows
+    .replace(/(^\|[^\n]+\|\s*\n\|[\s|:-]+\|\s*\n(?:\|[^\n]+\|\s*\n?)+)/gm, (block) => {
+      const lines = block.trim().split('\n');
+      const splitRow = (line) =>
+        line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+      const header = splitRow(lines[0]);
+      const rows = lines.slice(2).map(splitRow);
+      let out = '<table class="md-table"><thead><tr>' +
+        header.map(h => `<th>${h}</th>`).join('') +
+        '</tr></thead><tbody>';
+      for (const row of rows) out += '<tr>' + row.map(c => `<td>${c}</td>`).join('') + '</tr>';
+      out += '</tbody></table>';
+      return out + '\n';
     })
     // Inline code
     .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
-    // Headers
-    .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    // Headers (with slug IDs for anchor navigation)
+    .replace(/^#### (.+)$/gm, (_, t) => `<h4 id="${slugify(t)}">${t}</h4>`)
+    .replace(/^### (.+)$/gm, (_, t) => `<h3 id="${slugify(t)}">${t}</h3>`)
+    .replace(/^## (.+)$/gm, (_, t) => `<h2 id="${slugify(t)}">${t}</h2>`)
+    .replace(/^# (.+)$/gm, (_, t) => `<h1 id="${slugify(t)}">${t}</h1>`)
+    // Blockquotes
+    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
     // Bold & italic
     .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    // Links (in-page anchors and cross-doc links stay in SPA; external links open in new tab)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, href) => {
+      if (href.startsWith('#')) return `<a href="${href}">${text}</a>`;
+      // Cross-doc link: foo.md or foo.md#anchor → #foo or #foo/anchor
+      const mdMatch = href.match(/^([^/]+\.md)(?:#(.+))?$/);
+      if (mdMatch) {
+        const key = DOC_KEY_BY_FILE[mdMatch[1]];
+        if (key) {
+          return mdMatch[2]
+            ? `<a href="#${key}/${mdMatch[2]}">${text}</a>`
+            : `<a href="#${key}">${text}</a>`;
+        }
+      }
+      return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+    })
     // Unordered lists
-    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
+    .replace(/^[-*] (.+)$/gm, '<li class="ul-item">$1</li>')
+    // Ordered lists
+    .replace(/^\d+\. (.+)$/gm, '<li class="ol-item">$1</li>')
     // Horizontal rules
     .replace(/^---$/gm, '<hr />')
-    // Paragraphs (lines not already wrapped)
+    // Paragraphs (lines not already wrapped in a tag)
     .replace(/^(?!<[a-z/])(.+)$/gm, '<p>$1</p>');
 
-  // Wrap consecutive <li> in <ul>
-  html = html.replace(/((?:<li>[\s\S]*?<\/li>\s*)+)/g, '<ul>$1</ul>');
+  // Wrap consecutive <li class="ul-item"> in <ul>, and <li class="ol-item"> in <ol>
+  html = html.replace(/((?:<li class="ul-item">[\s\S]*?<\/li>\s*)+)/g, '<ul>$1</ul>');
+  html = html.replace(/((?:<li class="ol-item">[\s\S]*?<\/li>\s*)+)/g, '<ol>$1</ol>');
+
+  // Restore fenced code blocks
+  html = html.replace(/<div data-cb="(\d+)"><\/div>/g, (_, i) => codeBlocks[Number(i)]);
 
   return html;
 }
 
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Slugify header text for anchor IDs (matches clap-markdown's anchor convention)
+function slugify(text) {
+  return text
+    .replace(/<[^>]+>/g, '') // strip any inline HTML (e.g. <code>)
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '') // drop non-word chars except spaces/hyphens
+    .trim()
+    .replace(/\s+/g, '-');
 }
 
 // Sidebar navigation click handler
@@ -141,9 +219,10 @@ document.getElementById('sidebar-toggle').addEventListener('click', () => {
 
 // Hash routing
 function handleHash() {
-  const hash = location.hash.replace('#', '') || 'api';
-  if (DOC_MAP.hasOwnProperty(hash)) {
-    showView(hash);
+  const raw = location.hash.replace('#', '') || 'api';
+  const [name, anchor] = raw.split('/');
+  if (Object.hasOwn(DOC_MAP, name)) {
+    showView(name, anchor);
   }
 }
 

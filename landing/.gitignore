@@ -1,3 +1,5 @@
 node_modules
 dist
 public/docs/
+public/llms-full.txt
+public/llms.txt
