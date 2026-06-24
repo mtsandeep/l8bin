@@ -103,6 +103,15 @@ jobs:
           name: linux
           path: staging/*
 
+      - name: Upload docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs
+          path: |
+            openapi.json
+            cli-reference.md
+            llms-full.txt
+
   build-macos:
     runs-on: macos-latest
     steps:
@@ -196,6 +205,7 @@ jobs:
             artifacts/linux/l8b-dashboard.tar.gz
             artifacts/linux/l8b-dashboard.zip
             artifacts/checksums.txt
-            openapi.json
-            llms-full.txt
+            artifacts/docs/openapi.json
+            artifacts/docs/cli-reference.md
+            artifacts/docs/llms-full.txt
           body_path: CHANGELOG.md
