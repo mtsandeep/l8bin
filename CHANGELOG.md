@@ -41,6 +41,7 @@ All notable changes to this project will be documented in this file.
 - **Docker socket handling** — Containers with `/var/run/docker.sock` mounts no longer fail deploy/recreate when "Allow Docker access" is disabled; socket is stripped silently with a warning toast. Proxy sidecar waits for network readiness before dependent services start.
 - **Non-fatal port mapping** — `run_service_container` no longer fails when a container exits immediately (e.g. missing docker.sock); returns port=0 and lets status polling resolve it.
 - **PHP-style entrypoint init** — Added `FOWNER` + `FSETID` to the capability whitelist. Fixes PHP/Apache images that fail with `chmod: /tmp: Operation not permitted` during init.
+- **Compose-only deploys stuck on "starting"** — Route resolver skipped projects with `mapped_port = NULL`, but compose deploys never bind host ports. Changed the guard to check `internal_port` (the in-container listen port), which is what the upstream dial address is actually built from.
 
 ## [0.2.17] - 2026-05-08
 

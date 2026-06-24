@@ -75,10 +75,10 @@ pub async fn resolve_routes(
     let mut routes = Vec::with_capacity(projects.len());
 
     for project in projects {
-        let Some(_mapped_port) = project.mapped_port else {
-            continue;
-        };
-        if project.status != ProjectStatus::Running {
+        // Compose deploys don't bind host ports (traffic flows via Docker network),
+        // so mapped_port is NULL for them. internal_port is the app's actual listen
+        // port and is what the upstream dial address is built from below.
+        if project.internal_port.is_none() || project.status != ProjectStatus::Running {
             continue;
         }
 
