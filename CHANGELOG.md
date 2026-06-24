@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-24
+
 ### Added
 - **Reserved-port check for `allow_raw_ports`** — LiteBin service ports (80, 443, 2019, 5080, 5083, 8443) are silently skipped instead of crashing on "port already allocated".
 - **Port constants in `litebin-common`** — Single source of truth for Caddy (80/443/2019), orchestrator (5080), and agent (8443/5083) ports. Orchestrator and agent config fallbacks now reference these constants instead of inline string literals.
