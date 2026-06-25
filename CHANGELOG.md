@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **`l8b deploy` auto-redeploys existing projects** — Falls back from `POST /deploy` (create) to `PUT /deploy` (redeploy) on 409 Conflict, so CI re-runs no longer fail when the project already exists.
+
 ## [0.3.1] - 2026-06-25
 
 ### Fixed

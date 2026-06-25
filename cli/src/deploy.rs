@@ -31,6 +31,32 @@ pub async fn deploy(
     send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, reqwest::Method::POST, "deploy request failed".into(), "deploy failed".into()).await
 }
 
+/// Try POST /deploy (create); on 409 Conflict fall back to PUT /deploy (redeploy).
+pub async fn deploy_or_redeploy(
+    client: &reqwest::Client,
+    server: &str,
+    project_id: &str,
+    image: &str,
+    port: u16,
+    node_id: Option<&str>,
+    cmd: Option<&str>,
+    memory: Option<i64>,
+    cpu: Option<f64>,
+    auto_stop_enabled: bool,
+) -> Result<DeployResponse> {
+    match deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled).await {
+        Ok(resp) => Ok(resp),
+        Err(e) => {
+            // send_deploy bails with "<msg> (409 Conflict): ..." when the project exists
+            if format!("{e:#}").contains("409 Conflict") {
+                redeploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled).await
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
 /// PUT /deploy to the orchestrator (redeploy)
 pub async fn redeploy(
     client: &reqwest::Client,

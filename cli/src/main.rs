@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
                 .await?;
 
                 ci_mode.println("Deploying...");
-                let response = deploy::deploy(
+                let response = deploy::deploy_or_redeploy(
                     &client,
                     &server,
                     &project,
