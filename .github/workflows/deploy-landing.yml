@@ -26,6 +26,7 @@ jobs:
           mkdir -p landing/public/docs/guides
           cp docs/openapi.json landing/public/docs/openapi.json
           cp docs/cli-reference.md landing/public/docs/guides/cli-reference.md
+          cp docs/llms.txt landing/public/llms.txt
           cp llms-full.txt landing/public/llms-full.txt
           for f in multi-service multi-server volumes env-secrets configuration local-testing security faq architecture decisions failure-model janitor user-flows waker; do
             if [ -f "docs/${f}.md" ]; then
