@@ -255,7 +255,9 @@ export default function ProjectCard({
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span
                             className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                              svc.status === ProjectStatus.Running ? 'bg-emerald-400' : 'bg-slate-600'
+                              svc.status === ProjectStatus.Running || svc.status === ProjectStatus.Completed
+                                ? 'bg-emerald-400'
+                                : 'bg-slate-600'
                             }`}
                           />
                           <span className="text-xs font-medium text-slate-300 truncate">{svc.service_name}</span>

@@ -420,6 +420,7 @@ pub async fn deploy_compose(
     // Seed project_services rows for each service in the compose file
     let target_set: Option<std::collections::HashSet<String>> = target_services.as_ref()
         .map(|ts| ts.iter().cloned().collect());
+    let oneshot_names = compose.oneshot_service_names();
     for svc_name in &start_order {
         let svc = &compose.services[svc_name];
         let image = svc.image.clone().unwrap_or_default();
@@ -428,6 +429,7 @@ pub async fn deploy_compose(
             .and_then(|p| p.split(':').last()?.parse().ok())
             .map(|p: u16| p as i64);
         let is_public = public_service.as_deref() == Some(svc_name.as_str());
+        let is_oneshot = oneshot_names.contains(svc_name);
         let depends_on = svc.depends_on.as_ref()
             .and_then(|d| serde_json::to_string(d).ok());
         let compose_mem: Option<i64> = svc.memory_bytes()
@@ -456,8 +458,8 @@ pub async fn deploy_compose(
             ProjectStatus::Running
         };
         if let Err(e) = sqlx::query(
-            "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, is_public, depends_on, memory_limit_mb, cpu_limit, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, is_public, depends_on, memory_limit_mb, cpu_limit, status, is_oneshot)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&project_id)
         .bind(svc_name)
@@ -468,6 +470,7 @@ pub async fn deploy_compose(
         .bind(memory_limit_mb)
         .bind(cpu_limit)
         .bind(status)
+        .bind(is_oneshot)
         .execute(&state.db)
         .await
         {

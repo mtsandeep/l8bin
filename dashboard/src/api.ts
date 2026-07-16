@@ -12,6 +12,7 @@ export const ProjectStatus = {
   Degraded: 'degraded',
   Unconfigured: 'unconfigured',
   Waking: 'waking',
+  Completed: 'completed',
 } as const;
 export type ProjectStatus = (typeof ProjectStatus)[keyof typeof ProjectStatus];
 

@@ -32,8 +32,10 @@ The deploy endpoint supports two-tier auth: session cookie checked first, then `
 There is no in-app "forgot password" flow (no email infrastructure is assumed). Operators recover from a forgotten admin password with the out-of-band CLI:
 
 ```bash
-docker exec -it <orchestrator-container> /app/litebin-orchestrator reset-password
+docker exec -it litebin-orchestrator /app/litebin-orchestrator reset-password
 ```
+
+Replace `litebin-orchestrator` if your deployment uses a custom container name (the default comes from `container_name` in `docker-compose.yml`).
 
 The command prompts for a username and a new password (hidden input), then writes a fresh bcrypt hash to the `users` table using the same code path as the live `change_password` endpoint.
 

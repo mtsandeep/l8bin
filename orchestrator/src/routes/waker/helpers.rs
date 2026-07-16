@@ -138,7 +138,7 @@ pub(super) async fn remote_recreate(
 /// Used by the waker when non-public services are down but the public service is up.
 pub(super) async fn start_stopped_services(state: &AppState, project: &crate::db::models::Project) {
     let stopped: Vec<String> = match sqlx::query_scalar(
-        "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped'"
+        "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped' AND is_oneshot = 0"
     )
     .bind(&project.id)
     .fetch_all(&state.db)

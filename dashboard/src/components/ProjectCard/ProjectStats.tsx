@@ -9,7 +9,9 @@ interface ProjectStatsProps {
 }
 
 function aggregateFromServices(services: ServiceInfo[]) {
-  const running = services.filter((s) => s.status === ProjectStatus.Running);
+  const running = services.filter(
+    (s) => s.status === ProjectStatus.Running || s.status === ProjectStatus.Completed,
+  );
   const totalCpu = running.reduce((sum, s) => sum + (s.cpu_percent ?? 0), 0);
   const totalMem = running.reduce((sum, s) => sum + (s.memory_usage ?? 0), 0);
   const totalLimit = running.reduce((sum, s) => sum + (s.memory_limit_mb ?? 0) * 1024 * 1024, 0);

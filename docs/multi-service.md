@@ -140,6 +140,15 @@ Compose `depends_on` supports conditions:
 
 When a downstream service depends on another with `service_healthy`, the orchestrator polls Docker inspect every 500ms for up to 60 seconds.
 
+When a service is a dependency with `service_completed_successfully`, LiteBin treats it as a **one-shot job**:
+
+1. It runs during deploy / cold start and LiteBin waits for exit code 0 before starting dependents
+2. After success its status is `completed` (not `stopped`)
+3. Completed jobs do **not** make the project `degraded` and are not restarted on partial wake recovery
+4. If the one-shot container is removed (redeploy / force recreate), it runs again; a still-present exit-0 container is left alone (Compose behavior)
+
+Detection is Compose-native only: any service named as a `service_completed_successfully` dependency.
+
 ### Rollback on failure
 
 When `rollback_on_failure` is true (deploy only), if any service fails to start, all previously started containers in the project are stopped and removed.

@@ -201,6 +201,7 @@ async fn create_docker_proxy_sidecar(
         networks: None,
         binds: Some(vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()]),
         is_public: false,
+        is_oneshot: false,
         bollard_create_body: Some(create_body),
         bollard_host_config: Some(HostConfig { ..Default::default() }),
         allow_raw_ports: false,

@@ -93,7 +93,9 @@ fn enrich_services(
         let mut enriched = svc.clone();
         if let Some(container_id) = cid {
             if stopped_cids.contains(container_id) {
-                enriched.status = ProjectStatus::Stopped;
+                if enriched.status != ProjectStatus::Completed {
+                    enriched.status = ProjectStatus::Stopped;
+                }
                 enriched.cpu_percent = None;
                 enriched.memory_usage = None;
                 if let Some(bytes) = disk_cache.get(container_id) {
@@ -233,10 +235,10 @@ async fn batch_load_services(
 }
 
 fn make_stats_response(project_id: String, status: ProjectStatus, last_active_at: Option<i64>, services: Vec<ServiceInfo>) -> StatsResponse {
-    // Compute effective status: if DB says "running" but not all services are up, mark as "degraded"
+    // Compute effective status: if DB says "running" but not all services are healthy, mark as "degraded"
     let effective_status = if status == ProjectStatus::Running
         && !services.is_empty()
-        && services.iter().any(|s| s.status != ProjectStatus::Running)
+        && services.iter().any(|s| !s.status.is_service_healthy())
     {
         ProjectStatus::Degraded
     } else {
@@ -373,7 +375,7 @@ pub async fn all_project_stats(
         let status = match project_status {
             ProjectStatus::Stopping | ProjectStatus::Deploying | ProjectStatus::Error | ProjectStatus::Unconfigured => project_status,
             _ => {
-                let any_running = services.iter().any(|s| s.status == ProjectStatus::Running);
+                let any_running = services.iter().any(|s| s.status.is_service_healthy());
                 if any_running { ProjectStatus::Degraded } else { ProjectStatus::Stopped }
             }
         };

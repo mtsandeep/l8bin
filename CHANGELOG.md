@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Compose one-shot services** — Dependencies with `service_completed_successfully` are tracked as completed (`is_oneshot`), ignored for project health/degraded status, and skipped on partial wake recovery (orchestrator and agent).
+
 ## [0.3.2] - 2026-06-25
 
 ### Fixed

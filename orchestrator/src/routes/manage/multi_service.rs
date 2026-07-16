@@ -159,6 +159,10 @@ pub async fn start_services(
         .filter(|s| plan.needs_healthy_wait(s))
         .cloned()
         .collect();
+    let completed_wait_set: HashSet<String> = plan.service_order.iter()
+        .filter(|s| plan.needs_completed_wait(s))
+        .cloned()
+        .collect();
     let has_healthcheck: HashSet<String> = plan.service_order.iter()
         .filter(|s| {
             plan.configs.iter()
@@ -229,12 +233,39 @@ pub async fn start_services(
             let docker = state.docker.clone();
             let svc = svc_name.clone();
             let needs_healthy = healthy_wait_set.contains(svc_name) && has_healthcheck.contains(svc_name);
+            let needs_completed = completed_wait_set.contains(svc_name) || run_config.is_oneshot;
             let is_public = run_config.is_public;
+            let is_oneshot = run_config.is_oneshot;
             let existing = existing_containers.get(svc_name).cloned();
             let any_started = any_started.clone();
             let started_containers = started_containers.clone();
 
             tasks.spawn(async move {
+                // One-shot already exited 0: treat as done (Compose behavior)
+                if is_oneshot && !opts.force_recreate {
+                    if let Some((ref existing_cid, _)) = existing {
+                        if !docker.is_container_running(existing_cid).await.unwrap_or(false) {
+                            if matches!(docker.container_exit_code(existing_cid).await.ok().flatten(), Some(0)) {
+                                if let Err(e) = status::set_service_completed(
+                                    &db,
+                                    &run_config.project_id,
+                                    &svc,
+                                    existing_cid,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service completed");
+                                }
+                                return Ok(StartedService {
+                                    container_id: existing_cid.clone(),
+                                    mapped_port: 0,
+                                    is_public,
+                                });
+                            }
+                        }
+                    }
+                }
+
                 let (container_id, mapped_port) = if opts.force_recreate {
                     // Force recreate: always remove + create new
                     if let Some((ref existing_cid, _)) = existing {
@@ -265,6 +296,9 @@ pub async fn start_services(
                                 mapped_port: existing_port,
                                 is_public,
                             });
+                        } else if is_oneshot {
+                            // Exited one-shot that did not succeed — recreate below
+                            let _ = docker.remove_container(existing_cid).await;
                         } else {
                             // Stopped — try docker start (fast path)
                             match docker.start_existing_container(existing_cid).await {
@@ -318,8 +352,15 @@ pub async fn start_services(
                     }
                 }
 
-                // Update project_services row
-                if let Err(e) = status::set_service_running(&db, &run_config.project_id, &svc, &container_id, Some(mapped_port as i64)).await {
+                if needs_completed {
+                    docker
+                        .wait_for_completed_successfully(&container_id)
+                        .await
+                        .map_err(|e| format!("one-shot service '{}' failed: {}", svc, e))?;
+                    if let Err(e) = status::set_service_completed(&db, &run_config.project_id, &svc, &container_id).await {
+                        tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service completed");
+                    }
+                } else if let Err(e) = status::set_service_running(&db, &run_config.project_id, &svc, &container_id, Some(mapped_port as i64)).await {
                     tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service running (new container)");
                 }
 

@@ -8,6 +8,22 @@ pub struct ComposeFile {
     pub services: HashMap<String, ComposeService>,
 }
 
+impl ComposeFile {
+    /// Names of services that any other service depends on with
+    /// `condition: service_completed_successfully`.
+    pub fn oneshot_service_names(&self) -> std::collections::HashSet<String> {
+        let mut names = std::collections::HashSet::new();
+        for service in self.services.values() {
+            for (dep, cond) in service.dependency_conditions() {
+                if cond == "service_completed_successfully" {
+                    names.insert(dep);
+                }
+            }
+        }
+        names
+    }
+}
+
 /// A single service from docker-compose.yaml.
 /// Fields are kept as Option<String> / Option<Vec<String>> to match compose format.
 /// `#[serde(flatten)]` captures unknown fields silently.

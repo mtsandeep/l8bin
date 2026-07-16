@@ -31,7 +31,9 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
       .finally(() => setLoadingService(null));
   };
 
-  const runningCount = services.filter((s) => s.status === ProjectStatus.Running).length;
+  const runningCount = services.filter(
+    (s) => s.status === ProjectStatus.Running || s.status === ProjectStatus.Completed,
+  ).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm pt-8">

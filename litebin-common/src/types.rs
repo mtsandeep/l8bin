@@ -56,6 +56,8 @@ pub enum ProjectStatus {
     Error,
     Degraded,
     Unconfigured,
+    /// One-shot job finished with exit code 0 (Compose `service_completed_successfully`).
+    Completed,
 }
 
 impl ProjectStatus {
@@ -63,6 +65,11 @@ impl ProjectStatus {
     /// not be overwritten by periodic Docker reconciliation.
     pub fn is_transient(&self) -> bool {
         matches!(self, ProjectStatus::Deploying | ProjectStatus::Importing | ProjectStatus::Stopping | ProjectStatus::Error | ProjectStatus::Unconfigured)
+    }
+
+    /// Whether this service status counts as healthy for project aggregation.
+    pub fn is_service_healthy(&self) -> bool {
+        matches!(self, ProjectStatus::Running | ProjectStatus::Completed)
     }
 }
 
@@ -77,6 +84,7 @@ impl fmt::Display for ProjectStatus {
             ProjectStatus::Error => write!(f, "error"),
             ProjectStatus::Degraded => write!(f, "degraded"),
             ProjectStatus::Unconfigured => write!(f, "unconfigured"),
+            ProjectStatus::Completed => write!(f, "completed"),
         }
     }
 }
@@ -333,6 +341,7 @@ pub struct ProjectService {
     pub cpu_limit: Option<f64>,
     pub status: ProjectStatus,
     pub instance_id: Option<String>,
+    pub is_oneshot: bool,
 }
 
 /// A volume definition for a service (one row per mount in `project_volumes`).
@@ -377,6 +386,9 @@ pub struct RunServiceConfig {
     pub networks: Option<Vec<NetworkConfig>>,
     pub binds: Option<Vec<String>>,
     pub is_public: bool,
+    /// True when another service depends on this one with
+    /// `condition: service_completed_successfully`.
+    pub is_oneshot: bool,
     /// Pre-built bollard config from compose-bollard (compose path).
     /// When provided, these are used as the base and LiteBin overrides are applied on top.
     pub bollard_create_body: Option<ContainerCreateBody>,
@@ -433,6 +445,7 @@ impl RunServiceConfig {
             networks: None,
             binds,
             is_public: true,
+            is_oneshot: false,
             bollard_create_body: None,
             bollard_host_config: None,
             allow_raw_ports: false,

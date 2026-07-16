@@ -130,7 +130,7 @@ pub async fn wake_for_host(
 
         // Fast DB-only check: are any services already marked "stopped"?
         let db_stopped: Vec<String> = match sqlx::query_scalar(
-            "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped'",
+            "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped' AND is_oneshot = 0",
         )
         .bind(&project_id)
         .fetch_all(&state.db)

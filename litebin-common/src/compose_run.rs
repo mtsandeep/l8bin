@@ -50,7 +50,16 @@ impl ComposeRunPlan {
             }
         }
 
-        let configs = build_configs(compose, project_id, extra_env, instance_id, &pub_service_name, &service_order);
+        let oneshot_names = compose.oneshot_service_names();
+        let configs = build_configs(
+            compose,
+            project_id,
+            extra_env,
+            instance_id,
+            &pub_service_name,
+            &service_order,
+            &oneshot_names,
+        );
 
         Ok(Self {
             service_order,
@@ -68,6 +77,18 @@ impl ComposeRunPlan {
         for conditions in self.dependency_conditions.values() {
             for (dep, cond) in conditions {
                 if dep == svc_name && cond == "service_healthy" {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if dependents wait for this service to exit successfully.
+    pub fn needs_completed_wait(&self, svc_name: &str) -> bool {
+        for conditions in self.dependency_conditions.values() {
+            for (dep, cond) in conditions {
+                if dep == svc_name && cond == "service_completed_successfully" {
                     return true;
                 }
             }
@@ -126,6 +147,7 @@ impl ComposeRunPlan {
             networks: None,
             binds: Some(vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()]),
             is_public: false,
+            is_oneshot: false,
             bollard_create_body: Some(create_body),
             bollard_host_config: Some(host_config),
             allow_raw_ports: false,
@@ -177,6 +199,7 @@ fn build_configs(
     instance_id: Option<&str>,
     pub_service_name: &Option<String>,
     service_order: &[String],
+    oneshot_names: &std::collections::HashSet<String>,
 ) -> Vec<RunServiceConfig> {
     let env_map: HashMap<String, String> = extra_env
         .iter()
@@ -198,6 +221,7 @@ fn build_configs(
             let image = svc.image.clone()?;
 
             let is_public = pub_service_name.as_deref() == Some(svc_name.as_str());
+            let is_oneshot = oneshot_names.contains(svc_name);
 
             let port: Option<u16> = svc.ports.as_ref()
                 .and_then(|p| p.first())
@@ -237,6 +261,7 @@ fn build_configs(
                 networks: None,
                 binds,
                 is_public,
+                is_oneshot,
                 bollard_create_body: Some(bollard_config.create_body),
                 bollard_host_config: Some(bollard_config.host_config),
                 allow_raw_ports: false,

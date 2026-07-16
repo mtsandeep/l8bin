@@ -81,6 +81,15 @@ pub async fn transition(
                     .execute(&mut *tx)
                     .await?;
                 }
+            } else if new_status == ProjectStatus::Running {
+                // Do not overwrite completed one-shot jobs when marking the project running
+                sqlx::query(
+                    "UPDATE project_services SET status = ? WHERE project_id = ? AND is_oneshot = 0",
+                )
+                .bind(&new_status)
+                .bind(project_id)
+                .execute(&mut *tx)
+                .await?;
             } else {
                 sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ?")
                     .bind(&new_status)
@@ -99,6 +108,9 @@ pub async fn transition(
         }
         ProjectStatus::Degraded => {
             // Do NOT touch services — degraded is derived from individual service states
+        }
+        ProjectStatus::Completed => {
+            // Service-only status; never set as a project-level status via transition
         }
         ProjectStatus::Unconfigured => {
             // Cascade to all services
@@ -133,6 +145,25 @@ pub async fn set_service_running(
     .bind(ProjectStatus::Running)
     .bind(container_id)
     .bind(mapped_port)
+    .bind(project_id)
+    .bind(service_name)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Mark a one-shot service as completed after a successful exit (code 0).
+pub async fn set_service_completed(
+    db: &SqlitePool,
+    project_id: &str,
+    service_name: &str,
+    container_id: &str,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE project_services SET status = ?, container_id = ?, mapped_port = NULL, is_oneshot = 1 WHERE project_id = ? AND service_name = ?",
+    )
+    .bind(ProjectStatus::Completed)
+    .bind(container_id)
     .bind(project_id)
     .bind(service_name)
     .execute(db)
@@ -185,12 +216,15 @@ pub async fn sync_single_service_row(
 /// Derive project status from aggregated service states and update projects table.
 /// Returns the derived status.
 ///
-/// - All services running → Running
-/// - Some services running → Degraded
-/// - No services running → Stopped
+/// - All long-running services running and one-shots completed → Running
+/// - Some long-running services running → Degraded
+/// - No long-running services running → Stopped
 pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) -> ProjectStatus {
-    let statuses: Vec<ProjectStatus> = match sqlx::query_scalar(
-        "SELECT status FROM project_services WHERE project_id = ?",
+    // Refresh is_oneshot from stored depends_on JSON (covers projects deployed before the column existed)
+    refresh_oneshot_flags(db, project_id).await;
+
+    let rows: Vec<(ProjectStatus, bool)> = match sqlx::query_as(
+        "SELECT status, is_oneshot FROM project_services WHERE project_id = ?",
     )
     .bind(project_id)
     .fetch_all(db)
@@ -203,16 +237,32 @@ pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) ->
         }
     };
 
-    if statuses.is_empty() {
+    if rows.is_empty() {
         return ProjectStatus::Stopped;
     }
 
-    let total = statuses.len();
-    let running = statuses.iter().filter(|s| **s == ProjectStatus::Running).count();
-    let new_status = if running == total {
+    let mut healthy = 0usize;
+    let mut long_running_up = 0usize;
+    let mut long_running_total = 0usize;
+    for (status, is_oneshot) in &rows {
+        if status.is_service_healthy() {
+            healthy += 1;
+        }
+        if !*is_oneshot {
+            long_running_total += 1;
+            if *status == ProjectStatus::Running {
+                long_running_up += 1;
+            }
+        }
+    }
+
+    let new_status = if healthy == rows.len() {
         ProjectStatus::Running
-    } else if running > 0 {
+    } else if long_running_up > 0 {
         ProjectStatus::Degraded
+    } else if long_running_total == 0 && healthy > 0 {
+        // Only one-shots present and some completed — treat as stopped until daemons exist
+        ProjectStatus::Stopped
     } else {
         ProjectStatus::Stopped
     };
@@ -229,6 +279,60 @@ pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) ->
     }
 
     new_status
+}
+
+/// Parse `depends_on` JSON stored on service rows and set `is_oneshot` for
+/// services referenced with `service_completed_successfully`.
+async fn refresh_oneshot_flags(db: &SqlitePool, project_id: &str) {
+    let deps: Vec<(String, Option<String>)> = match sqlx::query_as(
+        "SELECT service_name, depends_on FROM project_services WHERE project_id = ?",
+    )
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let mut oneshots = std::collections::HashSet::new();
+    for (_name, depends_on) in &deps {
+        let Some(raw) = depends_on else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+            continue;
+        };
+        match value {
+            serde_json::Value::Object(map) => {
+                for (dep, spec) in map {
+                    let cond = spec
+                        .get("condition")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("service_started");
+                    if cond == "service_completed_successfully" {
+                        oneshots.insert(dep);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if oneshots.is_empty() {
+        return;
+    }
+
+    for name in &oneshots {
+        if let Err(e) = sqlx::query(
+            "UPDATE project_services SET is_oneshot = 1 WHERE project_id = ? AND service_name = ?",
+        )
+        .bind(project_id)
+        .bind(name)
+        .execute(db)
+        .await
+        {
+            tracing::warn!(project_id = %project_id, service = %name, error = %e, "status: failed to set is_oneshot");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -273,8 +377,8 @@ pub async fn sync_project_from_docker(
     }
 
     // Load services
-    let services: Vec<(String, Option<String>)> = match sqlx::query_as(
-        "SELECT service_name, container_id FROM project_services WHERE project_id = ?",
+    let services: Vec<(String, Option<String>, bool)> = match sqlx::query_as(
+        "SELECT service_name, container_id, is_oneshot FROM project_services WHERE project_id = ?",
     )
     .bind(project_id)
     .fetch_all(db)
@@ -299,14 +403,52 @@ pub async fn sync_project_from_docker(
         };
     }
 
+    refresh_oneshot_flags(db, project_id).await;
+
+    // Re-load after oneshot refresh
+    let services: Vec<(String, Option<String>, bool)> = match sqlx::query_as(
+        "SELECT service_name, container_id, is_oneshot FROM project_services WHERE project_id = ?",
+    )
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(project_id = %project_id, error = %e, "status: failed to re-fetch services for sync");
+            return SyncResult {
+                old_status: current_status.clone(),
+                new_status: current_status,
+                caddy_dirty: false,
+            };
+        }
+    };
+
     // Check each service's container against Docker
     let mut running_count = 0i32;
-    for (service_name, container_id) in &services {
+    for (service_name, container_id, is_oneshot) in &services {
         let actually_running = match container_id {
             Some(cid) if !cid.is_empty() => docker.is_container_running(cid).await.unwrap_or(false),
             _ => false,
         };
-        let new_svc_status = if actually_running { ProjectStatus::Running } else { ProjectStatus::Stopped };
+
+        let new_svc_status = if actually_running {
+            ProjectStatus::Running
+        } else if *is_oneshot {
+            let exit_ok = match container_id {
+                Some(cid) if !cid.is_empty() => {
+                    matches!(docker.container_exit_code(cid).await.ok().flatten(), Some(0))
+                }
+                _ => false,
+            };
+            if exit_ok {
+                ProjectStatus::Completed
+            } else {
+                ProjectStatus::Stopped
+            }
+        } else {
+            ProjectStatus::Stopped
+        };
 
         if actually_running {
             running_count += 1;
@@ -429,7 +571,24 @@ pub async fn update_status_from_container_states(
     }
 
     for (container_id, is_running) in container_states {
-        let new_svc_status = if *is_running { ProjectStatus::Running } else { ProjectStatus::Stopped };
+        let oneshot: bool = sqlx::query_scalar(
+            "SELECT is_oneshot FROM project_services WHERE project_id = ? AND container_id = ?",
+        )
+        .bind(project_id)
+        .bind(container_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+
+        let new_svc_status = if *is_running {
+            ProjectStatus::Running
+        } else if oneshot {
+            ProjectStatus::Completed
+        } else {
+            ProjectStatus::Stopped
+        };
 
         if let Err(e) = sqlx::query(
             "UPDATE project_services SET status = ? WHERE project_id = ? AND container_id = ? AND status != ?",

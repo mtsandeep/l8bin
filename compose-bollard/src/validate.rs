@@ -308,6 +308,37 @@ services:
     }
 
     #[test]
+    fn oneshot_service_names_from_completed_successfully() {
+        let yaml = r#"
+services:
+  db:
+    image: postgres
+    healthcheck:
+      test: ["CMD", "true"]
+  migrate:
+    image: app
+    command: ["migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+  web:
+    image: app
+    ports:
+      - "3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+"#;
+        let compose = ComposeParser::parse(yaml).unwrap();
+        let oneshots = compose.oneshot_service_names();
+        assert!(oneshots.contains("migrate"));
+        assert!(!oneshots.contains("db"));
+        assert!(!oneshots.contains("web"));
+    }
+
+    #[test]
     fn detect_public_by_label() {
         let yaml = r#"
 services:

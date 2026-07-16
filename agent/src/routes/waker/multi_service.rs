@@ -84,6 +84,31 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     // Build owned lookup: service_name -> RunServiceConfig
     let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
+    let healthy_wait_set: std::collections::HashSet<String> = plan
+        .service_order
+        .iter()
+        .filter(|s| plan.needs_healthy_wait(s))
+        .cloned()
+        .collect();
+    let completed_wait_set: std::collections::HashSet<String> = plan
+        .service_order
+        .iter()
+        .filter(|s| plan.needs_completed_wait(s))
+        .cloned()
+        .collect();
+    let has_healthcheck: std::collections::HashSet<String> = plan
+        .service_order
+        .iter()
+        .filter(|s| {
+            plan.configs
+                .iter()
+                .find(|c| c.service_name == **s)
+                .and_then(|c| c.bollard_create_body.as_ref())
+                .map(|body| body.healthcheck.is_some())
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
 
     let mut public_container_id: Option<String> = None;
     let mut public_mapped_port: Option<u16> = None;
@@ -98,12 +123,17 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
             let docker = state.docker.clone();
             let svc = svc_name.clone();
             let is_public = run_config.is_public;
+            let is_oneshot = run_config.is_oneshot;
+            let needs_healthy =
+                healthy_wait_set.contains(svc_name) && has_healthcheck.contains(svc_name);
+            let needs_completed = completed_wait_set.contains(svc_name) || is_oneshot;
             let pid = project_id.to_string();
             let any_created = any_created.clone();
 
             tasks.spawn(async move {
-                // Check if container already exists and is running
                 let cname = litebin_common::types::container_name(&pid, &svc, None);
+
+                // Check if container already exists and is running
                 if let Ok(Some(existing_id)) = docker.find_container_by_name(&cname).await {
                     if docker.is_container_running(&existing_id).await.unwrap_or(false) {
                         tracing::info!(
@@ -111,27 +141,71 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                             service = %svc,
                             "wake_multi_service: service already running, skipping"
                         );
-                        // Return existing container info so public service tracking still works
                         let port = run_config.port.unwrap_or(80) as u16;
                         return Ok((existing_id, port, is_public));
                     }
-                    // Container exists but is stopped — just start it (fast path)
-                    docker.start_existing_container(&existing_id).await
-                        .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
-                    tracing::info!(
-                        project_id = %pid,
-                        service = %svc,
-                        container = %existing_id,
-                        "wake_multi_service: started existing stopped container"
-                    );
-                    let port = run_config.port.unwrap_or(80) as u16;
-                    return Ok((existing_id, port, is_public));
+
+                    // One-shot already exited successfully — leave it alone
+                    if is_oneshot {
+                        if matches!(
+                            docker.container_exit_code(&existing_id).await.ok().flatten(),
+                            Some(0)
+                        ) {
+                            tracing::info!(
+                                project_id = %pid,
+                                service = %svc,
+                                "wake_multi_service: one-shot already completed, skipping"
+                            );
+                            let port = run_config.port.unwrap_or(80) as u16;
+                            return Ok((existing_id, port, is_public));
+                        }
+                        // Failed or unknown exit — recreate
+                        let _ = docker.remove_container(&existing_id).await;
+                    } else {
+                        // Long-running container exists but is stopped — start it
+                        docker
+                            .start_existing_container(&existing_id)
+                            .await
+                            .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
+                        tracing::info!(
+                            project_id = %pid,
+                            service = %svc,
+                            container = %existing_id,
+                            "wake_multi_service: started existing stopped container"
+                        );
+                        let port = run_config.port.unwrap_or(80) as u16;
+                        return Ok((existing_id, port, is_public));
+                    }
                 }
 
-                let (container_id, mapped_port) = docker.run_service_container(&run_config).await
+                let (container_id, mapped_port) = docker
+                    .run_service_container(&run_config)
+                    .await
                     .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
 
                 any_created.store(true, std::sync::atomic::Ordering::Relaxed);
+
+                if docker.is_container_running(&container_id).await.unwrap_or(false) {
+                    let _ = docker.wait_for_network_ready(&container_id).await;
+                }
+
+                if needs_healthy {
+                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
+                        tracing::warn!(
+                            project_id = %pid,
+                            service = %svc,
+                            error = %e,
+                            "wake_multi_service: healthcheck failed, continuing"
+                        );
+                    }
+                }
+
+                if needs_completed {
+                    docker
+                        .wait_for_completed_successfully(&container_id)
+                        .await
+                        .map_err(|e| format!("one-shot service '{}' failed: {}", svc, e))?;
+                }
 
                 tracing::info!(
                     project_id = %pid,

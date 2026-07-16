@@ -185,13 +185,26 @@ pub async fn wake(
                 }
             };
 
+            let oneshot_containers = completed_oneshot_container_names(&subdomain);
+
             let mut stopped_services = Vec::new();
             for cname in &container_names {
-                if let Ok(Some(id)) = state.docker.find_container_by_name(cname).await {
-                    if !state.docker.is_container_running(&id).await.unwrap_or(false) {
-                        stopped_services.push(cname.clone());
-                    }
+                let Ok(Some(id)) = state.docker.find_container_by_name(cname).await else {
+                    continue;
+                };
+                if state.docker.is_container_running(&id).await.unwrap_or(false) {
+                    continue;
                 }
+                // Completed one-shots (exit 0) are healthy — do not treat as crashed.
+                if oneshot_containers.contains(cname)
+                    && matches!(
+                        state.docker.container_exit_code(&id).await.ok().flatten(),
+                        Some(0)
+                    )
+                {
+                    continue;
+                }
+                stopped_services.push(cname.clone());
             }
 
             if !stopped_services.is_empty() {
@@ -431,6 +444,26 @@ pub async fn wake(
             }
         }
     }
+}
+
+/// Container names for compose one-shot services (`service_completed_successfully`).
+fn completed_oneshot_container_names(project_id: &str) -> std::collections::HashSet<String> {
+    let Some(yaml) = litebin_common::docker::DockerManager::read_compose(project_id) else {
+        return std::collections::HashSet::new();
+    };
+    let extra_env = crate::routes::containers::read_project_env(project_id);
+    let Ok(plan) = litebin_common::compose_run::build_compose_run_plan(
+        &yaml, project_id, &extra_env, None,
+    ) else {
+        return std::collections::HashSet::new();
+    };
+    plan.configs
+        .iter()
+        .filter(|c| c.is_oneshot)
+        .map(|c| {
+            litebin_common::types::container_name(project_id, &c.service_name, None)
+        })
+        .collect()
 }
 
 fn extract_subdomain<'a>(host: &'a str, domain: &str) -> Option<&'a str> {
