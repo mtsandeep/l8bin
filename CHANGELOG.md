@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Gated first deploy for runtime configuration** — Interactive `l8b ship` now stages the first deployment (compose + target-node `.env`) without starting containers, pauses with **Awaiting runtime configuration**, and only starts after confirmation. Redeploys are unchanged. Interrupted first deploys can resume via **Resume deployment**.
 
+### Changed
+- **CLI `ship` cleanup** — Deduplicated interactive and noninteractive compose deploy paths (shared load/build-summary/prepare helpers), removed unreachable Compose port scanning, and clarified first-deploy pause/resume wording.
+
 ## [0.3.3] - 2026-07-17
 
 ### Fixed

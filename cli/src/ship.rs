@@ -127,8 +127,7 @@ async fn new_project_flow(
     let url = build_and_deploy(client, server, &name, project_dir, port, secret_override, true, None).await?;
 
     if let Some(url) = url {
-        println!("  {} Live at: {}", "🌐".dimmed(), url.green().bold());
-        println!();
+        print_live_url(&url);
         println!("  {} Use this token to redeploy from CI/CD:", "💡".dimmed());
         println!(
             "  {}",
@@ -213,9 +212,7 @@ async fn existing_project_flow(
             if started {
                 let domain = auth::fetch_platform_domain(client, server).await;
                 let live_url = auth::project_live_url(project_id, &domain);
-                println!();
-                println!("  {} Live at: {}", "🌐".dimmed(), live_url.green().bold());
-                println!();
+                print_live_url(&live_url);
             }
         }
         "Redeploy" => {
@@ -238,10 +235,7 @@ async fn existing_project_flow(
             )
             .await?;
             if let Some(url) = url {
-                println!();
-                println!();
-                println!("  {} Live at: {}", "🌐".dimmed(), url.green().bold());
-                println!();
+                print_live_url(&url);
             }
         }
         "Recreate" => {
@@ -345,19 +339,6 @@ fn resolve_app_port(project_dir: &Path, port_override: Option<u16>) -> Result<u1
 fn detect_exposed_ports(project_dir: &Path) -> Vec<u16> {
     let mut ports = Vec::new();
 
-    if let Some(name) = detect_compose_file(project_dir) {
-        if let Ok(content) = std::fs::read_to_string(project_dir.join(name)) {
-            if let Ok(compose) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
-                if let Some(services) = compose.get("services").and_then(|s| s.as_mapping()) {
-                    for (_, svc) in services {
-                        collect_service_ports(svc, &mut ports);
-                    }
-                }
-            }
-        }
-        return ports;
-    }
-
     let dockerfile = project_dir.join("Dockerfile");
     if let Ok(content) = std::fs::read_to_string(&dockerfile) {
         for line in content.lines() {
@@ -376,22 +357,6 @@ fn detect_exposed_ports(project_dir: &Path) -> Vec<u16> {
     }
 
     ports
-}
-
-fn collect_service_ports(svc: &serde_yaml::Value, ports: &mut Vec<u16>) {
-    if let Some(port_list) = svc.get("ports").and_then(|p| p.as_sequence()) {
-        for port_val in port_list {
-            if let Some(port_str) = port_val.as_str() {
-                let port_part = port_str.split('/').next().unwrap_or(port_str);
-                let container_port = port_part.rsplit(':').next().unwrap_or(port_part);
-                if let Ok(p) = container_port.parse::<u16>() {
-                    if !ports.contains(&p) {
-                        ports.push(p);
-                    }
-                }
-            }
-        }
-    }
 }
 
 fn parse_container_port(port_str: &str) -> Option<u16> {
@@ -760,6 +725,12 @@ fn short_image(image: &str) -> String {
     } else {
         hash.to_string()
     }
+}
+
+fn print_live_url(url: &str) {
+    println!();
+    println!("  {} Live at: {}", "🌐".dimmed(), url.green().bold());
+    println!();
 }
 
 /// Detect compose file in the given directory. Returns the filename or None.
@@ -1139,6 +1110,87 @@ async fn submit_compose(
     auth::session_post_multipart(client, server, "/deploy/compose", form).await
 }
 
+fn load_compose(project_dir: &Path, compose_name: &str) -> Result<serde_yaml::Value> {
+    println!(
+        "  {} Found {} — deploying as multi-service",
+        "🐳".dimmed(),
+        compose_name.cyan()
+    );
+
+    let compose_yaml = std::fs::read_to_string(project_dir.join(compose_name))
+        .with_context(|| format!("failed to read {}", compose_name))?;
+    serde_yaml::from_str(&compose_yaml).with_context(|| "failed to parse compose YAML")
+}
+
+fn print_compose_build_summary(compose: &serde_yaml::Value, build_infos: &[BuildInfo]) {
+    if build_infos.is_empty() {
+        return;
+    }
+
+    let total_services = compose
+        .get("services")
+        .and_then(|s| s.as_mapping())
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let pull_count = total_services.saturating_sub(build_infos.len());
+    let pull_info = if pull_count > 0 {
+        format!(" ({} pre-built will be pulled by orchestrator)", pull_count)
+    } else {
+        String::new()
+    };
+    println!(
+        "  {} Found {} services — building {}{}",
+        "🐳".dimmed(),
+        total_services,
+        build_infos.len(),
+        pull_info
+    );
+}
+
+fn print_building_services(build_infos: &[BuildInfo]) {
+    if !build_infos.is_empty() {
+        println!(
+            "  {} Building {} service(s)...",
+            "🔨".dimmed(),
+            build_infos.len()
+        );
+    }
+}
+
+async fn prepare_compose_deployment(
+    client: &reqwest::Client,
+    server: &str,
+    project_id: &str,
+    project_dir: &Path,
+    compose: &serde_yaml::Value,
+    build_infos: &[BuildInfo],
+    selected_public: Option<&str>,
+    env_mode: EnvSelectMode,
+    node_id: Option<&str>,
+    platform: Option<&str>,
+    ci_mode: bool,
+) -> Result<String> {
+    let root_env_paths = select_env_files(project_dir, env_mode)?;
+    let resolved_images = build_and_upload_services(
+        client,
+        server,
+        project_id,
+        project_dir,
+        build_infos,
+        &root_env_paths,
+        node_id,
+        platform,
+        ci_mode,
+    )
+    .await?;
+
+    let mut resolved_yaml = rewrite_compose_images(compose, &resolved_images)?;
+    if let Some(service_name) = selected_public {
+        resolved_yaml = inject_public_label(&resolved_yaml, service_name)?;
+    }
+    Ok(resolved_yaml)
+}
+
 // ── Build & deploy ───────────────────────────────────────────────────────────
 
 async fn build_and_deploy(
@@ -1340,41 +1392,13 @@ async fn deploy_compose(
     node_id: Option<&str>,
     platform: Option<&str>,
 ) -> Result<Option<String>> {
-    println!(
-        "  {} Found {} — deploying as multi-service",
-        "🐳".dimmed(),
-        compose_name.cyan()
-    );
-
-    let compose_yaml = std::fs::read_to_string(project_dir.join(compose_name))
-        .with_context(|| format!("failed to read {}", compose_name))?;
-    let compose: serde_yaml::Value =
-        serde_yaml::from_str(&compose_yaml).with_context(|| "failed to parse compose YAML")?;
-
+    let compose = load_compose(project_dir, compose_name)?;
     let selected_public = pick_public_service(&compose)?;
     let mut build_infos = collect_build_infos(&compose);
-    let total_services = compose
-        .get("services")
-        .and_then(|s| s.as_mapping())
-        .map(|m| m.len())
-        .unwrap_or(0);
+    print_compose_build_summary(&compose, &build_infos);
 
     let mut is_partial_build = false;
     if !build_infos.is_empty() {
-        let pull_count = total_services.saturating_sub(build_infos.len());
-        let pull_info = if pull_count > 0 {
-            format!(" ({} pre-built will be pulled by orchestrator)", pull_count)
-        } else {
-            String::new()
-        };
-        println!(
-            "  {} Found {} services — building {}{}",
-            "🐳".dimmed(),
-            total_services,
-            build_infos.len(),
-            pull_info
-        );
-
         if !is_new_project && build_infos.len() >= 2 {
             let svc_names: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
             loop {
@@ -1418,32 +1442,23 @@ async fn deploy_compose(
                 }
             }
         }
-
-        println!(
-            "  {} Building {} service(s)...",
-            "🔨".dimmed(),
-            build_infos.len()
-        );
     }
+    print_building_services(&build_infos);
 
-    let root_env_paths = select_env_files(project_dir, EnvSelectMode::InteractiveNoCustomOrder)?;
-    let resolved_images = build_and_upload_services(
+    let resolved_yaml = prepare_compose_deployment(
         client,
         server,
         project_id,
         project_dir,
+        &compose,
         &build_infos,
-        &root_env_paths,
+        selected_public.as_deref(),
+        EnvSelectMode::InteractiveNoCustomOrder,
         node_id,
         platform,
         false,
     )
     .await?;
-
-    let mut resolved_yaml = rewrite_compose_images(&compose, &resolved_images)?;
-    if let Some(ref svc_name) = selected_public {
-        resolved_yaml = inject_public_label(&resolved_yaml, svc_name)?;
-    }
 
     let deploy_spinner = spinner("  🚢 {spinner} {msg}");
     deploy_spinner.set_message(if is_new_project {
@@ -1499,17 +1514,7 @@ pub async fn deploy_compose_noninteractive(
     opts: ComposeDeployOpts,
     platform: Option<&str>,
 ) -> Result<String> {
-    println!(
-        "  {} Found {} — deploying as multi-service",
-        "🐳".dimmed(),
-        compose_name.cyan()
-    );
-
-    let compose_yaml = std::fs::read_to_string(project_dir.join(compose_name))
-        .with_context(|| format!("failed to read {}", compose_name))?;
-    let compose: serde_yaml::Value =
-        serde_yaml::from_str(&compose_yaml).with_context(|| "failed to parse compose YAML")?;
-
+    let compose = load_compose(project_dir, compose_name)?;
     let selected_public = auto_pick_public_service(&compose);
     let mut build_infos = collect_build_infos(&compose);
 
@@ -1524,50 +1529,23 @@ pub async fn deploy_compose_noninteractive(
         false
     };
 
-    let total_services = compose
-        .get("services")
-        .and_then(|s| s.as_mapping())
-        .map(|m| m.len())
-        .unwrap_or(0);
-    if !build_infos.is_empty() {
-        let pull_count = total_services.saturating_sub(build_infos.len());
-        let pull_info = if pull_count > 0 {
-            format!(" ({} pre-built will be pulled by orchestrator)", pull_count)
-        } else {
-            String::new()
-        };
-        println!(
-            "  {} Found {} services — building {}{}",
-            "🐳".dimmed(),
-            total_services,
-            build_infos.len(),
-            pull_info
-        );
-        println!(
-            "  {} Building {} service(s)...",
-            "🔨".dimmed(),
-            build_infos.len()
-        );
-    }
+    print_compose_build_summary(&compose, &build_infos);
+    print_building_services(&build_infos);
 
-    let root_env_paths = select_env_files(project_dir, EnvSelectMode::AutoAllExceptExample)?;
-    let resolved_images = build_and_upload_services(
+    let resolved_yaml = prepare_compose_deployment(
         client,
         server,
         project_id,
         project_dir,
+        &compose,
         &build_infos,
-        &root_env_paths,
+        selected_public.as_deref(),
+        EnvSelectMode::AutoAllExceptExample,
         opts.node_id.as_deref(),
         platform,
         true,
     )
     .await?;
-
-    let mut resolved_yaml = rewrite_compose_images(&compose, &resolved_images)?;
-    if let Some(ref svc_name) = selected_public {
-        resolved_yaml = inject_public_label(&resolved_yaml, svc_name)?;
-    }
 
     println!("  {} Deploying compose...", "🚢".dimmed());
     let _resp = submit_compose(
