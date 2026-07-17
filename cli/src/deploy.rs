@@ -13,6 +13,8 @@ pub struct DeployResponse {
     pub message: Option<String>,
     #[serde(default)]
     pub mapped_port: Option<u16>,
+    #[serde(default)]
+    pub node_id: Option<String>,
 }
 
 /// POST /deploy to the orchestrator (create-only)
@@ -28,7 +30,7 @@ pub async fn deploy(
     cpu: Option<f64>,
     auto_stop_enabled: bool,
 ) -> Result<DeployResponse> {
-    send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, reqwest::Method::POST, "deploy request failed".into(), "deploy failed".into()).await
+    send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, false, reqwest::Method::POST, "deploy request failed".into(), "deploy failed".into()).await
 }
 
 /// Try POST /deploy (create); on 409 Conflict fall back to PUT /deploy (redeploy).
@@ -49,7 +51,7 @@ pub async fn deploy_or_redeploy(
         Err(e) => {
             // send_deploy bails with "<msg> (409 Conflict): ..." when the project exists
             if format!("{e:#}").contains("409 Conflict") {
-                redeploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled).await
+                redeploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, false).await
             } else {
                 Err(e)
             }
@@ -69,8 +71,9 @@ pub async fn redeploy(
     memory: Option<i64>,
     cpu: Option<f64>,
     auto_stop_enabled: bool,
+    stage_only: bool,
 ) -> Result<DeployResponse> {
-    send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, reqwest::Method::PUT, "redeploy request failed".into(), "redeploy failed".into()).await
+    send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, stage_only, reqwest::Method::PUT, "redeploy request failed".into(), "redeploy failed".into()).await
 }
 
 async fn send_deploy(
@@ -84,6 +87,7 @@ async fn send_deploy(
     memory: Option<i64>,
     cpu: Option<f64>,
     auto_stop_enabled: bool,
+    stage_only: bool,
     method: reqwest::Method,
     err_prefix: String,
     err_msg: String,
@@ -95,6 +99,7 @@ async fn send_deploy(
         "image": image,
         "port": port,
         "auto_stop_enabled": auto_stop_enabled,
+        "stage_only": stage_only,
     });
 
     if let Some(node) = node_id {

@@ -145,6 +145,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let api_routes = Router::new()
         .route("/projects", get(routes::projects::list_projects))
+        .route("/projects", post(routes::projects::create_project))
         .route("/projects/{id}", get(routes::projects::get_project))
         .route("/projects/{id}/settings", patch(routes::settings::update_project_settings))
         .route("/projects/{id}/stop", post(routes::manage::handlers::stop_project))
@@ -166,6 +167,7 @@ pub fn build_router(state: AppState) -> Router {
     let deploy_routes = Router::new()
         .route("/deploy", post(routes::deploy::single::deploy_create))
         .route("/deploy", put(routes::deploy::single::deploy_update))
+        .route("/deploy/compose", post(routes::deploy::compose::deploy_compose))
         .route("/images/upload", post(routes::images::upload_image));
 
     // Deploy token management (session auth)

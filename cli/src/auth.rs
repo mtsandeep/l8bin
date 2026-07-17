@@ -261,6 +261,65 @@ pub async fn session_delete(
     Ok(json)
 }
 
+/// Fetch the Platform Domain from GET /settings (same value the dashboard shows).
+/// Falls back to deriving from the server URL if settings are unavailable (e.g. CI token auth).
+pub async fn fetch_platform_domain(client: &reqwest::Client, server: &str) -> String {
+    if let Ok(settings) = session_get(client, server, "/settings").await {
+        if let Some(domain) = settings["domain"].as_str() {
+            let domain = domain.trim();
+            if !domain.is_empty() {
+                return domain.to_string();
+            }
+        }
+    }
+    derive_domain_from_server(server)
+}
+
+/// Last-resort domain derivation when /settings is unavailable.
+/// `https://dash.11b.in` → `11b.in`
+fn derive_domain_from_server(server: &str) -> String {
+    let host = server
+        .trim()
+        .trim_end_matches('/')
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let host = host.split('/').next().unwrap_or(host);
+    let host = host.split(':').next().unwrap_or(host);
+    let parts: Vec<&str> = host.split('.').filter(|p| !p.is_empty()).collect();
+    if parts.len() >= 3 {
+        parts[1..].join(".")
+    } else {
+        host.to_string()
+    }
+}
+
+/// Public project URL using the Platform Domain: `https://{project_id}.{domain}`
+pub fn project_live_url(project_id: &str, domain: &str) -> String {
+    format!("https://{}.{}", project_id, domain.trim().trim_start_matches('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{derive_domain_from_server, project_live_url};
+
+    #[test]
+    fn strips_dashboard_subdomain() {
+        assert_eq!(derive_domain_from_server("https://dash.11b.in"), "11b.in");
+        assert_eq!(derive_domain_from_server("https://dash.11b.in/"), "11b.in");
+    }
+
+    #[test]
+    fn keeps_apex_domain() {
+        assert_eq!(derive_domain_from_server("https://example.com"), "example.com");
+    }
+
+    #[test]
+    fn project_url_uses_platform_domain() {
+        assert_eq!(project_live_url("board", "11b.in"), "https://board.11b.in");
+        assert_ne!(project_live_url("board", "11b.in"), "board.https://dash.11b.in");
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct NodeInfo {
     pub id: String,

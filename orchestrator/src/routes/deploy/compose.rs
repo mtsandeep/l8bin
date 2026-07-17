@@ -56,6 +56,7 @@ pub async fn deploy_compose(
     let mut allow_docker_access = None;
     let mut compose_content = None;
     let mut target_services_raw = None;
+    let mut stage_only_requested = false;
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let field_name = match field.name() {
@@ -99,6 +100,11 @@ pub async fn deploy_compose(
             }
             "target_services" => {
                 target_services_raw = field.text().await.ok();
+            }
+            "stage_only" => {
+                stage_only_requested = field.text().await.ok()
+                    .and_then(|v| v.parse::<bool>().ok())
+                    .unwrap_or(false);
             }
             _ => {
                 tracing::debug!(field = %field_name, "ignoring unknown multipart field");
@@ -222,19 +228,23 @@ pub async fn deploy_compose(
     let auto_start = auto_start_enabled.unwrap_or(true);
 
     // On redeploy, preserve existing sleep settings unless explicitly provided
-    let is_update = match sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM projects WHERE id = ?"
+    let existing_status: Option<ProjectStatus> = match sqlx::query_scalar(
+        "SELECT status FROM projects WHERE id = ?"
     )
     .bind(&project_id)
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await
     {
-        Ok(count) => count > 0,
+        Ok(status) => status,
         Err(e) => {
             tracing::error!(project_id = %project_id, error = %e, "compose deploy: failed to check project existence");
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "database error"}))).into_response();
         }
     };
+    let is_update = existing_status.is_some();
+    // First-deploy staging only applies before the project has ever left unconfigured.
+    let stage_only = stage_only_requested
+        && matches!(existing_status, None | Some(ProjectStatus::Unconfigured));
 
     let (auto_stop, auto_stop_mins, auto_start) = if is_update && auto_stop_enabled.is_none() && auto_start_enabled.is_none() {
         let existing = sqlx::query_as::<_, (bool, i64, bool)>(
@@ -314,8 +324,15 @@ pub async fn deploy_compose(
     let service_count = compose.services.len() as i64;
     let service_summary = start_order.join(":");
 
-    // On partial redeploy, project stays running (we're only updating a subset of services)
-    let project_status = if target_services.is_some() { ProjectStatus::Running } else { ProjectStatus::Deploying };
+    // On partial redeploy, project stays running (we're only updating a subset of services).
+    // First-deploy staging leaves the project unconfigured until the user confirms start.
+    let project_status = if stage_only {
+        ProjectStatus::Unconfigured
+    } else if target_services.is_some() {
+        ProjectStatus::Running
+    } else {
+        ProjectStatus::Deploying
+    };
 
     // On redeploy, preserve existing allow_raw_ports/allow_docker_access unless explicitly provided
     let (db_allow_raw_ports, db_allow_docker_access) = if is_update && allow_raw_ports.is_none() && allow_docker_access.is_none() {
@@ -451,7 +468,9 @@ pub async fn deploy_compose(
         let cpu_limit = compose_cpu.or_else(|| existing_override.as_ref().and_then(|(_, c)| *c));
 
         // On partial redeploy, only mark targeted services as 'deploying'
-        let status = if target_set.as_ref().map_or(true, |ts| ts.contains(svc_name)) {
+        let status = if stage_only {
+            ProjectStatus::Unconfigured
+        } else if target_set.as_ref().map_or(true, |ts| ts.contains(svc_name)) {
             ProjectStatus::Deploying
         } else {
             // Preserve current status for non-targeted services
@@ -527,6 +546,104 @@ pub async fn deploy_compose(
             ).into_response();
         }
     };
+
+    // Persist sticky node selection even for staged first deploys.
+    if let Err(e) = sqlx::query(
+        "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
+    )
+    .bind(&target_node_id)
+    .bind(now)
+    .bind(&project_id)
+    .execute(&state.db)
+    .await
+    {
+        tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to persist node_id");
+    }
+
+    // First-deploy staging: prepare compose + runtime .env, do not start containers.
+    if stage_only {
+        if target_node_id != "local" {
+            let node = match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
+                Ok(n) => n,
+                Err(e) => {
+                    if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                        tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
+                    }
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"error": format!("{:?}", e)})),
+                    ).into_response();
+                }
+            };
+
+            let client = match nodes::client::get_node_client(&state.node_clients, &target_node_id) {
+                Ok(c) => c,
+                Err(e) => {
+                    if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                        tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
+                    }
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"error": format!("node client unavailable: {:?}", e)})),
+                    ).into_response();
+                }
+            };
+
+            let base_url = agent_base_url(&state.config, &node);
+            let stage_resp = match client
+                .post(&format!("{}/containers/batch-run", base_url))
+                .json(&json!({
+                    "project_id": project_id,
+                    "compose_yaml": compose_yaml,
+                    "service_order": start_order,
+                    "stage_only": true,
+                }))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "remote compose stage request failed");
+                    if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                        tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
+                    }
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"error": format!("agent unreachable: {e}")})),
+                    ).into_response();
+                }
+            };
+
+            if !stage_resp.status().is_success() {
+                let body = stage_resp.text().await.unwrap_or_default();
+                tracing::error!(body = %body, "remote compose stage failed");
+                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                    tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
+                }
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error": format!("remote stage failed: {body}")})),
+                ).into_response();
+            }
+        }
+
+        tracing::info!(
+            project_id = %project_id,
+            node_id = %target_node_id,
+            "compose deployment staged; awaiting runtime configuration"
+        );
+
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "status": "unconfigured",
+                "project_id": project_id,
+                "node_id": target_node_id,
+                "url": format!("https://{}.{}", project_id, state.config.domain),
+                "message": "Deployment staged. Configure runtime secrets, then start the project.",
+            })),
+        ).into_response();
+    }
 
     // Local vs remote deploy path
     if target_node_id != "local" {
@@ -713,6 +830,7 @@ pub async fn deploy_compose(
             Json(json!({
                 "status": "deployed",
                 "project_id": project_id,
+                "url": format!("https://{}.{}", project_id, state.config.domain),
                 "warnings": agent_warnings,
             })),
         ).into_response();
@@ -901,6 +1019,7 @@ pub async fn deploy_compose(
         Json(json!({
             "status": "deploying",
             "project_id": project_id,
+            "url": format!("https://{}.{}", project_id, state.config.domain),
             "message": "Compose deployment started in background",
             "warnings": sock_warnings,
         })),

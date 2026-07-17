@@ -237,7 +237,8 @@ async fn main() -> Result<()> {
                 let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
                 match final_status.as_ref() {
                     Some(ProjectStatus::Running) => {
-                        let url = format!("https://{}.{}", project, server.trim_start_matches("https://").trim_start_matches("http://"));
+                        let domain = auth::fetch_platform_domain(&client, &server).await;
+                        let url = auth::project_live_url(&project, &domain);
                         println!("Deployed! {}", url);
                     }
                     Some(ProjectStatus::Error) => {
@@ -290,9 +291,12 @@ async fn main() -> Result<()> {
                     let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
                     match final_status.as_ref() {
                         Some(ProjectStatus::Running) => {
-                            let url = response.url.as_deref()
-                                .map(|u| u.to_string())
-                                .unwrap_or_else(|| format!("https://{}.{}", project, server.trim_start_matches("https://").trim_start_matches("http://")));
+                            let url = if let Some(u) = response.url.as_deref().filter(|u| !u.is_empty()) {
+                                u.to_string()
+                            } else {
+                                let domain = auth::fetch_platform_domain(&client, &server).await;
+                                auth::project_live_url(&project, &domain)
+                            };
                             println!("Deployed! {}", url);
                         }
                         Some(ProjectStatus::Error) => {

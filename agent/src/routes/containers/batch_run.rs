@@ -31,6 +31,10 @@ pub struct BatchRunRequest {
     /// Whether to force-pull images (true) or skip if already present locally (false).
     #[serde(default = "default_false")]
     pub force_pull: bool,
+    /// When true, only persist compose.yaml and create the runtime `.env` placeholder.
+    /// No networks, pulls, or containers are started.
+    #[serde(default = "default_false")]
+    pub stage_only: bool,
     /// Per-service resource overrides from dashboard (service_name → {memory_limit_mb, cpu_limit}).
     /// Applied on top of compose-embedded limits; None values mean "use global default".
     pub service_resources: Option<std::collections::HashMap<String, ServiceResources>>,
@@ -73,6 +77,7 @@ pub async fn batch_run(
     tracing::info!(
         project = %req.project_id,
         services = ?req.service_order,
+        stage_only = req.stage_only,
         "batch-run request received"
     );
 
@@ -85,6 +90,18 @@ pub async fn batch_run(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: format!("failed to store compose.yaml: {e}") }),
+        ).into_response();
+    }
+
+    // First-deploy staging: prepare runtime files without starting anything.
+    if req.stage_only {
+        tracing::info!(project = %req.project_id, "batch-run staged (no containers started)");
+        return (
+            StatusCode::OK,
+            Json(BatchRunResponse {
+                services: Vec::new(),
+                warnings: Vec::new(),
+            }),
         ).into_response();
     }
 

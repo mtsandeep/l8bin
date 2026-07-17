@@ -20,6 +20,11 @@ pub(crate) fn ensure_project_dir_and_env(project_id: &str) {
         if let Err(e) = std::fs::write(&env_path, placeholder) {
             tracing::error!(project = project_id, error = %e, "failed to create placeholder .env");
         } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600));
+            }
             tracing::info!(project = project_id, path = %env_path.display(), "created placeholder .env");
         }
     }

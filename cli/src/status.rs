@@ -131,9 +131,12 @@ pub async fn show_project_status(
     let image = project["public_stats"]["image"].as_str();
     let custom_domain = project["custom_domain"].as_str();
     let service_count = project["service_count"].as_u64().unwrap_or(1);
-    let url = custom_domain
-        .map(|d| format!("https://{}", d))
-        .unwrap_or_else(|| format!("https://{}.{}", project_id, server.trim_end_matches('/').trim_start_matches("https://").trim_start_matches("http://")));
+    let url = if let Some(d) = custom_domain.filter(|s| !s.is_empty()) {
+        format!("https://{}", d)
+    } else {
+        let domain = crate::auth::fetch_platform_domain(client, server).await;
+        crate::auth::project_live_url(project_id, &domain)
+    };
 
     // Status color
     let status_colored = match &status {

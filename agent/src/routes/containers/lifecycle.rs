@@ -24,6 +24,24 @@ pub async fn run_container(
     State(state): State<AgentState>,
     Json(req): Json<RunRequest>,
 ) -> impl IntoResponse {
+    if req.stage_only {
+        ensure_project_dir_and_env(&req.project_id);
+        write_project_metadata(
+            &req.project_id,
+            &req.image,
+            req.internal_port,
+            req.cmd.as_deref(),
+            req.memory_limit_mb,
+            req.cpu_limit,
+            req.volumes.clone(),
+        );
+        tracing::info!(project = %req.project_id, "container run staged (no containers started)");
+        return (StatusCode::OK, Json(RunResponse {
+            container_id: String::new(),
+            mapped_port: 0,
+        })).into_response();
+    }
+
     // Remove existing container for this project if present (handles redeploy)
     let _ = state.docker.remove_by_name(&req.project_id).await;
 

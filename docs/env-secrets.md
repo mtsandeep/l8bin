@@ -35,7 +35,7 @@ When you run `l8b ship`, the CLI automatically scans your project root for envir
 For variables that change between environments (like database passwords or internal salts) or that you want to manage manually on the server, LiteBin provides a **Runtime Secret** system.
 
 ### 1. Automatic Folder Creation
-Upon the first deployment of any project (or any subsequent redeploy), LiteBin's Master or Agent will automatically ensure the following directory structure exists on the host:
+Upon the **first** deployment of any project, LiteBin stages the project and creates the runtime directory **before containers start**:
 ```text
 litebin/
 └── projects/
@@ -43,6 +43,8 @@ litebin/
         ├── .env          <-- Created automatically (starts as a comment placeholder)
         └── .env.l8bin    <-- Created after first container start (env snapshot)
 ```
+
+Interactive `l8b ship` then pauses with **Awaiting runtime configuration** so you can edit this file (for example DB passwords) before confirming container start. If your app needs no runtime env, choose **Start containers now** immediately. Redeploys skip this pause.
 
 The initial `.env` contains only a comment instructing you to add your runtime variables. You can edit it at any time — LiteBin picks up changes on the next container start.
 
@@ -87,7 +89,9 @@ litebin/
 - **Do not edit `.env.l8bin`** — it is auto-generated and will be overwritten.
 
 ### 5. Usage via CLI
-After a successful `ship`, the CLI will display the absolute path to this runtime secret file for easy local management.
+On the first interactive `l8b ship`, the CLI stages the deployment, prints the runtime `.env` path on the selected node, and waits for confirmation before starting containers. If you pause, the image stays ready without starting; run `l8b ship` again, select the project, and choose **Resume deployment** (no rebuild required).
+
+After a successful start, the same path remains available for later secret updates.
 
 ---
 

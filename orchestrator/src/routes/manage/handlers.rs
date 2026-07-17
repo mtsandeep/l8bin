@@ -10,7 +10,7 @@ use litebin_common::types::{DeployType, ProjectStatus};
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
-use super::helpers::{MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, read_local_project_env, sync_caddy};
+use super::helpers::{MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, project_is_staged, read_local_project_env, sync_caddy};
 use super::multi_service::{StartServicesOpts, start_services, stop_services, recreate_services};
 
 /// POST /projects/:id/stop
@@ -182,14 +182,32 @@ pub async fn start_project(
         }));
     }
 
+    if project.status == ProjectStatus::Unconfigured {
+        if !project_is_staged(&project) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("project '{}' has no staged deployment data yet", project_id),
+            ));
+        }
+        status::transition(
+            &state.db,
+            &project_id,
+            ProjectStatus::Deploying,
+            &ProjectUpdateFields::default(),
+            None,
+        ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+    }
+
     let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
     let is_compose = matches!(project.deploy_type, Some(DeployType::Compose));
+    let first_start = project.status == ProjectStatus::Unconfigured;
 
     if is_local {
         // It has fast-path (docker start existing) and fallback (recreate) built in.
+        // First start after staging always recreates and pulls registry images.
         start_services(&state, &project, StartServicesOpts {
-            force_recreate: false,
-            pull_images: false,
+            force_recreate: first_start,
+            pull_images: first_start,
             force_pull: false,
             services: None,
             connect_orchestrator: true,
@@ -283,89 +301,144 @@ pub async fn start_project(
         status::derive_and_set_project_status(&state.db, &project_id).await;
         let _ = state.route_sync_tx.send(());
     } else {
-        // Remote single-service: agent start/recreate
+        // Remote single-service: agent start/recreate/run
         let node_id = project.node_id.as_deref().unwrap();
         let client = nodes::client::get_node_client(&state.node_clients, node_id)
             .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
         let node = get_node_from_db(&state.db, node_id).await?;
         let base_url = agent_base_url(&state.config, &node);
-
-        let container_id = project.container_id.as_deref()
-            .ok_or((StatusCode::BAD_REQUEST, "no container id".to_string()))?;
-
         let now = chrono::Utc::now().timestamp();
 
-        // Fast path: try starting existing container
-        let resp = client
-            .post(&format!("{}/containers/start", base_url))
-            .json(&json!({ "container_id": container_id }))
-            .send()
-            .await;
+        let image = project.image.as_deref()
+            .ok_or((StatusCode::BAD_REQUEST, "project has no image".to_string()))?;
+        let internal_port = project.internal_port
+            .ok_or((StatusCode::BAD_REQUEST, "project has no port configured".to_string()))?;
 
-        match resp {
-            Ok(r) if r.status().is_success() => {
-                let port = r.json::<serde_json::Value>().await.ok()
-                    .and_then(|v| v["mapped_port"].as_u64())
-                    .map(|p| p as i64);
-                status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
-                    mapped_port: port.map(Some),
-                    last_active_at: Some(now),
-                    ..Default::default()
-                }, None).await
-                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+        // First start after staging has no container yet — create it on the agent.
+        if project.container_id.is_none() {
+            let resp = client
+                .post(format!("{}/containers/run", base_url))
+                .json(&json!({
+                    "image": image,
+                    "internal_port": internal_port,
+                    "project_id": project_id,
+                    "cmd": project.cmd,
+                    "memory_limit_mb": project.memory_limit_mb,
+                    "cpu_limit": project.cpu_limit,
+                }))
+                .send()
+                .await
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
+
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("remote run failed: {body}")));
             }
-            Ok(r) => {
-                tracing::warn!(project = %project_id, status = %r.status(), "agent start returned non-success, falling back to recreate");
-                // Fallback: recreate on agent
-                if let Err(e) = client
-                    .post(format!("{}/containers/remove", base_url))
-                    .json(&json!({ "container_id": container_id }))
-                    .send()
-                    .await
-                {
-                    tracing::warn!(project_id = %project_id, container_id = %container_id, error = %e, "start: failed to remove old container on agent");
-                }
 
-                let image = project.image.as_deref()
-                    .ok_or((StatusCode::BAD_REQUEST, "project has no image".to_string()))?;
-                let internal_port = project.internal_port
-                    .ok_or((StatusCode::BAD_REQUEST, "project has no port configured".to_string()))?;
+            let result: serde_json::Value = resp.json().await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
+            let new_cid = result["container_id"].as_str().unwrap_or("").to_string();
+            let port = result["mapped_port"].as_u64()
+                .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port".to_string()))? as i64;
 
-                let resp = client
-                    .post(format!("{}/containers/recreate", base_url))
-                    .json(&json!({
-                        "image": image,
-                        "internal_port": internal_port,
-                        "project_id": project_id,
-                        "cmd": project.cmd,
-                        "memory_limit_mb": project.memory_limit_mb,
-                        "cpu_limit": project.cpu_limit,
-                    }))
-                    .send()
-                    .await
-                    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
+            status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
+                container_id: Some(Some(new_cid.clone())),
+                mapped_port: Some(Some(port)),
+                last_active_at: Some(now),
+                ..Default::default()
+            }, None).await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
-                if !resp.status().is_success() {
-                    let body = resp.text().await.unwrap_or_default();
-                    return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("recreate failed: {body}")));
-                }
-
-                let result: serde_json::Value = resp.json().await
-                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
-                let new_cid = result["container_id"].as_str().unwrap_or("").to_string();
-                let port = result["mapped_port"].as_u64()
-                    .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port".to_string()))? as i64;
-
-                status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
-                    container_id: Some(Some(new_cid)),
-                    mapped_port: Some(Some(port)),
-                    last_active_at: Some(now),
-                    ..Default::default()
-                }, None).await
-                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+            if let Err(e) = sqlx::query(
+                "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit)
+                 VALUES (?, 'web', ?, ?, ?, 1, 'running', ?, ?, ?, ?)",
+            )
+            .bind(&project_id)
+            .bind(image)
+            .bind(internal_port)
+            .bind(port)
+            .bind(&new_cid)
+            .bind(&project.cmd)
+            .bind(project.memory_limit_mb)
+            .bind(project.cpu_limit)
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(project_id = %project_id, error = %e, "start: failed to upsert project_services row");
             }
-            Err(e) => {
-                return Err((StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")));
+
+            let _ = state.route_sync_tx.send(());
+        } else {
+            let container_id = project.container_id.as_deref().unwrap();
+
+            // Fast path: try starting existing container
+            let resp = client
+                .post(&format!("{}/containers/start", base_url))
+                .json(&json!({ "container_id": container_id }))
+                .send()
+                .await;
+
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    let port = r.json::<serde_json::Value>().await.ok()
+                        .and_then(|v| v["mapped_port"].as_u64())
+                        .map(|p| p as i64);
+                    status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
+                        mapped_port: port.map(Some),
+                        last_active_at: Some(now),
+                        ..Default::default()
+                    }, None).await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+                }
+                Ok(r) => {
+                    tracing::warn!(project = %project_id, status = %r.status(), "agent start returned non-success, falling back to recreate");
+                    // Fallback: recreate on agent
+                    if let Err(e) = client
+                        .post(format!("{}/containers/remove", base_url))
+                        .json(&json!({ "container_id": container_id }))
+                        .send()
+                        .await
+                    {
+                        tracing::warn!(project_id = %project_id, container_id = %container_id, error = %e, "start: failed to remove old container on agent");
+                    }
+
+                    let resp = client
+                        .post(format!("{}/containers/recreate", base_url))
+                        .json(&json!({
+                            "image": image,
+                            "internal_port": internal_port,
+                            "project_id": project_id,
+                            "cmd": project.cmd,
+                            "memory_limit_mb": project.memory_limit_mb,
+                            "cpu_limit": project.cpu_limit,
+                        }))
+                        .send()
+                        .await
+                        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
+
+                    if !resp.status().is_success() {
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("recreate failed: {body}")));
+                    }
+
+                    let result: serde_json::Value = resp.json().await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
+                    let new_cid = result["container_id"].as_str().unwrap_or("").to_string();
+                    let port = result["mapped_port"].as_u64()
+                        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port".to_string()))? as i64;
+
+                    status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
+                        container_id: Some(Some(new_cid)),
+                        mapped_port: Some(Some(port)),
+                        last_active_at: Some(now),
+                        ..Default::default()
+                    }, None).await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+                }
+                Err(e) => {
+                    return Err((StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")));
+                }
             }
         }
     }

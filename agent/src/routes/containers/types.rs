@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 
 // ── Request / Response types ──────────────────────────────────────────────────
 
+fn default_false() -> bool {
+    false
+}
+
 #[derive(Deserialize)]
 pub struct RunRequest {
     pub image: String,
@@ -12,6 +16,10 @@ pub struct RunRequest {
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
     pub volumes: Option<Vec<VolumeMount>>,
+    /// When true, only create the project directory, `.env` placeholder, and metadata.
+    /// No image pull or container start.
+    #[serde(default = "default_false")]
+    pub stage_only: bool,
 }
 
 #[derive(Serialize)]

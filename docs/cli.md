@@ -183,7 +183,15 @@ $ l8b ship
   ✔ Image built
   :: Uploading image...
   ✔ Upload complete
-  :: Deploying...
+  :: Staging deployment...
+  ✔ Deployment staged
+
+  ⏸ Awaiting runtime configuration
+  🔒 Runtime secrets on node local: ~/litebin/projects/my-app/.env
+? Ready to start containers?
+> Start containers now
+  Pause — start later
+
   ✔ Deploy successful!
 
   🌐 Live at: https://my-app.l8b.in
@@ -191,6 +199,8 @@ $ l8b ship
   💡 Use this token to redeploy from CI/CD:
      L8B_TOKEN=a1b2c3d4... l8b deploy --project my-app --port 3000
 ```
+
+The first deploy pauses so you can edit the server-side `projects/<id>/.env` before any containers start. Choose **Start containers now** immediately if no runtime env is needed. If you pause, the image stays ready without starting; run `l8b ship` again, select the project, and choose **Resume deployment** (no rebuild).
 
 When selecting **Existing project**, a list of projects is shown with their status, image, and port:
 
@@ -206,9 +216,11 @@ When selecting **Existing project**, a list of projects is shown with their stat
 1. **Creates the project** (if new) on the server
 2. **Generates a deploy token** scoped to the project — displayed so you can save it for CI/CD later
 3. **Detects your framework** (Node.js, Python, Go, Rust, Java, Docker) for informational display
-4. **Builds, uploads, and deploys** in one step
+4. **Builds and uploads** images
+5. **Stages the first deploy** (writes compose/metadata and creates the target-node `.env`) without starting containers
+6. **Waits for runtime configuration**, then starts containers after confirmation
 
-For advanced options (custom Dockerfile, resource limits, node selection), use `l8b deploy` with flags.
+For advanced options (custom Dockerfile, resource limits, node selection), use `l8b deploy` with flags. Non-interactive `l8b deploy` / CI paths do not pause for runtime configuration.
 
 ### `l8b login`
 

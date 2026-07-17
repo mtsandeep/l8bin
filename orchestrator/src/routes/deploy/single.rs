@@ -37,6 +37,10 @@ pub struct DeployRequest {
     pub custom_domain: Option<String>,
     pub volumes: Option<Vec<VolumeMount>>,
     pub cleanup_volumes: Option<bool>,
+    /// When true on a first deploy, persist project metadata and create the runtime
+    /// `.env` without starting containers. Ignored for redeploys of configured projects.
+    #[serde(default)]
+    pub stage_only: bool,
 }
 
 #[utoipa::path(
@@ -215,11 +219,23 @@ async fn execute_deploy(
         (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled)
     };
 
+    let existing_status: Option<ProjectStatus> = sqlx::query_scalar(
+        "SELECT status FROM projects WHERE id = ?"
+    )
+    .bind(&payload.project_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let stage_only = payload.stage_only
+        && matches!(existing_status, None | Some(ProjectStatus::Unconfigured));
+
     tracing::info!(
         project_id = %payload.project_id,
         image = %payload.image,
         port = %payload.port,
         is_update = is_update,
+        stage_only = stage_only,
         "deploy request received"
     );
 
@@ -241,6 +257,12 @@ async fn execute_deploy(
     .ok()
     .flatten()
     .unwrap_or((None, None));
+
+    let initial_status = if stage_only {
+        ProjectStatus::Unconfigured
+    } else {
+        ProjectStatus::Deploying
+    };
 
     // 3. Insert or upsert project in DB with status='deploying'
     // Capture old volumes for orphan detection
@@ -292,7 +314,7 @@ async fn execute_deploy(
         .bind(&payload.description)
         .bind(&payload.image)
         .bind(payload.port)
-        .bind(ProjectStatus::Deploying)
+        .bind(initial_status.clone())
         .bind(auto_stop_enabled)
         .bind(auto_stop_timeout_mins)
         .bind(auto_start_enabled)
@@ -303,7 +325,7 @@ async fn execute_deploy(
         .bind(&volumes_json)
         .bind(now)
         .bind(now)
-        .bind(ProjectStatus::Deploying)
+        .bind(initial_status.clone())
         .execute(&state.db)
         .await
     } else {
@@ -320,7 +342,7 @@ async fn execute_deploy(
         .bind(&payload.description)
         .bind(&payload.image)
         .bind(payload.port)
-        .bind(ProjectStatus::Deploying)
+        .bind(initial_status.clone())
         .bind(auto_stop_enabled)
         .bind(auto_stop_timeout_mins)
         .bind(auto_start_enabled)
@@ -378,6 +400,105 @@ async fn execute_deploy(
                 .into_response();
         }
     };
+
+    // Persist sticky node selection for staged and live deploys.
+    if let Err(e) = sqlx::query(
+        "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
+    )
+    .bind(&node_id)
+    .bind(now)
+    .bind(&payload.project_id)
+    .execute(&state.db)
+    .await
+    {
+        tracing::warn!(project_id = %payload.project_id, error = %e, "deploy: failed to persist node_id");
+    }
+
+    // First-deploy staging: create runtime .env / metadata, do not start containers.
+    if stage_only {
+        if node_id == "local" {
+            crate::routes::manage::ensure_project_dir_and_env(&payload.project_id);
+        } else {
+            let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
+                .bind(&node_id)
+                .fetch_optional(&state.db)
+                .await
+            {
+                Ok(Some(n)) => n,
+                Ok(None) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"error": format!("node '{}' not found", node_id)})),
+                    ).into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": format!("database error: {e}")})),
+                    ).into_response();
+                }
+            };
+
+            let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
+                Ok(c) => c,
+                Err(e) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"error": format!("node client unavailable: {e}")})),
+                    ).into_response();
+                }
+            };
+            let base_url = agent_base_url(&state.config, &node);
+            let stage_resp = match client
+                .post(&format!("{}/containers/run", base_url))
+                .json(&json!({
+                    "image": payload.image,
+                    "internal_port": payload.port,
+                    "project_id": payload.project_id,
+                    "cmd": project.cmd,
+                    "memory_limit_mb": project.memory_limit_mb,
+                    "cpu_limit": project.cpu_limit,
+                    "volumes": payload.volumes,
+                    "stage_only": true,
+                }))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"error": format!("agent unreachable: {e}")})),
+                    ).into_response();
+                }
+            };
+
+            if !stage_resp.status().is_success() {
+                let body = stage_resp.text().await.unwrap_or_default();
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error": format!("remote stage failed: {body}")})),
+                ).into_response();
+            }
+        }
+
+        tracing::info!(
+            project_id = %payload.project_id,
+            node_id = %node_id,
+            "deployment staged; awaiting runtime configuration"
+        );
+
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "status": "unconfigured",
+                "project_id": payload.project_id,
+                "node_id": node_id,
+                "url": format!("https://{}.{}", payload.project_id, state.config.domain),
+                "message": "Deployment staged. Configure runtime secrets, then start the project.",
+            })),
+        ).into_response();
+    }
 
     // 5. Spawn background task for heavy lifting (Pull, Start, Route Sync)
     let state_clone = state.clone();
@@ -616,6 +737,7 @@ async fn execute_deploy(
         Json(json!({
             "status": "deploying",
             "project_id": payload.project_id,
+            "url": format!("https://{}.{}", payload.project_id, state.config.domain),
             "message": "Deployment started in background"
         })),
     )

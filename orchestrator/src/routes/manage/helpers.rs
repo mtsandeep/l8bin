@@ -51,8 +51,74 @@ pub fn ensure_project_dir_and_env(project_id: &str) {
         if let Err(e) = std::fs::write(&env_path, placeholder) {
             tracing::error!(project = project_id, error = %e, "failed to create placeholder .env");
         } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600));
+            }
             tracing::info!(project = project_id, path = %env_path.display(), "created placeholder .env");
         }
+    }
+}
+
+/// Whether a project has enough staged deployment data to start containers.
+pub fn project_is_staged(project: &crate::db::models::Project) -> bool {
+    let has_compose = std::path::PathBuf::from("projects")
+        .join(&project.id)
+        .join("compose.yaml")
+        .exists();
+    let has_image = project
+        .image
+        .as_ref()
+        .map(|img| !img.is_empty())
+        .unwrap_or(false);
+    has_compose || has_image
+}
+
+#[cfg(test)]
+mod tests {
+    use super::project_is_staged;
+    use litebin_common::types::ProjectStatus;
+
+    fn sample_project(id: &str, image: Option<&str>) -> crate::db::models::Project {
+        crate::db::models::Project {
+            id: id.to_string(),
+            user_id: "u1".into(),
+            name: None,
+            description: None,
+            image: image.map(|s| s.to_string()),
+            internal_port: Some(80),
+            mapped_port: None,
+            container_id: None,
+            node_id: Some("local".into()),
+            status: ProjectStatus::Unconfigured,
+            cmd: None,
+            memory_limit_mb: None,
+            cpu_limit: None,
+            custom_domain: None,
+            volumes: None,
+            auto_stop_enabled: true,
+            auto_stop_timeout_mins: 15,
+            auto_start_enabled: true,
+            allow_raw_ports: false,
+            allow_docker_access: false,
+            last_active_at: None,
+            service_count: None,
+            service_summary: None,
+            deploy_type: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn staged_when_image_present() {
+        assert!(project_is_staged(&sample_project("p1", Some("nginx:alpine"))));
+    }
+
+    #[test]
+    fn not_staged_without_image_or_compose() {
+        assert!(!project_is_staged(&sample_project("p-missing-stage", None)));
     }
 }
 
