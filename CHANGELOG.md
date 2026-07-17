@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-07-17
+
 ### Added
 - **Gated first deploy for runtime configuration** — Interactive `l8b ship` now stages the first deployment (compose + target-node `.env`) without starting containers, pauses with **Awaiting runtime configuration**, and only starts after confirmation. Redeploys are unchanged. Interrupted first deploys can resume via **Resume deployment**.
 - **Explicit first-deploy project states** — New projects start as `pending`, become `unconfigured` after staging (image/compose + runtime `.env`), then move to `deploying` on confirmed start. Dashboard badges distinguish **Pending** vs **Awaiting configuration**.
