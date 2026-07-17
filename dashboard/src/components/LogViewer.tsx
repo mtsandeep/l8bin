@@ -3,6 +3,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchDeployLogs, fetchLogs, ProjectStatus, type ServiceInfo } from '../api';
 import { useIntervalWhileVisible } from '../hooks/useIntervalWhileVisible';
 
+/** Strip ANSI / CSI escape sequences so colored terminal logs render as plain text. */
+const ANSI_RE = /\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_RE, '');
+}
+
+function stripAnsiLines(lines: string[]): string[] {
+  return lines.map(stripAnsi);
+}
+
 interface LogViewerProps {
   projectId: string;
   services?: ServiceInfo[];
@@ -71,17 +82,17 @@ export default function LogViewer({ projectId, services = [], status, onClose }:
           const data = await fetchDeployLogs(projectId);
           setTabStates((prev) => ({
             ...prev,
-            deploy: { lines: data.lines, loading: false, stale: false },
+            deploy: { lines: stripAnsiLines(data.lines), loading: false, stale: false },
           }));
         } else {
           const data = await fetchLogs(projectId, 200, tab);
           if (isMultiService) {
             setTabStates((prev) => ({
               ...prev,
-              [tab || '']: { lines: data.lines, loading: false, stale: false },
+              [tab || '']: { lines: stripAnsiLines(data.lines), loading: false, stale: false },
             }));
           } else {
-            setLines(data.lines);
+            setLines(stripAnsiLines(data.lines));
           }
         }
       } catch (e) {

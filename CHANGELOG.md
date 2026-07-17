@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Dashboard log viewer strips ANSI** — Container logs with terminal color codes render as plain text instead of raw escape sequences like `\u001b[95m`.
+
 ## [0.3.4] - 2026-07-17
 
 ### Added
