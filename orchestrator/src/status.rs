@@ -112,8 +112,8 @@ pub async fn transition(
         ProjectStatus::Completed => {
             // Service-only status; never set as a project-level status via transition
         }
-        ProjectStatus::Unconfigured => {
-            // Cascade to all services
+        ProjectStatus::Pending | ProjectStatus::Unconfigured => {
+            // Cascade setup states to any existing service rows
             sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ?")
                 .bind(&new_status)
                 .bind(project_id)
@@ -352,7 +352,7 @@ pub struct SyncResult {
 /// Checks each service's container via `is_container_running()`, updates
 /// `project_services.status` to match Docker, then derives `projects.status`.
 ///
-/// Skips transient states (deploying, stopping, error, unconfigured).
+/// Skips transient/setup states (pending, unconfigured, deploying, stopping, error).
 pub async fn sync_project_from_docker(
     db: &SqlitePool,
     docker: &DockerManager,

@@ -44,7 +44,7 @@ litebin/
         └── .env.l8bin    <-- Created after first container start (env snapshot)
 ```
 
-Interactive `l8b ship` then pauses with **Awaiting runtime configuration** so you can edit this file (for example DB passwords) before confirming container start. If your app needs no runtime env, choose **Start containers now** immediately. Redeploys skip this pause.
+Interactive `l8b ship` moves the project from `pending` to `unconfigured`, then pauses with **Awaiting runtime configuration** so you can edit this file (for example DB passwords) before confirming container start. If your app needs no runtime env, choose **Start containers now** immediately; the project then moves through `deploying` to `running`. Redeploys skip this pause.
 
 The initial `.env` contains only a comment instructing you to add your runtime variables. You can edit it at any time — LiteBin picks up changes on the next container start.
 

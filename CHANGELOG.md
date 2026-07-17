@@ -6,9 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Gated first deploy for runtime configuration** — Interactive `l8b ship` now stages the first deployment (compose + target-node `.env`) without starting containers, pauses with **Awaiting runtime configuration**, and only starts after confirmation. Redeploys are unchanged. Interrupted first deploys can resume via **Resume deployment**.
+- **Explicit first-deploy project states** — New projects start as `pending`, become `unconfigured` after staging (image/compose + runtime `.env`), then move to `deploying` on confirmed start. Dashboard badges distinguish **Pending** vs **Awaiting configuration**.
 
 ### Changed
 - **CLI `ship` cleanup** — Deduplicated interactive and noninteractive compose deploy paths (shared load/build-summary/prepare helpers), removed unreachable Compose port scanning, and clarified first-deploy pause/resume wording.
+
+### Fixed
+- **Waker ignores unconfigured projects** — Opening a staged project's URL no longer auto-starts containers; status stays `unconfigured` until the user confirms start from the CLI.
+- **Waker also blocks pending projects** — Opening a `pending` project's URL does not auto-start; the project stays paused until artifacts are staged and start is confirmed.
 
 ## [0.3.3] - 2026-07-17
 

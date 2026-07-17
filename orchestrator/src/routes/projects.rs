@@ -246,7 +246,7 @@ pub async fn create_project(
     let now = chrono::Utc::now().timestamp();
 
     let result = sqlx::query(
-        "INSERT INTO projects (id, user_id, name, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'unconfigured', ?, ?)",
+        "INSERT INTO projects (id, user_id, name, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
     )
     .bind(&payload.id)
     .bind(&user_id)

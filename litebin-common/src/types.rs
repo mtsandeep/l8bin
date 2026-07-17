@@ -48,6 +48,7 @@ use sqlx::{FromRow, Type};
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "TEXT", rename_all = "snake_case")]
 pub enum ProjectStatus {
+    Pending,
     Stopped,
     Running,
     Deploying,
@@ -64,7 +65,7 @@ impl ProjectStatus {
     /// Transient statuses are managed by their owning code paths and should
     /// not be overwritten by periodic Docker reconciliation.
     pub fn is_transient(&self) -> bool {
-        matches!(self, ProjectStatus::Deploying | ProjectStatus::Importing | ProjectStatus::Stopping | ProjectStatus::Error | ProjectStatus::Unconfigured)
+        matches!(self, ProjectStatus::Pending | ProjectStatus::Deploying | ProjectStatus::Importing | ProjectStatus::Stopping | ProjectStatus::Error | ProjectStatus::Unconfigured)
     }
 
     /// Whether this service status counts as healthy for project aggregation.
@@ -76,6 +77,7 @@ impl ProjectStatus {
 impl fmt::Display for ProjectStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ProjectStatus::Pending => write!(f, "pending"),
             ProjectStatus::Stopped => write!(f, "stopped"),
             ProjectStatus::Running => write!(f, "running"),
             ProjectStatus::Deploying => write!(f, "deploying"),

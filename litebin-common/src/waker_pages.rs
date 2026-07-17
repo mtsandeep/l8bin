@@ -1,4 +1,4 @@
-/// Shared HTML templates for waker pages (loading, error, not-found, offline).
+/// Shared HTML templates for waker pages (loading, error, not-found, offline, pending, not-ready).
 /// Both the orchestrator and agent wakers use these — the HTML/CSS is identical,
 /// only the response wrapping differs per framework.
 
@@ -111,6 +111,34 @@ pub fn offline_page_html() -> String {
     <div class="msg">
         <h2>This website is currently offline</h2>
         <p>Auto-start is disabled!</p>
+        {footer}
+    </div>
+</body>
+</html>"#,
+        footer = footer_html(),
+    )
+}
+
+/// Generic "App not ready!" page for setup states (pending/unconfigured).
+/// Intentionally vague — does not reveal the project's internal lifecycle state.
+pub fn not_ready_page_html() -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>App not ready</title>
+    <style>
+        body {{ font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }}
+        .msg {{ text-align: center; }}
+        h2 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }}
+        p {{ color: #64748b; margin: 0; font-size: 0.875rem; }}
+    </style>
+</head>
+<body>
+    <div class="msg">
+        <h2>App not ready!</h2>
+        <p>Complete the deployment to have your app live.</p>
         {footer}
     </div>
 </body>

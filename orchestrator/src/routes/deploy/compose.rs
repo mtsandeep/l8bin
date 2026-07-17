@@ -242,9 +242,9 @@ pub async fn deploy_compose(
         }
     };
     let is_update = existing_status.is_some();
-    // First-deploy staging only applies before the project has ever left unconfigured.
+    // First-deploy staging applies while pending or to legacy unstaged projects.
     let stage_only = stage_only_requested
-        && matches!(existing_status, None | Some(ProjectStatus::Unconfigured));
+        && matches!(existing_status, None | Some(ProjectStatus::Pending | ProjectStatus::Unconfigured));
 
     let (auto_stop, auto_stop_mins, auto_start) = if is_update && auto_stop_enabled.is_none() && auto_start_enabled.is_none() {
         let existing = sqlx::query_as::<_, (bool, i64, bool)>(
@@ -325,9 +325,9 @@ pub async fn deploy_compose(
     let service_summary = start_order.join(":");
 
     // On partial redeploy, project stays running (we're only updating a subset of services).
-    // First-deploy staging leaves the project unconfigured until the user confirms start.
+    // First-deploy staging remains pending until artifacts and runtime config are ready.
     let project_status = if stage_only {
-        ProjectStatus::Unconfigured
+        ProjectStatus::Pending
     } else if target_services.is_some() {
         ProjectStatus::Running
     } else {
@@ -469,7 +469,7 @@ pub async fn deploy_compose(
 
         // On partial redeploy, only mark targeted services as 'deploying'
         let status = if stage_only {
-            ProjectStatus::Unconfigured
+            ProjectStatus::Pending
         } else if target_set.as_ref().map_or(true, |ts| ts.contains(svc_name)) {
             ProjectStatus::Deploying
         } else {
@@ -625,6 +625,20 @@ pub async fn deploy_compose(
                     Json(json!({"error": format!("remote stage failed: {body}")})),
                 ).into_response();
             }
+        }
+
+        if let Err(e) = status::transition(
+            &state.db,
+            &project_id,
+            ProjectStatus::Unconfigured,
+            &ProjectUpdateFields::default(),
+            None,
+        ).await {
+            tracing::error!(project_id = %project_id, error = %e, "compose stage: failed to mark project unconfigured");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "failed to persist staged deployment status"})),
+            ).into_response();
         }
 
         tracing::info!(

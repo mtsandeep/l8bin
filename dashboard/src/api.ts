@@ -3,6 +3,7 @@ const API_BASE = '';
 // ── Shared Types ──────────────────────────────────────────────────────────────
 
 export const ProjectStatus = {
+  Pending: 'pending',
   Running: 'running',
   Stopped: 'stopped',
   Deploying: 'deploying',

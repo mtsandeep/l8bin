@@ -200,7 +200,7 @@ CREATE TABLE project_services (
     mapped_port     INTEGER,
     memory_limit_mb INTEGER,
     cpu_limit       REAL,
-    status          TEXT NOT NULL DEFAULT 'stopped',  -- deploying|running|stopped|error
+    status          TEXT NOT NULL DEFAULT 'stopped',  -- pending|unconfigured|deploying|running|stopped|error
     instance_id     TEXT DEFAULT NULL,
     PRIMARY KEY (project_id, service_name)
 );

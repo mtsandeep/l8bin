@@ -5,6 +5,12 @@ interface StatusBadgeProps {
 }
 
 const statusConfig: Record<string, { bg: string; text: string; dot: string; label: string }> = {
+  [ProjectStatus.Pending]: {
+    bg: 'bg-slate-500/10',
+    text: 'text-slate-400',
+    dot: 'bg-slate-400',
+    label: 'Pending',
+  },
   [ProjectStatus.Running]: {
     bg: 'bg-emerald-500/10',
     text: 'text-emerald-400',
@@ -57,7 +63,7 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string; labe
     bg: 'bg-indigo-500/10',
     text: 'text-indigo-400',
     dot: 'bg-indigo-400',
-    label: 'Pending',
+    label: 'Awaiting configuration',
   },
 };
 

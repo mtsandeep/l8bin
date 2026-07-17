@@ -5,7 +5,7 @@ import { formatBytes, ProjectStatus } from '../../api';
 interface ProjectStatsProps {
   stats: ProjectStats | null;
   isRunning: boolean;
-  isUnconfigured: boolean;
+  setupStatus: ProjectStatus | null;
 }
 
 function aggregateFromServices(services: ServiceInfo[]) {
@@ -19,12 +19,17 @@ function aggregateFromServices(services: ServiceInfo[]) {
   return { totalCpu, totalMem, totalLimit, totalDisk };
 }
 
-export default function StatsGrid({ stats, isRunning, isUnconfigured }: ProjectStatsProps) {
-  if (isUnconfigured) {
+export default function StatsGrid({ stats, isRunning, setupStatus }: ProjectStatsProps) {
+  if (setupStatus) {
+    const isPending = setupStatus === ProjectStatus.Pending;
     return (
       <div className="mb-4 px-3 py-4 bg-indigo-500/5 border border-indigo-500/15 rounded-md text-center">
-        <p className="text-xs text-indigo-300">Awaiting first deploy</p>
-        <p className="text-[10px] text-slate-500 mt-1">Deploy via CLI or GitHub Action</p>
+        <p className="text-xs text-indigo-300">
+          {isPending ? 'Awaiting first deploy' : 'Awaiting runtime configuration'}
+        </p>
+        <p className="text-[10px] text-slate-500 mt-1">
+          {isPending ? 'Deploy via CLI or GitHub Action' : 'Configure .env, then resume deployment from the CLI'}
+        </p>
       </div>
     );
   }

@@ -160,7 +160,7 @@ async fn existing_project_flow(
         .map(|p| {
             let status = match &p.status {
                 ProjectStatus::Running => p.status.to_string().green().to_string(),
-                ProjectStatus::Stopped | ProjectStatus::Unconfigured => p.status.to_string().yellow().to_string(),
+                ProjectStatus::Pending | ProjectStatus::Stopped | ProjectStatus::Unconfigured => p.status.to_string().yellow().to_string(),
                 ProjectStatus::Error | ProjectStatus::Degraded => p.status.to_string().red().to_string(),
                 _ => p.status.to_string(),
             };
@@ -189,8 +189,12 @@ async fn existing_project_flow(
     let project_id = &project.id;
 
     let staged = project.status == ProjectStatus::Unconfigured && project_is_staged(project);
+    let awaiting_first_deploy = project.status == ProjectStatus::Pending
+        || (project.status == ProjectStatus::Unconfigured && !staged);
     let actions: Vec<&str> = if staged {
         vec!["Resume deployment", "Redeploy", "Delete"]
+    } else if awaiting_first_deploy {
+        vec!["Deploy", "Delete"]
     } else {
         vec!["Redeploy", "Recreate", "Start", "Stop", "Delete"]
     };
@@ -215,9 +219,9 @@ async fn existing_project_flow(
                 print_live_url(&live_url);
             }
         }
-        "Redeploy" => {
+        "Deploy" | "Redeploy" => {
             let existing_node = project.node_id.as_deref();
-            let is_first = project.status == ProjectStatus::Unconfigured;
+            let is_first = matches!(project.status, ProjectStatus::Pending | ProjectStatus::Unconfigured);
             let port = if detect_compose_file(project_dir).is_some() {
                 0
             } else {

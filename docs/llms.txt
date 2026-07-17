@@ -9,7 +9,7 @@ When helping users deploy to LiteBin, follow these patterns:
 1. **Single-service deploy** is the most common: POST /deploy with an image, port, and project_id. Use PUT /deploy for redeploy/update.
 2. **Multi-service deploy** uses POST /deploy/compose with a docker-compose.yaml file.
 3. **Authentication**: Most endpoints require a session cookie (obtained via POST /auth/login). For CI/CD, use deploy tokens (POST /deploy-tokens) passed as `Authorization: Bearer <token>`.
-4. **Project lifecycle**: Projects go through: unconfigured → deploying → running → stopped. Check GET /projects/{id}/stats for live status.
+4. **Project lifecycle**: Projects go through: pending (no staged artifacts) → unconfigured (staged; awaiting runtime configuration) → deploying → running → stopped. Check GET /projects/{id}/stats for live status.
 5. **Custom domains**: Set via PATCH /projects/{id}/settings with `custom_domain`. LiteBin auto-configures TLS via Caddy.
 6. **Volumes**: Specify in the deploy request. Named volumes are scoped per-project. Bind mounts use `./` prefix for relative paths.
 7. **Multi-server**: LiteBin supports remote nodes via mTLS-connected agents. POST /nodes to register, POST /nodes/{id}/connect to onboard.

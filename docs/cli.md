@@ -200,7 +200,7 @@ $ l8b ship
      L8B_TOKEN=a1b2c3d4... l8b deploy --project my-app --port 3000
 ```
 
-The first deploy pauses so you can edit the server-side `projects/<id>/.env` before any containers start. Choose **Start containers now** immediately if no runtime env is needed. If you pause, the image stays ready without starting; run `l8b ship` again, select the project, and choose **Resume deployment** (no rebuild).
+The first deploy moves from `pending` (project created, nothing staged) to `unconfigured` (image/compose and `.env` staged), then pauses so you can edit the server-side `projects/<id>/.env` before any containers start. Choose **Start containers now** immediately if no runtime env is needed; this moves the project through `deploying` to `running`. If you pause, the image stays ready without starting; run `l8b ship` again, select the project, and choose **Resume deployment** (no rebuild).
 
 When selecting **Existing project**, a list of projects is shown with their status, image, and port:
 

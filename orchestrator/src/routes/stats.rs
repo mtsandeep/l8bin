@@ -369,11 +369,11 @@ pub async fn all_project_stats(
             }
             services.push(svc);
         }
-        // Use the actual project status — preserve transient states (stopping, deploying, error, unconfigured)
+        // Use the actual project status — preserve transient/setup states
         // and only derive stopped/degraded when the project is in a stable terminal state
         let project_status = projects.iter().find(|p| p.id == project_id).map(|p| p.status.clone()).unwrap_or(ProjectStatus::Stopped);
         let status = match project_status {
-            ProjectStatus::Stopping | ProjectStatus::Deploying | ProjectStatus::Error | ProjectStatus::Unconfigured => project_status,
+            ProjectStatus::Pending | ProjectStatus::Stopping | ProjectStatus::Deploying | ProjectStatus::Error | ProjectStatus::Unconfigured => project_status,
             _ => {
                 let any_running = services.iter().any(|s| s.status.is_service_healthy());
                 if any_running { ProjectStatus::Degraded } else { ProjectStatus::Stopped }

@@ -241,7 +241,7 @@ Root CA (self-signed, ECDSA P-256)
 | mapped_port | INTEGER | Host-mapped port (assigned at runtime) |
 | container_id | TEXT | Docker container ID |
 | node_id | TEXT FK | Which node this runs on |
-| status | TEXT | `running`, `stopped`, `deploying`, `migrating`, `degraded` |
+| status | TEXT | `pending`, `unconfigured`, `deploying`, `running`, `stopped`, `stopping`, `error`, `degraded` |
 | volumes | TEXT | Volume configuration |
 | service_count | INTEGER DEFAULT 1 | Number of services (multi-service) |
 | service_summary | TEXT | Summary of services |

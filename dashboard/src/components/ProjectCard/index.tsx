@@ -195,9 +195,13 @@ export default function ProjectCard({
   const isStopped = effectiveStatus === ProjectStatus.Stopped;
   const isStopping = effectiveStatus === ProjectStatus.Stopping;
   const isDegraded = effectiveStatus === ProjectStatus.Degraded;
-  const isUnconfigured =
-    project.status === ProjectStatus.Unconfigured ||
-    (project.status === ProjectStatus.Stopped && !project.public_stats?.image);
+  const setupStatus =
+    project.status === ProjectStatus.Pending || project.status === ProjectStatus.Unconfigured
+      ? project.status
+      : project.status === ProjectStatus.Stopped && !project.public_stats?.image
+        ? ProjectStatus.Pending
+        : null;
+  const isAwaitingSetup = setupStatus !== null;
   return (
     <div className="relative bg-slate-800/50 border border-slate-700/50 rounded-lg p-5 hover:border-slate-600/50 transition-colors">
       {/* Header */}
@@ -331,7 +335,7 @@ export default function ProjectCard({
         </div>
       </div>
 
-      <StatsGrid stats={stats} isRunning={isRunning} isUnconfigured={isUnconfigured} />
+      <StatsGrid stats={stats} isRunning={isRunning} setupStatus={setupStatus} />
 
       {/* Node */}
       <div className="mb-4 px-3 py-2 bg-slate-900/50 rounded-md flex items-center gap-2 min-w-0">
@@ -487,7 +491,7 @@ export default function ProjectCard({
             </button>
             {showActions && (
               <div className="absolute right-0 bottom-full mb-1 w-60 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl py-1 z-50">
-                {!isUnconfigured && (
+                {!isAwaitingSetup && (
                   <>
                     <button
                       type="button"

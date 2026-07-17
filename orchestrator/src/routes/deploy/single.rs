@@ -228,7 +228,7 @@ async fn execute_deploy(
     .ok()
     .flatten();
     let stage_only = payload.stage_only
-        && matches!(existing_status, None | Some(ProjectStatus::Unconfigured));
+        && matches!(existing_status, None | Some(ProjectStatus::Pending | ProjectStatus::Unconfigured));
 
     tracing::info!(
         project_id = %payload.project_id,
@@ -259,7 +259,7 @@ async fn execute_deploy(
     .unwrap_or((None, None));
 
     let initial_status = if stage_only {
-        ProjectStatus::Unconfigured
+        ProjectStatus::Pending
     } else {
         ProjectStatus::Deploying
     };
@@ -390,8 +390,9 @@ async fn execute_deploy(
     let node_id = match nodes::selector::select_node(&state.db, &project, payload.node_id.clone()).await {
         Ok(id) => id,
         Err(e) => {
-            if let Err(e) = status::transition(&state.db, &payload.project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await {
-                tracing::warn!(project_id = %payload.project_id, error = %e, "deploy: failed to transition to Stopped");
+            let failure_status = if stage_only { ProjectStatus::Pending } else { ProjectStatus::Stopped };
+            if let Err(e) = status::transition(&state.db, &payload.project_id, failure_status, &ProjectUpdateFields::default(), None).await {
+                tracing::warn!(project_id = %payload.project_id, error = %e, "deploy: failed to transition after node selection error");
             }
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -480,6 +481,20 @@ async fn execute_deploy(
                     Json(json!({"error": format!("remote stage failed: {body}")})),
                 ).into_response();
             }
+        }
+
+        if let Err(e) = status::transition(
+            &state.db,
+            &payload.project_id,
+            ProjectStatus::Unconfigured,
+            &ProjectUpdateFields::default(),
+            None,
+        ).await {
+            tracing::error!(project_id = %payload.project_id, error = %e, "deploy: failed to mark staged project unconfigured");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "failed to persist staged deployment status"})),
+            ).into_response();
         }
 
         tracing::info!(

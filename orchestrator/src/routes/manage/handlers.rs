@@ -182,6 +182,13 @@ pub async fn start_project(
         }));
     }
 
+    if project.status == ProjectStatus::Pending {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("project '{}' has not been staged yet", project_id),
+        ));
+    }
+
     if project.status == ProjectStatus::Unconfigured {
         if !project_is_staged(&project) {
             return Err((

@@ -37,6 +37,10 @@ fn offline_page_html() -> Html<String> {
     Html(litebin_common::waker_pages::offline_page_html())
 }
 
+fn not_ready_page_html() -> Html<String> {
+    Html(litebin_common::waker_pages::not_ready_page_html())
+}
+
 /// Core waker logic — shared by the fallback handler and the subdomain intercept middleware.
 pub async fn wake_for_host(
     state: AppState,
@@ -109,6 +113,44 @@ pub async fn wake_for_host(
     // Use project.id as the canonical key for everything (wake locks, display, etc.)
     let project_id = project.id.clone();
     let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
+
+    // A project record exists, but no deploy artifacts have been staged yet.
+    if project.status == ProjectStatus::Pending {
+        tracing::info!(project = %project_id, "waker: project pending, refusing auto-start");
+        if wants_json {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "5")],
+                json!({"error": "pending", "retry_after": 5}).to_string(),
+            )
+                .into_response();
+        }
+        return (StatusCode::SERVICE_UNAVAILABLE, not_ready_page_html()).into_response();
+    }
+
+    // Staged first deploys stay unconfigured until the user confirms start in the CLI.
+    // Opening the URL must not bypass that gate.
+    if project.status == ProjectStatus::Unconfigured {
+        tracing::info!(project = %project_id, "waker: project unconfigured, refusing auto-start");
+        if wants_json {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "5")],
+                json!({"error": "unconfigured", "retry_after": 5}).to_string(),
+            )
+                .into_response();
+        }
+        return (StatusCode::SERVICE_UNAVAILABLE, not_ready_page_html()).into_response();
+    }
+
+    // Deploy/stop in progress — show loading, do not spawn another wake.
+    if matches!(project.status, ProjectStatus::Deploying | ProjectStatus::Stopping) {
+        return if wants_json {
+            starting_json_response()
+        } else {
+            loading_page_html(&project_id).into_response()
+        };
+    }
 
     // Unified running/degraded path for ALL projects
     let is_multi = project.service_count.unwrap_or(1) > 1;

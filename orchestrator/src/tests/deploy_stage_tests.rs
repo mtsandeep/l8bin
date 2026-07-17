@@ -92,7 +92,7 @@ services:
 }
 
 #[tokio::test]
-async fn start_unconfigured_without_staged_data_fails() {
+async fn start_pending_without_staged_data_fails() {
     let server = logged_in_server().await;
     let project_id = "stage-empty-1";
 
@@ -101,6 +101,9 @@ async fn start_unconfigured_without_staged_data_fails() {
         .json(&json!({"id": project_id}))
         .await
         .assert_status(StatusCode::CREATED);
+
+    let project: Value = server.get(&format!("/projects/{project_id}")).await.json();
+    assert_eq!(project["status"], "pending");
 
     let resp = server.post(&format!("/projects/{project_id}/start")).await;
     resp.assert_status(StatusCode::BAD_REQUEST);

@@ -138,6 +138,52 @@ async fn waker_returns_200_for_running_project_with_auto_start_disabled() {
     resp.assert_status(StatusCode::OK);
 }
 
+/// Unconfigured (staged) projects must not auto-start when the public URL is opened.
+#[tokio::test]
+async fn waker_refuses_auto_start_when_unconfigured() {
+    let (server, db) = test_server_with_db().await;
+    seed_user(&db).await;
+    insert_project_with_status(&db, "staged-proj", "unconfigured", true, None).await;
+
+    let resp = server
+        .get("/")
+        .add_header(axum::http::header::HOST, "staged-proj.localhost")
+        .add_header(axum::http::header::ACCEPT, "text/html")
+        .await;
+
+    resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+
+    let row: (String,) = sqlx::query_as("SELECT status FROM projects WHERE id = ?")
+        .bind("staged-proj")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.0, "unconfigured");
+}
+
+/// Pending projects have no staged artifacts and must never be auto-started.
+#[tokio::test]
+async fn waker_refuses_auto_start_when_pending() {
+    let (server, db) = test_server_with_db().await;
+    seed_user(&db).await;
+    insert_project_with_status(&db, "pending-proj", "pending", true, None).await;
+
+    let resp = server
+        .get("/")
+        .add_header(axum::http::header::HOST, "pending-proj.localhost")
+        .add_header(axum::http::header::ACCEPT, "text/html")
+        .await;
+
+    resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+
+    let row: (String,) = sqlx::query_as("SELECT status FROM projects WHERE id = ?")
+        .bind("pending-proj")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.0, "pending");
+}
+
 #[cfg(test)]
 mod prop_tests {
     use proptest::prelude::*;

@@ -36,6 +36,14 @@ async fn list_projects_requires_auth() {
 }
 
 #[tokio::test]
+async fn new_project_starts_pending() {
+    let server = logged_in_server().await;
+    let resp = server.post("/projects").json(&json!({"id": "pending-app"})).await;
+    resp.assert_status(StatusCode::CREATED);
+    assert_eq!(resp.json::<Value>()["status"], "pending");
+}
+
+#[tokio::test]
 async fn delete_nonexistent_project_returns_404() {
     let server = logged_in_server().await;
     server
