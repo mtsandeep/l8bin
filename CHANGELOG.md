@@ -4,8 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Compose compatibility report** — Deploy validates Compose files and reports supported, translated, overridden, permission-required, and unsupported fields instead of silently ignoring them.
+- **Project capabilities** — Explicit grants (`docker-access`, `raw-ports`) replace ad-hoc permission toggles. Compose deploy can request them; users approve in CLI/`l8b deploy --grant-capability` or the dashboard validation step. Existing Compose projects manage grants under Settings → Capabilities.
+
 ### Fixed
 - **Dashboard log viewer strips ANSI** — Container logs with terminal color codes render as plain text instead of raw escape sequences like `\u001b[95m`.
+- **`/compose/validate` proxied to orchestrator** — Added `/compose/*` to Caddy API path matchers so validation requests no longer hit the dashboard (405).
 
 ## [0.3.4] - 2026-07-17
 

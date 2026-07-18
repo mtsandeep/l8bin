@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod caddy;
+pub mod capabilities;
 pub mod docs;
 pub mod deploy;
 pub mod deploy_tokens;

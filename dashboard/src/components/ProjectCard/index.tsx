@@ -86,8 +86,6 @@ export default function ProjectCard({
   // Settings state for gear popover
   const [projectName, setProjectName] = useState(project.name ?? '');
   const [projectDescription, setProjectDescription] = useState(project.description ?? '');
-  const [allowRawPorts, setAllowRawPorts] = useState(project.allow_raw_ports);
-  const [allowDockerAccess, setAllowDockerAccess] = useState(project.allow_docker_access);
   const [customDomainInput, setCustomDomainInput] = useState(project.custom_domain ?? '');
   const [customDomainSaving, setCustomDomainSaving] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -122,8 +120,6 @@ export default function ProjectCard({
     setAutoStop(project.auto_stop_enabled);
     setTimeoutMins(project.auto_stop_timeout_mins);
     setAutoStart(project.auto_start_enabled);
-    setAllowRawPorts(project.allow_raw_ports);
-    setAllowDockerAccess(project.allow_docker_access);
     setProjectName(project.name ?? '');
     setProjectDescription(project.description ?? '');
     setCustomDomainInput(project.custom_domain ?? '');
@@ -131,11 +127,9 @@ export default function ProjectCard({
     project.auto_stop_enabled,
     project.auto_stop_timeout_mins,
     project.auto_start_enabled,
-    project.allow_raw_ports,
     project.name,
     project.description,
     project.custom_domain,
-    project.allow_docker_access,
   ]);
 
   // Close actions dropdown on outside click
@@ -422,15 +416,11 @@ export default function ProjectCard({
                 customDomainInput={customDomainInput}
                 settingsError={settingsError}
                 customDomainSaving={customDomainSaving}
-                allowRawPorts={allowRawPorts}
-                allowDockerAccess={allowDockerAccess}
                 onProjectNameChange={setProjectName}
                 onProjectDescriptionChange={setProjectDescription}
                 onCustomDomainChange={setCustomDomainInput}
                 onSettingsErrorChange={setSettingsError}
                 onCustomDomainSavingChange={setCustomDomainSaving}
-                onAllowRawPortsChange={setAllowRawPorts}
-                onAllowDockerAccessChange={setAllowDockerAccess}
                 onRefresh={onRefresh}
                 onClose={() => {
                   setOpenPopover(null);

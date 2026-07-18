@@ -1,9 +1,14 @@
+pub mod compat;
 pub mod error;
 pub mod interpolate;
 pub mod mapping;
 pub mod parse;
 pub mod validate;
 
+pub use compat::{
+    analyze_compose, analyze_compose_yaml, CompatibilityFinding, CompatibilityReport,
+    FindingDisposition,
+};
 pub use error::{ComposeError, Result};
 pub use mapping::{BollardMappingOptions, ComposeBollardConfig};
 pub use parse::{ComposeFile, ComposeService};

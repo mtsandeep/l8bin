@@ -563,6 +563,12 @@ EOF
 	handle /deploy/* {
 		reverse_proxy litebin-orchestrator:5080
 	}
+	handle /compose {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /compose/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
 	handle /deploy-tokens {
 		reverse_proxy litebin-orchestrator:5080
 	}

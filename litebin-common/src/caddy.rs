@@ -9,6 +9,8 @@ pub const ORCHESTRATOR_API_PATHS: &[&str] = &[
     "/projects/*",
     "/deploy",
     "/deploy/*",
+    "/compose",
+    "/compose/*",
     "/deploy-tokens",
     "/deploy-tokens/*",
     "/images",

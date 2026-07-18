@@ -201,6 +201,8 @@ pub async fn update_project_settings(
     if has_auto_stop_enabled { query = query.bind(payload.auto_stop_enabled.unwrap()); }
     if has_auto_stop_timeout_mins { query = query.bind(payload.auto_stop_timeout_mins.unwrap()); }
     if has_auto_start_enabled { query = query.bind(payload.auto_start_enabled.unwrap()); }
+    let sync_raw = payload.allow_raw_ports;
+    let sync_docker = payload.allow_docker_access;
     if has_allow_raw_ports { query = query.bind(payload.allow_raw_ports.unwrap()); }
     if has_allow_docker_access { query = query.bind(payload.allow_docker_access.unwrap()); }
     if has_cmd { query = query.bind(payload.cmd.as_deref().filter(|s| !s.is_empty())); }
@@ -213,6 +215,44 @@ pub async fn update_project_settings(
             format!("database error: {e}"),
         )
     })?;
+
+    // Keep capability grants in sync with legacy boolean settings.
+    if let Some(true) = sync_raw {
+        crate::capabilities::grant(
+            &state.db,
+            &id,
+            litebin_common::capabilities::ProjectCapability::RawPorts,
+            None,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    } else if let Some(false) = sync_raw {
+        crate::capabilities::revoke(
+            &state.db,
+            &id,
+            litebin_common::capabilities::ProjectCapability::RawPorts,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(true) = sync_docker {
+        crate::capabilities::grant(
+            &state.db,
+            &id,
+            litebin_common::capabilities::ProjectCapability::DockerAccess,
+            None,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    } else if let Some(false) = sync_docker {
+        crate::capabilities::revoke(
+            &state.db,
+            &id,
+            litebin_common::capabilities::ProjectCapability::DockerAccess,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     // For multi-service projects, also update the public service in project_services
     if (has_memory_limit_mb || has_cpu_limit) && existing.as_ref().unwrap().service_count.unwrap_or(1) > 1 {

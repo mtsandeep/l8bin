@@ -514,6 +514,108 @@ export async function deleteNode(nodeId: string): Promise<void> {
   }
 }
 
+// --- Compose compatibility & capabilities ---
+
+export type FindingDisposition =
+  | 'supported'
+  | 'translated'
+  | 'overridden'
+  | 'permission_required'
+  | 'unsupported';
+
+export interface CompatibilityFinding {
+  path: string;
+  service: string | null;
+  disposition: FindingDisposition;
+  message: string;
+  capability: string | null;
+}
+
+export interface CompatibilityReport {
+  findings: CompatibilityFinding[];
+  ok: boolean;
+  required_capabilities: string[];
+}
+
+export interface CapabilityInfo {
+  id: string;
+  label: string;
+  description: string;
+  risk: string;
+  requires_recreate: boolean;
+}
+
+export interface ValidateComposeResponse {
+  report: CompatibilityReport;
+  missing_capabilities: string[];
+  catalog: CapabilityInfo[];
+}
+
+export interface ProjectCapabilityStatus extends CapabilityInfo {
+  granted: boolean;
+  granted_at: number | null;
+  requested_reason: string | null;
+}
+
+export async function validateCompose(
+  compose: string,
+  opts?: { project_id?: string; public_service?: string },
+): Promise<ValidateComposeResponse> {
+  const res = await fetch(`${API_BASE}/compose/validate`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      compose,
+      project_id: opts?.project_id,
+      public_service: opts?.public_service,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Compose validation failed');
+  }
+  return res.json();
+}
+
+export async function fetchProjectCapabilities(projectId: string): Promise<ProjectCapabilityStatus[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/capabilities`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch capabilities');
+  return res.json();
+}
+
+export async function grantProjectCapabilities(
+  projectId: string,
+  capabilities: string[],
+): Promise<ProjectCapabilityStatus[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/capabilities`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ capabilities }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to grant capabilities');
+  }
+  return res.json();
+}
+
+export async function revokeProjectCapability(
+  projectId: string,
+  capability: string,
+): Promise<ProjectCapabilityStatus[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/capabilities/${encodeURIComponent(capability)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to revoke capability');
+  }
+  return res.json();
+}
+
 // --- Compose Deploy ---
 
 export interface ComposeDeployPayload {
@@ -525,8 +627,11 @@ export interface ComposeDeployPayload {
   auto_stop_enabled?: boolean;
   auto_stop_timeout_mins?: number;
   auto_start_enabled?: boolean;
+  /** @deprecated prefer grant_capabilities */
   allow_raw_ports?: boolean;
+  /** @deprecated prefer grant_capabilities */
   allow_docker_access?: boolean;
+  grant_capabilities?: string[];
 }
 
 export async function deployComposeProject(payload: ComposeDeployPayload): Promise<string[]> {
@@ -543,6 +648,9 @@ export async function deployComposeProject(payload: ComposeDeployPayload): Promi
   if (payload.allow_raw_ports !== undefined) form.append('allow_raw_ports', String(payload.allow_raw_ports));
   if (payload.allow_docker_access !== undefined)
     form.append('allow_docker_access', String(payload.allow_docker_access));
+  if (payload.grant_capabilities && payload.grant_capabilities.length > 0) {
+    form.append('grant_capabilities', payload.grant_capabilities.join(','));
+  }
 
   const res = await fetch(`${API_BASE}/deploy/compose`, {
     method: 'POST',

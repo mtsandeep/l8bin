@@ -139,6 +139,15 @@ Both orchestrator and agent mount `/var/run/docker.sock`. This is required for c
 - Orchestrator requires session or deploy token auth
 - App containers have restricted capabilities
 
+### Project capabilities
+
+Risky Compose features require explicit grants stored in `project_capabilities`:
+
+- `docker-access` — injects a restricted Docker socket proxy (never raw `docker.sock`)
+- `raw-ports` — publishes Compose ports on the host
+
+Compose files may *request* capabilities; only the user can *grant* them (dashboard validation step, Settings → Capabilities, or `l8b deploy --grant-capability`). Unsupported fields such as `network_mode: host` and `privileged` are rejected until supported with their own grants.
+
 ---
 
 ## Wake-Report Endpoint

@@ -84,6 +84,10 @@ enum Commands {
         /// Deploy only specific services (repeatable, compose mode only)
         #[arg(long)]
         service: Vec<String>,
+
+        /// Grant a project capability for this deploy (repeatable: docker-access, raw-ports)
+        #[arg(long = "grant-capability")]
+        grant_capability: Vec<String>,
     },
     /// Interactive deploy — guided flow for new or existing projects
     Ship {
@@ -179,6 +183,7 @@ async fn main() -> Result<()> {
             secret,
             compose,
             service,
+            grant_capability,
         } => {
             if !project
                 .chars()
@@ -229,7 +234,11 @@ async fn main() -> Result<()> {
 
                 ship::deploy_compose_noninteractive(
                     &client, &server, &project, &path, compose_name, true,
-                    ship::ComposeDeployOpts { target_services, node_id: effective_node.clone() },
+                    ship::ComposeDeployOpts {
+                        target_services,
+                        node_id: effective_node.clone(),
+                        grant_capabilities: grant_capability,
+                    },
                     platform.as_deref(),
                 ).await?;
 

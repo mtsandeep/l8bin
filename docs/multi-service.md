@@ -12,6 +12,31 @@ All running projects — single and multi-service — get direct Caddy→contain
 
 ---
 
+## Compose compatibility and capabilities
+
+LiteBin does not run `docker compose up`. It parses Compose YAML, maps supported fields through Bollard, and applies its own networking/security policy. Before deploy, `POST /compose/validate` returns a structured report:
+
+- **supported** — applied as written
+- **translated** — kept but remapped (e.g. public ports → Caddy ingress, docker.sock → restricted proxy)
+- **overridden** — replaced by LiteBin policy (container names, logging, security opts)
+- **permission_required** — needs an explicit project capability grant
+- **unsupported** — blocks deploy until the file is changed (e.g. `network_mode: host`, `privileged`)
+
+### Capabilities
+
+| Id | Meaning |
+|---|---|
+| `docker-access` | Use LiteBin's restricted Docker socket proxy |
+| `raw-ports` | Publish Compose ports directly on the host |
+
+Grants are stored in `project_capabilities` and synced to the legacy `allow_docker_access` / `allow_raw_ports` columns. Approve them from:
+
+- Dashboard Deploy New App → **Parse and validate** step
+- Dashboard project Settings → **Capabilities** (Compose projects)
+- CLI: interactive `l8b ship` prompt, or `l8b deploy --grant-capability docker-access`
+
+---
+
 ## Per-Project Networks
 
 Each multi-service project gets its own Docker bridge network:

@@ -1,6 +1,6 @@
 # LiteBin
 
-> LiteBin is a self-hosted Platform-as-a-Service (PaaS) for deploying and managing containerized applications. Think Railway/Fly.io but self-hosted on your own server. Deploy web apps, APIs, and multi-service stacks with a single API call or CLI command.
+> LiteBin is an open-source, self-hosted platform for deploying web apps, APIs, and Docker Compose stacks to your own servers. Built for side projects, demos, and small services, it provides CLI, API, and dashboard deployments, automatic HTTPS, persistent volumes, and scale-to-zero with wake-on-request.
 
 ## Instructions
 
@@ -21,7 +21,7 @@ When helping users deploy to LiteBin, follow these patterns:
 
 ## CLI
 
-Install via: `curl -sSf https://... | sh` or build from source.
+Install via: `curl -fsSL https://l8b.in | bash -s cli` or build from source.
 
 Commands:
 - `l8b deploy` — Deploy a Docker image

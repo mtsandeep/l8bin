@@ -1,4 +1,5 @@
 pub mod caddy;
+pub mod capabilities;
 pub mod cloudflare;
 pub mod compose_run;
 pub mod docker;

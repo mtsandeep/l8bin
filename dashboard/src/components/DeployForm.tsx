@@ -1,17 +1,34 @@
-import { ChevronLeft, ChevronRight, Loader2, Moon, Rocket, Server, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Moon,
+  Rocket,
+  Server,
+  Shield,
+  X,
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   DeployType,
   deployComposeProject,
   deployProject,
   fetchGlobalSettings,
   fetchNodes,
+  type CapabilityInfo,
+  type CompatibilityFinding,
   type Node,
+  type ValidateComposeResponse,
   NodeStatus,
+  validateCompose,
 } from '../api';
 import DeployProgressModal from './DeployProgressModal';
 import ResourceLimitInput from './ResourceLimitInput';
 import { useToast } from './ToastContext';
+
+type DeployStep = 'details' | 'validate' | 'settings';
 
 interface DeployFormProps {
   onDeploy: () => void;
@@ -19,13 +36,143 @@ interface DeployFormProps {
   domain: string;
 }
 
+function catalogForId(catalog: CapabilityInfo[], id: string): CapabilityInfo | undefined {
+  return catalog.find((c) => c.id === id);
+}
+
+function groupFindings(findings: CompatibilityFinding[]) {
+  return {
+    supported: findings.filter((f) => f.disposition === 'supported'),
+    translated: findings.filter((f) => f.disposition === 'translated'),
+    overridden: findings.filter((f) => f.disposition === 'overridden'),
+    permissionRequired: findings.filter((f) => f.disposition === 'permission_required'),
+    unsupported: findings.filter((f) => f.disposition === 'unsupported'),
+  };
+}
+
+type FindingSections = {
+  unsupported: string[];
+  supported: string[];
+  translated: string[];
+  overridden: string[];
+};
+
+type ServiceFindings = {
+  service: string | null;
+  sections: FindingSections;
+};
+
+function emptyFindingSections(): FindingSections {
+  return { unsupported: [], supported: [], translated: [], overridden: [] };
+}
+
+/** Group disposition sections under project/service cards. */
+function findingsByService(findings: CompatibilityFinding[]): ServiceFindings[] {
+  const project = emptyFindingSections();
+  const services = new Map<string, FindingSections>();
+  const supportedFields = new Map<string, string[]>();
+
+  for (const finding of findings) {
+    if (finding.disposition === 'permission_required') continue;
+
+    const sections = finding.service
+      ? (services.get(finding.service) ?? emptyFindingSections())
+      : project;
+    if (finding.service) services.set(finding.service, sections);
+
+    if (finding.disposition === 'supported') {
+      const field = /^([\w.-]+) is supported$/.exec(finding.message)?.[1];
+      if (field && finding.service) {
+        const fields = supportedFields.get(finding.service) ?? [];
+        fields.push(field);
+        supportedFields.set(finding.service, fields);
+        continue;
+      }
+      sections.supported.push(finding.message);
+    } else if (finding.disposition === 'unsupported') {
+      const servicePrefix = finding.service ? `services.${finding.service}.` : '';
+      const path = servicePrefix && finding.path.startsWith(servicePrefix)
+        ? finding.path.slice(servicePrefix.length)
+        : finding.path;
+      sections.unsupported.push(`${path} — ${finding.message}`);
+    } else {
+      sections[finding.disposition].push(finding.message);
+    }
+  }
+
+  for (const [service, fields] of supportedFields) {
+    services.get(service)?.supported.unshift(fields.join(', '));
+  }
+
+  const cards: ServiceFindings[] = [];
+  if (Object.values(project).some((lines) => lines.length > 0)) {
+    cards.push({ service: null, sections: project });
+  }
+  for (const service of [...services.keys()].sort()) {
+    cards.push({ service, sections: services.get(service)! });
+  }
+  return cards;
+}
+
+function messagesByService(findings: CompatibilityFinding[]) {
+  const groups = new Map<string | null, string[]>();
+  for (const finding of findings) {
+    const lines = groups.get(finding.service) ?? [];
+    lines.push(finding.message);
+    groups.set(finding.service, lines);
+  }
+  return [...groups].map(([service, lines]) => ({ service, lines }));
+}
+
+const sectionStyles = {
+  unsupported: { label: 'Unsupported', color: 'text-red-400', line: 'border-red-500/25 text-red-300/90' },
+  supported: { label: 'Supported', color: 'text-emerald-400', line: 'border-emerald-500/25 text-emerald-300/80' },
+  translated: { label: 'Adapted by LiteBin', color: 'text-sky-400', line: 'border-sky-500/25 text-sky-300/80' },
+  overridden: { label: 'Overridden by LiteBin', color: 'text-slate-400', line: 'border-slate-600/40 text-slate-400' },
+} as const;
+
+function ServiceFindingCard({ card }: { card: ServiceFindings }) {
+  return (
+    <div className="rounded-md border border-slate-700/50 bg-slate-900/40 px-3 py-2.5">
+      <div className="text-xs font-semibold text-slate-200 mb-2">
+        {card.service ?? 'Project-wide'}
+      </div>
+      <div className="space-y-2.5">
+        {(Object.keys(sectionStyles) as Array<keyof FindingSections>).map((key) => {
+          const lines = card.sections[key];
+          if (lines.length === 0) return null;
+          const style = sectionStyles[key];
+          return (
+            <div key={key}>
+              <div className={`text-[11px] font-medium ${style.color}`}>
+                {style.label}
+                <span className="ml-1 opacity-60 font-normal">({lines.length})</span>
+              </div>
+              <ul className="mt-1 space-y-1">
+                {lines.map((line, index) => (
+                  <li
+                    key={index}
+                    className={`text-[11px] leading-relaxed pl-2 border-l ${style.line}`}
+                  >
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function DeployForm({ onDeploy, onClose, domain: domainProp }: DeployFormProps) {
   const { showToast } = useToast();
   const [showProgress, setShowProgress] = useState(false);
   const [deployProjectId, setDeployProjectId] = useState('');
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<DeployStep>('details');
 
-  // Step 1 fields
+  // Details step fields
   const [deployMode, setDeployMode] = useState<DeployType>(DeployType.Image);
   const [projectId, setProjectId] = useState('');
   const [projectName, setProjectName] = useState('');
@@ -33,10 +180,13 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [image, setImage] = useState('');
   const [port, setPort] = useState('80');
   const [composeYaml, setComposeYaml] = useState('');
-  const [allowRawPorts, setAllowRawPorts] = useState(false);
-  const [allowDockerAccess, setAllowDockerAccess] = useState(false);
 
-  // Step 2 fields — pre-populated with defaults
+  // Validate step state
+  const [validateResult, setValidateResult] = useState<ValidateComposeResponse | null>(null);
+  const [validating, setValidating] = useState(false);
+  const [approvedCapabilityIds, setApprovedCapabilityIds] = useState<string[]>([]);
+
+  // Settings step fields — pre-populated with defaults
   const [autoStop, setAutoStop] = useState(true);
   const [timeoutMins, setTimeoutMins] = useState(15);
   const [autoStart, setAutoStart] = useState(true);
@@ -49,9 +199,9 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [domain, setDomain] = useState(domainProp);
   const [nodes, setNodes] = useState<Node[]>([]);
 
-  // Fetch nodes + global settings when entering step 2
+  // Fetch nodes + global settings when entering settings step
   useEffect(() => {
-    if (step === 2) {
+    if (step === 'settings') {
       if (nodes.length === 0)
         fetchNodes()
           .then(setNodes)
@@ -71,13 +221,61 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const step1Valid =
+  const steps: DeployStep[] =
+    deployMode === DeployType.Compose ? ['details', 'validate', 'settings'] : ['details', 'settings'];
+
+  const stepLabels: Record<DeployStep, string> = {
+    details: 'App details',
+    validate: 'Validate',
+    settings: 'Settings',
+  };
+
+  const detailsValid =
     projectId.trim() !== '' && (deployMode === DeployType.Image ? image.trim() !== '' : composeYaml.trim() !== '');
   const timeoutValid = timeoutMins >= 1;
 
-  const handleNext = (e: React.FormEvent) => {
+  const findingGroups = useMemo(
+    () => (validateResult ? groupFindings(validateResult.report.findings) : null),
+    [validateResult],
+  );
+
+  const missingCaps = validateResult?.missing_capabilities ?? [];
+  const hasUnsupported = (findingGroups?.unsupported.length ?? 0) > 0;
+  const allMissingApproved =
+    missingCaps.length === 0 || missingCaps.every((id) => approvedCapabilityIds.includes(id));
+  const canProceedFromValidate =
+    !!validateResult && validateResult.report.ok && !hasUnsupported && allMissingApproved;
+
+  const runValidate = async () => {
+    setError(null);
+    setValidating(true);
+    try {
+      const result = await validateCompose(composeYaml.trim(), {
+        project_id: projectId.trim() || undefined,
+      });
+      setValidateResult(result);
+      // Keep approvals that are still missing; drop ones no longer required
+      setApprovedCapabilityIds((prev) => prev.filter((id) => result.missing_capabilities.includes(id)));
+      setStep('validate');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Compose validation failed');
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const handleDetailsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (step1Valid) setStep(2);
+    if (!detailsValid) return;
+    if (deployMode === DeployType.Image) {
+      setStep('settings');
+      return;
+    }
+    await runValidate();
+  };
+
+  const toggleApprovedCapability = (id: string) => {
+    setApprovedCapabilityIds((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -97,8 +295,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           auto_stop_enabled: autoStop,
           auto_stop_timeout_mins: timeoutMins,
           auto_start_enabled: autoStart,
-          allow_raw_ports: allowRawPorts,
-          allow_docker_access: allowDockerAccess,
+          grant_capabilities: approvedCapabilityIds.length > 0 ? approvedCapabilityIds : undefined,
         });
         for (const w of warnings) showToast(w, 'warning');
       } else {
@@ -127,6 +324,30 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
     }
   };
 
+  const stepIndex = steps.indexOf(step);
+
+  const StepIndicator = ({ label }: { label: string }) => (
+    <div className="flex items-center gap-1">
+      {steps.map((s, i) => (
+        <div key={s} className="flex items-center gap-1">
+          <div
+            className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
+              step === s
+                ? 'bg-violet-600 text-white'
+                : stepIndex > i
+                  ? 'bg-violet-900/50 text-violet-400'
+                  : 'bg-slate-800 text-slate-500'
+            }`}
+          >
+            {i + 1}
+          </div>
+          {i < steps.length - 1 && <ChevronRight size={12} className="text-slate-700" />}
+        </div>
+      ))}
+      <span className="ml-2 text-xs text-slate-500">{label}</span>
+    </div>
+  );
+
   // Deploy progress modal (shown after deploy API returns)
   if (showProgress) {
     return (
@@ -141,9 +362,13 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
     );
   }
 
+  const modalWidth = step === 'validate' ? 'max-w-2xl' : 'max-w-md';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-md mx-4 shadow-2xl max-h-[85vh] flex flex-col">
+      <div
+        className={`bg-slate-800 border border-slate-700/50 rounded-lg w-full ${modalWidth} mx-4 shadow-2xl max-h-[85vh] flex flex-col`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/50 shrink-0">
           <h2 className="text-sm font-semibold text-slate-100">Deploy New App</h2>
@@ -156,29 +381,10 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           </button>
         </div>
 
-        {/* Step 1 */}
-        {step === 1 && (
-          <form onSubmit={handleNext} className="p-5 space-y-4 overflow-y-auto">
-            {/* Step indicator */}
-            <div className="flex items-center gap-1">
-              {([1, 2] as const).map((s, i) => (
-                <div key={s} className="flex items-center gap-1">
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
-                      step === s
-                        ? 'bg-violet-600 text-white'
-                        : step > s
-                          ? 'bg-violet-900/50 text-violet-400'
-                          : 'bg-slate-800 text-slate-500'
-                    }`}
-                  >
-                    {s}
-                  </div>
-                  {i < 1 && <ChevronRight size={12} className="text-slate-700" />}
-                </div>
-              ))}
-              <span className="ml-2 text-xs text-slate-500">App details</span>
-            </div>
+        {/* Details step */}
+        {step === 'details' && (
+          <form onSubmit={handleDetailsSubmit} className="p-5 space-y-4 overflow-y-auto">
+            <StepIndicator label={stepLabels.details} />
 
             {/* Deploy mode toggle */}
             <div className="flex items-center gap-2">
@@ -187,7 +393,12 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                 type="button"
                 role="switch"
                 aria-checked={deployMode === DeployType.Compose}
-                onClick={() => setDeployMode((v) => (v === DeployType.Image ? DeployType.Compose : DeployType.Image))}
+                onClick={() => {
+                  setDeployMode((v) => (v === DeployType.Image ? DeployType.Compose : DeployType.Image));
+                  setValidateResult(null);
+                  setApprovedCapabilityIds([]);
+                  setError(null);
+                }}
                 className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
                   deployMode === DeployType.Compose ? 'bg-violet-500' : 'bg-slate-600'
                 }`}
@@ -314,92 +525,192 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
               </div>
             )}
 
-            {deployMode === DeployType.Compose && (
-              <div className="border-t border-slate-700/50 pt-3 space-y-3">
-                <label className="flex items-center justify-between gap-2 cursor-pointer">
-                  <div>
-                    <span className="text-xs text-slate-300">Allow raw ports</span>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      Expose all compose ports directly on host (TCP/UDP)
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={allowRawPorts}
-                    onClick={() => setAllowRawPorts((v) => !v)}
-                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                      allowRawPorts ? 'bg-violet-500' : 'bg-slate-600'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                        allowRawPorts ? 'translate-x-3.5' : 'translate-x-0.5'
-                      }`}
-                    />
-                  </button>
-                </label>
-
-                <label className="flex items-center justify-between gap-2 cursor-pointer">
-                  <div>
-                    <span className="text-xs text-slate-300">Allow Docker access</span>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      Inject docker-socket-proxy for inter-service container management
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={allowDockerAccess}
-                    onClick={() => setAllowDockerAccess((v) => !v)}
-                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                      allowDockerAccess ? 'bg-violet-500' : 'bg-slate-600'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                        allowDockerAccess ? 'translate-x-3.5' : 'translate-x-0.5'
-                      }`}
-                    />
-                  </button>
-                </label>
+            {error && (
+              <div className="px-3 py-2 rounded-md bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+                {error}
               </div>
             )}
 
             <button
               type="submit"
-              disabled={!step1Valid}
+              disabled={!detailsValid || validating}
               className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
-              Next
-              <ChevronRight size={14} />
+              {validating ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Validating...
+                </>
+              ) : deployMode === DeployType.Compose ? (
+                <>
+                  Parse and validate
+                  <ChevronRight size={14} />
+                </>
+              ) : (
+                <>
+                  Next
+                  <ChevronRight size={14} />
+                </>
+              )}
             </button>
           </form>
         )}
 
-        {/* Step 2 */}
-        {step === 2 && (
-          <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
-            {/* Step indicator */}
-            <div className="flex items-center gap-1">
-              {([1, 2] as const).map((s, i) => (
-                <div key={s} className="flex items-center gap-1">
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
-                      step === s
-                        ? 'bg-violet-600 text-white'
-                        : step > s
-                          ? 'bg-violet-900/50 text-violet-400'
-                          : 'bg-slate-800 text-slate-500'
-                    }`}
-                  >
-                    {s}
-                  </div>
-                  {i < 1 && <ChevronRight size={12} className="text-slate-700" />}
-                </div>
-              ))}
-              <span className="ml-2 text-xs text-slate-500">Settings</span>
+        {/* Validate step (compose only) */}
+        {step === 'validate' && validateResult && findingGroups && (
+          <div className="p-5 space-y-4 overflow-y-auto">
+            <StepIndicator label={stepLabels.validate} />
+
+            <div>
+              <label htmlFor="validate-docker-compose" className="block text-xs font-medium text-slate-400 mb-1.5">
+                Docker Compose
+              </label>
+              <textarea
+                id="validate-docker-compose"
+                value={composeYaml}
+                onChange={(e) => setComposeYaml(e.target.value)}
+                rows={6}
+                className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-xs text-slate-200 font-mono placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors resize-none"
+              />
             </div>
+
+            {validateResult.report.ok && !hasUnsupported && missingCaps.length === 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                <CheckCircle2 size={14} />
+                <span className="text-xs font-medium">All good — no extra capabilities required</span>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {missingCaps.length > 0 && !hasUnsupported && (
+                <div className="px-3 py-3 rounded-md bg-amber-500/10 border border-amber-500/20 space-y-3">
+                  <div className="flex items-center gap-2 text-amber-400">
+                    <Shield size={14} />
+                    <span className="text-xs font-medium">Capabilities requested</span>
+                  </div>
+                  <p className="text-[11px] text-amber-300/80">
+                    Approve each capability below to continue. These will be granted on deploy.
+                  </p>
+                  <div className="space-y-2">
+                    {missingCaps.map((id) => {
+                      const info = catalogForId(validateResult.catalog, id);
+                      const checked = approvedCapabilityIds.includes(id);
+                      const reasonBuckets = messagesByService(
+                        findingGroups.permissionRequired.filter((f) => f.capability === id),
+                      );
+                      return (
+                        <label
+                          key={id}
+                          className="flex items-start gap-2.5 cursor-pointer rounded-md bg-slate-900/40 border border-amber-500/15 px-2.5 py-2"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleApprovedCapability(id)}
+                            className="mt-0.5 rounded border-slate-600 bg-slate-800 text-violet-500 focus:ring-violet-500/40"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs text-slate-200 font-medium">{info?.label ?? id}</div>
+                            {info?.description && (
+                              <p className="text-[11px] text-slate-400 mt-0.5">{info.description}</p>
+                            )}
+                            {reasonBuckets.length > 0 && (
+                              <div className="mt-1.5 space-y-1.5">
+                                {reasonBuckets.map((bucket) => (
+                                  <div key={bucket.service ?? 'project'}>
+                                    {bucket.service && (
+                                      <div className="text-[10px] font-medium text-amber-200/80">
+                                        {bucket.service}
+                                      </div>
+                                    )}
+                                    <ul className="space-y-0.5">
+                                      {bucket.lines.map((r, i) => (
+                                        <li key={i} className="text-[10px] text-amber-300/70">
+                                          {r}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {info?.risk && (
+                              <p className="text-[10px] text-amber-400/80 mt-1 flex items-center gap-1">
+                                <AlertTriangle size={10} />
+                                {info.risk}
+                              </p>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {findingsByService(validateResult.report.findings).map((card) => (
+                <ServiceFindingCard key={card.service ?? 'project'} card={card} />
+              ))}
+            </div>
+
+            {error && (
+              <div className="px-3 py-2 rounded-md bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+                {error}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setStep('details');
+                }}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-md text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors cursor-pointer"
+              >
+                <ChevronLeft size={14} />
+                Back
+              </button>
+              {hasUnsupported ? (
+                <button
+                  type="button"
+                  onClick={runValidate}
+                  disabled={validating || !composeYaml.trim()}
+                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {validating ? <Loader2 size={14} className="animate-spin" /> : null}
+                  {validating ? 'Validating...' : 'Re-validate'}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={runValidate}
+                    disabled={validating || !composeYaml.trim()}
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-md text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {validating ? <Loader2 size={14} className="animate-spin" /> : null}
+                    Re-validate
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStep('settings')}
+                    disabled={!canProceedFromValidate}
+                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Next
+                    <ChevronRight size={14} />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Settings step */}
+        {step === 'settings' && (
+          <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
+            <StepIndicator label={stepLabels.settings} />
 
             <div className="flex items-center gap-1.5 text-slate-400 mb-1">
               <Moon size={13} />
@@ -566,7 +877,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setStep(1)}
+                onClick={() => setStep(deployMode === DeployType.Compose ? 'validate' : 'details')}
                 className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-md text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors cursor-pointer"
               >
                 <ChevronLeft size={14} />

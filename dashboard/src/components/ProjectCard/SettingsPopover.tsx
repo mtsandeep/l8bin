@@ -4,9 +4,13 @@ import {
   createProjectRoute,
   DeployType,
   deleteProjectRoute,
+  fetchProjectCapabilities,
   fetchProjectRoutes,
+  grantProjectCapabilities,
   type Project,
+  type ProjectCapabilityStatus,
   type ProjectRoute,
+  revokeProjectCapability,
   RouteType,
   type ServiceInfo,
   updateProjectSettings,
@@ -23,15 +27,11 @@ interface SettingsPopoverProps {
   customDomainInput: string;
   settingsError: string | null;
   customDomainSaving: boolean;
-  allowRawPorts: boolean;
-  allowDockerAccess: boolean;
   onProjectNameChange: (v: string) => void;
   onProjectDescriptionChange: (v: string) => void;
   onCustomDomainChange: (v: string) => void;
   onSettingsErrorChange: (v: string | null) => void;
   onCustomDomainSavingChange: (v: boolean) => void;
-  onAllowRawPortsChange: (v: boolean) => void;
-  onAllowDockerAccessChange: (v: boolean) => void;
   onRefresh: () => void;
   onClose: () => void;
 }
@@ -46,19 +46,16 @@ export default function SettingsPopover({
   customDomainInput,
   settingsError,
   customDomainSaving,
-  allowRawPorts,
-  allowDockerAccess,
   onProjectNameChange,
   onProjectDescriptionChange,
   onCustomDomainChange,
   onSettingsErrorChange,
   onCustomDomainSavingChange,
-  onAllowRawPortsChange,
-  onAllowDockerAccessChange,
   onRefresh,
   onClose,
 }: SettingsPopoverProps) {
-  const [settingsTab, setSettingsTab] = useState<'general' | 'routes'>('general');
+  const isCompose = project.deploy_type === DeployType.Compose;
+  const [settingsTab, setSettingsTab] = useState<'general' | 'routes' | 'capabilities'>('general');
 
   // Routes state
   const [routes, setRoutes] = useState<ProjectRoute[]>([]);
@@ -70,6 +67,13 @@ export default function SettingsPopover({
   const [newRoutePriority, setNewRoutePriority] = useState(100);
   const [addingRoute, setAddingRoute] = useState(false);
   const [deletingRouteId, setDeletingRouteId] = useState<string | null>(null);
+
+  // Capabilities state
+  const [capabilities, setCapabilities] = useState<ProjectCapabilityStatus[]>([]);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+  const [capabilityActionId, setCapabilityActionId] = useState<string | null>(null);
+  const [capabilityCatalogOpen, setCapabilityCatalogOpen] = useState(false);
+  const [capabilitySearch, setCapabilitySearch] = useState('');
 
   const ref = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
@@ -94,6 +98,18 @@ export default function SettingsPopover({
       showToast(e instanceof Error ? e.message : 'Failed to load routes');
     } finally {
       setRoutesLoading(false);
+    }
+  }, [project.id, showToast]);
+
+  const loadCapabilities = useCallback(async () => {
+    setCapabilitiesLoading(true);
+    try {
+      const caps = await fetchProjectCapabilities(project.id);
+      setCapabilities(caps);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to load capabilities');
+    } finally {
+      setCapabilitiesLoading(false);
     }
   }, [project.id, showToast]);
 
@@ -136,12 +152,51 @@ export default function SettingsPopover({
     }
   };
 
+  const handleGrantCapability = async (cap: ProjectCapabilityStatus) => {
+    const recreateNote = cap.requires_recreate ? ' A recreate will be required for this to take effect.' : '';
+    if (!confirm(`Grant "${cap.label}" to this project?${recreateNote}`)) return;
+    setCapabilityActionId(cap.id);
+    try {
+      const updated = await grantProjectCapabilities(project.id, [cap.id]);
+      setCapabilities(updated);
+      showToast(`Granted ${cap.label}`, 'success');
+      onRefresh();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to grant capability');
+    } finally {
+      setCapabilityActionId(null);
+    }
+  };
+
+  const handleRevokeCapability = async (cap: ProjectCapabilityStatus) => {
+    const recreateNote = cap.requires_recreate ? ' A recreate will be required for this to take effect.' : '';
+    if (!confirm(`Revoke "${cap.label}" from this project?${recreateNote}`)) return;
+    setCapabilityActionId(cap.id);
+    try {
+      const updated = await revokeProjectCapability(project.id, cap.id);
+      setCapabilities(updated);
+      showToast(`Revoked ${cap.label}`, 'success');
+      onRefresh();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to revoke capability');
+    } finally {
+      setCapabilityActionId(null);
+    }
+  };
+
   // Load routes when switching to routes tab
   useEffect(() => {
     if (settingsTab === 'routes') {
       loadRoutes();
     }
   }, [settingsTab, loadRoutes]);
+
+  // Load capabilities when switching to capabilities tab
+  useEffect(() => {
+    if (settingsTab === 'capabilities' && isCompose) {
+      loadCapabilities();
+    }
+  }, [settingsTab, isCompose, loadCapabilities]);
 
   const [saving, setSaving] = useState(false);
 
@@ -152,8 +207,6 @@ export default function SettingsPopover({
       await updateProjectSettings(project.id, {
         name: projectName,
         description: projectDescription,
-        allow_raw_ports: allowRawPorts,
-        allow_docker_access: allowDockerAccess,
       });
       showToast('Settings saved', 'success');
       onClose();
@@ -236,6 +289,19 @@ export default function SettingsPopover({
           >
             Routes
           </button>
+          {isCompose && (
+            <button
+              type="button"
+              onClick={() => setSettingsTab('capabilities')}
+              className={`flex-1 px-3 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
+                settingsTab === 'capabilities'
+                  ? 'text-violet-300 border-b-2 border-violet-500'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Capabilities
+            </button>
+          )}
         </div>
 
         {settingsTab === 'general' && (
@@ -260,64 +326,6 @@ export default function SettingsPopover({
                 className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
               />
             </div>
-
-            {/* Allow raw ports (compose-only) */}
-            {project.deploy_type === DeployType.Compose && (
-              <div className="border-t border-slate-700/50 pt-3">
-                <label className="flex items-center justify-between gap-2 cursor-pointer">
-                  <div>
-                    <span className="text-xs text-slate-300">Allow raw ports</span>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      Expose all compose ports directly on host (TCP/UDP)
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={allowRawPorts}
-                    onClick={() => onAllowRawPortsChange(!allowRawPorts)}
-                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                      allowRawPorts ? 'bg-violet-500' : 'bg-slate-600'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                        allowRawPorts ? 'translate-x-3.5' : 'translate-x-0.5'
-                      }`}
-                    />
-                  </button>
-                </label>
-              </div>
-            )}
-
-            {/* Allow Docker access (compose-only) */}
-            {project.deploy_type === DeployType.Compose && (
-              <div className="border-t border-slate-700/50 pt-3">
-                <label className="flex items-center justify-between gap-2 cursor-pointer">
-                  <div>
-                    <span className="text-xs text-slate-300">Allow Docker access</span>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      Inject docker-socket-proxy for inter-service container management
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={allowDockerAccess}
-                    onClick={() => onAllowDockerAccessChange(!allowDockerAccess)}
-                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                      allowDockerAccess ? 'bg-violet-500' : 'bg-slate-600'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                        allowDockerAccess ? 'translate-x-3.5' : 'translate-x-0.5'
-                      }`}
-                    />
-                  </button>
-                </label>
-              </div>
-            )}
 
             <button
               type="button"
@@ -599,6 +607,154 @@ export default function SettingsPopover({
             </div>
           </div>
         )}
+
+        {settingsTab === 'capabilities' && isCompose && (
+          <div className="space-y-3">
+            {capabilitiesLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 size={16} className="animate-spin text-slate-500" />
+              </div>
+            ) : (
+              <>
+                {(() => {
+                  const requested = capabilities.filter((c) => c.requested_reason);
+                  const grantedExtra = capabilities.filter(
+                    (c) => c.granted && !c.requested_reason,
+                  );
+                  const catalog = capabilities.filter(
+                    (c) => !c.requested_reason && !c.granted,
+                  );
+                  const q = capabilitySearch.trim().toLowerCase();
+                  const catalogFiltered = q
+                    ? catalog.filter(
+                        (c) =>
+                          c.label.toLowerCase().includes(q) ||
+                          c.id.toLowerCase().includes(q) ||
+                          c.description.toLowerCase().includes(q),
+                      )
+                    : catalog;
+
+                  const renderCap = (
+                    cap: ProjectCapabilityStatus,
+                    opts?: { showReason?: boolean },
+                  ) => (
+                    <div key={cap.id} className="bg-slate-900/50 rounded px-2.5 py-2 space-y-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs text-slate-200 font-medium">{cap.label}</span>
+                            {cap.granted ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/15 text-emerald-400">
+                                Granted
+                              </span>
+                            ) : cap.requested_reason ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-amber-500/15 text-amber-400">
+                                Needed
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5">{cap.description}</p>
+                          {opts?.showReason && cap.requested_reason && (
+                            <p className="text-[10px] text-amber-300/80 mt-1">{cap.requested_reason}</p>
+                          )}
+                          {cap.risk && (
+                            <p className="text-[10px] text-amber-400/80 mt-1">{cap.risk}</p>
+                          )}
+                          {cap.requires_recreate && (
+                            <p className="text-[10px] text-slate-500 mt-1">Requires recreate to apply</p>
+                          )}
+                        </div>
+                        {cap.granted ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRevokeCapability(cap)}
+                            disabled={capabilityActionId === cap.id}
+                            className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-slate-700 text-slate-300 hover:bg-red-500/20 hover:text-red-300 transition-colors disabled:opacity-50 cursor-pointer"
+                          >
+                            {capabilityActionId === cap.id ? (
+                              <Loader2 size={11} className="animate-spin" />
+                            ) : (
+                              'Revoke'
+                            )}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleGrantCapability(cap)}
+                            disabled={capabilityActionId === cap.id}
+                            className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
+                          >
+                            {capabilityActionId === cap.id ? (
+                              <Loader2 size={11} className="animate-spin" />
+                            ) : (
+                              'Grant'
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
+                          Needed by Compose
+                        </p>
+                        {requested.length === 0 ? (
+                          <p className="text-[11px] text-slate-500 px-0.5">
+                            Current compose file does not request any capabilities.
+                          </p>
+                        ) : (
+                          requested.map((cap) => renderCap(cap, { showReason: true }))
+                        )}
+                      </div>
+
+                      {grantedExtra.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
+                            Granted (not requested by current compose)
+                          </p>
+                          {grantedExtra.map((cap) => renderCap(cap))}
+                        </div>
+                      )}
+
+                      {catalog.length > 0 && (
+                        <details
+                          open={capabilityCatalogOpen}
+                          onToggle={(e) =>
+                            setCapabilityCatalogOpen((e.target as HTMLDetailsElement).open)
+                          }
+                          className="rounded border border-slate-700/50 bg-slate-900/30"
+                        >
+                          <summary className="px-2.5 py-2 text-[11px] text-slate-400 cursor-pointer select-none">
+                            Browse other capabilities
+                            <span className="ml-1 opacity-60">({catalog.length})</span>
+                          </summary>
+                          <div className="px-2.5 pb-2.5 space-y-2 border-t border-slate-700/40 pt-2">
+                            <input
+                              type="search"
+                              value={capabilitySearch}
+                              onChange={(e) => setCapabilitySearch(e.target.value)}
+                              placeholder="Search capabilities…"
+                              className="w-full px-2 py-1.5 rounded bg-slate-900/60 border border-slate-700/50 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50"
+                            />
+                            {catalogFiltered.length === 0 ? (
+                              <p className="text-[11px] text-slate-500">No matches</p>
+                            ) : (
+                              catalogFiltered.map((cap) => renderCap(cap))
+                            )}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+          </div>
+        )}
+
       </div>
     </div>
   );

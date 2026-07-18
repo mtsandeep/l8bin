@@ -54,6 +54,7 @@ pub async fn deploy_compose(
     let mut custom_domain = None;
     let mut allow_raw_ports = None;
     let mut allow_docker_access = None;
+    let mut grant_capabilities_raw = None;
     let mut compose_content = None;
     let mut target_services_raw = None;
     let mut stage_only_requested = false;
@@ -94,6 +95,9 @@ pub async fn deploy_compose(
             }
             "allow_docker_access" => {
                 allow_docker_access = field.text().await.ok().and_then(|v| v.parse::<bool>().ok());
+            }
+            "grant_capabilities" => {
+                grant_capabilities_raw = field.text().await.ok();
             }
             "compose" => {
                 compose_content = field.bytes().await.ok();
@@ -221,6 +225,110 @@ pub async fn deploy_compose(
             Json(json!({"error": format!("public service conflict: {e}")})),
         ).into_response(),
     };
+
+    // 5. Compatibility report — reject unsupported fields; require capability grants
+    let compat_report = match compose_bollard::analyze_compose_yaml(
+        &compose_yaml,
+        public_service.as_deref(),
+        Some(&project_id),
+    ) {
+        Ok((_, report)) => report,
+        Err(e) => return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("compose compatibility error: {e}")})),
+        ).into_response(),
+    };
+    if !compat_report.ok {
+        let unsupported: Vec<_> = compat_report
+            .unsupported()
+            .map(|f| json!({
+                "path": f.path,
+                "service": f.service,
+                "message": f.message,
+            }))
+            .collect();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "compose file has unsupported fields",
+                "unsupported": unsupported,
+                "report": compat_report,
+            })),
+        ).into_response();
+    }
+
+    // Apply capability grants from explicit list and/or legacy boolean flags
+    let pending_grants = {
+        use litebin_common::capabilities::ProjectCapability;
+        let mut to_grant = Vec::new();
+        if let Some(raw) = grant_capabilities_raw.as_deref() {
+            for part in raw.split(',') {
+                let id = part.trim();
+                if id.is_empty() {
+                    continue;
+                }
+                match ProjectCapability::parse(id) {
+                    Some(c) => {
+                        if !to_grant.contains(&c) {
+                            to_grant.push(c);
+                        }
+                    }
+                    None => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"error": format!("unknown capability '{id}'")})),
+                        ).into_response();
+                    }
+                }
+            }
+        }
+        if allow_docker_access == Some(true)
+            && !to_grant.contains(&ProjectCapability::DockerAccess)
+        {
+            to_grant.push(ProjectCapability::DockerAccess);
+        }
+        if allow_raw_ports == Some(true) && !to_grant.contains(&ProjectCapability::RawPorts) {
+            to_grant.push(ProjectCapability::RawPorts);
+        }
+        to_grant
+    };
+
+    // Enforce required capabilities before mutating the project row.
+    {
+        let existing_grants = match crate::capabilities::granted_ids(&state.db, &project_id).await {
+            Ok(g) => g,
+            Err(e) => {
+                // Table may not exist yet on brand-new DBs mid-migration — treat as empty.
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to read capabilities");
+                std::collections::HashSet::new()
+            }
+        };
+        let mut effective = existing_grants;
+        for c in &pending_grants {
+            effective.insert(c.id().to_string());
+        }
+        // Legacy multipart flags also count as approval for this request.
+        if allow_docker_access == Some(true) {
+            effective.insert("docker-access".into());
+        }
+        if allow_raw_ports == Some(true) {
+            effective.insert("raw-ports".into());
+        }
+        let missing = crate::capabilities::missing_capabilities(
+            &compat_report.required_capabilities,
+            &effective,
+        );
+        if !missing.is_empty() {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "missing required capabilities",
+                    "missing_capabilities": missing,
+                    "report": compat_report,
+                })),
+            ).into_response();
+        }
+    }
 
     let now = chrono::Utc::now().timestamp();
     let auto_stop = auto_stop_enabled.unwrap_or(true);
@@ -415,6 +523,21 @@ pub async fn deploy_compose(
         return (
             status,
             Json(json!({"error": if is_conflict { format!("project '{}' already exists", project_id) } else { format!("database error: {e}") } })),
+        ).into_response();
+    }
+
+    // Persist any newly approved capabilities (syncs legacy allow_* columns).
+    if let Err(e) = crate::capabilities::grant_many(
+        &state.db,
+        &project_id,
+        &pending_grants,
+        Some(&user_id),
+    )
+    .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("failed to grant capabilities: {e}")})),
         ).into_response();
     }
 

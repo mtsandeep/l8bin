@@ -462,8 +462,8 @@ impl RunServiceConfig {
 
 /// Build the Docker container name for a service.
 /// - Single-service (service_name="web", instance_id=None): `litebin-{project_id}`
-/// - Multi-service (instance_id=None): `litebin-{project_id}-{service_name}`
-/// - With instance: `litebin-{project_id}-{service_name}-{instance_id}`
+/// - Multi-service (instance_id=None): `litebin-{project_id}.{service_name}`
+/// - With instance: `litebin-{project_id}.{service_name}.{instance_id}`
 pub fn container_name(project_id: &str, service_name: &str, instance_id: Option<&str>) -> String {
     match instance_id {
         Some(id) => format!("litebin-{}.{}.{}", project_id, service_name, id),

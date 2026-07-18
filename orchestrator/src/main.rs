@@ -1,5 +1,6 @@
 mod activity;
 mod auth;
+mod capabilities;
 mod cli;
 mod cloudflare_router;
 mod config;
@@ -368,6 +369,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/{id}/routes", get(routes::projects::list_routes))
         .route("/projects/{id}/routes", post(routes::projects::create_route))
         .route("/projects/{id}/routes/{route_id}", delete(routes::projects::delete_route))
+        .route("/projects/{id}/capabilities", get(routes::capabilities::list_project_capabilities))
+        .route("/projects/{id}/capabilities", post(routes::capabilities::grant_project_capabilities))
+        .route("/projects/{id}/capabilities/{capability}", delete(routes::capabilities::revoke_project_capability))
         .route("/nodes", get(routes::nodes::list_nodes))
         .route("/nodes", post(routes::nodes::create_node))
         .route("/nodes/{id}", delete(routes::nodes::delete_node))
@@ -388,6 +392,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/deploy", post(routes::deploy::single::deploy_create))
         .route("/deploy", put(routes::deploy::single::deploy_update))
         .route("/deploy/compose", post(routes::deploy::compose::deploy_compose))
+        .route("/compose/validate", post(routes::capabilities::validate_compose))
         .route("/images/upload", post(routes::images::upload_image));
 
     // Routes - Deploy token management (session auth)
