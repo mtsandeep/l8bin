@@ -94,7 +94,7 @@ Root CA (self-signed, ECDSA P-256)
 | `log_config` | max-size 10m, max-file 3 |
 | `memory` | 256 MiB default, per-project override |
 | `nano_cpus` | 0.5 cores default, per-project override |
-| `network_mode` | `litebin-network` (or per-project `litebin-{project_id}` for multi-service) |
+| `network_mode` | Managed project bridge by default; approved background services may use `host` |
 | `restart_policy` | `no` (orchestrator manages lifecycle) |
 
 ### Capability strategy
@@ -144,13 +144,18 @@ Both orchestrator and agent mount `/var/run/docker.sock`. This is required for c
 Risky workload features require explicit grants stored in `project_capabilities`:
 
 - `docker-observe` — injects a managed HAProxy sidecar with an endpoint-allowlisted, read-only Docker API policy (never raw `docker.sock`)
+- `host-network` — runs an approved background service in the host network namespace
 - `raw-ports` — publishes Compose ports on the host
 
-Deployments may *request* capabilities; only the user can *grant* them (dashboard validation step, Settings → Capabilities, or `l8b deploy --grant-capability`). Unsupported Compose fields such as `network_mode: host` and `privileged` are rejected until supported with their own grants.
+Deployments may *request* capabilities; only the user can *grant* them (dashboard validation step, Settings → Capabilities, or `l8b deploy --grant-capability`). `network_mode: host` requires `host-network`; privileged mode remains unsupported.
 
 Docker socket declarations are always removed, including mounts marked `:ro`; filesystem read-only mode does not restrict Docker API operations. With `docker-observe`, HAProxy forwards only `GET`/`HEAD` requests for daemon info, version, events, container listing, container inspect, container stats, and container logs. The requesting service receives `DOCKER_HOST`; other project services do not.
 
 Observation is host-wide. Responses can include container metadata, environment values, and logs from other projects on the node. LiteBin does not expose mutating Docker API access.
+
+Host networking is restricted to background projects on native Linux nodes using rootful Docker; Docker Desktop is not eligible. Compose `ports` and custom networks cannot be combined with it. The workload shares the host network namespace, so it can reach host-bound services and its listeners bind directly on the host. LiteBin's capability drops, `no-new-privileges`, resource limits, and log limits still apply.
+
+When a host-network service also uses `docker-observe`, the HAProxy sidecar remains on an isolated bridge and is published only to a Docker-assigned loopback port. LiteBin injects `DOCKER_HOST=tcp://127.0.0.1:<port>` into that approved service; the proxy is never bound to a non-loopback host address.
 
 ---
 

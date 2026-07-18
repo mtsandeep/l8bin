@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **Background project deploy UX** — CLI and dashboard deploy flows explicitly select Web or Background projects, skip public service and port controls when appropriate, report “No managed URL,” and hide incompatible URL, domain, and route actions.
 - **Safe Docker observation** — Added explicit `docker-observe` grants. LiteBin always removes workload socket mounts, injects `DOCKER_HOST` only for requesting services, and uses a fail-closed proxy restricted to read-only observation endpoints; legacy mutating `docker-access` is unavailable.
 - **Docker observation across workload types** — Extended the managed HAProxy observation sidecar to image and Compose projects, isolated it to approved requesters, and added a live Docker policy test for allowed reads and denied mutations.
+- **Permission-gated host agents** — Added `host-network` for background Compose services on Linux rootful Docker nodes, including loopback-only Docker observation and compatibility validation for host-network workloads.
 
 ### Fixed
 - **Dashboard log viewer strips ANSI** — Container logs with terminal color codes render as plain text instead of raw escape sequences like `\u001b[95m`.

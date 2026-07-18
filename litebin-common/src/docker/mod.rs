@@ -84,6 +84,43 @@ pub struct DockerManager {
     pub(crate) cpu_samples: Arc<Mutex<HashMap<String, CpuSample>>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockerHostInfo {
+    pub os_type: Option<String>,
+    pub operating_system: Option<String>,
+    pub rootless: Option<bool>,
+}
+
+pub fn security_options_are_rootless(options: Option<&[String]>) -> Option<bool> {
+    options.map(|values| {
+        values.iter().any(|value| {
+            let value = value.to_ascii_lowercase();
+            value == "rootless" || value.contains("name=rootless")
+        })
+    })
+}
+
+pub fn require_host_network_eligible(
+    os_type: Option<&str>,
+    operating_system: Option<&str>,
+    rootless: Option<bool>,
+    protocol_version: Option<i64>,
+) -> anyhow::Result<()> {
+    if !protocol_version.is_some_and(|version| version >= 3) {
+        anyhow::bail!("host networking requires agent protocol version 3 or newer");
+    }
+    if os_type != Some("linux") {
+        anyhow::bail!("host networking requires a Linux Docker engine (node Docker OS is unknown or non-Linux)");
+    }
+    if operating_system.is_some_and(|value| value.to_ascii_lowercase().contains("docker desktop")) {
+        anyhow::bail!("host networking requires a native Linux Docker node; Docker Desktop is not eligible");
+    }
+    if rootless != Some(false) {
+        anyhow::bail!("host networking requires rootful Docker (rootless state is unknown or enabled)");
+    }
+    Ok(())
+}
+
 impl Clone for DockerManager {
     fn clone(&self) -> Self {
         Self {
@@ -98,6 +135,14 @@ impl Clone for DockerManager {
 }
 
 impl DockerManager {
+    pub async fn host_info(&self) -> anyhow::Result<DockerHostInfo> {
+        let info = self.docker.info().await?;
+        Ok(DockerHostInfo {
+            os_type: info.os_type,
+            operating_system: info.operating_system,
+            rootless: security_options_are_rootless(info.security_options.as_deref()),
+        })
+    }
     pub fn new(network: String, memory_limit: i64, cpu_limit: f64) -> anyhow::Result<Self> {
         let docker = Docker::connect_with_socket_defaults()?;
         Ok(Self {
@@ -182,6 +227,29 @@ impl DockerManager {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod host_info_tests {
+    use super::*;
+
+    #[test]
+    fn parses_rootless_security_option() {
+        let values = vec!["name=seccomp,profile=default".into(), "name=rootless".into()];
+        assert_eq!(security_options_are_rootless(Some(&values)), Some(true));
+        assert_eq!(security_options_are_rootless(Some(&[])), Some(false));
+        assert_eq!(security_options_are_rootless(None), None);
+    }
+
+    #[test]
+    fn eligibility_fails_closed() {
+        assert!(require_host_network_eligible(Some("linux"), Some("Ubuntu"), Some(false), Some(3)).is_ok());
+        assert!(require_host_network_eligible(None, None, Some(false), Some(3)).is_err());
+        assert!(require_host_network_eligible(Some("linux"), Some("Docker Desktop"), Some(false), Some(3)).is_err());
+        assert!(require_host_network_eligible(Some("linux"), Some("Ubuntu"), None, Some(3)).is_err());
+        assert!(require_host_network_eligible(Some("linux"), Some("Ubuntu"), Some(true), Some(3)).is_err());
+        assert!(require_host_network_eligible(Some("linux"), Some("Ubuntu"), Some(false), Some(2)).is_err());
     }
 }
 

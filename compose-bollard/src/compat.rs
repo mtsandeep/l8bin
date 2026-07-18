@@ -294,15 +294,25 @@ fn managed_network_name(project_id: &str) -> String {
 /// (label / port / CLI selection). Pass `None` to use automatic detection.
 ///
 /// When `project_id` is provided, findings use concrete names
-/// (e.g. `litebin-beszel.beszel-agent`) instead of placeholders.
+/// (e.g. `litebin-monitor.host-agent`) instead of placeholders.
 pub fn analyze_compose_yaml(
     yaml: &str,
     public_service: Option<&str>,
     project_id: Option<&str>,
 ) -> Result<(ComposeFile, CompatibilityReport)> {
+    analyze_compose_yaml_for_workload(yaml, public_service, project_id, false)
+}
+
+pub fn analyze_compose_yaml_for_workload(
+    yaml: &str,
+    public_service: Option<&str>,
+    project_id: Option<&str>,
+    is_background: bool,
+) -> Result<(ComposeFile, CompatibilityReport)> {
     let root: serde_yaml::Value = serde_yaml::from_str(yaml)?;
     let compose = ComposeParser::parse(yaml)?;
-    let report = analyze_compose(&root, &compose, public_service, project_id)?;
+    let report =
+        analyze_compose_for_workload(&root, &compose, public_service, project_id, is_background)?;
     Ok((compose, report))
 }
 
@@ -313,9 +323,20 @@ pub fn analyze_compose(
     public_service: Option<&str>,
     project_id: Option<&str>,
 ) -> Result<CompatibilityReport> {
+    analyze_compose_for_workload(root, compose, public_service, project_id, false)
+}
+
+pub fn analyze_compose_for_workload(
+    root: &serde_yaml::Value,
+    compose: &ComposeFile,
+    public_service: Option<&str>,
+    project_id: Option<&str>,
+    is_background: bool,
+) -> Result<CompatibilityReport> {
     let mut findings = Vec::new();
 
-    analyze_top_level(root, project_id, &mut findings);
+    let has_host_network = compose.services.values().any(ComposeService::uses_host_network);
+    analyze_top_level(root, project_id, has_host_network, &mut findings);
 
     if compose.services.is_empty() {
         return Err(ComposeError::NoServices);
@@ -324,7 +345,10 @@ pub fn analyze_compose(
     // Validate graph early so callers get a clear error, but still build findings.
     let _ = compose.topological_sort()?;
 
-    let detected_public = match public_service {
+    let detected_public = if is_background {
+        None
+    } else {
+        match public_service {
         Some(name) => {
             if !compose.services.contains_key(name) {
                 return Err(ComposeError::ServiceNotFound {
@@ -333,7 +357,8 @@ pub fn analyze_compose(
             }
             Some(name.to_string())
         }
-        None => compose.detect_public_service()?,
+            None => compose.detect_public_service()?,
+        }
     };
 
     if let Some(ref pub_svc) = detected_public {
@@ -366,6 +391,7 @@ pub fn analyze_compose(
             svc,
             detected_public.as_deref(),
             project_id,
+            is_background,
             &mut findings,
         );
     }
@@ -378,7 +404,10 @@ pub fn analyze_compose(
         "LiteBin applies capability drop/add, no-new-privileges, pids_limit, and log rotation to all services",
         None,
     ));
-    let network_msg = match project_id {
+    let network_msg = if has_host_network {
+        "host-network services use the host namespace; other services use LiteBin's managed project bridge".to_string()
+    } else {
+        match project_id {
         Some(pid) => format!(
             "services join managed network {} (Compose networks / network_mode are not applied)",
             managed_network_name(pid)
@@ -386,6 +415,7 @@ pub fn analyze_compose(
         None => {
             "services join managed network litebin-<project_id> (Compose networks / network_mode are not applied)"
                 .to_string()
+        }
         }
     };
     findings.push(finding(
@@ -402,6 +432,7 @@ pub fn analyze_compose(
 fn analyze_top_level(
     root: &serde_yaml::Value,
     project_id: Option<&str>,
+    has_host_network: bool,
     findings: &mut Vec<CompatibilityFinding>,
 ) {
     let Some(map) = root.as_mapping() else {
@@ -429,6 +460,16 @@ fn analyze_top_level(
                 None,
             )),
             "networks" => {
+                if has_host_network {
+                    findings.push(finding(
+                        "networks",
+                        None,
+                        FindingDisposition::Unsupported,
+                        "custom networks cannot be combined with host-network services",
+                        None,
+                    ));
+                    continue;
+                }
                 let msg = match project_id {
                     Some(pid) => format!(
                         "top-level networks are ignored; LiteBin creates {}",
@@ -478,6 +519,7 @@ fn analyze_service(
     svc: &ComposeService,
     public_service: Option<&str>,
     project_id: Option<&str>,
+    is_background: bool,
     findings: &mut Vec<CompatibilityFinding>,
 ) {
     let prefix = format!("services.{svc_name}");
@@ -490,6 +532,33 @@ fn analyze_service(
             "service name 'litebin-docker-proxy' is reserved for LiteBin's managed Docker observation proxy",
             None,
         ));
+    }
+    let host_network = svc.uses_host_network();
+    if host_network {
+        findings.push(finding(
+            format!("{prefix}.network_mode"),
+            Some(svc_name.into()),
+            if is_background {
+                FindingDisposition::PermissionRequired
+            } else {
+                FindingDisposition::Unsupported
+            },
+            if is_background {
+                "host networking runs the service in the host network namespace and exposes listeners directly"
+            } else {
+                "host networking is available only to background projects without managed HTTP ingress"
+            },
+            if is_background { Some("host-network") } else { None },
+        ));
+        if svc.ports.as_ref().is_some_and(|ports| !ports.is_empty()) {
+            findings.push(finding(
+                format!("{prefix}.ports"),
+                Some(svc_name.into()),
+                FindingDisposition::Unsupported,
+                "Compose ports cannot be combined with host networking; listeners bind directly on the host",
+                None,
+            ));
+        }
     }
 
     // Supported fields that are present
@@ -524,7 +593,8 @@ fn analyze_service(
             continue;
         }
         match *field {
-            "ports" => analyze_ports(svc_name, svc, is_public, findings),
+            "ports" if !host_network => analyze_ports(svc_name, svc, is_public, findings),
+            "ports" => {}
             "volumes" => analyze_volumes(svc_name, svc, findings),
             "restart" => findings.push(finding(
                 format!("{prefix}.restart"),
@@ -597,6 +667,21 @@ fn analyze_service(
     }
 
     for (field, message) in UNSUPPORTED_SERVICE_FIELDS {
+        if *field == "network_mode" {
+            if svc.extra.contains_key(*field) && !host_network {
+                findings.push(finding(
+                    format!("{prefix}.{field}"),
+                    Some(svc_name.into()),
+                    FindingDisposition::Unsupported,
+                    "only network_mode: host is supported, and it requires the host-network capability",
+                    None,
+                ));
+            }
+            if svc.extra.contains_key(*field) {
+                handled_extra.insert((*field).to_string());
+            }
+            continue;
+        }
         if svc.extra.contains_key(*field) {
             let msg = match (*field, project_id) {
                 ("network_mode", Some(pid)) => format!(
@@ -793,6 +878,12 @@ mod tests {
         analyze_compose_yaml(yaml, None, Some(project_id)).unwrap().1
     }
 
+    fn background_report(yaml: &str) -> CompatibilityReport {
+        analyze_compose_yaml_for_workload(yaml, None, None, true)
+            .unwrap()
+            .1
+    }
+
     #[test]
     fn simple_web_app_is_ok() {
         let r = report(
@@ -804,7 +895,7 @@ services:
       - "8080:80"
 "#,
         );
-        assert!(r.ok);
+        assert!(r.ok, "findings: {:#?}", r.findings);
         assert!(r.required_capabilities.is_empty());
         assert!(r
             .findings
@@ -861,7 +952,7 @@ services:
     }
 
     #[test]
-    fn network_mode_host_is_unsupported() {
+    fn network_mode_host_is_unsupported_for_web_projects() {
         let r = report(
             r#"
 services:
@@ -872,6 +963,50 @@ services:
         );
         assert!(!r.ok);
         assert!(r.unsupported().any(|f| f.path.ends_with("network_mode")));
+    }
+
+    #[test]
+    fn host_observer_requests_only_observation_and_host_network() {
+        let r = background_report(
+            r#"
+services:
+  host-agent:
+    image: example/host-agent
+    network_mode: host
+    environment:
+      HUB_URL: https://hub.example.com
+      LISTEN: "45876"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./agent_data:/var/lib/host-agent
+"#,
+        );
+        assert!(r.ok, "findings: {:#?}", r.findings);
+        assert_eq!(
+            r.required_capabilities,
+            vec!["docker-observe".to_string(), "host-network".to_string()]
+        );
+    }
+
+    #[test]
+    fn host_mode_rejects_ports_and_custom_networks() {
+        let r = background_report(
+            r#"
+networks:
+  custom:
+services:
+  agent:
+    image: example/agent
+    network_mode: host
+    ports: ["45876:45876"]
+    networks: [custom]
+"#,
+        );
+        assert!(!r.ok);
+        assert!(r.unsupported().any(|f| f.path == "networks"));
+        assert!(r.unsupported().any(|f| f.path.ends_with(".ports")));
+        assert!(r.unsupported().any(|f| f.path.ends_with(".networks")));
+        assert!(!r.required_capabilities.contains(&"raw-ports".to_string()));
     }
 
     #[test]
@@ -945,19 +1080,19 @@ services:
         let r = report_for(
             r#"
 services:
-  beszel-agent:
-    image: henrygd/beszel-agent
+  host-agent:
+    image: example/host-agent
     container_name: agent
     network_mode: host
 "#,
-            "beszel",
+            "monitor",
         );
         let container = r
             .findings
             .iter()
             .find(|f| f.path.ends_with("container_name"))
             .expect("container_name finding");
-        assert!(container.message.contains("litebin-beszel.beszel-agent"));
+        assert!(container.message.contains("litebin-monitor.host-agent"));
         assert!(!container.message.contains('{'));
 
         let network = r
@@ -965,13 +1100,13 @@ services:
             .iter()
             .find(|f| f.path == "litebin.network")
             .expect("network finding");
-        assert!(network.message.contains("litebin-beszel"));
+        assert!(network.message.contains("host namespace"));
         assert!(!network.message.contains('{'));
 
         let mode = r
             .unsupported()
             .find(|f| f.path.ends_with("network_mode"))
             .expect("network_mode finding");
-        assert!(mode.message.contains("litebin-beszel"));
+        assert!(mode.message.contains("background"));
     }
 }

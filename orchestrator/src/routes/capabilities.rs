@@ -7,7 +7,7 @@ use axum::{
     Json,
 };
 use axum_login::AuthSession;
-use compose_bollard::{analyze_compose_yaml, CompatibilityReport};
+use compose_bollard::{analyze_compose_yaml_for_workload, CompatibilityReport};
 use litebin_common::capabilities::{
     capability_catalog, parse_capability_ids, CapabilityInfo, ProjectCapability,
     ProjectCapabilityStatus,
@@ -72,7 +72,7 @@ pub async fn validate_compose(
     }
 
     let (_compose, report) =
-        match analyze_compose_yaml(
+        match analyze_compose_yaml_for_workload(
             &payload.compose,
             if payload.is_background {
                 None
@@ -80,6 +80,7 @@ pub async fn validate_compose(
                 payload.public_service.as_deref()
             },
             payload.project_id.as_deref(),
+            payload.is_background,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -158,11 +159,21 @@ pub async fn grant_project_capabilities(
 ) -> Result<Json<Vec<ProjectCapabilityStatus>>, (StatusCode, String)> {
     ensure_project(&state, &id).await?;
     let caps = parse_capability_ids(&payload.capabilities).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if caps.contains(&ProjectCapability::HostNetwork) {
+        let is_background: bool = sqlx::query_scalar("SELECT is_background FROM projects WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(capabilities::db_err)?;
+        if !is_background {
+            return Err((StatusCode::BAD_REQUEST, "host networking is restricted to background projects".into()));
+        }
+    }
     let granted_by = auth_session.user.map(|u| u.id);
     capabilities::grant_many(&state.db, &id, &caps, granted_by.as_deref())
         .await
         .map_err(capabilities::db_err)?;
-    if caps.contains(&ProjectCapability::DockerObserve) {
+    if caps.iter().any(|cap| matches!(cap, ProjectCapability::DockerObserve | ProjectCapability::HostNetwork)) {
         let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
             .bind(&id)
             .fetch_one(&state.db)
@@ -209,6 +220,66 @@ pub async fn revoke_project_capability(
         )
     })?;
     let mut docker_observe_node_id: Option<String> = None;
+    let mut host_network_node_id: Option<String> = None;
+    if cap == ProjectCapability::HostNetwork {
+        let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(capabilities::db_err)?;
+        host_network_node_id = node_id.clone();
+        let container_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
+        )
+        .bind(&id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(capabilities::db_err)?;
+        if node_id.as_deref().unwrap_or("local") == "local" {
+            for container_id in &container_ids {
+                if let Err(error) = state.docker.stop_container(container_id).await {
+                    if litebin_common::docker::DockerErrorKind::from_anyhow(&error)
+                        != litebin_common::docker::DockerErrorKind::NotFound
+                    {
+                        return Err((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("failed to stop host-network workload before revocation: {error}"),
+                        ));
+                    }
+                }
+            }
+        } else if let Some(node_id) = node_id.as_deref() {
+            let node = crate::routes::manage::get_node_from_db(&state.db, node_id)
+                .await
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("{e:?}")))?;
+            let client = crate::nodes::client::get_node_client(&state.node_clients, node_id)
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("{e:?}")))?;
+            let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
+            for container_id in &container_ids {
+                let response = client
+                    .post(format!("{base_url}/containers/stop"))
+                    .json(&json!({"container_id": container_id}))
+                    .send()
+                    .await
+                    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("failed to stop host-network workload: {e}")))?;
+                if !response.status().is_success() {
+                    return Err((StatusCode::BAD_GATEWAY, "failed to stop host-network workload before revocation".into()));
+                }
+            }
+        }
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query("UPDATE project_services SET status = 'stopped' WHERE project_id = ? AND is_oneshot = 0")
+            .bind(&id)
+            .execute(&state.db)
+            .await
+            .map_err(capabilities::db_err)?;
+        sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(&id)
+            .execute(&state.db)
+            .await
+            .map_err(capabilities::db_err)?;
+    }
     if cap == ProjectCapability::DockerObserve {
         let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
             .bind(&id)
@@ -254,6 +325,17 @@ pub async fn revoke_project_capability(
         .await
         .map_err(capabilities::db_err)?;
     if let Some(node_id) = docker_observe_node_id {
+        if node_id != "local" {
+            crate::cloudflare_router::push_project_meta_to_agent(
+                &node_id,
+                &state.db,
+                &state.node_clients,
+                &state.config,
+            )
+            .await;
+        }
+    }
+    if let Some(node_id) = host_network_node_id {
         if node_id != "local" {
             crate::cloudflare_router::push_project_meta_to_agent(
                 &node_id,

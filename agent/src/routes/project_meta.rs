@@ -10,6 +10,7 @@ pub struct ProjectMetaRequest {
     pub background_projects: Option<HashMap<String, bool>>,
     pub allow_raw_ports: Option<HashMap<String, bool>>,
     pub docker_observe: Option<HashMap<String, bool>>,
+    pub host_network: Option<HashMap<String, bool>>,
     /// Global default memory limit (MB) from orchestrator settings.
     pub default_memory_limit_mb: Option<i64>,
     /// Global default CPU limit from orchestrator settings.
@@ -31,6 +32,7 @@ pub async fn update_project_meta(
             is_background: false,
             allow_raw_ports: false,
             docker_observe: false,
+            host_network: false,
             default_memory_limit_mb: req.default_memory_limit_mb,
             default_cpu_limit: req.default_cpu_limit,
         }))
@@ -51,6 +53,12 @@ pub async fn update_project_meta(
     if let Some(docker_observe) = req.docker_observe {
         for (id, val) in docker_observe {
             meta.entry(id).or_default().docker_observe = val;
+        }
+    }
+
+    if let Some(host_network) = req.host_network {
+        for (id, val) in host_network {
+            meta.entry(id).or_default().host_network = val;
         }
     }
 

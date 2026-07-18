@@ -89,7 +89,7 @@ enum Commands {
         #[arg(long)]
         service: Vec<String>,
 
-        /// Grant a project capability for this deploy (repeatable: docker-observe, raw-ports)
+        /// Grant a project capability for this deploy (repeatable: docker-observe, host-network, raw-ports)
         #[arg(long = "grant-capability")]
         grant_capability: Vec<String>,
     },

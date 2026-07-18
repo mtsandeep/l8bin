@@ -12,6 +12,9 @@ pub enum ProjectCapability {
     /// Observe the host Docker daemon through LiteBin's read-only proxy.
     #[serde(rename = "docker-observe")]
     DockerObserve,
+    /// Run approved background services in the host network namespace.
+    #[serde(rename = "host-network")]
+    HostNetwork,
     /// Publish Compose-declared ports directly on the host (bypass Caddy).
     #[serde(rename = "raw-ports")]
     RawPorts,
@@ -20,12 +23,14 @@ pub enum ProjectCapability {
 impl ProjectCapability {
     pub const ALL: &'static [ProjectCapability] = &[
         ProjectCapability::DockerObserve,
+        ProjectCapability::HostNetwork,
         ProjectCapability::RawPorts,
     ];
 
     pub fn id(self) -> &'static str {
         match self {
             ProjectCapability::DockerObserve => "docker-observe",
+            ProjectCapability::HostNetwork => "host-network",
             ProjectCapability::RawPorts => "raw-ports",
         }
     }
@@ -33,6 +38,7 @@ impl ProjectCapability {
     pub fn label(self) -> &'static str {
         match self {
             ProjectCapability::DockerObserve => "Docker observation",
+            ProjectCapability::HostNetwork => "Host networking",
             ProjectCapability::RawPorts => "Raw host ports",
         }
     }
@@ -42,6 +48,10 @@ impl ProjectCapability {
             ProjectCapability::DockerObserve => {
                 "Allows selected services to read host-wide container information through LiteBin's \
                  endpoint-allowlisted proxy. The raw Docker socket is never mounted into the workload."
+            }
+            ProjectCapability::HostNetwork => {
+                "Runs approved background services in the host network namespace. \
+                 The service can access host-bound listeners and exposes its own listeners directly."
             }
             ProjectCapability::RawPorts => {
                 "Publishes Compose-declared container ports directly on the host (0.0.0.0). \
@@ -55,6 +65,9 @@ impl ProjectCapability {
             ProjectCapability::DockerObserve => {
                 "High — responses may expose host-wide container metadata, environment values, and logs."
             }
+            ProjectCapability::HostNetwork => {
+                "High — removes network namespace isolation and may expose host services or create listener conflicts."
+            }
             ProjectCapability::RawPorts => {
                 "Medium — opens host ports and can conflict with other services; LiteBin-reserved ports are still blocked."
             }
@@ -64,6 +77,7 @@ impl ProjectCapability {
     pub fn parse(id: &str) -> Option<Self> {
         match id {
             "docker-observe" => Some(ProjectCapability::DockerObserve),
+            "host-network" => Some(ProjectCapability::HostNetwork),
             "raw-ports" => Some(ProjectCapability::RawPorts),
             _ => None,
         }
@@ -149,6 +163,7 @@ mod tests {
     fn catalog_exposes_observation_but_not_legacy_mutating_access() {
         let ids: Vec<String> = capability_catalog().into_iter().map(|item| item.id).collect();
         assert!(ids.contains(&"docker-observe".to_string()));
+        assert!(ids.contains(&"host-network".to_string()));
         assert!(!ids.contains(&"docker-access".to_string()));
     }
 }

@@ -303,9 +303,12 @@ impl Default for ImageStats {
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HealthReport {
     pub version: String,
-    /// Agent API protocol version, reserved for compatibility checks.
+    /// Agent API protocol version used for compatibility checks.
     pub protocol_version: u32,
     pub architecture: String,
+    pub docker_os_type: Option<String>,
+    pub docker_operating_system: Option<String>,
+    pub docker_rootless: Option<bool>,
     pub memory_available: u64,
     pub memory_total: u64,
     pub cpu_cores: u32,
@@ -387,6 +390,9 @@ pub struct RunServiceConfig {
     pub read_only: Option<bool>,
     pub extra_hosts: Option<Vec<String>>,
     pub networks: Option<Vec<NetworkConfig>>,
+    /// Run in the host network namespace. Host-network services may not use
+    /// managed/custom networks or Docker port publishing.
+    pub host_network: bool,
     pub binds: Option<Vec<String>>,
     pub is_public: bool,
     /// True when another service depends on this one with
@@ -448,6 +454,7 @@ impl RunServiceConfig {
             read_only: None,
             extra_hosts: None,
             networks: None,
+            host_network: false,
             binds,
             is_public: !project.is_background,
             is_oneshot: false,

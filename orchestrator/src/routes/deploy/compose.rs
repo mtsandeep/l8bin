@@ -232,10 +232,11 @@ pub async fn deploy_compose(
     };
 
     // 5. Compatibility report — reject unsupported fields; require capability grants
-    let compat_report = match compose_bollard::analyze_compose_yaml(
+    let compat_report = match compose_bollard::analyze_compose_yaml_for_workload(
         &compose_yaml,
         public_service.as_deref(),
         Some(&project_id),
+        is_background,
     ) {
         Ok((_, report)) => report,
         Err(e) => return (
@@ -570,6 +571,22 @@ pub async fn deploy_compose(
                 .into_response();
         }
     };
+    let host_network = match crate::capabilities::has_capability(
+        &state.db,
+        &project_id,
+        litebin_common::capabilities::ProjectCapability::HostNetwork,
+    )
+    .await
+    {
+        Ok(granted) => granted,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("failed to read host-network grant: {e}")})),
+            )
+                .into_response();
+        }
+    };
 
     // Seed project_services rows for each service in the compose file
     let target_set: Option<std::collections::HashSet<String>> = target_services.as_ref()
@@ -683,6 +700,65 @@ pub async fn deploy_compose(
             ).into_response();
         }
     };
+    if compose.services.values().any(|service| service.uses_host_network()) {
+        let eligibility = if target_node_id == "local" {
+            let host = state.docker.host_info().await.ok();
+            litebin_common::docker::require_host_network_eligible(
+                host.as_ref().and_then(|info| info.os_type.as_deref()),
+                host.as_ref()
+                    .and_then(|info| info.operating_system.as_deref()),
+                host.as_ref().and_then(|info| info.rootless),
+                Some(3),
+            )
+        } else {
+            match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
+                Ok(node) => match nodes::client::get_node_client(
+                    &state.node_clients,
+                    &target_node_id,
+                ) {
+                    Ok(client) => {
+                        let health_url =
+                            format!("{}/health", agent_base_url(&state.config, &node));
+                        match client.get(health_url).send().await {
+                            Ok(response) if response.status().is_success() => {
+                                match response.json::<litebin_common::types::HealthReport>().await {
+                                    Ok(health) => {
+                                        litebin_common::docker::require_host_network_eligible(
+                                            health.docker_os_type.as_deref(),
+                                            health.docker_operating_system.as_deref(),
+                                            health.docker_rootless,
+                                            Some(health.protocol_version as i64),
+                                        )
+                                    }
+                                    Err(error) => Err(anyhow::anyhow!(
+                                        "failed to read selected agent health: {error}"
+                                    )),
+                                }
+                            }
+                            Ok(response) => Err(anyhow::anyhow!(
+                                "selected agent health check returned {}",
+                                response.status()
+                            )),
+                            Err(error) => Err(anyhow::anyhow!(
+                                "failed to contact selected agent for host-network eligibility: {error}"
+                            )),
+                        }
+                    }
+                    Err(error) => Err(anyhow::anyhow!(
+                        "selected agent client is unavailable: {error:?}"
+                    )),
+                },
+                Err(error) => Err(anyhow::anyhow!("failed to load selected node: {error:?}")),
+            }
+        };
+        if let Err(error) = eligibility {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": error.to_string()})),
+            )
+                .into_response();
+        }
+    }
 
     // Persist sticky node selection even for staged first deploys.
     if let Err(e) = sqlx::query(
@@ -735,6 +811,7 @@ pub async fn deploy_compose(
                     "service_order": start_order,
                     "is_background": is_background,
                     "docker_observe": docker_observe,
+                    "host_network": host_network,
                     "stage_only": true,
                 }))
                 .send()
@@ -866,6 +943,7 @@ pub async fn deploy_compose(
                 "target_services": target_services,
                 "allow_raw_ports": project.allow_raw_ports,
                 "docker_observe": docker_observe,
+                "host_network": host_network,
                 "is_background": project.is_background,
                 "service_resources": service_resources,
                 "default_memory_limit_mb": default_mem,

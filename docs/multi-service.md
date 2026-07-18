@@ -20,22 +20,25 @@ LiteBin does not run `docker compose up`. It parses Compose YAML, maps supported
 - **translated** — kept but remapped (e.g. public ports → Caddy ingress, docker.sock → restricted proxy)
 - **overridden** — replaced by LiteBin policy (container names, logging, security opts)
 - **permission_required** — needs an explicit project capability grant
-- **unsupported** — blocks deploy until the file is changed (e.g. `network_mode: host`, `privileged`)
+- **unsupported** — blocks deploy until the file is changed (e.g. privileged mode or incompatible host-network options)
 
 ### Capabilities
 
 | Id | Meaning |
 |---|---|
 | `docker-observe` | Read host-wide container metadata through LiteBin's endpoint-allowlisted proxy |
+| `host-network` | Run a background service in the Linux host network namespace |
 | `raw-ports` | Publish Compose ports directly on the host |
 
 Grants are stored in `project_capabilities`. Approve them from:
 
 - Dashboard Deploy New App → **Parse and validate** step
 - Dashboard project Settings → **Capabilities**
-- CLI: interactive `l8b ship` prompt, or `l8b deploy --grant-capability docker-observe`
+- CLI: interactive `l8b ship` prompt, or repeatable `l8b deploy --grant-capability`
 
 Docker socket mounts are always stripped, even when declared read-only. Approved requesting services receive `DOCKER_HOST`; the managed HAProxy sidecar permits only read-only observation endpoints. It does not filter results by project, so responses may expose host-wide metadata, environment values, and logs. Mutating Docker access is unavailable.
+
+`network_mode: host` is available only to background projects on Linux nodes using rootful Docker and requires `host-network`. Such services cannot declare Compose `ports` or custom networks. Their listeners bind directly on the host. When combined with `docker-observe`, LiteBin keeps HAProxy bridged and exposes it only through a Docker-assigned `127.0.0.1` port.
 
 ---
 

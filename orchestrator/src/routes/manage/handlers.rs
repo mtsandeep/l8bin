@@ -267,6 +267,13 @@ pub async fn start_project(
         )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
+        let host_network = crate::capabilities::has_capability(
+            &state.db,
+            &project_id,
+            litebin_common::capabilities::ProjectCapability::HostNetwork,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
         let resp = match client
             .post(format!("{}/containers/batch-run", base_url))
             .json(&json!({
@@ -275,6 +282,7 @@ pub async fn start_project(
                 "service_order": &svc_names,
                 "allow_raw_ports": project.allow_raw_ports,
                 "docker_observe": docker_observe,
+                "host_network": host_network,
                 "is_background": project.is_background,
                 "service_resources": service_resources,
                 "default_memory_limit_mb": default_mem,
@@ -762,6 +770,13 @@ pub async fn recreate_project(
             )
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
+            let host_network = crate::capabilities::has_capability(
+                &state.db,
+                &project_id,
+                litebin_common::capabilities::ProjectCapability::HostNetwork,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
             let pull = body.as_ref().and_then(|b| b.0.pull_images).unwrap_or(false);
             let target_services = body.as_ref().and_then(|b| b.0.services.clone());
             let target_set = target_services
@@ -786,6 +801,7 @@ pub async fn recreate_project(
                     "target_services": target_services,
                     "allow_raw_ports": project.allow_raw_ports,
                     "docker_observe": docker_observe,
+                    "host_network": host_network,
                     "is_background": project.is_background,
                     "service_resources": service_resources,
                     "default_memory_limit_mb": default_mem,

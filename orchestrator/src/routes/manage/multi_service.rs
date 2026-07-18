@@ -50,6 +50,7 @@ impl Default for StartServicesOpts {
 // ── Result of starting a single service ──────────────────────────────────────
 
 struct StartedService {
+    service_name: String,
     container_id: String,
     mapped_port: u16,
     is_public: bool,
@@ -89,6 +90,32 @@ pub async fn start_services(
         for config in &mut plan.configs {
             config.is_public = false;
         }
+    }
+
+    let requests_host_network = plan.configs.iter().any(|config| config.host_network);
+    if requests_host_network {
+        if !project.is_background {
+            return Err((StatusCode::BAD_REQUEST, "host networking is restricted to background projects".into()));
+        }
+        let authorized = crate::capabilities::has_capability(
+            &state.db,
+            project_id,
+            litebin_common::capabilities::ProjectCapability::HostNetwork,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
+        if !authorized {
+            return Err((StatusCode::FORBIDDEN, "host-network capability was not authorized".into()));
+        }
+        let host = state.docker.host_info().await.ok();
+        litebin_common::docker::require_host_network_eligible(
+            host.as_ref().and_then(|info| info.os_type.as_deref()),
+            host.as_ref()
+                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.rootless),
+            Some(3),
+        )
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
     }
 
     // 1b. Apply per-service overrides from project_services (dashboard-set memory/cpu)
@@ -184,7 +211,7 @@ pub async fn start_services(
     }
 
     // 3. Build lookup maps from plan
-    let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
+    let mut configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
     let healthy_wait_set: HashSet<String> = plan.service_order.iter()
         .filter(|s| plan.needs_healthy_wait(s))
@@ -288,6 +315,7 @@ pub async fn start_services(
                                     tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service completed");
                                 }
                                 return Ok(StartedService {
+                                    service_name: svc.clone(),
                                     container_id: existing_cid.clone(),
                                     mapped_port: 0,
                                     is_public,
@@ -323,6 +351,7 @@ pub async fn start_services(
                                 tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service running (existing container)");
                             }
                             return Ok(StartedService {
+                                service_name: svc.clone(),
                                 container_id: existing_cid.clone(),
                                 mapped_port: existing_port,
                                 is_public,
@@ -350,6 +379,7 @@ pub async fn start_services(
                                     }
                                     tracing::info!(service = %svc, container_id = %existing_cid, "started existing stopped container");
                                     return Ok(StartedService {
+                                        service_name: svc.clone(),
                                         container_id: existing_cid.clone(),
                                         mapped_port: actual_port,
                                         is_public,
@@ -384,7 +414,7 @@ pub async fn start_services(
                 }
 
                 // Wait for Docker network to assign a valid IP (skip if container exited)
-                if docker.is_container_running(&container_id).await.unwrap_or(false) {
+                if !run_config.host_network && docker.is_container_running(&container_id).await.unwrap_or(false) {
                     if let Err(e) = docker.wait_for_network_ready(&container_id).await {
                         tracing::warn!(service = %svc, error = %e, "network readiness timeout, continuing");
                     }
@@ -410,6 +440,7 @@ pub async fn start_services(
                 }
 
                 Ok(StartedService {
+                    service_name: svc,
                     container_id,
                     mapped_port,
                     is_public,
@@ -421,6 +452,24 @@ pub async fn start_services(
         while let Some(result) = tasks.join_next().await {
             match result {
                 Ok(Ok(started)) => {
+                    if started.service_name == litebin_common::types::DOCKER_PROXY_SERVICE
+                        && configs_map
+                            .values()
+                            .any(|config| config.host_network && config.docker_observe)
+                    {
+                        let port = state
+                            .docker
+                            .inspect_mapped_port_for(&started.container_id, "2375/tcp")
+                            .await
+                            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to inspect Docker observation proxy mapping: {e}")))?
+                            .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "Docker observation proxy did not receive its required loopback mapping".into()))?;
+                        for config in configs_map.values_mut() {
+                            if config.host_network && config.docker_observe {
+                                config.env.retain(|value| !value.starts_with("DOCKER_HOST="));
+                                config.env.push(format!("DOCKER_HOST=tcp://127.0.0.1:{port}"));
+                            }
+                        }
+                    }
                     if started.is_public {
                         public_container_id = started.container_id;
                         public_mapped_port = started.mapped_port;

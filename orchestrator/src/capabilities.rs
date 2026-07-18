@@ -1,7 +1,7 @@
 //! Project capability grant helpers.
 
 use axum::http::StatusCode;
-use compose_bollard::{analyze_compose_yaml, FindingDisposition};
+use compose_bollard::{analyze_compose_yaml_for_workload, FindingDisposition};
 use litebin_common::capabilities::{
     capability_catalog, ProjectCapability, ProjectCapabilityGrant, ProjectCapabilityStatus,
 };
@@ -165,7 +165,9 @@ pub fn requested_reasons_from_compose(project_id: &str) -> HashMap<String, Strin
     let Ok(yaml) = std::fs::read_to_string(&path) else {
         return HashMap::new();
     };
-    let Ok((_, report)) = analyze_compose_yaml(&yaml, None, Some(project_id)) else {
+    let Ok((_, report)) =
+        analyze_compose_yaml_for_workload(&yaml, None, Some(project_id), true)
+    else {
         return HashMap::new();
     };
 

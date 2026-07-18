@@ -92,6 +92,8 @@ pub struct ProjectMetaEntry {
     pub allow_raw_ports: bool,
     #[serde(default)]
     pub docker_observe: bool,
+    #[serde(default)]
+    pub host_network: bool,
     /// Global default memory limit (MB) from orchestrator settings.
     #[serde(default)]
     pub default_memory_limit_mb: Option<i64>,

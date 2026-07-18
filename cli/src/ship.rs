@@ -1313,7 +1313,7 @@ async fn validate_compose_for_deploy(
 
     if !interactive {
         anyhow::bail!(
-            "missing required capabilities: {}. Pass --grant-capability for each (e.g. --grant-capability docker-observe)",
+            "missing required capabilities: {}. Pass --grant-capability for each (for example, --grant-capability host-network)",
             still_missing.join(", ")
         );
     }

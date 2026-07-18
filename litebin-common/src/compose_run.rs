@@ -128,19 +128,25 @@ impl ComposeRunPlan {
             if config_requests_docker_socket(config) {
                 config.docker_observe = true;
                 config.env.retain(|value| !value.starts_with("DOCKER_HOST="));
-                config.env.push(format!("DOCKER_HOST=tcp://{}:2375", proxy_name));
-                config.networks = Some(vec![
-                    NetworkConfig {
-                        name: project_network.clone(),
-                        aliases: Some(vec![config.service_name.clone()]),
-                    },
-                    NetworkConfig {
-                        name: observe_network.clone(),
-                        aliases: None,
-                    },
-                ]);
+                if !config.host_network {
+                    config.env.push(format!("DOCKER_HOST=tcp://{}:2375", proxy_name));
+                    config.networks = Some(vec![
+                        NetworkConfig {
+                            name: project_network.clone(),
+                            aliases: Some(vec![config.service_name.clone()]),
+                        },
+                        NetworkConfig {
+                            name: observe_network.clone(),
+                            aliases: None,
+                        },
+                    ]);
+                }
             }
         }
+        let host_requester = self
+            .configs
+            .iter()
+            .any(|config| config.host_network && config.docker_observe);
 
         // Build a minimal bollard config to trigger the compose path in
         // run_service_container(), which connects to the per-project network.
@@ -193,6 +199,7 @@ impl ComposeRunPlan {
                 name: observe_network,
                 aliases: Some(vec![proxy_name.clone()]),
             }]),
+            host_network: false,
             binds: Some(vec![
                 "/var/run/docker.sock:/var/run/docker.sock".to_string(),
                 format!(
@@ -207,6 +214,12 @@ impl ComposeRunPlan {
             docker_observe: true,
             is_managed_docker_proxy: true,
         };
+        let mut proxy_config = proxy_config;
+        // This is an internal-only loopback publication used solely by host-network
+        // requesters. It is never a project public port.
+        if host_requester {
+            proxy_config.port = Some(2375);
+        }
 
         // Insert at the beginning of service_order and into its own topological
         // level (level 0) so the proxy starts and becomes network-ready before
@@ -215,6 +228,19 @@ impl ComposeRunPlan {
         self.service_levels.insert(0, vec![proxy_name.clone()]);
         self.configs.insert(0, proxy_config);
         Ok(true)
+    }
+
+    /// Inject the exact loopback endpoint assigned to the managed proxy into
+    /// host-network Docker observation requesters.
+    pub fn inject_host_docker_proxy_endpoint(&mut self, mapped_port: u16) {
+        for config in &mut self.configs {
+            if config.host_network && config.docker_observe {
+                config.env.retain(|value| !value.starts_with("DOCKER_HOST="));
+                config
+                    .env
+                    .push(format!("DOCKER_HOST=tcp://127.0.0.1:{mapped_port}"));
+            }
+        }
     }
 
     /// Build a minimal `ComposeRunPlan` for a single-service project.
@@ -314,6 +340,7 @@ fn build_configs(
                 read_only: None,
                 extra_hosts: None,
                 networks: None,
+                host_network: svc.uses_host_network(),
                 binds,
                 is_public,
                 is_oneshot,
@@ -452,6 +479,36 @@ services:
             .service_order
             .iter()
             .any(|name| name == crate::types::DOCKER_PROXY_SERVICE));
+    }
+
+    #[test]
+    fn host_observer_uses_loopback_proxy_without_raw_ports() {
+        let project_id = format!("host-observer-{}", std::process::id());
+        let yaml = r#"
+services:
+  agent:
+    image: example/host-agent
+    network_mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+"#;
+        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None).unwrap();
+        assert!(plan.configs[0].host_network);
+        assert!(!plan.configs[0].allow_raw_ports);
+        assert!(plan.configs[0].port.is_none());
+        assert!(plan.inject_docker_observe_proxy(&project_id).unwrap());
+
+        let workload = plan.configs.iter().find(|config| config.service_name == "agent").unwrap();
+        assert!(workload.networks.is_none());
+        assert!(!workload.env.iter().any(|value| value.starts_with("DOCKER_HOST=")));
+        let proxy = plan.configs.iter().find(|config| config.is_managed_docker_proxy).unwrap();
+        assert_eq!(proxy.port, Some(2375));
+        assert!(!proxy.is_public);
+
+        plan.inject_host_docker_proxy_endpoint(49152);
+        let workload = plan.configs.iter().find(|config| config.service_name == "agent").unwrap();
+        assert!(workload.env.iter().any(|value| value == "DOCKER_HOST=tcp://127.0.0.1:49152"));
+        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
     }
 
     #[test]

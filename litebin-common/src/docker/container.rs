@@ -210,6 +210,24 @@ impl DockerManager {
         Ok(port)
     }
 
+    /// Inspect one exact container port mapping (for example `2375/tcp`).
+    pub async fn inspect_mapped_port_for(
+        &self,
+        container_id: &str,
+        port_key: &str,
+    ) -> anyhow::Result<Option<u16>> {
+        let info = self.docker.inspect_container(container_id, None).await?;
+        Ok(info
+            .network_settings
+            .as_ref()
+            .and_then(|settings| settings.ports.as_ref())
+            .and_then(|ports| ports.get(port_key))
+            .and_then(|bindings| bindings.as_ref())
+            .and_then(|bindings| bindings.first())
+            .and_then(|binding| binding.host_port.as_deref())
+            .and_then(|port| port.parse().ok()))
+    }
+
     /// Start an existing stopped container (preserves port mappings)
     pub async fn start_existing_container(&self, container_id: &str) -> anyhow::Result<()> {
         tracing::info!(container_id = %container_id, "starting existing container");
@@ -217,6 +235,15 @@ impl DockerManager {
             .start_container(container_id, None::<StartContainerOptions>)
             .await?;
         Ok(())
+    }
+
+    pub async fn container_uses_host_network(&self, container_id: &str) -> anyhow::Result<bool> {
+        let info = self.docker.inspect_container(container_id, None).await?;
+        Ok(info
+            .host_config
+            .as_ref()
+            .and_then(|config| config.network_mode.as_deref())
+            == Some("host"))
     }
 
     pub async fn stop_container(&self, container_id: &str) -> anyhow::Result<()> {
@@ -396,8 +423,27 @@ impl DockerManager {
         let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
         let mut exposed_ports: Vec<String> = Vec::new();
 
+        if config.host_network {
+            let compose_has_ports = config
+                .bollard_create_body
+                .as_ref()
+                .and_then(|body| body.exposed_ports.as_ref())
+                .is_some_and(|ports| !ports.is_empty());
+            if config.is_public
+                || config.port.is_some()
+                || config.allow_raw_ports
+                || compose_has_ports
+                || config.networks.as_ref().is_some_and(|networks| !networks.is_empty())
+            {
+                anyhow::bail!(
+                    "host-network service '{}' cannot declare ports, public routing, raw ports, or custom networks",
+                    config.service_name
+                );
+            }
+        }
+
         // Only bind a host port for public services that have a port defined
-        if config.is_public {
+        if config.is_public && !config.host_network {
             if let Some(port) = config.port {
                 let port_str = format!("{}/tcp", port);
                 port_bindings.insert(
@@ -409,6 +455,20 @@ impl DockerManager {
                 );
                 exposed_ports.push(port_str);
             }
+        }
+
+        // A managed observation proxy remains private/bridged. Host-network
+        // requesters reach it only through an ephemeral loopback publication.
+        if config.is_managed_docker_proxy && config.port == Some(2375) {
+            let port_key = "2375/tcp".to_string();
+            port_bindings.insert(
+                port_key.clone(),
+                Some(vec![PortBinding {
+                    host_ip: Some("127.0.0.1".to_string()),
+                    host_port: Some("0".to_string()),
+                }]),
+            );
+            exposed_ports.push(port_key);
         }
 
         // When allow_raw_ports is set, bind compose-declared ports directly on the host
@@ -485,7 +545,10 @@ impl DockerManager {
 
         // Build LiteBin security overrides (shared by both paths)
         let lb_host_overrides = |host: &mut HostConfig| {
-            if !port_bindings.is_empty() {
+            if config.host_network {
+                host.network_mode = Some("host".to_string());
+                host.port_bindings = None;
+            } else if !port_bindings.is_empty() {
                 host.port_bindings = Some(port_bindings.clone());
             }
             host.memory = Some(memory);
@@ -562,7 +625,9 @@ impl DockerManager {
             }
 
             // Merge exposed ports: keep compose-declared ports, add LiteBin public port
-            if !exposed_ports.is_empty() {
+            if config.host_network {
+                body.exposed_ports = None;
+            } else if !exposed_ports.is_empty() {
                 if let Some(ref compose_exposed) = body.exposed_ports {
                     let mut merged = compose_exposed.clone();
                     for ep in &exposed_ports {
@@ -579,30 +644,35 @@ impl DockerManager {
             body.host_config = Some(host);
 
             // Connect to the managed networks selected by the run plan.
-            let networks = config.networks.clone().unwrap_or_else(|| {
-                vec![crate::types::NetworkConfig {
-                    name: project_network_name(&config.project_id, config.instance_id.as_deref()),
-                    aliases: Some(vec![config.service_name.clone()]),
-                }]
-            });
-            body.networking_config = Some(NetworkingConfig {
-                endpoints_config: Some({
-                    let mut map = HashMap::new();
-                    for network in networks {
-                        map.insert(
-                            network.name,
-                            EndpointSettings {
-                                aliases: network.aliases,
-                                ..Default::default()
-                            },
-                        );
-                    }
-                    map
-                }),
-            });
+            if config.host_network {
+                body.networking_config = None;
+                body.hostname = None;
+            } else {
+                let networks = config.networks.clone().unwrap_or_else(|| {
+                    vec![crate::types::NetworkConfig {
+                        name: project_network_name(&config.project_id, config.instance_id.as_deref()),
+                        aliases: Some(vec![config.service_name.clone()]),
+                    }]
+                });
+                body.networking_config = Some(NetworkingConfig {
+                    endpoints_config: Some({
+                        let mut map = HashMap::new();
+                        for network in networks {
+                            map.insert(
+                                network.name,
+                                EndpointSettings {
+                                    aliases: network.aliases,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                        map
+                    }),
+                });
 
-            // Set hostname to service name for DNS resolution within the network
-            body.hostname = Some(config.service_name.clone());
+                // Set hostname to service name for DNS resolution within the network
+                body.hostname = Some(config.service_name.clone());
+            }
 
             // Add LiteBin and standard Compose labels to workload containers.
             if !config.is_managed_docker_proxy {
@@ -631,7 +701,9 @@ impl DockerManager {
             }
             let mut host_config = HostConfig {
                 binds: translated_binds,
-                network_mode: if config.networks.is_some() {
+                network_mode: if config.host_network {
+                    Some("host".to_string())
+                } else if config.networks.is_some() {
                     None
                 } else {
                     Some(self.network.clone())
@@ -645,7 +717,7 @@ impl DockerManager {
                 env.push(format!("PORT={}", port));
             }
 
-            let networking_config = config.networks.as_ref().map(|networks| NetworkingConfig {
+            let networking_config = (!config.host_network).then(|| config.networks.as_ref()).flatten().map(|networks| NetworkingConfig {
                 endpoints_config: Some(
                     networks
                         .iter()
@@ -672,7 +744,7 @@ impl DockerManager {
                 host_config: Some(host_config),
                 env: if env.is_empty() { None } else { Some(env) },
                 cmd: config.cmd.as_deref().and_then(|c| shlex::split(c)),
-                hostname: Some(config.service_name.clone()),
+                hostname: (!config.host_network).then(|| config.service_name.clone()),
                 networking_config,
                 labels: if config.is_managed_docker_proxy {
                     None
@@ -720,8 +792,18 @@ impl DockerManager {
         // Get the mapped port for public services (non-fatal).
         // Containers that crash immediately (e.g. missing docker.sock) will
         // have no port mapping — return 0 and let status polling resolve it.
-        let mapped_port = if config.is_public && config.port.is_some() {
-            match self.inspect_mapped_port(&container_id).await {
+        let mapped_port_key = if config.is_managed_docker_proxy && config.port == Some(2375) {
+            Some("2375/tcp")
+        } else {
+            None
+        };
+        let mapped_port = if (config.is_public && config.port.is_some()) || mapped_port_key.is_some() {
+            let inspected = if let Some(port_key) = mapped_port_key {
+                self.inspect_mapped_port_for(&container_id, port_key).await
+            } else {
+                self.inspect_mapped_port(&container_id).await
+            };
+            match inspected {
                 Ok(Some(port)) => port,
                 Ok(None) => {
                     // Port key exists but binding is empty — container likely exited

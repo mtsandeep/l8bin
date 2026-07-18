@@ -39,6 +39,10 @@ pub struct StartRequest {
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
+    #[serde(default = "default_false")]
+    pub host_network: bool,
+    #[serde(default = "default_false")]
+    pub is_background: bool,
 }
 
 #[derive(Serialize)]

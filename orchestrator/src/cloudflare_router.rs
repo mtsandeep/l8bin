@@ -815,6 +815,18 @@ pub async fn push_project_meta_to_agent(
     .into_iter()
     .map(|id| (id, true))
     .collect();
+    let host_network: HashMap<String, bool> = sqlx::query_scalar::<_, String>(
+        "SELECT pc.project_id FROM project_capabilities pc \
+         JOIN projects p ON p.id = pc.project_id \
+         WHERE p.node_id = ? AND p.is_background = 1 AND pc.capability = 'host-network'",
+    )
+    .bind(node_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|id| (id, true))
+    .collect();
 
     let client = match get_node_client(node_clients, node_id) {
         Ok(c) => c,
@@ -862,6 +874,7 @@ pub async fn push_project_meta_to_agent(
         "background_projects": background_projects,
         "allow_raw_ports": allow_raw_ports,
         "docker_observe": docker_observe,
+        "host_network": host_network,
         "default_memory_limit_mb": default_mem,
         "default_cpu_limit": default_cpu,
     });

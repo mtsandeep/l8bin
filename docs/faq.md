@@ -331,7 +331,7 @@ If your compose declares one of these (e.g., `ports: - "8282:80/tcp"` for a web 
 
 ### Networks defined in my compose file are ignored
 
-LiteBin creates and manages a single Docker network per project (`litebin_<project_id>`), connects all services and the agent to it, and ignores any `networks` definitions in the compose file. If you have multiple networks for organizing services, they will not be created — all services communicate on the same network.
+LiteBin creates and manages a single Docker network per project (`litebin_<project_id>`) and connects bridged services to it. Custom Compose networks are not created. Background services may instead request `network_mode: host` with the `host-network` capability; this is limited to Linux rootful Docker nodes and cannot be combined with Compose `ports` or custom networks.
 
 ### My app uses Docker socket (`/var/run/docker.sock`) but it's not working
 
@@ -343,6 +343,8 @@ LiteBin always strips raw Docker socket mounts, including mounts marked read-onl
 LiteBin creates a managed HAProxy sidecar with an endpoint-allowlisted, read-only policy and injects `DOCKER_HOST` only into services that declared the socket. Observation is host-wide: responses may include metadata, environment values, and logs from other projects on that node.
 
 Without `docker-observe`, the raw socket is removed and no replacement is provided. Mutating Docker access is not supported.
+
+For an approved host-network service, the HAProxy sidecar stays bridged and LiteBin injects a Docker-assigned loopback endpoint such as `tcp://127.0.0.1:49152`. The proxy is not exposed on external host interfaces.
 
 ### Non-HTTP ports and auto-wake
 

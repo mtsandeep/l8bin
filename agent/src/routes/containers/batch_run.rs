@@ -18,6 +18,10 @@ fn default_false() -> bool {
     false
 }
 
+fn host_network_authorized(granted: bool, is_background: bool) -> bool {
+    granted && is_background
+}
+
 #[derive(Deserialize)]
 pub struct BatchRunRequest {
     pub project_id: String,
@@ -28,6 +32,7 @@ pub struct BatchRunRequest {
     pub target_services: Option<Vec<String>>,
     pub allow_raw_ports: Option<bool>,
     pub docker_observe: Option<bool>,
+    pub host_network: Option<bool>,
     #[serde(default = "default_false")]
     pub is_background: bool,
     /// Whether to force-pull images (true) or skip if already present locally (false).
@@ -100,6 +105,78 @@ pub async fn batch_run(
         "batch-run request received"
     );
 
+    // Parse and authorize host networking before any filesystem, metadata, network,
+    // or container mutation at the agent trust boundary.
+    let compatibility = match compose_bollard::analyze_compose_yaml_for_workload(
+        &req.compose_yaml,
+        None,
+        Some(&req.project_id),
+        req.is_background,
+    ) {
+        Ok((_, report)) => report,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid compose: {error}"),
+                }),
+            )
+                .into_response()
+        }
+    };
+    if !compatibility.ok {
+        let reasons = compatibility
+            .unsupported()
+            .map(|finding| format!("{}: {}", finding.path, finding.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("unsupported compose configuration: {reasons}"),
+            }),
+        )
+            .into_response();
+    }
+    let extra_env = read_project_env(&req.project_id);
+    let mut plan = match litebin_common::compose_run::build_compose_run_plan(
+        &req.compose_yaml, &req.project_id, &extra_env, None,
+    ) {
+        Ok(plan) => plan,
+        Err(e) => return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: format!("invalid compose: {e}") }),
+        ).into_response(),
+    };
+    let requests_host_network = plan.configs.iter().any(|config| config.host_network);
+    if requests_host_network {
+        if !req.host_network.unwrap_or(false) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse { error: "host-network capability was not authorized".into() }),
+            ).into_response();
+        }
+        if !host_network_authorized(req.host_network.unwrap_or(false), req.is_background) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: "host networking is restricted to background projects".into() }),
+            ).into_response();
+        }
+        let host = state.docker.host_info().await.ok();
+        if let Err(error) = litebin_common::docker::require_host_network_eligible(
+            host.as_ref().and_then(|info| info.os_type.as_deref()),
+            host.as_ref()
+                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.rootless),
+            Some(3),
+        ) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse { error: error.to_string() }),
+            ).into_response();
+        }
+    }
+
     // Ensure project directory exists
     ensure_project_dir_and_env(&req.project_id);
     {
@@ -107,6 +184,7 @@ pub async fn batch_run(
         let entry = meta.entry(req.project_id.clone()).or_default();
         entry.is_background = req.is_background;
         entry.docker_observe = req.docker_observe.unwrap_or(false);
+        entry.host_network = req.host_network.unwrap_or(false);
         if req.is_background {
             entry.auto_start_enabled = false;
         }
@@ -133,19 +211,6 @@ pub async fn batch_run(
             }),
         ).into_response();
     }
-
-    let extra_env = read_project_env(&req.project_id);
-
-    // Build compose run plan (parse, topo sort, detect public, map configs)
-    let mut plan = match litebin_common::compose_run::build_compose_run_plan(
-        &req.compose_yaml, &req.project_id, &extra_env, None,
-    ) {
-        Ok(p) => p,
-        Err(e) => return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: format!("invalid compose: {e}") }),
-        ).into_response(),
-    };
 
     if req.is_background {
         plan.pub_service_name = None;
@@ -315,7 +380,7 @@ pub async fn batch_run(
     }
 
     // Build owned lookup: service_name -> RunServiceConfig
-    let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
+    let mut configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
 
     // Pre-check: warn if a socket declaration has no explicit observation grant.
@@ -356,6 +421,7 @@ pub async fn batch_run(
 
             let run_config = configs_map[svc_name].clone();
             let is_public = run_config.is_public;
+            let is_proxy = run_config.is_managed_docker_proxy;
             let docker = state.docker.clone();
             let svc = svc_name.clone();
             let pid = req.project_id.clone();
@@ -373,7 +439,7 @@ pub async fn batch_run(
                         ServiceRunResult {
                             service_name: svc,
                             container_id: Some(container_id),
-                            mapped_port: is_public.then_some(mapped_port),
+                            mapped_port: (is_public || is_proxy).then_some(mapped_port),
                             error: None,
                         }
                     }
@@ -424,6 +490,38 @@ pub async fn batch_run(
                                 }),
                             ).into_response();
                         }
+                        if configs_map
+                            .values()
+                            .any(|config| config.host_network && config.docker_observe)
+                        {
+                            let port = match state
+                                .docker
+                                .inspect_mapped_port_for(cid, "2375/tcp")
+                                .await
+                            {
+                                Ok(Some(port)) => port,
+                                Ok(None) => {
+                                    rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        Json(ErrorResponse { error: "Docker observation proxy did not receive its required loopback mapping".into() }),
+                                    ).into_response();
+                                }
+                                Err(error) => {
+                                    rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        Json(ErrorResponse { error: format!("failed to inspect Docker observation proxy mapping: {error}") }),
+                                    ).into_response();
+                                }
+                            };
+                            for config in configs_map.values_mut() {
+                                if config.host_network && config.docker_observe {
+                                    config.env.retain(|value| !value.starts_with("DOCKER_HOST="));
+                                    config.env.push(format!("DOCKER_HOST=tcp://127.0.0.1:{port}"));
+                                }
+                            }
+                        }
                     }
                     if let Some(ref container_id) = r.container_id {
                         started_container_ids.push(container_id.clone());
@@ -469,4 +567,17 @@ pub async fn batch_run(
     }
 
     (StatusCode::OK, Json(BatchRunResponse { services: results, warnings })).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host_network_authorized;
+
+    #[test]
+    fn host_network_requires_grant_and_background_project() {
+        assert!(host_network_authorized(true, true));
+        assert!(!host_network_authorized(false, true));
+        assert!(!host_network_authorized(true, false));
+        assert!(!host_network_authorized(false, false));
+    }
 }

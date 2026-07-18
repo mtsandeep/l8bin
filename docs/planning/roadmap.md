@@ -34,7 +34,7 @@ Planned features beyond the current release. Ordered by priority and dependency.
 - API tokens for programmatic access
 - Resource limits (CPU/memory) per project
 - HAProxy-based read-only Docker observation for approved services
-- Project capabilities (Docker observation and raw ports)
+- Project capabilities (Docker observation, permission-gated host networking, and raw ports)
 - Janitor (auto-stop idle projects)
 - Crash recovery via auto-wake
 

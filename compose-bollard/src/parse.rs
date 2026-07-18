@@ -83,6 +83,14 @@ pub struct ComposeService {
 }
 
 impl ComposeService {
+    pub fn network_mode(&self) -> Option<&str> {
+        self.extra.get("network_mode").and_then(serde_yaml::Value::as_str)
+    }
+
+    pub fn uses_host_network(&self) -> bool {
+        self.network_mode() == Some("host")
+    }
+
     /// Get the build context directory (e.g. `./api` from `build: ./api`).
     /// Returns None if the service uses `image:` instead of `build:`.
     pub fn build_context(&self) -> Option<&str> {

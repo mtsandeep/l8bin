@@ -295,6 +295,47 @@ pub async fn start_container(
     State(state): State<AgentState>,
     Json(req): Json<StartRequest>,
 ) -> impl IntoResponse {
+    if state
+        .docker
+        .container_uses_host_network(&req.container_id)
+        .await
+        .unwrap_or(false)
+    {
+        let persisted_authorized = req.project_id.as_ref().is_some_and(|project_id| {
+            state
+                .project_meta
+                .read()
+                .ok()
+                .and_then(|meta| meta.get(project_id).cloned())
+                .is_some_and(|entry| entry.host_network && entry.is_background)
+        });
+        if !(persisted_authorized || (req.host_network && req.is_background)) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse { error: "host-network workload is not authorized as a background project".into() }),
+            ).into_response();
+        }
+        if let Some(project_id) = req.project_id.as_ref() {
+            let mut meta = state.project_meta.write().unwrap();
+            let entry = meta.entry(project_id.clone()).or_default();
+            entry.host_network = true;
+            entry.is_background = true;
+        }
+        let host = state.docker.host_info().await.ok();
+        if let Err(error) = litebin_common::docker::require_host_network_eligible(
+            host.as_ref().and_then(|info| info.os_type.as_deref()),
+            host.as_ref()
+                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.rootless),
+            Some(3),
+        ) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse { error: error.to_string() }),
+            ).into_response();
+        }
+    }
+
     // Check if .env changed — if so, recreate to pick up new vars
     if let Some(ref project_id) = req.project_id {
         if env_has_changed(project_id) {

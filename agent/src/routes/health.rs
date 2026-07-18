@@ -24,11 +24,17 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
         .unwrap_or(0);
 
     let image_stats = state.docker.image_stats().await;
+    let docker_host = state.docker.host_info().await.ok();
 
     Json(HealthReport {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        protocol_version: 2,
+        protocol_version: 3,
         architecture: std::env::consts::ARCH.to_string(),
+        docker_os_type: docker_host.as_ref().and_then(|info| info.os_type.clone()),
+        docker_operating_system: docker_host
+            .as_ref()
+            .and_then(|info| info.operating_system.clone()),
+        docker_rootless: docker_host.as_ref().and_then(|info| info.rootless),
         memory_available,
         memory_total,
         cpu_cores,

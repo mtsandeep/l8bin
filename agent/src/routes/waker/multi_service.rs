@@ -38,6 +38,21 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     let mut plan = litebin_common::compose_run::build_compose_run_plan(
         &compose_yaml, project_id, &extra_env, None,
     )?;
+    let requests_host_network = plan.configs.iter().any(|config| config.host_network);
+    if requests_host_network {
+        let meta = state.project_meta.read().unwrap().get(project_id).cloned();
+        if !meta.as_ref().is_some_and(|entry| entry.host_network && entry.is_background) {
+            anyhow::bail!("host-network workload is not authorized as a background project");
+        }
+        let host = state.docker.host_info().await.ok();
+        litebin_common::docker::require_host_network_eligible(
+            host.as_ref().and_then(|info| info.os_type.as_deref()),
+            host.as_ref()
+                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.rootless),
+            Some(3),
+        )?;
+    }
 
     // Apply allow_raw_ports flag from agent state
     let allow_raw = state.project_meta.read().unwrap()
@@ -103,7 +118,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     let _ = state.docker.connect_container_to_network(&agent_container, &project_network).await;
 
     // Build owned lookup: service_name -> RunServiceConfig
-    let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
+    let mut configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
     let healthy_wait_set: std::collections::HashSet<String> = plan
         .service_order
@@ -146,6 +161,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
             let svc = svc_name.clone();
             let is_public = run_config.is_public;
             let is_oneshot = run_config.is_oneshot;
+            let is_host_network = run_config.host_network;
             let needs_healthy =
                 healthy_wait_set.contains(svc_name) && has_healthcheck.contains(svc_name);
             let needs_completed = completed_wait_set.contains(svc_name) || is_oneshot;
@@ -222,7 +238,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                     }
                 }
 
-                if docker.is_container_running(&container_id).await.unwrap_or(false) {
+                if !is_host_network && docker.is_container_running(&container_id).await.unwrap_or(false) {
                     let _ = docker.wait_for_network_ready(&container_id).await;
                 }
 
@@ -260,6 +276,28 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
         while let Some(result) = tasks.join_next().await {
             match result {
                 Ok(Ok((container_id, mapped_port, is_public))) => {
+                    if configs_map
+                        .get(litebin_common::types::DOCKER_PROXY_SERVICE)
+                        .is_some_and(|config| config.port == Some(2375))
+                        && container_id
+                            == changed_container_ids
+                                .lock()
+                                .ok()
+                                .and_then(|ids| ids.last().cloned())
+                                .unwrap_or_default()
+                    {
+                        let port = state
+                            .docker
+                            .inspect_mapped_port_for(&container_id, "2375/tcp")
+                            .await?
+                            .ok_or_else(|| anyhow::anyhow!("Docker observation proxy did not receive its required loopback mapping"))?;
+                        for config in configs_map.values_mut() {
+                            if config.host_network && config.docker_observe {
+                                config.env.retain(|value| !value.starts_with("DOCKER_HOST="));
+                                config.env.push(format!("DOCKER_HOST=tcp://127.0.0.1:{port}"));
+                            }
+                        }
+                    }
                     if is_public {
                         public_container_id = Some(container_id.clone());
                         public_mapped_port = Some(mapped_port);
