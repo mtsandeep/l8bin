@@ -7,6 +7,23 @@ fn is_docker_sock(path: &str) -> bool {
     path.ends_with("/docker.sock")
 }
 
+pub(crate) fn sanitize_docker_socket_binds(
+    binds: &[String],
+    is_managed_proxy: bool,
+) -> Vec<String> {
+    if is_managed_proxy {
+        return binds.to_vec();
+    }
+    binds
+        .iter()
+        .filter(|bind| {
+            let source = bind.split(':').next().unwrap_or("");
+            !is_docker_sock(source)
+        })
+        .cloned()
+        .collect()
+}
+
 use bollard::models::{
     ContainerCreateBody, EndpointSettings, HostConfig, HostConfigLogConfig, NetworkingConfig,
     PortBinding, RestartPolicy, RestartPolicyNameEnum,
@@ -258,30 +275,19 @@ impl DockerManager {
             }
         }
 
-        // Strip Docker socket mounts when allow_docker_access is disabled.
-        // Log a warning so the user knows the mount was removed.
-        let filtered_binds: Option<Vec<String>> = if config.allow_docker_access {
+        // Workloads never receive the raw Docker socket. Only LiteBin's managed
+        // observation proxy may mount it.
+        let is_docker_proxy = config.service_name == crate::types::DOCKER_PROXY_SERVICE;
+        let filtered_binds: Option<Vec<String>> = if is_docker_proxy {
             config.binds.clone()
         } else if let Some(ref binds) = config.binds {
-            let stripped: Vec<String> = binds
-                .iter()
-                .filter(|b| {
-                    let source = b.split(':').next().unwrap_or("");
-                    if is_docker_sock(source) {
-                        tracing::warn!(
-                            service = %config.service_name,
-                            project_id = %config.project_id,
-                            bind = %b,
-                            "stripped Docker socket mount: 'Allow Docker access' is disabled"
-                        );
-                        false
-                    } else {
-                        true
-                    }
-                })
-                .map(|s| s.to_string())
-                .collect();
+            let stripped = sanitize_docker_socket_binds(binds, false);
             if stripped.len() != binds.len() {
+                tracing::warn!(
+                    service = %config.service_name,
+                    project_id = %config.project_id,
+                    "stripped raw Docker socket mount from workload"
+                );
                 Some(stripped)
             } else {
                 config.binds.clone()
@@ -351,28 +357,16 @@ impl DockerManager {
             // Compose path: use bollard config as base, apply LiteBin overrides
             lb_host_overrides(&mut host);
 
-            // Strip Docker socket mounts from bollard host config when disabled
-            if !config.allow_docker_access {
+            // The raw Docker socket is reserved exclusively for the managed proxy.
+            if !is_docker_proxy {
                 if let Some(ref binds) = host.binds {
-                    let filtered: Vec<String> = binds
-                        .iter()
-                        .filter(|b| {
-                            let source = b.split(':').next().unwrap_or("");
-                            if is_docker_sock(source) {
-                                tracing::warn!(
-                                    service = %config.service_name,
-                                    project_id = %config.project_id,
-                                    bind = %b,
-                                    "stripped Docker socket mount from compose config: 'Allow Docker access' is disabled"
-                                );
-                                false
-                            } else {
-                                true
-                            }
-                        })
-                        .cloned()
-                        .collect();
+                    let filtered = sanitize_docker_socket_binds(binds, false);
                     if filtered.len() != binds.len() {
+                        tracing::warn!(
+                            service = %config.service_name,
+                            project_id = %config.project_id,
+                            "stripped raw Docker socket mount from compose workload"
+                        );
                         host.binds = Some(filtered);
                     }
                 }

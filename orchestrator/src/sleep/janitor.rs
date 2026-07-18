@@ -124,11 +124,8 @@ async fn sweep(
                         stop_local_container(state, &project.id, container_id).await;
                     }
                 }
-                // Also stop docker-socket-proxy if allow_docker_access is enabled
-                if project.allow_docker_access {
-                    let proxy_name = litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
-                    stop_local_container_by_name(state, &project.id, &proxy_name).await;
-                }
+                let proxy_name = litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
+                stop_local_container_by_name(state, &project.id, &proxy_name).await;
             } else {
                 let node_id = match project.node_id.as_deref() {
                     Some(n) if n != "local" => n.to_string(),
@@ -136,14 +133,11 @@ async fn sweep(
                 };
                 for (_svc_name, cid) in containers.iter().rev() {
                     if let Some(container_id) = cid {
-                        stop_remote_container(state, &project.id, &node_id, container_id).await;
+                        stop_remote_container(state, &project.id, &node_id, container_id, false).await;
                     }
                 }
-                // Also stop docker-socket-proxy if allow_docker_access is enabled
-                if project.allow_docker_access {
-                    let proxy_name = litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
-                    stop_remote_container(state, &project.id, &node_id, &proxy_name).await;
-                }
+                let proxy_name = litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
+                stop_remote_container(state, &project.id, &node_id, &proxy_name, true).await;
             }
         } else if let Some((_svc_name, cid)) = containers.first() {
             // Single-service: stop the one container
@@ -152,7 +146,7 @@ async fn sweep(
                     stop_local_container(state, &project.id, container_id).await;
                 } else {
                     let node_id = project.node_id.as_deref().unwrap();
-                    stop_remote_container(state, &project.id, node_id, container_id).await;
+                    stop_remote_container(state, &project.id, node_id, container_id, false).await;
                 }
             }
         }
@@ -184,7 +178,8 @@ async fn stop_local_container_by_name(state: &AppState, project_id: &str, contai
             if let Ok(inspect) = state.docker.inspect_container(cid).await {
                 if inspect.name.as_deref().map(|n| n.trim_start_matches('/')) == Some(container_name) {
                     let _ = state.docker.stop_container(cid).await;
-                    tracing::info!(project = %project_id, "janitor: docker-socket-proxy stopped (idle)");
+                    let _ = state.docker.remove_container(cid).await;
+                    tracing::info!(project = %project_id, "janitor: Docker observation proxy removed (idle)");
                     return;
                 }
             }
@@ -192,7 +187,7 @@ async fn stop_local_container_by_name(state: &AppState, project_id: &str, contai
     }
 }
 
-async fn stop_remote_container(state: &AppState, project_id: &str, node_id: &str, container_id: &str) {
+async fn stop_remote_container(state: &AppState, project_id: &str, node_id: &str, container_id: &str, remove: bool) {
     let client = match crate::nodes::client::get_node_client(&state.node_clients, node_id) {
         Ok(c) => c,
         Err(e) => {
@@ -216,7 +211,7 @@ async fn stop_remote_container(state: &AppState, project_id: &str, node_id: &str
     let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
 
     match client
-        .post(&format!("{}/containers/stop", base_url))
+        .post(&format!("{}/containers/{}", base_url, if remove { "remove" } else { "stop" }))
         .json(&serde_json::json!({"container_id": container_id}))
         .send()
         .await

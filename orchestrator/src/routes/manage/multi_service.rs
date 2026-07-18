@@ -122,22 +122,37 @@ pub async fn start_services(
         config.allow_raw_ports = allow_raw;
     }
 
-    // 1d. Apply allow_docker_access flag and inject docker-socket-proxy if enabled
-    let allow_docker = project.allow_docker_access;
-    for config in &mut plan.configs {
-        config.allow_docker_access = allow_docker;
-    }
-    if allow_docker {
-        plan.inject_docker_proxy(project_id);
+    // 1d. Inject read-only Docker observation only for an explicit normalized grant.
+    let docker_observe = crate::capabilities::has_capability(
+        &state.db,
+        project_id,
+        litebin_common::capabilities::ProjectCapability::DockerObserve,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
+    state
+        .docker
+        .remove_by_service_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to clean up previous Docker observation proxy: {e}")))?;
+    let proxy_injected = if docker_observe {
+        plan
+            .inject_docker_observe_proxy(project_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to configure Docker observation proxy: {e}")))?
+    } else {
+        false
+    };
+    if proxy_injected {
         // Ensure the proxy is always included in the service filter,
         // even when user selects specific services to recreate.
         if let Some(ref mut filter) = opts.services {
             filter.insert(litebin_common::types::DOCKER_PROXY_SERVICE.to_string());
         }
         // Pre-pull the proxy image (skip if already local; it's not in project_services so the normal pull logic skips it)
-        if let Err(e) = state.docker.pull_image_with_opts("tecnativa/docker-socket-proxy", false).await {
-            tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
-        }
+        state.docker
+            .pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to prepare Docker observation proxy: {e}")))?;
     }
 
     // 2. Ensure per-project network + connect Caddy + optionally orchestrator
@@ -345,6 +360,14 @@ pub async fn start_services(
 
                 tracing::info!(service = %svc, container_id = %container_id, port = %mapped_port, "service started");
 
+                if svc == litebin_common::types::DOCKER_PROXY_SERVICE {
+                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
+                        let _ = docker.stop_container(&container_id).await;
+                        let _ = docker.remove_container(&container_id).await;
+                        return Err(format!("Docker observation proxy failed health check: {}", e));
+                    }
+                }
+
                 // Wait for Docker network to assign a valid IP (skip if container exited)
                 if docker.is_container_running(&container_id).await.unwrap_or(false) {
                     if let Err(e) = docker.wait_for_network_ready(&container_id).await {
@@ -395,6 +418,16 @@ pub async fn start_services(
                 }
                 Ok(Err(e)) => {
                     tracing::error!(error = %e, "service failed to start");
+                    if proxy_injected {
+                        let _ = state
+                            .docker
+                            .remove_by_service_name(
+                                project_id,
+                                litebin_common::types::DOCKER_PROXY_SERVICE,
+                                None,
+                            )
+                            .await;
+                    }
                     if opts.rollback_on_failure {
                         // Collect container IDs, drop guard, then stop/remove (MutexGuard is not Send)
                         let cids: Vec<String> = started_containers.lock()
@@ -423,6 +456,16 @@ pub async fn start_services(
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "service task panicked");
+                    if proxy_injected {
+                        let _ = state
+                            .docker
+                            .remove_by_service_name(
+                                project_id,
+                                litebin_common::types::DOCKER_PROXY_SERVICE,
+                                None,
+                            )
+                            .await;
+                    }
                     if opts.rollback_on_failure {
                         let cids: Vec<String> = started_containers.lock()
                             .map(|s| s.iter().map(|(_, cid)| cid.clone()).collect())
@@ -543,30 +586,15 @@ pub async fn stop_services(
         }
     }
 
-    // Stop the docker-socket-proxy if allow_docker_access is enabled
-    let allow_docker: bool = match sqlx::query_scalar(
-        "SELECT allow_docker_access FROM projects WHERE id = ?"
-    )
-    .bind(project_id)
-    .fetch_one(&state.db)
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(project_id = %project_id, error = %e, "stop: failed to read allow_docker_access, skipping proxy stop");
-            false
-        }
-    };
-
-    if allow_docker {
-        let proxy_name = litebin_common::types::container_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
-        if let Ok(containers) = state.docker.list_containers_by_prefix(&format!("litebin-{}.", project_id)).await {
-            for cid in &containers {
-                if let Ok(inspect) = state.docker.inspect_container(cid).await {
-                    if inspect.name.as_deref().map(|n| n.trim_start_matches('/')) == Some(proxy_name.as_str()) {
-                        let _ = state.docker.stop_container(cid).await;
-                        tracing::info!(project = %project_id, "docker-socket-proxy stopped");
-                    }
+    // Always stop any observation proxy. This also cleans up stale proxies after revoke.
+    let proxy_name = litebin_common::types::container_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
+    if let Ok(containers) = state.docker.list_containers_by_prefix(&format!("litebin-{}.", project_id)).await {
+        for cid in &containers {
+            if let Ok(inspect) = state.docker.inspect_container(cid).await {
+                if inspect.name.as_deref().map(|n| n.trim_start_matches('/')) == Some(proxy_name.as_str()) {
+                    let _ = state.docker.stop_container(cid).await;
+                    let _ = state.docker.remove_container(cid).await;
+                    tracing::info!(project = %project_id, "Docker observation proxy removed");
                 }
             }
         }
@@ -683,7 +711,7 @@ pub async fn recreate_services(
         let compose_path = std::path::PathBuf::from("projects").join(project_id).join("compose.yaml");
         let compose_yaml = std::fs::read_to_string(&compose_path).unwrap_or_default();
         if compose_yaml.contains("/docker.sock") {
-            vec!["Docker socket mounts found but 'Allow Docker access' is disabled — socket will not be available".into()]
+            vec!["Docker socket declaration found without docker-observe — the raw socket was removed".into()]
         } else {
             vec![]
         }

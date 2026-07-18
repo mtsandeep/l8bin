@@ -4,8 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use bollard::models::{ContainerCreateBody, HostConfig};
-use litebin_common::types::{COMPOSE_FILE_NAMES, RunServiceConfig};
+use litebin_common::types::COMPOSE_FILE_NAMES;
 use serde::{Deserialize, Serialize};
 
 use crate::AgentState;
@@ -141,83 +140,15 @@ pub async fn import_containers(
         }
     }
 
-    // 6. Create docker-socket-proxy sidecar if docker access is enabled
+    // Legacy mutating Docker access is intentionally unavailable.
     if req.allow_docker_access.unwrap_or(false) {
-        if let Err(e) = create_docker_proxy_sidecar(&state, &req.project_id, &req.network_name).await {
-            tracing::warn!(project_id = %req.project_id, error = %e, "import: failed to create docker-proxy sidecar");
-            errors.push(format!("docker-proxy sidecar creation failed: {e}"));
-        }
+        errors.push(
+            "allow_docker_access is unavailable; scan/import Docker observation selection is deferred"
+                .into(),
+        );
     }
 
     (StatusCode::OK, Json(ImportResponse { results, errors })).into_response()
-}
-
-/// Create the docker-socket-proxy sidecar for an imported project.
-/// Non-fatal — errors are logged as warnings by the caller.
-async fn create_docker_proxy_sidecar(
-    state: &AgentState,
-    project_id: &str,
-    network_name: &str,
-) -> Result<(), anyhow::Error> {
-    // Pull the proxy image
-    state.docker.pull_image_with_opts("tecnativa/docker-socket-proxy", false).await?;
-
-    let create_body = ContainerCreateBody {
-        image: Some("tecnativa/docker-socket-proxy".to_string()),
-        env: Some(vec![
-            "CONTAINERS=1".into(),
-            "LOGS=1".into(),
-            "EXEC=1".into(),
-            "POST=1".into(),
-            "ALLOW_RESTARTS=1".into(),
-            "ALLOW_STOP=1".into(),
-            "STATS=1".into(),
-            format!("CONTAINER_LABEL_FILTER=litebin.project_id={}", project_id),
-        ]),
-        labels: Some(std::collections::HashMap::from([
-            ("com.docker.compose.project".into(), project_id.into()),
-            ("com.docker.compose.service".into(), litebin_common::types::DOCKER_PROXY_SERVICE.into()),
-        ])),
-        ..Default::default()
-    };
-
-    let proxy_config = RunServiceConfig {
-        project_id: project_id.to_string(),
-        service_name: litebin_common::types::DOCKER_PROXY_SERVICE.to_string(),
-        instance_id: None,
-        image: "tecnativa/docker-socket-proxy".to_string(),
-        port: None,
-        cmd: None,
-        entrypoint: None,
-        working_dir: None,
-        user: None,
-        env: vec![],
-        memory_limit_mb: None,
-        cpu_limit: None,
-        shm_size: None,
-        tmpfs: None,
-        read_only: None,
-        extra_hosts: None,
-        networks: None,
-        binds: Some(vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()]),
-        is_public: false,
-        is_oneshot: false,
-        bollard_create_body: Some(create_body),
-        bollard_host_config: Some(HostConfig { ..Default::default() }),
-        allow_raw_ports: false,
-        allow_docker_access: true,
-    };
-
-    state.docker.run_service_container(&proxy_config).await?;
-
-    // Connect proxy to the project network
-    state.docker.connect_container_to_network(
-        &litebin_common::types::container_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None),
-        network_name,
-    ).await?;
-
-    tracing::info!(project_id = %project_id, "import: created docker-proxy sidecar");
-    Ok(())
 }
 
 /// GET /containers/compose-file?dir=<path>

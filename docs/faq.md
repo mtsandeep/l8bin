@@ -335,14 +335,14 @@ LiteBin creates and manages a single Docker network per project (`litebin_<proje
 
 ### My app uses Docker socket (`/var/run/docker.sock`) but it's not working
 
-LiteBin strips Docker socket mounts from your compose by default for security. If your app needs Docker socket access:
+LiteBin always strips raw Docker socket mounts, including mounts marked read-only. If your app only needs to observe containers:
 
 1. Open the project settings in the dashboard
-2. Enable **Allow Docker access**
+2. Grant **Docker observation**
 
-When enabled, LiteBin creates a `docker-socket-proxy` sidecar that filters Docker API access to only your project's containers. Your app's socket mount is redirected through this proxy — it never gets raw access to the host Docker daemon.
+LiteBin creates an endpoint-allowlisted, read-only proxy and injects `DOCKER_HOST` only into services that declared the socket. Observation is host-wide: responses may include metadata, environment values, and logs from other projects on that node.
 
-If you deploy without enabling this setting, the socket mount is silently removed and your app won't have Docker access. The dashboard shows a warning when this happens.
+Without `docker-observe`, the raw socket is removed and no replacement is provided. Mutating Docker access is not supported.
 
 ### Non-HTTP ports and auto-wake
 

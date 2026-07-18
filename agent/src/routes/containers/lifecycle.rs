@@ -322,6 +322,11 @@ pub async fn remove_container(
     Json(req): Json<RemoveRequest>,
 ) -> impl IntoResponse {
     if let Err(e) = state.docker.remove_container(&req.container_id).await {
+        if litebin_common::docker::DockerErrorKind::from_anyhow(&e)
+            == litebin_common::docker::DockerErrorKind::NotFound
+        {
+            return StatusCode::OK.into_response();
+        }
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {

@@ -215,11 +215,10 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
         env_file_found: g.originalGroup.env_file_found,
         name: g.name || undefined,
         description: g.description || undefined,
-        allow_docker_access: g.allowDockerAccess || undefined,
       }));
       const result = await importContainers(payload);
 
-      // Apply raw-ports setting for imported projects (docker access is set during import)
+      // Apply raw-ports setting for imported projects.
       const settingsPromises = selected
         .filter((g) => g.allowRawPorts)
         .map((g) =>
@@ -847,25 +846,6 @@ function EditForm({
           >
             <span
               className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${(draft.allowRawPorts ?? false) ? 'translate-x-3.5' : 'translate-x-0.5'}`}
-            />
-          </button>
-        </label>
-        <label className="flex items-center justify-between gap-2 cursor-pointer">
-          <div>
-            <span className="text-xs text-slate-300">Allow Docker access</span>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Inject docker-socket-proxy for inter-service container management
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={draft.allowDockerAccess ?? false}
-            onClick={() => onChange({ allowDockerAccess: !(draft.allowDockerAccess ?? false) })}
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${(draft.allowDockerAccess ?? false) ? 'bg-violet-500' : 'bg-slate-600'}`}
-          >
-            <span
-              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${(draft.allowDockerAccess ?? false) ? 'translate-x-3.5' : 'translate-x-0.5'}`}
             />
           </button>
         </label>

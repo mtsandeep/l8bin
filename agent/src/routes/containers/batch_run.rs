@@ -27,7 +27,9 @@ pub struct BatchRunRequest {
     /// If Some, only recreate these services (partial redeploy). If None, deploy all.
     pub target_services: Option<Vec<String>>,
     pub allow_raw_ports: Option<bool>,
-    pub allow_docker_access: Option<bool>,
+    #[serde(rename = "allow_docker_access")]
+    pub _allow_docker_access: Option<bool>,
+    pub docker_observe: Option<bool>,
     #[serde(default = "default_false")]
     pub is_background: bool,
     /// Whether to force-pull images (true) or skip if already present locally (false).
@@ -89,6 +91,7 @@ pub async fn batch_run(
         let mut meta = state.project_meta.write().unwrap();
         let entry = meta.entry(req.project_id.clone()).or_default();
         entry.is_background = req.is_background;
+        entry.docker_observe = req.docker_observe.unwrap_or(false);
         if req.is_background {
             entry.auto_start_enabled = false;
         }
@@ -143,15 +146,41 @@ pub async fn batch_run(
         }
     }
 
-    // Apply allow_docker_access flag and inject docker-socket-proxy if enabled
-    if req.allow_docker_access.unwrap_or(false) {
-        for config in plan.configs.iter_mut() {
-            config.allow_docker_access = true;
+    // Inject the read-only observation proxy only for the explicit new capability.
+    let docker_observe = req.docker_observe.unwrap_or(false);
+    if let Err(e) = state
+        .docker
+        .remove_by_service_name(
+            &req.project_id,
+            litebin_common::types::DOCKER_PROXY_SERVICE,
+            None,
+        )
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: format!("failed to clean up previous Docker observation proxy: {e}") }),
+        ).into_response();
+    }
+    let proxy_injected = if docker_observe {
+        match plan.inject_docker_observe_proxy(&req.project_id) {
+            Ok(injected) => injected,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error: format!("failed to configure Docker observation proxy: {e}") }),
+                ).into_response();
+            }
         }
-        plan.inject_docker_proxy(&req.project_id);
-        // Pre-pull the proxy image (skip if already local)
-        if let Err(e) = state.docker.pull_image_with_opts("tecnativa/docker-socket-proxy", false).await {
-            tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
+    } else {
+        false
+    };
+    if proxy_injected {
+        if let Err(e) = state.docker.pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: format!("failed to prepare Docker observation proxy: {e}") }),
+            ).into_response();
         }
     }
 
@@ -184,8 +213,13 @@ pub async fn batch_run(
     // Clean up existing containers from a previous deploy (by name prefix)
     // On partial redeploy, only remove targeted service containers
     let prefix = format!("litebin-{}.", req.project_id);
-    let target_set: Option<std::collections::HashSet<String>> = req.target_services.as_ref()
+    let mut target_set: Option<std::collections::HashSet<String>> = req.target_services.as_ref()
         .map(|ts| ts.iter().cloned().collect());
+    if proxy_injected {
+        if let Some(ref mut targets) = target_set {
+            targets.insert(litebin_common::types::DOCKER_PROXY_SERVICE.to_string());
+        }
+    }
     if let Ok(all_containers) = state.docker.list_containers_by_prefix(&prefix).await {
         for cid in &all_containers {
             if let Some(ref targets) = target_set {
@@ -257,9 +291,9 @@ pub async fn batch_run(
     let configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
 
-    // Pre-check: warn if any service has docker.sock but allow_docker_access is disabled
+    // Pre-check: warn if a socket declaration has no explicit observation grant.
     let mut warnings: Vec<String> = Vec::new();
-    if !req.allow_docker_access.unwrap_or(false) {
+    if !docker_observe {
         let has_sock = plan.configs.iter().any(|c| {
             c.binds.as_ref().map_or(false, |binds| {
                 binds.iter().any(|b| {
@@ -269,7 +303,7 @@ pub async fn batch_run(
             })
         });
         if has_sock {
-            warnings.push("Docker socket mounts found but 'Allow Docker access' is disabled — socket will not be available".into());
+            warnings.push("Docker socket declaration found without docker-observe — the raw socket was removed".into());
         }
     }
 
@@ -331,15 +365,24 @@ pub async fn batch_run(
         while let Some(result) = tasks.join_next().await {
             match result {
                 Ok(r) => {
-                    // If the docker-socket-proxy was started, wait for it to be
-                    // network-ready before starting the next level.
+                    // Observation access fails closed: workloads are not started
+                    // unless the managed proxy becomes healthy.
                     if r.service_name == litebin_common::types::DOCKER_PROXY_SERVICE {
-                        if let Some(ref cid) = r.container_id {
-                            if let Err(e) = state.docker.wait_for_network_ready(cid).await {
-                                tracing::warn!(error = %e, "docker-socket-proxy network readiness timeout, continuing");
-                            } else {
-                                tracing::info!(container_id = %cid, "docker-socket-proxy is network-ready");
-                            }
+                        let Some(ref cid) = r.container_id else {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ErrorResponse { error: "Docker observation proxy failed to start".into() }),
+                            ).into_response();
+                        };
+                        if let Err(e) = state.docker.wait_for_healthy(cid, true).await {
+                            let _ = state.docker.stop_container(cid).await;
+                            let _ = state.docker.remove_container(cid).await;
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ErrorResponse {
+                                    error: format!("Docker observation proxy failed health check: {e}"),
+                                }),
+                            ).into_response();
                         }
                     }
                     results.push(r)
@@ -348,6 +391,24 @@ pub async fn batch_run(
                     tracing::error!(error = %e, "batch-run: service task panicked");
                 }
             }
+        }
+    }
+
+    if proxy_injected && results.iter().any(|result| result.error.is_some()) {
+        if let Err(e) = state
+            .docker
+            .remove_by_service_name(
+                &req.project_id,
+                litebin_common::types::DOCKER_PROXY_SERVICE,
+                None,
+            )
+            .await
+        {
+            tracing::warn!(
+                project = %req.project_id,
+                error = %e,
+                "failed to clean up Docker observation proxy after deployment error"
+            );
         }
     }
 

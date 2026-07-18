@@ -143,10 +143,14 @@ Both orchestrator and agent mount `/var/run/docker.sock`. This is required for c
 
 Risky Compose features require explicit grants stored in `project_capabilities`:
 
-- `docker-access` — injects a restricted Docker socket proxy (never raw `docker.sock`)
+- `docker-observe` — injects an endpoint-allowlisted, read-only Docker API proxy (never raw `docker.sock`)
 - `raw-ports` — publishes Compose ports on the host
 
 Compose files may *request* capabilities; only the user can *grant* them (dashboard validation step, Settings → Capabilities, or `l8b deploy --grant-capability`). Unsupported fields such as `network_mode: host` and `privileged` are rejected until supported with their own grants.
+
+Docker socket declarations are always removed, including mounts marked `:ro`; filesystem read-only mode does not restrict Docker API operations. With `docker-observe`, only `GET`/`HEAD` requests for daemon info, version, events, container listing, container inspect, container stats, and container logs are forwarded. The requesting service receives `DOCKER_HOST`; other project services do not.
+
+Observation is host-wide. Responses can include container metadata, environment values, and logs from other projects on the node. Mutating `docker-access` is unavailable because safe mutation requires object-level authorization, not unsupported label filtering.
 
 ---
 

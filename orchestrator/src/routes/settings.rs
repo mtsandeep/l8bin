@@ -127,6 +127,13 @@ pub async fn update_project_settings(
         ));
     }
     let old_domain = existing.as_ref().unwrap().custom_domain.clone();
+    if payload.allow_docker_access.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "allow_docker_access is unavailable; manage the docker-observe capability instead"
+                .to_string(),
+        ));
+    }
 
     let now = chrono::Utc::now().timestamp();
 

@@ -35,18 +35,24 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
         config.allow_raw_ports = allow_raw;
     }
 
-    // Apply allow_docker_access flag and inject docker-socket-proxy if enabled
-    let allow_docker = state.project_meta.read().unwrap()
-        .get(project_id).map(|e| e.allow_docker_access).unwrap_or(false);
-    for config in plan.configs.iter_mut() {
-        config.allow_docker_access = allow_docker;
-    }
-    if allow_docker {
-        plan.inject_docker_proxy(project_id);
-        // Pre-pull the proxy image (skip if already local)
-        if let Err(e) = state.docker.pull_image_with_opts("tecnativa/docker-socket-proxy", false).await {
-            tracing::warn!(error = %e, "failed to pull docker-socket-proxy image");
-        }
+    // Inject read-only Docker observation only when explicitly granted.
+    let docker_observe = state.project_meta.read().unwrap()
+        .get(project_id).map(|e| e.docker_observe).unwrap_or(false);
+    state
+        .docker
+        .remove_by_service_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
+        .await?;
+    let proxy_injected = if docker_observe {
+        plan.inject_docker_observe_proxy(project_id)?
+    } else {
+        false
+    };
+    if proxy_injected {
+        state
+            .docker
+            .pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to prepare Docker observation proxy: {e}"))?;
     }
 
     // Apply global defaults for services without explicit limits
@@ -185,6 +191,14 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 
                 any_created.store(true, std::sync::atomic::Ordering::Relaxed);
 
+                if svc == litebin_common::types::DOCKER_PROXY_SERVICE {
+                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
+                        let _ = docker.stop_container(&container_id).await;
+                        let _ = docker.remove_container(&container_id).await;
+                        return Err(format!("Docker observation proxy failed health check: {e}"));
+                    }
+                }
+
                 if docker.is_container_running(&container_id).await.unwrap_or(false) {
                     let _ = docker.wait_for_network_ready(&container_id).await;
                 }
@@ -230,10 +244,30 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                 }
                 Ok(Err(e)) => {
                     tracing::error!(error = %e, "wake_multi_service: failed to start service");
+                    if proxy_injected {
+                        let _ = state
+                            .docker
+                            .remove_by_service_name(
+                                project_id,
+                                litebin_common::types::DOCKER_PROXY_SERVICE,
+                                None,
+                            )
+                            .await;
+                    }
                     anyhow::bail!("{}", e);
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "wake_multi_service: service task panicked");
+                    if proxy_injected {
+                        let _ = state
+                            .docker
+                            .remove_by_service_name(
+                                project_id,
+                                litebin_common::types::DOCKER_PROXY_SERVICE,
+                                None,
+                            )
+                            .await;
+                    }
                     anyhow::bail!("service task panicked");
                 }
             }

@@ -700,14 +700,14 @@ fn analyze_volumes(
                 format!("{prefix} ({vol})"),
                 Some(svc_name.into()),
                 FindingDisposition::PermissionRequired,
-                "Docker socket mount requires the docker-access capability; LiteBin injects a restricted socket proxy instead of raw docker.sock",
-                Some("docker-access"),
+                "Docker socket declarations require an explicit docker-observe grant; read-only mount syntax does not make the Docker API safe",
+                Some("docker-observe"),
             ));
             findings.push(finding(
                 format!("{prefix} ({vol})"),
                 Some(svc_name.into()),
                 FindingDisposition::Translated,
-                "when granted, docker.sock is replaced with DOCKER_HOST pointing at LiteBin's restricted docker-proxy service",
+                "the raw socket is always removed; with docker-observe, DOCKER_HOST points to LiteBin's endpoint-allowlisted read-only proxy",
                 None,
             ));
         }
@@ -779,7 +779,7 @@ services:
 "#,
         );
         assert!(r.ok);
-        assert_eq!(r.required_capabilities, vec!["docker-access".to_string()]);
+        assert_eq!(r.required_capabilities, vec!["docker-observe".to_string()]);
     }
 
     #[test]

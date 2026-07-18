@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bollard::models::{ContainerCreateBody, HostConfig};
+use bollard::models::{ContainerCreateBody, HealthConfig, HostConfig};
 use compose_bollard::{BollardMappingOptions, ComposeFile, ComposeParser};
 
 use crate::types::{is_windows_drive_path, RunServiceConfig};
@@ -96,27 +96,47 @@ impl ComposeRunPlan {
         false
     }
 
-    /// Inject a docker-socket-proxy service into the plan.
-    /// Called when `allow_docker_access` is enabled for the project.
-    /// The proxy is placed at topological level 0 (no dependencies)
-    /// and restricts Docker API access to only the project's own containers.
-    pub fn inject_docker_proxy(&mut self, project_id: &str) {
+    /// Replace Docker socket declarations with access to a read-only observation proxy.
+    /// Only services that declared a Docker socket receive `DOCKER_HOST`.
+    pub fn inject_docker_observe_proxy(&mut self, project_id: &str) -> anyhow::Result<bool> {
         let proxy_name = crate::types::DOCKER_PROXY_SERVICE.to_string();
+        if !self.configs.iter().any(config_requests_docker_socket) {
+            return Ok(false);
+        }
+        let config_dir = std::path::PathBuf::from("projects")
+            .join(project_id)
+            .join("docker-observe");
+        std::fs::create_dir_all(&config_dir)?;
+        let proxy_config_path = config_dir.join("haproxy.cfg");
+        std::fs::write(&proxy_config_path, docker_observe_haproxy_config())?;
+
+        for config in &mut self.configs {
+            if config_requests_docker_socket(config) {
+                config.docker_observe = true;
+                config.env.retain(|value| !value.starts_with("DOCKER_HOST="));
+                config.env.push(format!("DOCKER_HOST=tcp://{}:2375", proxy_name));
+            }
+        }
 
         // Build a minimal bollard config to trigger the compose path in
         // run_service_container(), which connects to the per-project network.
         let create_body = ContainerCreateBody {
-            image: Some("tecnativa/docker-socket-proxy".to_string()),
-            env: Some(vec![
-                "CONTAINERS=1".into(),
-                "LOGS=1".into(),
-                "EXEC=1".into(),
-                "POST=1".into(),
-                "ALLOW_RESTARTS=1".into(),
-                "ALLOW_STOP=1".into(),
-                "STATS=1".into(),
-                format!("CONTAINER_LABEL_FILTER=litebin.project_id={}", project_id),
-            ]),
+            image: Some(crate::types::DOCKER_OBSERVE_PROXY_IMAGE.to_string()),
+            healthcheck: Some(HealthConfig {
+                test: Some(vec![
+                    "CMD".into(),
+                    "wget".into(),
+                    "-q".into(),
+                    "-O".into(),
+                    "-".into(),
+                    "http://127.0.0.1:2375/_ping".into(),
+                ]),
+                interval: Some(1_000_000_000),
+                timeout: Some(1_000_000_000),
+                retries: Some(15),
+                start_period: Some(2_000_000_000),
+                ..Default::default()
+            }),
             labels: Some(std::collections::HashMap::from([
                 ("com.docker.compose.project".into(), project_id.into()),
                 ("com.docker.compose.service".into(), crate::types::DOCKER_PROXY_SERVICE.into()),
@@ -131,7 +151,7 @@ impl ComposeRunPlan {
             project_id: project_id.to_string(),
             service_name: proxy_name.clone(),
             instance_id: None,
-            image: "tecnativa/docker-socket-proxy".to_string(),
+            image: crate::types::DOCKER_OBSERVE_PROXY_IMAGE.to_string(),
             port: None,
             cmd: None,
             entrypoint: None,
@@ -145,13 +165,19 @@ impl ComposeRunPlan {
             read_only: None,
             extra_hosts: None,
             networks: None,
-            binds: Some(vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()]),
+            binds: Some(vec![
+                "/var/run/docker.sock:/var/run/docker.sock".to_string(),
+                format!(
+                    "projects/{project_id}/docker-observe/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"
+                ),
+            ]),
             is_public: false,
             is_oneshot: false,
             bollard_create_body: Some(create_body),
             bollard_host_config: Some(host_config),
             allow_raw_ports: false,
-            allow_docker_access: true,
+            allow_docker_access: false,
+            docker_observe: true,
         };
 
         // Insert at the beginning of service_order and into its own topological
@@ -160,6 +186,7 @@ impl ComposeRunPlan {
         self.service_order.insert(0, proxy_name.clone());
         self.service_levels.insert(0, vec![proxy_name.clone()]);
         self.configs.insert(0, proxy_config);
+        Ok(true)
     }
 
     /// Build a minimal `ComposeRunPlan` for a single-service project.
@@ -266,9 +293,44 @@ fn build_configs(
                 bollard_host_config: Some(bollard_config.host_config),
                 allow_raw_ports: false,
                 allow_docker_access: false,
+                docker_observe: false,
             })
         })
         .collect()
+}
+
+fn config_requests_docker_socket(config: &RunServiceConfig) -> bool {
+    config.binds.as_ref().is_some_and(|binds| {
+        binds.iter().any(|bind| {
+            bind.split(':')
+                .next()
+                .is_some_and(|source| source.ends_with("/docker.sock"))
+        })
+    })
+}
+
+fn docker_observe_haproxy_config() -> &'static str {
+    r#"global
+    log stdout format raw local0
+
+defaults
+    log global
+    mode http
+    timeout connect 5s
+    timeout client 1h
+    timeout server 1h
+
+frontend docker_observe
+    bind *:2375
+    acl read_method method GET HEAD
+    acl observe_endpoint path_reg -i ^/(v[0-9.]+/)?(_ping|version|info|events|containers/json|containers/[^/]+/(json|stats|logs))$
+    http-request deny deny_status 403 unless read_method
+    http-request deny deny_status 403 unless observe_endpoint
+    default_backend docker_socket
+
+backend docker_socket
+    server docker /var/run/docker.sock
+"#
 }
 
 /// Scope volume names in a compose volume spec with the project ID.
@@ -300,4 +362,78 @@ fn scope_volume_name(volume_spec: &str, project_id: &str) -> String {
     };
 
     format!("{}:{}", crate::types::scope_volume_source(&source, project_id), rest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docker_observe_is_injected_only_into_socket_requesters() {
+        let project_id = format!(
+            "observe-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let yaml = r#"
+services:
+  observer:
+    image: example/observer
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+  app:
+    image: example/app
+"#;
+        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None).unwrap();
+        plan.inject_docker_observe_proxy(&project_id).unwrap();
+
+        let observer = plan.configs.iter().find(|c| c.service_name == "observer").unwrap();
+        let app = plan.configs.iter().find(|c| c.service_name == "app").unwrap();
+        let proxy = plan
+            .configs
+            .iter()
+            .find(|c| c.service_name == crate::types::DOCKER_PROXY_SERVICE)
+            .unwrap();
+
+        assert!(observer.env.iter().any(|v| {
+            v == &format!(
+                "DOCKER_HOST=tcp://{}:2375",
+                crate::types::DOCKER_PROXY_SERVICE
+            )
+        }));
+        assert!(!app.env.iter().any(|v| v.starts_with("DOCKER_HOST=")));
+        assert!(proxy
+            .binds
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|v| v.starts_with("/var/run/docker.sock:")));
+
+        let generated = std::fs::read_to_string(
+            std::path::PathBuf::from("projects")
+                .join(&project_id)
+                .join("docker-observe")
+                .join("haproxy.cfg"),
+        )
+        .unwrap();
+        assert!(generated.contains("acl read_method method GET HEAD"));
+        assert!(generated.contains("containers/[^/]+/(json|stats|logs)"));
+        assert!(!generated.contains("/exec"));
+        assert!(!generated.contains("/archive"));
+
+        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
+    }
+
+    #[test]
+    fn docker_observe_grant_without_socket_request_does_not_start_proxy() {
+        let yaml = "services:\n  app:\n    image: example/app\n";
+        let mut plan = build_compose_run_plan(yaml, "observe-unused", &[], None).unwrap();
+        assert!(!plan.inject_docker_observe_proxy("observe-unused").unwrap());
+        assert!(!plan
+            .service_order
+            .iter()
+            .any(|name| name == crate::types::DOCKER_PROXY_SERVICE));
+    }
 }

@@ -305,6 +305,9 @@ impl Default for ImageStats {
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HealthReport {
     pub version: String,
+    /// Agent API feature level. Missing on older agents and deserializes as 0.
+    #[serde(default)]
+    pub protocol_version: u32,
     pub architecture: String,
     pub memory_available: u64,
     pub memory_total: u64,
@@ -401,6 +404,8 @@ pub struct RunServiceConfig {
     pub allow_raw_ports: bool,
     /// When true, Docker socket access is allowed and docker-socket-proxy is injected.
     pub allow_docker_access: bool,
+    /// True only for services approved to use LiteBin's read-only Docker observation proxy.
+    pub docker_observe: bool,
 }
 
 impl RunServiceConfig {
@@ -453,6 +458,7 @@ impl RunServiceConfig {
             bollard_host_config: None,
             allow_raw_ports: false,
             allow_docker_access: false,
+            docker_observe: false,
         }
     }
 }
@@ -487,6 +493,9 @@ pub fn project_network_name(project_id: &str, instance_id: Option<&str>) -> Stri
         None => format!("litebin-{}", project_id),
     }
 }
+
+/// Managed image used for the endpoint-allowlisted Docker observation proxy.
+pub const DOCKER_OBSERVE_PROXY_IMAGE: &str = "haproxy:3.0-alpine";
 
 /// Build the project data directory path.
 /// - Primary: `projects/{project_id}/data/`

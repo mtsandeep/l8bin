@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **Project capabilities** — Explicit grants (`docker-access`, `raw-ports`) replace ad-hoc permission toggles. Compose deploy can request them; users approve in CLI/`l8b deploy --grant-capability` or the dashboard validation step. Existing Compose projects manage grants under Settings → Capabilities.
 - **Background project runtime** — Image and Compose projects can run without managed HTTP ingress or request-driven sleep/wake behavior; their reserved hostname serves LiteBin's generic not-found page.
 - **Background project deploy UX** — CLI and dashboard deploy flows explicitly select Web or Background projects, skip public service and port controls when appropriate, report “No managed URL,” and hide incompatible URL, domain, and route actions.
+- **Safe Docker observation** — Added explicit `docker-observe` grants. LiteBin always removes workload socket mounts, injects `DOCKER_HOST` only for requesting services, and uses a fail-closed proxy restricted to read-only observation endpoints; legacy mutating `docker-access` is unavailable.
 
 ### Fixed
 - **Dashboard log viewer strips ANSI** — Container logs with terminal color codes render as plain text instead of raw escape sequences like `\u001b[95m`.

@@ -247,6 +247,12 @@ async fn import_single_group(
     let project_id = &group.project_id;
     let mut warnings: Vec<String> = Vec::new();
     let now = chrono::Utc::now().timestamp();
+    if group.allow_docker_access == Some(true) {
+        return Err(
+            "allow_docker_access is unavailable; scan/import capability selection is deferred"
+                .into(),
+        );
+    }
 
     // Validate project ID doesn't already exist
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")

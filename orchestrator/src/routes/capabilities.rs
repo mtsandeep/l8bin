@@ -158,10 +158,35 @@ pub async fn grant_project_capabilities(
 ) -> Result<Json<Vec<ProjectCapabilityStatus>>, (StatusCode, String)> {
     ensure_project(&state, &id).await?;
     let caps = parse_capability_ids(&payload.capabilities).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if caps.contains(&ProjectCapability::DockerAccess) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "docker-access is unavailable; use docker-observe for read-only host observation"
+                .to_string(),
+        ));
+    }
     let granted_by = auth_session.user.map(|u| u.id);
     capabilities::grant_many(&state.db, &id, &caps, granted_by.as_deref())
         .await
         .map_err(capabilities::db_err)?;
+    if caps.contains(&ProjectCapability::DockerObserve) {
+        let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(capabilities::db_err)?;
+        if let Some(node_id) = node_id {
+            if node_id != "local" {
+                crate::cloudflare_router::push_project_meta_to_agent(
+                    &node_id,
+                    &state.db,
+                    &state.node_clients,
+                    &state.config,
+                )
+                .await;
+            }
+        }
+    }
     let list = capabilities::status_list_for_project(&state.db, &id)
         .await
         .map_err(capabilities::db_err)?;
@@ -190,9 +215,62 @@ pub async fn revoke_project_capability(
             format!("unknown capability '{capability}'"),
         )
     })?;
+    let mut docker_observe_node_id: Option<String> = None;
+    if cap == ProjectCapability::DockerObserve {
+        let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(capabilities::db_err)?;
+        docker_observe_node_id = node_id.clone();
+        let proxy_name = litebin_common::types::container_name(
+            &id,
+            litebin_common::types::DOCKER_PROXY_SERVICE,
+            None,
+        );
+        if node_id.as_deref().unwrap_or("local") == "local" {
+            state
+                .docker
+                .remove_by_service_name(&id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove Docker observation proxy: {e}")))?;
+        } else {
+            let node_id = node_id.as_deref().unwrap();
+            let node = crate::routes::manage::get_node_from_db(&state.db, node_id)
+                .await
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("{e:?}")))?;
+            let client = crate::nodes::client::get_node_client(&state.node_clients, node_id)
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("{e:?}")))?;
+            let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
+            let response = client
+                .post(format!("{base_url}/containers/remove"))
+                .json(&json!({"container_id": proxy_name}))
+                .send()
+                .await
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("failed to contact agent: {e}")))?;
+            if !response.status().is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    format!("failed to remove Docker observation proxy: {body}"),
+                ));
+            }
+        }
+    }
     capabilities::revoke(&state.db, &id, cap)
         .await
         .map_err(capabilities::db_err)?;
+    if let Some(node_id) = docker_observe_node_id {
+        if node_id != "local" {
+            crate::cloudflare_router::push_project_meta_to_agent(
+                &node_id,
+                &state.db,
+                &state.node_clients,
+                &state.config,
+            )
+            .await;
+        }
+    }
     let list = capabilities::status_list_for_project(&state.db, &id)
         .await
         .map_err(capabilities::db_err)?;

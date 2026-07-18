@@ -61,6 +61,25 @@ fn classify_anyhow_wrapping_bollard() {
 }
 
 #[test]
+fn raw_docker_socket_is_removed_from_workloads_even_when_read_only() {
+    let binds = vec![
+        "/var/run/docker.sock:/var/run/docker.sock:ro".to_string(),
+        "litebin_data:/data".to_string(),
+    ];
+    let sanitized = super::container::sanitize_docker_socket_binds(&binds, false);
+    assert_eq!(sanitized, vec!["litebin_data:/data"]);
+}
+
+#[test]
+fn raw_docker_socket_is_retained_only_for_managed_proxy() {
+    let binds = vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()];
+    assert_eq!(
+        super::container::sanitize_docker_socket_binds(&binds, true),
+        binds
+    );
+}
+
+#[test]
 fn classify_anyhow_without_bollard_as_other() {
     let anyhow_err: anyhow::Error = anyhow::anyhow!("some unrelated error");
     assert_eq!(DockerErrorKind::from_anyhow(&anyhow_err), DockerErrorKind::Other);

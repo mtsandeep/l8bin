@@ -27,6 +27,7 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
 
     Json(HealthReport {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        protocol_version: 2,
         architecture: std::env::consts::ARCH.to_string(),
         memory_available,
         memory_total,

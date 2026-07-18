@@ -113,17 +113,15 @@ pub async fn stop_project(
                     tracing::warn!(project_id = %project_id, container_id = %cid, error = %e, "stop: failed to stop container on agent");
                 }
             }
-            // Also stop docker-socket-proxy if allow_docker_access is enabled
-            if project.allow_docker_access {
-                let proxy_name = litebin_common::types::container_name(&project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
-                if let Err(e) = client
-                    .post(&format!("{}/containers/stop", base_url))
-                    .json(&json!({"container_id": proxy_name}))
-                    .send()
-                    .await
-                {
-                    tracing::warn!(project_id = %project_id, error = %e, "stop: failed to stop docker-socket-proxy on agent");
-                }
+            // Always remove any managed observation proxy, including stale revoked ones.
+            let proxy_name = litebin_common::types::container_name(&project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
+            if let Err(e) = client
+                .post(&format!("{}/containers/remove", base_url))
+                .json(&json!({"container_id": proxy_name}))
+                .send()
+                .await
+            {
+                tracing::warn!(project_id = %project_id, error = %e, "stop: failed to remove Docker observation proxy on agent");
             }
         } else {
             // Local: stop all service containers (works for single and multi-service)
@@ -262,6 +260,18 @@ pub async fn start_project(
             .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(256);
         let default_cpu: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
             .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(0.5);
+        let docker_observe = crate::capabilities::has_capability(
+            &state.db,
+            &project_id,
+            litebin_common::capabilities::ProjectCapability::DockerObserve,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
+        if docker_observe {
+            crate::routes::deploy::compose::ensure_docker_observe_agent(&client, &base_url)
+                .await
+                .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+        }
 
         let resp = client
             .post(format!("{}/containers/batch-run", base_url))
@@ -270,7 +280,7 @@ pub async fn start_project(
                 "compose_yaml": &compose_yaml,
                 "service_order": &svc_names,
                 "allow_raw_ports": project.allow_raw_ports,
-                "allow_docker_access": project.allow_docker_access,
+                "docker_observe": docker_observe,
                 "service_resources": service_resources,
                 "default_memory_limit_mb": default_mem,
                 "default_cpu_limit": default_cpu,
@@ -694,6 +704,18 @@ pub async fn recreate_project(
                 .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(256);
             let default_cpu: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
                 .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(0.5);
+            let docker_observe = crate::capabilities::has_capability(
+                &state.db,
+                &project_id,
+                litebin_common::capabilities::ProjectCapability::DockerObserve,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
+            if docker_observe {
+                crate::routes::deploy::compose::ensure_docker_observe_agent(&client, &base_url)
+                    .await
+                    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+            }
 
             let pull = body.as_ref().and_then(|b| b.0.pull_images).unwrap_or(false);
 
@@ -713,7 +735,7 @@ pub async fn recreate_project(
                     "compose_yaml": &compose_yaml,
                     "service_order": &svc_names,
                     "allow_raw_ports": project.allow_raw_ports,
-                    "allow_docker_access": project.allow_docker_access,
+                    "docker_observe": docker_observe,
                     "service_resources": service_resources,
                     "default_memory_limit_mb": default_mem,
                     "default_cpu_limit": default_cpu,

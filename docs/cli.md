@@ -77,6 +77,7 @@ l8b deploy --project <PROJECT_ID> [options]
 | `--secret` | *(none)* | Pass a local file (e.g. .env) as a Docker build secret (repeatable) |
 | `--compose` | auto-detect | Force compose mode (deploy as multi-service) |
 | `--service` | *(none)* | Deploy only specific services (repeatable, compose mode only) |
+| `--grant-capability` | *(none)* | Explicitly grant a requested capability; repeatable (`docker-observe`, `raw-ports`) |
 
 Global flags (available on all commands):
 

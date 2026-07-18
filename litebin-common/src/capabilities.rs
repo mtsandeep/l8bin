@@ -9,9 +9,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectCapability {
-    /// Mount / use Docker API via LiteBin's restricted socket proxy.
+    /// Legacy mutating Docker access grant. Kept for stored-row compatibility only.
     #[serde(rename = "docker-access")]
     DockerAccess,
+    /// Observe the host Docker daemon through LiteBin's read-only proxy.
+    #[serde(rename = "docker-observe")]
+    DockerObserve,
     /// Publish Compose-declared ports directly on the host (bypass Caddy).
     #[serde(rename = "raw-ports")]
     RawPorts,
@@ -19,20 +22,22 @@ pub enum ProjectCapability {
 
 impl ProjectCapability {
     pub const ALL: &'static [ProjectCapability] = &[
-        ProjectCapability::DockerAccess,
+        ProjectCapability::DockerObserve,
         ProjectCapability::RawPorts,
     ];
 
     pub fn id(self) -> &'static str {
         match self {
             ProjectCapability::DockerAccess => "docker-access",
+            ProjectCapability::DockerObserve => "docker-observe",
             ProjectCapability::RawPorts => "raw-ports",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            ProjectCapability::DockerAccess => "Docker access",
+            ProjectCapability::DockerAccess => "Docker access (unavailable)",
+            ProjectCapability::DockerObserve => "Docker observation",
             ProjectCapability::RawPorts => "Raw host ports",
         }
     }
@@ -40,8 +45,11 @@ impl ProjectCapability {
     pub fn description(self) -> &'static str {
         match self {
             ProjectCapability::DockerAccess => {
-                "Allows the project to talk to Docker through LiteBin's restricted socket proxy \
-                 (not the raw docker.sock). Required when Compose mounts /var/run/docker.sock."
+                "Reserved for future object-authorized mutating Docker access. This capability is not available."
+            }
+            ProjectCapability::DockerObserve => {
+                "Allows selected services to read host-wide container information through LiteBin's \
+                 endpoint-allowlisted proxy. The raw Docker socket is never mounted into the workload."
             }
             ProjectCapability::RawPorts => {
                 "Publishes Compose-declared container ports directly on the host (0.0.0.0). \
@@ -53,7 +61,10 @@ impl ProjectCapability {
     pub fn risk(self) -> &'static str {
         match self {
             ProjectCapability::DockerAccess => {
-                "High — the app can inspect and (within proxy filters) interact with containers on this node."
+                "Unavailable — safe project-scoped mutation requires object-level authorization."
+            }
+            ProjectCapability::DockerObserve => {
+                "High — responses may expose host-wide container metadata, environment values, and logs."
             }
             ProjectCapability::RawPorts => {
                 "Medium — opens host ports and can conflict with other services; LiteBin-reserved ports are still blocked."
@@ -64,6 +75,7 @@ impl ProjectCapability {
     pub fn parse(id: &str) -> Option<Self> {
         match id {
             "docker-access" => Some(ProjectCapability::DockerAccess),
+            "docker-observe" => Some(ProjectCapability::DockerObserve),
             "raw-ports" => Some(ProjectCapability::RawPorts),
             _ => None,
         }
@@ -139,4 +151,16 @@ pub fn parse_capability_ids(ids: &[String]) -> Result<Vec<ProjectCapability>, St
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_exposes_observation_but_not_legacy_mutating_access() {
+        let ids: Vec<String> = capability_catalog().into_iter().map(|item| item.id).collect();
+        assert!(ids.contains(&"docker-observe".to_string()));
+        assert!(!ids.contains(&"docker-access".to_string()));
+    }
 }

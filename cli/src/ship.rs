@@ -42,7 +42,7 @@ pub struct ComposeDeployOpts {
     pub target_services: Option<Vec<String>>,
     /// Target node ID (optional).
     pub node_id: Option<String>,
-    /// Capability ids to grant (e.g. docker-access, raw-ports).
+    /// Capability ids to grant (e.g. docker-observe, raw-ports).
     pub grant_capabilities: Vec<String>,
     /// Deploy the whole project without managed HTTP ingress.
     pub is_background: bool,
@@ -1313,7 +1313,7 @@ async fn validate_compose_for_deploy(
 
     if !interactive {
         anyhow::bail!(
-            "missing required capabilities: {}. Pass --grant-capability for each (e.g. --grant-capability docker-access)",
+            "missing required capabilities: {}. Pass --grant-capability for each (e.g. --grant-capability docker-observe)",
             still_missing.join(", ")
         );
     }
