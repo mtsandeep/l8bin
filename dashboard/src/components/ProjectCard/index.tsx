@@ -253,9 +253,11 @@ export default function ProjectCard({
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span
                             className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                              svc.status === ProjectStatus.Running || svc.status === ProjectStatus.Completed
-                                ? 'bg-emerald-400'
-                                : 'bg-slate-600'
+                              svc.status === ProjectStatus.Completed
+                                ? 'bg-sky-400'
+                                : svc.status === ProjectStatus.Running
+                                  ? 'bg-emerald-400'
+                                  : 'bg-slate-600'
                             }`}
                           />
                           <span className="text-xs font-medium text-slate-300 truncate">{svc.service_name}</span>
@@ -265,7 +267,13 @@ export default function ProjectCard({
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span
-                            className={`text-[10px] ${svc.status === ProjectStatus.Running ? 'text-emerald-400' : 'text-slate-500'}`}
+                            className={`text-[10px] ${
+                              svc.status === ProjectStatus.Completed
+                                ? 'text-sky-400'
+                                : svc.status === ProjectStatus.Running
+                                  ? 'text-emerald-400'
+                                  : 'text-slate-500'
+                            }`}
                           >
                             {svc.status}
                           </span>

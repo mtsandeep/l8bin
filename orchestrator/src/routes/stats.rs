@@ -234,17 +234,139 @@ async fn batch_load_services(
     map
 }
 
-fn make_stats_response(project_id: String, status: ProjectStatus, last_active_at: Option<i64>, services: Vec<ServiceInfo>) -> StatsResponse {
-    // Compute effective status: if DB says "running" but not all services are healthy, mark as "degraded"
-    let effective_status = if status == ProjectStatus::Running
-        && !services.is_empty()
-        && services.iter().any(|s| !s.status.is_service_healthy())
+fn make_stats_response(
+    project_id: String,
+    status: ProjectStatus,
+    last_active_at: Option<i64>,
+    services: Vec<ServiceInfo>,
+) -> StatsResponse {
+    // Completed one-shots do not participate in the runtime aggregate.
+    let long_running: Vec<&ServiceInfo> = services
+        .iter()
+        .filter(|service| service.status != ProjectStatus::Completed)
+        .collect();
+    let running_count = long_running
+        .iter()
+        .filter(|service| service.status == ProjectStatus::Running)
+        .count();
+
+    let effective_status = if status != ProjectStatus::Running || services.is_empty() {
+        status
+    } else if long_running.is_empty() || running_count == 0 {
+        ProjectStatus::Stopped
+    } else if running_count < long_running.len() {
+        ProjectStatus::Degraded
+    } else {
+        ProjectStatus::Running
+    };
+    StatsResponse {
+        project_id,
+        status: effective_status.to_string(),
+        last_active_at,
+        services,
+    }
+}
+
+fn inactive_project_status(
+    project_status: ProjectStatus,
+    services: &[ServiceInfo],
+) -> ProjectStatus {
+    if project_status.is_transient() {
+        project_status
+    } else if services
+        .iter()
+        .any(|service| service.status == ProjectStatus::Running)
     {
         ProjectStatus::Degraded
     } else {
-        status
-    };
-    StatsResponse { project_id, status: effective_status.to_string(), last_active_at, services }
+        ProjectStatus::Stopped
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn service(name: &str, status: ProjectStatus) -> ServiceInfo {
+        ServiceInfo {
+            service_name: name.to_string(),
+            image: "test".to_string(),
+            port: None,
+            mapped_port: None,
+            is_public: false,
+            status,
+            container_id: None,
+            cmd: None,
+            cpu_percent: None,
+            memory_usage: None,
+            memory_limit_mb: None,
+            cpu_limit: None,
+            disk_gb: None,
+            volumes: vec![],
+        }
+    }
+
+    #[test]
+    fn completed_oneshot_does_not_keep_stopped_project_degraded() {
+        let response = make_stats_response(
+            "test".to_string(),
+            ProjectStatus::Running,
+            None,
+            vec![
+                service("migration", ProjectStatus::Completed),
+                service("web", ProjectStatus::Stopped),
+                service("db", ProjectStatus::Stopped),
+            ],
+        );
+
+        assert_eq!(response.status, "stopped");
+    }
+
+    #[test]
+    fn stopped_daemon_with_another_running_is_degraded() {
+        let response = make_stats_response(
+            "test".to_string(),
+            ProjectStatus::Running,
+            None,
+            vec![
+                service("migration", ProjectStatus::Completed),
+                service("web", ProjectStatus::Running),
+                service("db", ProjectStatus::Stopped),
+            ],
+        );
+
+        assert_eq!(response.status, "degraded");
+    }
+
+    #[test]
+    fn completed_oneshot_with_running_daemons_is_running() {
+        let response = make_stats_response(
+            "test".to_string(),
+            ProjectStatus::Running,
+            None,
+            vec![
+                service("migration", ProjectStatus::Completed),
+                service("web", ProjectStatus::Running),
+                service("db", ProjectStatus::Running),
+            ],
+        );
+
+        assert_eq!(response.status, "running");
+    }
+
+    #[test]
+    fn completed_oneshot_does_not_degrade_inactive_project() {
+        let services = vec![
+            service("migration", ProjectStatus::Completed),
+            service("web", ProjectStatus::Stopped),
+            service("db", ProjectStatus::Stopped),
+        ];
+
+        assert_eq!(
+            inactive_project_status(ProjectStatus::Stopped, &services),
+            ProjectStatus::Stopped
+        );
+    }
 }
 
 /// GET /projects/stats — returns stats + disk + services for all projects in one call
@@ -372,13 +494,7 @@ pub async fn all_project_stats(
         // Use the actual project status — preserve transient/setup states
         // and only derive stopped/degraded when the project is in a stable terminal state
         let project_status = projects.iter().find(|p| p.id == project_id).map(|p| p.status.clone()).unwrap_or(ProjectStatus::Stopped);
-        let status = match project_status {
-            ProjectStatus::Pending | ProjectStatus::Stopping | ProjectStatus::Deploying | ProjectStatus::Error | ProjectStatus::Unconfigured => project_status,
-            _ => {
-                let any_running = services.iter().any(|s| s.status.is_service_healthy());
-                if any_running { ProjectStatus::Degraded } else { ProjectStatus::Stopped }
-            }
-        };
+        let status = inactive_project_status(project_status, &services);
         results.push(make_stats_response(
             project_id.clone(),
             status,

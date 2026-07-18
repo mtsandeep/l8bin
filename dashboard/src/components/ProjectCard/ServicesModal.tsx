@@ -31,9 +31,9 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
       .finally(() => setLoadingService(null));
   };
 
-  const runningCount = services.filter(
-    (s) => s.status === ProjectStatus.Running || s.status === ProjectStatus.Completed,
-  ).length;
+  const runningCount = services.filter((s) => s.status === ProjectStatus.Running).length;
+  const completedCount = services.filter((s) => s.status === ProjectStatus.Completed).length;
+  const longRunningCount = services.length - completedCount;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm pt-8">
@@ -43,7 +43,8 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-100">{project.name || project.id}</span>
             <span className="text-xs text-slate-500">
-              {runningCount}/{services.length} running
+              {runningCount}/{longRunningCount} running
+              {completedCount > 0 && ` · ${completedCount} completed`}
             </span>
           </div>
           <button
@@ -66,6 +67,7 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
           {services.map((svc) => {
             const isLoading = loadingService === svc.service_name;
             const isRunning = svc.status === ProjectStatus.Running;
+            const isCompleted = svc.status === ProjectStatus.Completed;
             const memPercent =
               svc.memory_limit_mb && svc.memory_usage
                 ? (svc.memory_usage / (svc.memory_limit_mb * 1024 * 1024)) * 100
@@ -83,7 +85,11 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                       )}
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded ${
-                          isRunning ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700/60 text-slate-500'
+                          isCompleted
+                            ? 'bg-sky-500/20 text-sky-400'
+                            : isRunning
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : 'bg-slate-700/60 text-slate-500'
                         }`}
                       >
                         {svc.status}
@@ -105,7 +111,7 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                       >
                         <Terminal size={12} />
                       </button>
-                      {isRunning ? (
+                      {isCompleted ? null : isRunning ? (
                         <>
                           <button
                             type="button"

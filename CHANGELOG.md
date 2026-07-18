@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Dashboard log viewer strips ANSI** — Container logs with terminal color codes render as plain text instead of raw escape sequences like `\u001b[95m`.
 - **`/compose/validate` proxied to orchestrator** — Added `/compose/*` to Caddy API path matchers so validation requests no longer hit the dashboard (405).
+- **Completed service status display** — One-shot jobs are excluded from running/degraded counts and use a distinct completed indicator in service views.
 
 ## [0.3.4] - 2026-07-17
 

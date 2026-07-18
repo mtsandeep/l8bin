@@ -54,9 +54,9 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string; labe
     label: 'Waking',
   },
   [ProjectStatus.Completed]: {
-    bg: 'bg-slate-500/10',
-    text: 'text-slate-400',
-    dot: 'bg-slate-400',
+    bg: 'bg-sky-500/10',
+    text: 'text-sky-400',
+    dot: 'bg-sky-400',
     label: 'Completed',
   },
   [ProjectStatus.Unconfigured]: {
