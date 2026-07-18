@@ -66,6 +66,7 @@ l8b deploy --project <PROJECT_ID> [options]
 |------|---------|-------------|
 | `--project` | *(required)* | Project ID, used as subdomain (`<id>.example.com`) |
 | `--port` | `3000` | Internal port the app listens on inside the container |
+| `--background` | *off* | Run without managed HTTP ingress or URL; keeps auto-stop/request wake disabled |
 | `--path` | `.` | Path to the project directory |
 | `--dockerfile` | auto-detect | Path to Dockerfile relative to `--path` |
 | `--node` | auto-select | Target node ID |
@@ -136,6 +137,12 @@ l8b deploy --project myapp --cmd "node server.js --production"
 l8b deploy --project myapp --no-auto-stop
 ```
 
+**Background project** (worker, agent, or scheduler with no HTTP endpoint):
+
+```bash
+l8b deploy --project my-worker --background
+```
+
 **Compose deploy** (multi-service with docker-compose.yml):
 
 ```bash
@@ -152,6 +159,8 @@ l8b deploy --project myapp --compose
 ### `l8b ship`
 
 Interactive deploy — guided flow for deploying a new or existing project. Requires a prior `l8b login` session.
+
+New projects explicitly choose **Web app / HTTP API** (the default) or **Background project**. Background projects skip public service and port prompts and have no managed URL.
 
 ```bash
 l8b ship [options]

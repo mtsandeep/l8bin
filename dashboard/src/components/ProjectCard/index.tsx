@@ -102,6 +102,7 @@ export default function ProjectCard({
   const [showServicesPopover, setShowServicesPopover] = useState(false);
   const [showServicesModal, setShowServicesModal] = useState(false);
   const services = stats?.services ?? [];
+  const primaryService = project.public_stats ?? services[0] ?? null;
   const servicesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -174,11 +175,12 @@ export default function ProjectCard({
     handleAction('redeploy', () =>
       redeployProject(
         project.id,
-        project.public_stats?.image ?? '',
-        project.public_stats?.port ?? 3000,
-        project.public_stats?.cmd,
-        project.public_stats?.memory_limit_mb,
-        project.public_stats?.cpu_limit,
+        primaryService?.image ?? '',
+        project.is_background ? undefined : (primaryService?.port ?? 3000),
+        project.is_background,
+        primaryService?.cmd,
+        primaryService?.memory_limit_mb,
+        primaryService?.cpu_limit,
         cleanupVolumes,
       ),
     );
@@ -191,8 +193,10 @@ export default function ProjectCard({
   const isDegraded = effectiveStatus === ProjectStatus.Degraded;
   const setupStatus =
     project.status === ProjectStatus.Pending || project.status === ProjectStatus.Unconfigured
-      ? project.status
-      : project.status === ProjectStatus.Stopped && !project.public_stats?.image
+      ? project.status === ProjectStatus.Unconfigured && !project.is_staged
+        ? ProjectStatus.Pending
+        : project.status
+      : project.status === ProjectStatus.Stopped && !primaryService?.image
         ? ProjectStatus.Pending
         : null;
   const isAwaitingSetup = setupStatus !== null;
@@ -227,7 +231,7 @@ export default function ProjectCard({
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-1 ml-auto flex-shrink-0">
+            {!project.is_background && <div className="flex items-center gap-1 ml-auto flex-shrink-0">
               <a
                 href={`https://${project.custom_domain || `${project.id}.${domain}`}`}
                 target="_blank"
@@ -237,7 +241,7 @@ export default function ProjectCard({
               >
                 <ExternalLink size={14} />
               </a>
-            </div>
+            </div>}
             {/* Services popover — below the title row */}
             {showServicesPopover && (
               <div
@@ -301,10 +305,10 @@ export default function ProjectCard({
               </div>
             )}
           </div>
-          <p className="text-xs text-slate-500 truncate font-mono" title={project.public_stats?.image ?? ''}>
+          <p className="text-xs text-slate-500 truncate font-mono" title={primaryService?.image ?? ''}>
             {isMultiService
-              ? `${shortImage(project.public_stats?.image ?? null)} +${services.length - 1}`
-              : shortImage(project.public_stats?.image ?? null)}
+              ? `${shortImage(primaryService?.image ?? null)} +${services.length - 1}`
+              : shortImage(primaryService?.image ?? null)}
             {isMultiService
               ? services.filter((s) => s.mapped_port && s.mapped_port > 0).length > 0
                 ? ` | ports: ${services
@@ -312,11 +316,18 @@ export default function ProjectCard({
                     .map((s) => s.mapped_port)
                     .join(', ')}`
                 : ''
-              : project.public_stats?.mapped_port
-                ? ` | port: ${project.public_stats.mapped_port}`
+              : primaryService?.mapped_port
+                ? ` | port: ${primaryService.mapped_port}`
                 : ''}
           </p>
           <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-700/60 text-slate-400">
+              {project.is_background ? 'Background project' : 'Web app / HTTP API'}
+            </span>
+            {project.is_background ? (
+              <span className="text-slate-500">No managed URL</span>
+            ) : (
+              <>
             <span
               className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
                 autoStop ? 'bg-slate-700/60' : 'bg-slate-800/40'
@@ -333,6 +344,8 @@ export default function ProjectCard({
               <span className={`w-1.5 h-1.5 rounded-full ${autoStart ? 'bg-emerald-400' : 'bg-slate-600'}`} />
               <span className="text-slate-400">Auto-start</span>
             </span>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -391,6 +404,7 @@ export default function ProjectCard({
             {openPopover === 'app' ? (
               <AppSettingsPopover
                 project={project}
+                service={primaryService}
                 isStopping={isStopping}
                 onRefresh={onRefresh}
                 onClose={() => setOpenPopover(null)}
@@ -645,8 +659,8 @@ export default function ProjectCard({
       {showRedeployModal && (
         <RedeployModal
           project={project}
-          appImage={project.public_stats?.image ?? ''}
-          appPort={project.public_stats?.port ?? 3000}
+          appImage={primaryService?.image ?? ''}
+          appPort={primaryService?.port ?? 3000}
           isStopping={isStopping}
           onRedeploy={handleActionsRedeploy}
           onCancel={() => setShowRedeployModal(false)}

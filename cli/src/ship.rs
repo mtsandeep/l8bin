@@ -22,6 +22,10 @@ struct ProjectInfo {
     id: String,
     status: ProjectStatus,
     node_id: Option<String>,
+    #[serde(default)]
+    is_background: bool,
+    #[serde(default)]
+    is_staged: bool,
     public_stats: Option<PublicStats>,
 }
 
@@ -40,6 +44,8 @@ pub struct ComposeDeployOpts {
     pub node_id: Option<String>,
     /// Capability ids to grant (e.g. docker-access, raw-ports).
     pub grant_capabilities: Vec<String>,
+    /// Deploy the whole project without managed HTTP ingress.
+    pub is_background: bool,
 }
 
 pub async fn run(
@@ -94,8 +100,15 @@ async fn new_project_flow(
         })
         .interact_text()?;
 
+    let is_background = select_background_project()?;
+
     println!("  {} Creating project {}...", "::", name.cyan());
-    auth::session_post(client, server, "/projects", &json!({"id": &name}))
+    auth::session_post(
+        client,
+        server,
+        "/projects",
+        &json!({"id": &name, "is_background": is_background}),
+    )
         .await
         .with_context(|| format!("failed to create project '{}'", name))?;
     println!("  {} Project created", "✔".green());
@@ -124,23 +137,46 @@ async fn new_project_flow(
     println!("  {}", format!("L8B_TOKEN={}", token).dimmed());
     println!();
 
-    let port = resolve_app_port(project_dir, port_override)?;
+    let port = if is_background {
+        None
+    } else {
+        Some(resolve_app_port(project_dir, port_override)?)
+    };
 
-    let url = build_and_deploy(client, server, &name, project_dir, port, secret_override, true, None).await?;
+    let url = build_and_deploy(
+        client,
+        server,
+        &name,
+        project_dir,
+        port,
+        is_background,
+        secret_override,
+        true,
+        None,
+    )
+    .await?;
 
     if let Some(url) = url {
         print_live_url(&url);
-        println!("  {} Use this token to redeploy from CI/CD:", "💡".dimmed());
-        println!(
-            "  {}",
-            format!(
-                "L8B_TOKEN={} l8b deploy --project {} --port {}",
-                token, name, port
-            )
-            .dimmed()
-        );
-        println!();
+    } else {
+        print_no_managed_url();
     }
+    println!("  {} Use this token to redeploy from CI/CD:", "💡".dimmed());
+    let deploy_hint = if is_background {
+        format!(
+            "L8B_TOKEN={} l8b deploy --project {} --background",
+            token, name
+        )
+    } else {
+        format!(
+            "L8B_TOKEN={} l8b deploy --project {} --port {}",
+            token,
+            name,
+            port.expect("web projects have an HTTP port")
+        )
+    };
+    println!("  {}", deploy_hint.dimmed());
+    println!();
 
     Ok(())
 }
@@ -172,12 +208,15 @@ async fn existing_project_flow(
                 .and_then(|ps| ps.image.as_deref())
                 .map(short_image)
                 .unwrap_or_else(|| "—".to_string());
-            let port = p
-                .public_stats
-                .as_ref()
-                .and_then(|ps| ps.mapped_port)
-                .map(|p| format!("port {}", p))
-                .unwrap_or("—".to_string());
+            let port = if p.is_background {
+                "background".to_string()
+            } else {
+                p.public_stats
+                    .as_ref()
+                    .and_then(|ps| ps.mapped_port)
+                    .map(|p| format!("port {}", p))
+                    .unwrap_or("—".to_string())
+            };
             format!("  {:<20} {:<12} {:<25} {}", p.id, status, image, port)
         })
         .collect();
@@ -216,18 +255,22 @@ async fn existing_project_flow(
             )
             .await?;
             if started {
-                let domain = auth::fetch_platform_domain(client, server).await;
-                let live_url = auth::project_live_url(project_id, &domain);
-                print_live_url(&live_url);
+                if project.is_background {
+                    print_no_managed_url();
+                } else {
+                    let domain = auth::fetch_platform_domain(client, server).await;
+                    let live_url = auth::project_live_url(project_id, &domain);
+                    print_live_url(&live_url);
+                }
             }
         }
         "Deploy" | "Redeploy" => {
             let existing_node = project.node_id.as_deref();
             let is_first = matches!(project.status, ProjectStatus::Pending | ProjectStatus::Unconfigured);
-            let port = if detect_compose_file(project_dir).is_some() {
-                0
+            let port = if project.is_background || detect_compose_file(project_dir).is_some() {
+                None
             } else {
-                resolve_app_port(project_dir, port_override)?
+                Some(resolve_app_port(project_dir, port_override)?)
             };
             let url = build_and_deploy(
                 client,
@@ -235,6 +278,7 @@ async fn existing_project_flow(
                 project_id,
                 project_dir,
                 port,
+                project.is_background,
                 secret_override,
                 is_first,
                 existing_node,
@@ -242,6 +286,8 @@ async fn existing_project_flow(
             .await?;
             if let Some(url) = url {
                 print_live_url(&url);
+            } else if project.is_background {
+                print_no_managed_url();
             }
         }
         "Recreate" => {
@@ -716,12 +762,13 @@ fn show_env_path(server: &str, project_id: &str, node_id: Option<&str>) {
 }
 
 fn project_is_staged(project: &ProjectInfo) -> bool {
-    project
-        .public_stats
-        .as_ref()
-        .and_then(|ps| ps.image.as_ref())
-        .map(|img| !img.is_empty())
-        .unwrap_or(false)
+    project.is_staged
+        || project
+            .public_stats
+            .as_ref()
+            .and_then(|ps| ps.image.as_ref())
+            .map(|img| !img.is_empty())
+            .unwrap_or(false)
 }
 
 fn short_image(image: &str) -> String {
@@ -737,6 +784,25 @@ fn print_live_url(url: &str) {
     println!();
     println!("  {} Live at: {}", "🌐".dimmed(), url.green().bold());
     println!();
+}
+
+fn print_no_managed_url() {
+    println!();
+    println!("  {} No managed URL (background project)", "⚙".dimmed());
+    println!();
+}
+
+fn select_background_project() -> Result<bool> {
+    let choices = [
+        "Web app / HTTP API — expose a managed URL",
+        "Background project — no managed URL; stays running",
+    ];
+    let selection = Select::new()
+        .with_prompt("Project type")
+        .items(&choices)
+        .default(0)
+        .interact()?;
+    Ok(selection == 1)
 }
 
 /// Detect compose file in the given directory. Returns the filename or None.
@@ -1095,14 +1161,18 @@ async fn submit_compose(
     build_infos: &[BuildInfo],
     node_id: Option<&str>,
     stage_only: bool,
+    is_background: bool,
     grant_capabilities: &[String],
 ) -> Result<serde_json::Value> {
-    let mut form = reqwest::multipart::Form::new().text("project_id", project_id.to_string()).part(
-        "compose",
-        reqwest::multipart::Part::bytes(resolved_yaml.into_bytes())
-            .file_name(compose_name.to_string())
-            .mime_str("text/yaml")?,
-    );
+    let mut form = reqwest::multipart::Form::new()
+        .text("project_id", project_id.to_string())
+        .text("is_background", is_background.to_string())
+        .part(
+            "compose",
+            reqwest::multipart::Part::bytes(resolved_yaml.into_bytes())
+                .file_name(compose_name.to_string())
+                .mime_str("text/yaml")?,
+        );
     if is_partial_build {
         let target_list: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
         form = form.text("target_services", target_list.join(","));
@@ -1126,12 +1196,14 @@ async fn validate_compose_for_deploy(
     server: &str,
     project_id: &str,
     yaml: &str,
+    is_background: bool,
     interactive: bool,
     pregranted: &[String],
 ) -> Result<Vec<String>> {
     let body = serde_json::json!({
         "compose": yaml,
         "project_id": project_id,
+        "is_background": is_background,
     });
     let resp = auth::session_post(client, server, "/compose/validate", &body).await?;
 
@@ -1350,7 +1422,8 @@ async fn build_and_deploy(
     server: &str,
     project_id: &str,
     project_dir: &Path,
-    port: u16,
+    port: Option<u16>,
+    is_background: bool,
     mut secret: Vec<PathBuf>,
     is_new_project: bool,
     node_id: Option<&str>,
@@ -1367,6 +1440,7 @@ async fn build_and_deploy(
             project_dir,
             compose_name,
             is_new_project,
+            is_background,
             selected_node.as_deref(),
             platform.as_deref(),
         )
@@ -1454,6 +1528,7 @@ async fn build_and_deploy(
         project_id,
         &image_id,
         port,
+        is_background,
         selected_node.as_deref(),
         None,
         None,
@@ -1471,6 +1546,7 @@ async fn build_and_deploy(
         deploy_resp.status,
         deploy_resp.node_id.as_deref().or(selected_node.as_deref()),
         deploy_resp.url.as_deref(),
+        is_background,
         &deploy_spinner,
         "Deployment staged",
         "Deploy successful!",
@@ -1490,6 +1566,7 @@ async fn finish_deploy_response(
     status: ProjectStatus,
     stage_node: Option<&str>,
     api_url: Option<&str>,
+    is_background: bool,
     deploy_spinner: &ProgressBar,
     staged_label: &str,
     success_label: &str,
@@ -1505,6 +1582,9 @@ async fn finish_deploy_response(
         }
         stop_buildkit();
         if !started {
+            return Ok(None);
+        }
+        if is_background {
             return Ok(None);
         }
         return Ok(Some(
@@ -1529,6 +1609,9 @@ async fn finish_deploy_response(
     }
     stop_buildkit();
 
+    if is_background {
+        return Ok(None);
+    }
     Ok(Some(
         resolve_live_url(client, server, project_id, api_url).await,
     ))
@@ -1541,11 +1624,16 @@ async fn deploy_compose(
     project_dir: &Path,
     compose_name: &str,
     is_new_project: bool,
+    is_background: bool,
     node_id: Option<&str>,
     platform: Option<&str>,
 ) -> Result<Option<String>> {
     let compose = load_compose(project_dir, compose_name)?;
-    let selected_public = pick_public_service(&compose)?;
+    let selected_public = if is_background {
+        None
+    } else {
+        pick_public_service(&compose)?
+    };
     let mut build_infos = collect_build_infos(&compose);
     print_compose_build_summary(&compose, &build_infos);
 
@@ -1624,6 +1712,7 @@ async fn deploy_compose(
         server,
         project_id,
         &resolved_yaml,
+        is_background,
         true,
         &[],
     )
@@ -1639,6 +1728,7 @@ async fn deploy_compose(
         &build_infos,
         node_id,
         is_new_project,
+        is_background,
         &grants,
     )
     .await?;
@@ -1657,6 +1747,7 @@ async fn deploy_compose(
         resp_status,
         resp_node,
         resp["url"].as_str(),
+        is_background,
         &deploy_spinner,
         "Compose deployment staged",
         "Compose deploy successful!",
@@ -1678,7 +1769,11 @@ pub async fn deploy_compose_noninteractive(
     platform: Option<&str>,
 ) -> Result<String> {
     let compose = load_compose(project_dir, compose_name)?;
-    let selected_public = auto_pick_public_service(&compose);
+    let selected_public = if opts.is_background {
+        None
+    } else {
+        auto_pick_public_service(&compose)
+    };
     let mut build_infos = collect_build_infos(&compose);
 
     let is_partial_build = if let Some(ref targets) = opts.target_services {
@@ -1716,6 +1811,7 @@ pub async fn deploy_compose_noninteractive(
         server,
         project_id,
         &resolved_yaml,
+        opts.is_background,
         false,
         &opts.grant_capabilities,
     )
@@ -1730,6 +1826,7 @@ pub async fn deploy_compose_noninteractive(
         &build_infos,
         opts.node_id.as_deref(),
         false,
+        opts.is_background,
         &grants,
     )
     .await?;

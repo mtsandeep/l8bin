@@ -174,11 +174,21 @@ async fn background_project_cannot_enable_sleep_or_request_wake() {
     server.patch("/projects/worker-settings/settings")
         .json(&json!({"auto_start_enabled": true})).await
         .assert_status(StatusCode::BAD_REQUEST);
+    server.patch("/projects/worker-settings/settings")
+        .json(&json!({"custom_domain": "worker.example.com"})).await
+        .assert_status(StatusCode::BAD_REQUEST);
+    server.post("/projects/worker-settings/routes")
+        .json(&json!({
+            "route_type": "path",
+            "path": "/api",
+            "upstream": "http://worker:8080"
+        })).await
+        .assert_status(StatusCode::BAD_REQUEST);
 
-    let row: (bool, bool) = sqlx::query_as(
-        "SELECT auto_stop_enabled, auto_start_enabled FROM projects WHERE id = ?",
+    let row: (bool, bool, Option<String>) = sqlx::query_as(
+        "SELECT auto_stop_enabled, auto_start_enabled, custom_domain FROM projects WHERE id = ?",
     ).bind("worker-settings").fetch_one(&db).await.unwrap();
-    assert_eq!(row, (false, false));
+    assert_eq!(row, (false, false, None));
 }
 
 #[tokio::test]

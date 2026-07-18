@@ -23,6 +23,9 @@ pub struct ValidateComposeRequest {
     pub compose: String,
     /// Optional explicit public service name.
     pub public_service: Option<String>,
+    /// Background projects have no public Compose service.
+    #[serde(default)]
+    pub is_background: bool,
     /// Existing project id — used to compute missing grants.
     pub project_id: Option<String>,
 }
@@ -71,7 +74,11 @@ pub async fn validate_compose(
     let (_compose, report) =
         match analyze_compose_yaml(
             &payload.compose,
-            payload.public_service.as_deref(),
+            if payload.is_background {
+                None
+            } else {
+                payload.public_service.as_deref()
+            },
             payload.project_id.as_deref(),
         ) {
             Ok(v) => v,

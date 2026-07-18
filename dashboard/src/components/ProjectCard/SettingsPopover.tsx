@@ -186,10 +186,10 @@ export default function SettingsPopover({
 
   // Load routes when switching to routes tab
   useEffect(() => {
-    if (settingsTab === 'routes') {
+    if (settingsTab === 'routes' && !project.is_background) {
       loadRoutes();
     }
-  }, [settingsTab, loadRoutes]);
+  }, [settingsTab, project.is_background, loadRoutes]);
 
   // Load capabilities when switching to capabilities tab
   useEffect(() => {
@@ -278,7 +278,7 @@ export default function SettingsPopover({
           >
             General
           </button>
-          <button
+          {!project.is_background && <button
             type="button"
             onClick={() => setSettingsTab('routes')}
             className={`flex-1 px-3 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
@@ -288,7 +288,7 @@ export default function SettingsPopover({
             }`}
           >
             Routes
-          </button>
+          </button>}
           {isCompose && (
             <button
               type="button"
@@ -306,6 +306,16 @@ export default function SettingsPopover({
 
         {settingsTab === 'general' && (
           <div className="space-y-3">
+            <div className="rounded bg-slate-900/50 px-2 py-2">
+              <div className="text-xs text-slate-300">
+                {project.is_background ? 'Background project' : 'Web app / HTTP API'}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                {project.is_background
+                  ? 'No managed URL. This project stays running.'
+                  : `Managed URL: ${project.id}.${domain}`}
+              </div>
+            </div>
             <div>
               <span className="text-xs text-slate-400 block mb-1.5">Project name</span>
               <input
@@ -337,7 +347,7 @@ export default function SettingsPopover({
             </button>
 
             {/* Custom domain */}
-            <div className="border-t border-slate-700/50 pt-3 space-y-2">
+            {!project.is_background && <div className="border-t border-slate-700/50 pt-3 space-y-2">
               <div className="text-[11px] text-slate-500">
                 Subdomain:{' '}
                 <span className="text-slate-300 font-mono">
@@ -413,11 +423,11 @@ export default function SettingsPopover({
                   );
                 })()}
               </div>
-            </div>
+            </div>}
           </div>
         )}
 
-        {settingsTab === 'routes' && (
+        {settingsTab === 'routes' && !project.is_background && (
           <div className="space-y-3">
             {routesLoading ? (
               <div className="flex items-center justify-center py-4">

@@ -148,6 +148,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/projects", post(routes::projects::create_project))
         .route("/projects/{id}", get(routes::projects::get_project))
         .route("/projects/{id}/settings", patch(routes::settings::update_project_settings))
+        .route("/projects/{id}/routes", post(routes::projects::create_route))
         .route("/projects/{id}/stop", post(routes::manage::handlers::stop_project))
         .route("/projects/{id}/start", post(routes::manage::handlers::start_project))
         .route("/projects/{id}", delete(routes::manage::handlers::delete_project))

@@ -5,10 +5,11 @@ import { fetchAllStats, fetchDeployLogs, ProjectStatus } from '../api';
 interface DeployProgressModalProps {
   projectId: string;
   domain: string;
+  isBackground: boolean;
   onClose: () => void;
 }
 
-export default function DeployProgressModal({ projectId, domain, onClose }: DeployProgressModalProps) {
+export default function DeployProgressModal({ projectId, domain, isBackground, onClose }: DeployProgressModalProps) {
   const [deployLines, setDeployLines] = useState<string[]>([]);
   const hadLogs = useRef(false);
   const [status, setStatus] = useState<ProjectStatus>(ProjectStatus.Deploying);
@@ -76,7 +77,7 @@ export default function DeployProgressModal({ projectId, domain, onClose }: Depl
     }
   }, []);
 
-  const isSuccess = status === ProjectStatus.Running;
+  const isSuccess = status === ProjectStatus.Running || (isBackground && status === ProjectStatus.Completed);
   const isError = status === ProjectStatus.Error;
   const isDone = isSuccess || isError;
 
@@ -120,9 +121,7 @@ export default function DeployProgressModal({ projectId, domain, onClose }: Depl
 
         {/* Info */}
         <div className="px-4 py-2 border-b border-slate-700/30 flex items-center gap-2 text-xs text-slate-400 flex-shrink-0">
-          <span>
-            https://{projectId}.{domain}
-          </span>
+          <span>{isBackground ? 'No managed URL' : `https://${projectId}.${domain}`}</span>
         </div>
 
         {/* Log content */}
@@ -154,15 +153,21 @@ export default function DeployProgressModal({ projectId, domain, onClose }: Depl
           )}
           {isDone && isSuccess && (
             <div className="mb-2 px-3 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400">
-              Deployment complete. Your app is live at{' '}
-              <a
-                href={`https://${projectId}.${domain}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-emerald-300 underline"
-              >
-                https://{projectId}.{domain}
-              </a>
+              {isBackground ? (
+                'Deployment complete.'
+              ) : (
+                <>
+                  Deployment complete. Your app is live at{' '}
+                  <a
+                    href={`https://${projectId}.${domain}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-300 underline"
+                  >
+                    https://{projectId}.{domain}
+                  </a>
+                </>
+              )}
             </div>
           )}
           {isDone && isError && (

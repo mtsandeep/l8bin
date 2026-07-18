@@ -30,7 +30,13 @@ pub async fn poll_project_status(
                 let status: ProjectStatus = json["status"].as_str()
                     .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
                     .unwrap_or(ProjectStatus::Stopped);
-                if status == ProjectStatus::Running || status == ProjectStatus::Stopped || status == ProjectStatus::Error {
+                if matches!(
+                    status,
+                    ProjectStatus::Running
+                        | ProjectStatus::Stopped
+                        | ProjectStatus::Error
+                        | ProjectStatus::Completed
+                ) {
                     // Print any remaining new logs before returning
                     fetch_and_print_new_logs(client, server, project_id, &mut seen_lines).await;
                     return Ok(Some(status));
@@ -120,22 +126,43 @@ pub async fn show_project_status(
         anyhow::bail!("Project '{}' not found (HTTP {})", project_id, resp.status());
     }
 
-    let json: serde_json::Value = resp.json().await?;
-    let project = &json["project"];
+    let project: serde_json::Value = resp.json().await?;
+    let stats = client
+        .get(format!(
+            "{}/projects/{}/stats",
+            server.trim_end_matches('/'),
+            project_id
+        ))
+        .send()
+        .await
+        .ok()
+        .filter(|response| response.status().is_success());
+    let stats_json = match stats {
+        Some(response) => response.json::<serde_json::Value>().await.ok(),
+        None => None,
+    };
 
     let status: ProjectStatus = project["status"].as_str()
         .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
         .unwrap_or(ProjectStatus::Stopped);
     let status_str = status.to_string();
     let name = project["name"].as_str().unwrap_or(project_id);
-    let image = project["public_stats"]["image"].as_str();
+    let is_background = project["is_background"].as_bool().unwrap_or(false);
+    let services = stats_json
+        .as_ref()
+        .and_then(|stats| stats["services"].as_array());
+    let image = project["public_stats"]["image"]
+        .as_str()
+        .or_else(|| services.and_then(|items| items.first()).and_then(|svc| svc["image"].as_str()));
     let custom_domain = project["custom_domain"].as_str();
     let service_count = project["service_count"].as_u64().unwrap_or(1);
-    let url = if let Some(d) = custom_domain.filter(|s| !s.is_empty()) {
-        format!("https://{}", d)
+    let url = if is_background {
+        None
+    } else if let Some(d) = custom_domain.filter(|s| !s.is_empty()) {
+        Some(format!("https://{}", d))
     } else {
         let domain = crate::auth::fetch_platform_domain(client, server).await;
-        crate::auth::project_live_url(project_id, &domain)
+        Some(crate::auth::project_live_url(project_id, &domain))
     };
 
     // Status color
@@ -151,7 +178,11 @@ pub async fn show_project_status(
     println!("  {} {}", "Project:".dimmed(), name.cyan());
     println!("  {} {}", "ID:".dimmed(), project_id.dimmed());
     println!("  {} {}", "Status:".dimmed(), status_colored);
-    println!("  {} {}", "URL:".dimmed(), url.cyan());
+    if let Some(url) = url {
+        println!("  {} {}", "URL:".dimmed(), url.cyan());
+    } else {
+        println!("  {} {}", "URL:".dimmed(), "No managed URL".dimmed());
+    }
     if let Some(img) = image {
         let short = if img.len() > 40 { &img[..37] } else { img };
         println!("  {} {}", "Image:".dimmed(), short.dimmed());
@@ -161,7 +192,7 @@ pub async fn show_project_status(
     }
 
     // Show services
-    if let Some(services) = json["services"].as_array() {
+    if let Some(services) = services {
         if !services.is_empty() {
             println!();
             for svc in services {
@@ -179,7 +210,11 @@ pub async fn show_project_status(
                     _ => svc_status.to_string().yellow(),
                 };
 
-                let pub_tag = if is_public { " (public)".dimmed() } else { "".dimmed() };
+                let pub_tag = if is_public && !is_background {
+                    " (public)".dimmed()
+                } else {
+                    "".dimmed()
+                };
                 let stats = match (cpu, mem_mb) {
                     (Some(c), Some(m)) => format!("  {} cpu, {}MB mem", format!("{:.1}%", c), m),
                     (Some(c), None) => format!("  {} cpu", format!("{:.1}%", c)),

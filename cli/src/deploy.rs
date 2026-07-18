@@ -23,14 +23,15 @@ pub async fn deploy(
     server: &str,
     project_id: &str,
     image: &str,
-    port: u16,
+    port: Option<u16>,
+    is_background: bool,
     node_id: Option<&str>,
     cmd: Option<&str>,
     memory: Option<i64>,
     cpu: Option<f64>,
     auto_stop_enabled: bool,
 ) -> Result<DeployResponse> {
-    send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, false, reqwest::Method::POST, "deploy request failed".into(), "deploy failed".into()).await
+    send_deploy(client, server, project_id, image, port, is_background, node_id, cmd, memory, cpu, auto_stop_enabled, false, reqwest::Method::POST, "deploy request failed".into(), "deploy failed".into()).await
 }
 
 /// Try POST /deploy (create); on 409 Conflict fall back to PUT /deploy (redeploy).
@@ -39,19 +40,20 @@ pub async fn deploy_or_redeploy(
     server: &str,
     project_id: &str,
     image: &str,
-    port: u16,
+    port: Option<u16>,
+    is_background: bool,
     node_id: Option<&str>,
     cmd: Option<&str>,
     memory: Option<i64>,
     cpu: Option<f64>,
     auto_stop_enabled: bool,
 ) -> Result<DeployResponse> {
-    match deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled).await {
+    match deploy(client, server, project_id, image, port, is_background, node_id, cmd, memory, cpu, auto_stop_enabled).await {
         Ok(resp) => Ok(resp),
         Err(e) => {
             // send_deploy bails with "<msg> (409 Conflict): ..." when the project exists
             if format!("{e:#}").contains("409 Conflict") {
-                redeploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, false).await
+                redeploy(client, server, project_id, image, port, is_background, node_id, cmd, memory, cpu, auto_stop_enabled, false).await
             } else {
                 Err(e)
             }
@@ -65,7 +67,8 @@ pub async fn redeploy(
     server: &str,
     project_id: &str,
     image: &str,
-    port: u16,
+    port: Option<u16>,
+    is_background: bool,
     node_id: Option<&str>,
     cmd: Option<&str>,
     memory: Option<i64>,
@@ -73,7 +76,7 @@ pub async fn redeploy(
     auto_stop_enabled: bool,
     stage_only: bool,
 ) -> Result<DeployResponse> {
-    send_deploy(client, server, project_id, image, port, node_id, cmd, memory, cpu, auto_stop_enabled, stage_only, reqwest::Method::PUT, "redeploy request failed".into(), "redeploy failed".into()).await
+    send_deploy(client, server, project_id, image, port, is_background, node_id, cmd, memory, cpu, auto_stop_enabled, stage_only, reqwest::Method::PUT, "redeploy request failed".into(), "redeploy failed".into()).await
 }
 
 async fn send_deploy(
@@ -81,7 +84,8 @@ async fn send_deploy(
     server: &str,
     project_id: &str,
     image: &str,
-    port: u16,
+    port: Option<u16>,
+    is_background: bool,
     node_id: Option<&str>,
     cmd: Option<&str>,
     memory: Option<i64>,
@@ -98,6 +102,7 @@ async fn send_deploy(
         "project_id": project_id,
         "image": image,
         "port": port,
+        "is_background": is_background,
         "auto_stop_enabled": auto_stop_enabled,
         "stage_only": stage_only,
     });

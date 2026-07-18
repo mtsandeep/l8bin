@@ -25,14 +25,14 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/deploy` | Session or token | Create a new project deployment. Fails with 409 if project already exists. Body: `{project_id, image, port, name, description, node_id, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain}`. Returns `{status, project_id, url, custom_domain, mapped_port}` |
-| `PUT` | `/deploy` | Session or token | Redeploy an existing project (upsert). Body: same as POST. Returns same as POST. |
+| `POST` | `/deploy` | Session or token | Create a new image deployment. Body includes `{project_id, image, is_background, port, ...}`. Web projects require `port`; background projects require it to be omitted. Returns `{status, project_id, url, ...}`, where `url` is `null` for background projects. |
+| `PUT` | `/deploy` | Session or token | Redeploy an existing project (upsert). Body: same as POST. Omitting `is_background` preserves an existing project's workload type. |
 
 ### Compose Deploy
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/deploy/compose` | Session or token | Deploy a multi-service compose project. Multipart: `project_id` (text), `compose` (YAML file), `target_services` (optional, comma-separated). Returns `{status, project_id, url}` |
+| `POST` | `/deploy/compose` | Session or token | Deploy a Compose project. Multipart includes `project_id`, `compose`, and explicit `is_background`; public-service selection is ignored for background projects. Returns `{status, project_id, url}`, where `url` is `null` for background projects. |
 
 ### Projects
 

@@ -45,6 +45,10 @@ enum Commands {
         #[arg(long, default_value = "3000")]
         port: u16,
 
+        /// Run as a background project with no managed HTTP URL
+        #[arg(long)]
+        background: bool,
+
         /// Path to project directory (default: current dir)
         #[arg(long, default_value = ".")]
         path: std::path::PathBuf,
@@ -173,6 +177,7 @@ async fn main() -> Result<()> {
         Commands::Deploy {
             project,
             port,
+            background,
             path,
             node,
             dockerfile,
@@ -198,15 +203,23 @@ async fn main() -> Result<()> {
             let server = auth::resolve_server(&cfg)?;
 
             // Resolve effective node: project's sticky node_id takes precedence over --node flag
-            let effective_node = if let Ok(proj_json) = auth::session_get(&client, &server, &format!("/projects/{}", project)).await {
-                let existing = proj_json.get("node_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-                if existing.is_some() && node.is_some() && existing != node.as_deref() {
-                    eprintln!("  Note: --node ignored, project is pinned to node '{}'", existing.unwrap());
+            let existing_project =
+                auth::session_get(&client, &server, &format!("/projects/{}", project)).await.ok();
+            let effective_node = if let Some(proj_json) = existing_project.as_ref() {
+                let existing_node = proj_json.get("node_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                if existing_node.is_some() && node.is_some() && existing_node != node.as_deref() {
+                    eprintln!("  Note: --node ignored, project is pinned to node '{}'", existing_node.unwrap());
                 }
-                existing.or(node.as_deref()).map(|s| s.to_string())
+                existing_node.or(node.as_deref()).map(|s| s.to_string())
             } else {
                 node.clone()
             };
+            let effective_background = background
+                || existing_project
+                    .as_ref()
+                    .and_then(|project| project.get("is_background"))
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
 
             // Check for compose file (auto-detect or forced via --compose)
             let compose_file = ship::detect_compose_file(&path);
@@ -238,6 +251,7 @@ async fn main() -> Result<()> {
                         target_services,
                         node_id: effective_node.clone(),
                         grant_capabilities: grant_capability,
+                        is_background: effective_background,
                     },
                     platform.as_deref(),
                 ).await?;
@@ -245,10 +259,14 @@ async fn main() -> Result<()> {
                 // Poll for completion (2 min timeout, non-interactive)
                 let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
                 match final_status.as_ref() {
-                    Some(ProjectStatus::Running) => {
-                        let domain = auth::fetch_platform_domain(&client, &server).await;
-                        let url = auth::project_live_url(&project, &domain);
-                        println!("Deployed! {}", url);
+                    Some(ProjectStatus::Running | ProjectStatus::Completed) => {
+                        if effective_background {
+                            println!("Deployed! No managed URL (background project).");
+                        } else {
+                            let domain = auth::fetch_platform_domain(&client, &server).await;
+                            let url = auth::project_live_url(&project, &domain);
+                            println!("Deployed! {}", url);
+                        }
                     }
                     Some(ProjectStatus::Error) => {
                         println!("Deploy failed for project '{}'.", project);
@@ -286,7 +304,8 @@ async fn main() -> Result<()> {
                     &server,
                     &project,
                     &image_id,
-                    port,
+                    if effective_background { None } else { Some(port) },
+                    effective_background,
                     effective_node.as_deref(),
                     cmd.as_deref(),
                     memory,
@@ -299,7 +318,10 @@ async fn main() -> Result<()> {
                     // Poll for completion (2 min timeout, non-interactive)
                     let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
                     match final_status.as_ref() {
-                        Some(ProjectStatus::Running) => {
+                        Some(ProjectStatus::Running | ProjectStatus::Completed) => {
+                        if effective_background {
+                            println!("Deployed! No managed URL (background project).");
+                            } else {
                             let url = if let Some(u) = response.url.as_deref().filter(|u| !u.is_empty()) {
                                 u.to_string()
                             } else {
@@ -307,6 +329,7 @@ async fn main() -> Result<()> {
                                 auth::project_live_url(&project, &domain)
                             };
                             println!("Deployed! {}", url);
+                        }
                         }
                         Some(ProjectStatus::Error) => {
                             println!("Deploy failed for project '{}'.", project);
@@ -318,7 +341,10 @@ async fn main() -> Result<()> {
                         }
                     }
                 } else {
-                    println!("Deployed! {}", response.url.as_deref().unwrap_or("?"));
+                    match response.url.as_deref() {
+                        Some(url) => println!("Deployed! {}", url),
+                        None => println!("Deployed! No managed URL (background project)."),
+                    }
                 }
 
                 // Clean up

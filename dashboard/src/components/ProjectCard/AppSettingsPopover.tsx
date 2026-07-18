@@ -1,11 +1,12 @@
 import { ChevronDown, ChevronRight, FileCode, Info, Layers, Terminal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { DeployType, type Project, recreateProject, updateProjectSettings } from '../../api';
+import { DeployType, type Project, recreateProject, type ServiceInfo, updateProjectSettings } from '../../api';
 import ResourceLimitInput from '../ResourceLimitInput';
 import { useToast } from '../ToastContext';
 
 interface AppSettingsPopoverProps {
   project: Project;
+  service?: ServiceInfo | null;
   isStopping: boolean;
   onRefresh: () => void;
   onClose: () => void;
@@ -14,12 +15,13 @@ interface AppSettingsPopoverProps {
 
 export default function AppSettingsPopover({
   project,
+  service,
   isStopping,
   onRefresh,
   onClose,
   onViewServices,
 }: AppSettingsPopoverProps) {
-  const ps = project.public_stats;
+  const ps = service ?? project.public_stats;
   const isCompose = project.deploy_type === DeployType.Compose;
   const isMultiService = (project.service_count ?? 0) > 1;
 
@@ -148,7 +150,7 @@ export default function AppSettingsPopover({
             />
           )}
         </div>
-        <div>
+        {!project.is_background && <div>
           <span className="text-xs text-slate-400 block mb-1.5">App port</span>
           {isCompose ? (
             <input
@@ -167,7 +169,7 @@ export default function AppSettingsPopover({
               className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
             />
           )}
-        </div>
+        </div>}
         {!isCompose && (
           <div>
             <span className="text-xs text-slate-400 block mb-1.5">Command override</span>

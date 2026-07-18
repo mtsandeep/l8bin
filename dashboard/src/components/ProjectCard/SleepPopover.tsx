@@ -70,12 +70,12 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
             {settingsError}
           </div>
         )}
-        {!project.is_background && (
-          <p className="text-[11px] leading-relaxed text-amber-300/80">
-            Auto-stop stops every service in this project. Disable it for scheduled jobs, queue workers, or other tasks that must remain running.
+        {project.is_background ? (
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            Auto-stop and request-driven auto-start are not available for background projects.
           </p>
-        )}
-        <label className="flex items-center justify-between gap-2 cursor-pointer">
+        ) : null}
+        {!project.is_background && <label className="flex items-center justify-between gap-2 cursor-pointer">
           <span className="text-xs text-slate-300">Auto-stop when idle</span>
           <button
             type="button"
@@ -88,8 +88,8 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
               className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStop ? 'translate-x-3.5' : 'translate-x-0.5'}`}
             />
           </button>
-        </label>
-        {autoStop && (
+        </label>}
+        {!project.is_background && autoStop && (
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-slate-300">Idle timeout (mins)</span>
             <input
@@ -101,7 +101,7 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
             />
           </div>
         )}
-        <label className="flex items-center justify-between gap-2 cursor-pointer">
+        {!project.is_background && <label className="flex items-center justify-between gap-2 cursor-pointer">
           <span className="text-xs text-slate-300">Auto-start on visit</span>
           <button
             type="button"
@@ -114,7 +114,7 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
               className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStart ? 'translate-x-3.5' : 'translate-x-0.5'}`}
             />
           </button>
-        </label>
+        </label>}
       </div>
     </div>
   );

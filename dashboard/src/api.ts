@@ -69,6 +69,7 @@ export interface Project {
   name: string | null;
   description: string | null;
   is_background: boolean;
+  is_staged: boolean;
   node_id: string | null;
   status: ProjectStatus;
   last_active_at: number | null;
@@ -152,7 +153,8 @@ export interface ProjectSettings {
 export interface DeployPayload {
   project_id: string;
   image: string;
-  port: number;
+  port?: number;
+  is_background: boolean;
   name?: string;
   description?: string;
   node_id?: string | null;
@@ -242,7 +244,8 @@ export async function updateProjectSettings(projectId: string, settings: Project
 export async function redeployProject(
   projectId: string,
   image: string,
-  port: number,
+  port: number | undefined,
+  isBackground: boolean,
   cmd?: string | null,
   memoryLimitMb?: number | null,
   cpuLimit?: number | null,
@@ -256,6 +259,7 @@ export async function redeployProject(
       project_id: projectId,
       image,
       port,
+      is_background: isBackground,
       cmd: cmd ?? undefined,
       memory_limit_mb: memoryLimitMb ?? undefined,
       cpu_limit: cpuLimit ?? undefined,
@@ -560,7 +564,7 @@ export interface ProjectCapabilityStatus extends CapabilityInfo {
 
 export async function validateCompose(
   compose: string,
-  opts?: { project_id?: string; public_service?: string },
+  opts?: { project_id?: string; public_service?: string; is_background?: boolean },
 ): Promise<ValidateComposeResponse> {
   const res = await fetch(`${API_BASE}/compose/validate`, {
     method: 'POST',
@@ -570,6 +574,7 @@ export async function validateCompose(
       compose,
       project_id: opts?.project_id,
       public_service: opts?.public_service,
+      is_background: opts?.is_background,
     }),
   });
   if (!res.ok) {
@@ -622,6 +627,7 @@ export async function revokeProjectCapability(
 export interface ComposeDeployPayload {
   project_id: string;
   compose: string;
+  is_background: boolean;
   name?: string;
   description?: string;
   node_id?: string | null;
@@ -638,6 +644,7 @@ export interface ComposeDeployPayload {
 export async function deployComposeProject(payload: ComposeDeployPayload): Promise<string[]> {
   const form = new FormData();
   form.append('project_id', payload.project_id);
+  form.append('is_background', String(payload.is_background));
   form.append('compose', new Blob([payload.compose], { type: 'text/yaml' }), 'compose.yaml');
   if (payload.name) form.append('name', payload.name);
   if (payload.description) form.append('description', payload.description);

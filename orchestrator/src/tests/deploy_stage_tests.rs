@@ -87,6 +87,42 @@ services:
     let project_body: Value = project.json();
     assert_eq!(project_body["status"], "unconfigured");
     assert_eq!(project_body["node_id"], "local");
+    assert_eq!(project_body["is_staged"], true);
+
+    cleanup_project_dir(project_id);
+}
+
+#[tokio::test]
+async fn background_single_stage_has_no_url_and_remains_resumable() {
+    let server = logged_in_server().await;
+    let project_id = "stage-background-1";
+    cleanup_project_dir(project_id);
+
+    server
+        .post("/projects")
+        .json(&json!({"id": project_id}))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    let resp = server
+        .put("/deploy")
+        .json(&json!({
+            "project_id": project_id,
+            "image": "busybox:latest",
+            "is_background": true,
+            "stage_only": true
+        }))
+        .await;
+
+    resp.assert_status(StatusCode::OK);
+    let body: Value = resp.json();
+    assert_eq!(body["status"], "unconfigured");
+    assert!(body["url"].is_null());
+
+    let project: Value = server.get(&format!("/projects/{project_id}")).await.json();
+    assert_eq!(project["is_background"], true);
+    assert_eq!(project["is_staged"], true);
+    assert!(project["public_stats"].is_null());
 
     cleanup_project_dir(project_id);
 }

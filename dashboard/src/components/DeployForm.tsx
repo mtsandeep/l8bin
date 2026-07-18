@@ -180,6 +180,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [image, setImage] = useState('');
   const [port, setPort] = useState('80');
   const [composeYaml, setComposeYaml] = useState('');
+  const [isBackground, setIsBackground] = useState(false);
 
   // Validate step state
   const [validateResult, setValidateResult] = useState<ValidateComposeResponse | null>(null);
@@ -252,6 +253,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
     try {
       const result = await validateCompose(composeYaml.trim(), {
         project_id: projectId.trim() || undefined,
+        is_background: isBackground,
       });
       setValidateResult(result);
       // Keep approvals that are still missing; drop ones no longer required
@@ -289,12 +291,13 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
         const warnings = await deployComposeProject({
           project_id: projectId.trim(),
           compose: composeYaml.trim(),
+          is_background: isBackground,
           name: projectName.trim() || undefined,
           description: projectDescription.trim() || undefined,
           node_id: selectedNode,
-          auto_stop_enabled: autoStop,
+          auto_stop_enabled: isBackground ? false : autoStop,
           auto_stop_timeout_mins: timeoutMins,
-          auto_start_enabled: autoStart,
+          auto_start_enabled: isBackground ? false : autoStart,
           grant_capabilities: approvedCapabilityIds.length > 0 ? approvedCapabilityIds : undefined,
         });
         for (const w of warnings) showToast(w, 'warning');
@@ -302,13 +305,14 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
         await deployProject({
           project_id: projectId.trim(),
           image: image.trim(),
-          port: parseInt(port, 10),
+          port: isBackground ? undefined : parseInt(port, 10),
+          is_background: isBackground,
           name: projectName.trim() || undefined,
           description: projectDescription.trim() || undefined,
           node_id: selectedNode,
-          auto_stop_enabled: autoStop,
+          auto_stop_enabled: isBackground ? false : autoStop,
           auto_stop_timeout_mins: timeoutMins,
-          auto_start_enabled: autoStart,
+          auto_start_enabled: isBackground ? false : autoStart,
           cmd: cmd.trim() || undefined,
           memory_limit_mb: memMb,
           cpu_limit: cpuLimit,
@@ -354,6 +358,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
       <DeployProgressModal
         projectId={deployProjectId}
         domain={domain}
+        isBackground={isBackground}
         onClose={() => {
           setShowProgress(false);
           onClose();
@@ -413,6 +418,44 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             </div>
 
             <div>
+              <span className="block text-xs font-medium text-slate-400 mb-1.5">Project type</span>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  {
+                    background: false,
+                    title: 'Web app / HTTP API',
+                    description: 'Expose a managed URL',
+                  },
+                  {
+                    background: true,
+                    title: 'Background project',
+                    description: 'No managed URL; stays running',
+                  },
+                ].map((option) => (
+                  <button
+                    key={option.title}
+                    type="button"
+                    onClick={() => {
+                      setIsBackground(option.background);
+                      if (option.background) {
+                        setAutoStop(false);
+                        setAutoStart(false);
+                      }
+                    }}
+                    className={`rounded-md border px-3 py-2 text-left transition-colors cursor-pointer ${
+                      isBackground === option.background
+                        ? 'border-violet-500/50 bg-violet-500/10'
+                        : 'border-slate-700/50 bg-slate-900/50 hover:border-slate-600'
+                    }`}
+                  >
+                    <span className="block text-xs font-medium text-slate-200">{option.title}</span>
+                    <span className="block text-[10px] text-slate-500 mt-0.5">{option.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
               <label htmlFor="deploy-project-id" className="block text-xs font-medium text-slate-400 mb-1.5">
                 Project ID
               </label>
@@ -433,7 +476,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                 className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
               />
               <p className="text-[11px] text-slate-500 mt-1">
-                Used as subdomain:{' '}
+                {isBackground ? 'Hostname reserved: ' : 'Used as subdomain: '}
                 <span className="text-slate-400">
                   {projectId || 'my-app'}.{domain}
                 </span>
@@ -485,7 +528,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                   />
                 </div>
 
-                <div>
+                {!isBackground && <div>
                   <label htmlFor="deploy-app-port" className="block text-xs font-medium text-slate-400 mb-1.5">
                     App Port
                   </label>
@@ -503,7 +546,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                   <p className="text-[11px] text-slate-500 mt-1">
                     Port your app listens on inside the container (e.g. 80 for nginx, 3000 for Node)
                   </p>
-                </div>
+                </div>}
               </>
             )}
 
@@ -712,64 +755,73 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
             <StepIndicator label={stepLabels.settings} />
 
-            <div className="flex items-center gap-1.5 text-slate-400 mb-1">
-              <Moon size={13} />
-              <span className="text-xs font-medium">Sleep Settings</span>
-            </div>
-
-            {/* Auto-stop toggle */}
-            <label className="flex items-center justify-between gap-2 cursor-pointer">
-              <span className="text-xs text-slate-300">Auto-stop when idle</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoStop}
-                onClick={() => setAutoStop((v) => !v)}
-                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                  autoStop ? 'bg-violet-500' : 'bg-slate-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                    autoStop ? 'translate-x-3.5' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
-            </label>
-
-            {/* Idle timeout — only shown when auto-stop is enabled */}
-            {autoStop && (
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-slate-300">Idle timeout (mins)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={timeoutMins}
-                  onChange={(e) => setTimeoutMins(Number(e.target.value))}
-                  className="w-16 bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-200 text-right focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
-                />
+            {isBackground ? (
+              <div className="rounded-md border border-slate-700/50 bg-slate-900/40 px-3 py-3">
+                <div className="text-xs font-medium text-slate-300">Background project</div>
+                <p className="text-[11px] leading-relaxed text-slate-500 mt-1">
+                  Background projects stay running because there is no web request to wake them. Auto-stop and
+                  request-driven auto-start are off.
+                </p>
               </div>
-            )}
+            ) : (
+              <>
+                <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+                  <Moon size={13} />
+                  <span className="text-xs font-medium">Sleep Settings</span>
+                </div>
 
-            {/* Auto-start toggle */}
-            <label className="flex items-center justify-between gap-2 cursor-pointer">
-              <span className="text-xs text-slate-300">Auto-start on visit</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoStart}
-                onClick={() => setAutoStart((v) => !v)}
-                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
-                  autoStart ? 'bg-violet-500' : 'bg-slate-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                    autoStart ? 'translate-x-3.5' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
-            </label>
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <span className="text-xs text-slate-300">Auto-stop when idle</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoStop}
+                    onClick={() => setAutoStop((v) => !v)}
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
+                      autoStop ? 'bg-violet-500' : 'bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                        autoStop ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </label>
+
+                {autoStop && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-slate-300">Idle timeout (mins)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={timeoutMins}
+                      onChange={(e) => setTimeoutMins(Number(e.target.value))}
+                      className="w-16 bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-200 text-right focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
+                    />
+                  </div>
+                )}
+
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <span className="text-xs text-slate-300">Auto-start on visit</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoStart}
+                    onClick={() => setAutoStart((v) => !v)}
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
+                      autoStart ? 'bg-violet-500' : 'bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                        autoStart ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </label>
+              </>
+            )}
 
             {/* Command override — only for single image mode */}
             {deployMode === DeployType.Image && (

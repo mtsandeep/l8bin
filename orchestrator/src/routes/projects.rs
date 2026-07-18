@@ -20,6 +20,8 @@ pub struct CreateProjectRequest {
     pub id: String,
     pub name: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub is_background: bool,
 }
 
 // ── Public Stats (service-level data for the public service) ──────────────────
@@ -35,6 +37,8 @@ pub struct ProjectResponse {
     pub name: Option<String>,
     pub description: Option<String>,
     pub is_background: bool,
+    /// True when deployment artifacts are ready for a staged project to start.
+    pub is_staged: bool,
     pub node_id: Option<String>,
     pub status: String,
     pub last_active_at: Option<i64>,
@@ -161,6 +165,7 @@ async fn to_project_response(
         name: project.name.clone(),
         description: project.description.clone(),
         is_background: project.is_background,
+        is_staged: crate::routes::manage::helpers::project_is_staged(project),
         node_id: project.node_id.clone(),
         status: project.status.to_string(),
         last_active_at: project.last_active_at,
@@ -251,12 +256,15 @@ pub async fn create_project(
     let now = chrono::Utc::now().timestamp();
 
     let result = sqlx::query(
-        "INSERT INTO projects (id, user_id, name, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        "INSERT INTO projects (id, user_id, name, description, is_background, status, auto_stop_enabled, auto_start_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
     )
     .bind(&payload.id)
     .bind(&user_id)
     .bind(&payload.name)
     .bind(&payload.description)
+    .bind(payload.is_background)
+    .bind(!payload.is_background)
+    .bind(!payload.is_background)
     .bind(now)
     .bind(now)
     .execute(&state.db)
@@ -441,6 +449,29 @@ pub async fn create_route(
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"}))).into_response();
+    }
+
+    let is_background: Option<bool> = match sqlx::query_scalar(
+        "SELECT is_background FROM projects WHERE id = ?",
+    )
+    .bind(&project_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!(project_id = %project_id, error = %e, "create route: failed to read project");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"}))).into_response();
+        }
+    };
+    match is_background {
+        None => {
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Project not found"}))).into_response();
+        }
+        Some(true) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "background projects cannot configure HTTP routes"}))).into_response();
+        }
+        Some(false) => {}
     }
 
     if payload.route_type != "path" && payload.route_type != "alias" {

@@ -17,6 +17,8 @@ use crate::AppState;
 pub struct DeployResponse {
     pub status: String,
     pub project_id: String,
+    /// Managed application URL. Background projects return `null`.
+    pub url: Option<String>,
     pub message: String,
 }
 
@@ -26,7 +28,7 @@ pub struct DeployRequest {
     pub image: String,
     pub port: Option<i64>,
     #[serde(default)]
-    pub is_background: bool,
+    pub is_background: Option<bool>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub node_id: Option<String>, // optional override
@@ -198,20 +200,33 @@ async fn execute_deploy(
 ) -> axum::response::Response {
     let now = chrono::Utc::now().timestamp();
 
-    if payload.is_background && payload.port.is_some() {
+    // PUT requests that omit workload type preserve the current project setting.
+    let existing_background: Option<bool> = if is_update {
+        sqlx::query_scalar("SELECT is_background FROM projects WHERE id = ?")
+            .bind(&payload.project_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let is_background = resolve_background(payload.is_background, existing_background);
+
+    if is_background && payload.port.is_some() {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "background projects must not provide an HTTP port"}))).into_response();
     }
-    if !payload.is_background && payload.port.is_none() {
+    if !is_background && payload.port.is_none() {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "web projects require an HTTP port"}))).into_response();
     }
 
-    let auto_stop_enabled = if payload.is_background { false } else { payload.auto_stop_enabled.unwrap_or(true) };
+    let auto_stop_enabled = if is_background { false } else { payload.auto_stop_enabled.unwrap_or(true) };
     let auto_stop_timeout_mins = payload.auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
-    let auto_start_enabled = if payload.is_background { false } else { payload.auto_start_enabled.unwrap_or(true) };
+    let auto_start_enabled = if is_background { false } else { payload.auto_start_enabled.unwrap_or(true) };
 
     // On redeploy, preserve existing sleep settings unless explicitly provided
     let preserve_sleep = is_update && payload.auto_stop_enabled.is_none() && payload.auto_start_enabled.is_none();
-    let (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled) = if payload.is_background {
+    let (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled) = if is_background {
         (false, auto_stop_timeout_mins, false)
     } else if preserve_sleep {
         let existing = sqlx::query_as::<_, (bool, i64, bool)>(
@@ -245,7 +260,7 @@ async fn execute_deploy(
         project_id = %payload.project_id,
         image = %payload.image,
         port = ?payload.port,
-        is_background = payload.is_background,
+        is_background,
         is_update = is_update,
         stage_only = stage_only,
         "deploy request received"
@@ -325,7 +340,7 @@ async fn execute_deploy(
         .bind(&user_id)
         .bind(&payload.name)
         .bind(&payload.description)
-        .bind(payload.is_background)
+        .bind(is_background)
         .bind(&payload.image)
         .bind(payload.port)
         .bind(initial_status.clone())
@@ -354,7 +369,7 @@ async fn execute_deploy(
         .bind(&user_id)
         .bind(&payload.name)
         .bind(&payload.description)
-        .bind(payload.is_background)
+        .bind(is_background)
         .bind(&payload.image)
         .bind(payload.port)
         .bind(initial_status.clone())
@@ -524,7 +539,7 @@ async fn execute_deploy(
                 "status": "unconfigured",
                 "project_id": payload.project_id,
                 "node_id": node_id,
-                "url": if payload.is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", payload.project_id, state.config.domain)) },
+                "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", payload.project_id, state.config.domain)) },
                 "message": "Deployment staged. Configure runtime secrets, then start the project.",
             })),
         ).into_response();
@@ -538,6 +553,7 @@ async fn execute_deploy(
     let old_image_clone = old_image.clone();
     let old_node_id_clone = old_node_id.clone();
     let old_volumes_clone = old_volumes.clone();
+    let is_background_clone = is_background;
 
     tokio::spawn(async move {
         crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Deployment started");
@@ -626,7 +642,7 @@ async fn execute_deploy(
                 ProjectStatus::Running,
                 &ProjectUpdateFields {
                     container_id: Some(Some(container_id.clone())),
-                    mapped_port: Some(if payload_clone.is_background { None } else { Some(mapped_port as i64) }),
+                    mapped_port: Some(if is_background_clone { None } else { Some(mapped_port as i64) }),
                     node_id: Some(node_id_clone.clone()),
                     last_active_at: Some(chrono::Utc::now().timestamp()),
                 },
@@ -641,8 +657,8 @@ async fn execute_deploy(
             .bind(&payload_clone.project_id)
             .bind(&payload_clone.image)
             .bind(payload_clone.port)
-            .bind(if payload_clone.is_background { None } else { Some(mapped_port as i64) })
-            .bind(!payload_clone.is_background)
+            .bind(if is_background_clone { None } else { Some(mapped_port as i64) })
+            .bind(!is_background_clone)
             .bind(&container_id)
             .bind(&project_clone.cmd)
             .bind(project_clone.memory_limit_mb)
@@ -765,11 +781,15 @@ async fn execute_deploy(
         Json(json!({
             "status": "deploying",
             "project_id": payload.project_id,
-            "url": if payload.is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", payload.project_id, state.config.domain)) },
+            "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", payload.project_id, state.config.domain)) },
             "message": "Deployment started in background"
         })),
     )
         .into_response()
+}
+
+fn resolve_background(requested: Option<bool>, existing: Option<bool>) -> bool {
+    requested.or(existing).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -777,6 +797,15 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::Semaphore;
     use dashmap::DashMap;
+    use super::resolve_background;
+
+    #[test]
+    fn workload_type_defaults_to_web_and_is_preserved_on_redeploy() {
+        assert!(!resolve_background(None, None));
+        assert!(resolve_background(Some(true), None));
+        assert!(resolve_background(None, Some(true)));
+        assert!(!resolve_background(Some(false), Some(true)));
+    }
 
     #[tokio::test]
     async fn prop_deploy_lock_serializes_concurrent_ops() {

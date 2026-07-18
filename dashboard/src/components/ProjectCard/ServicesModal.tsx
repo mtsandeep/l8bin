@@ -80,7 +80,7 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className="text-xs font-medium text-slate-200 truncate">{svc.service_name}</span>
-                      {svc.is_public && (
+                      {svc.is_public && !project.is_background && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400">public</span>
                       )}
                       <span
@@ -154,6 +154,7 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                       <ServiceSettingsPopover
                         projectId={project.id}
                         service={svc}
+                        isBackground={project.is_background}
                         onRefresh={onRefresh}
                         onClose={() => setOpenSettingsService(null)}
                       />
@@ -163,7 +164,7 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                   {/* Image + port */}
                   <p className="text-[10px] text-slate-500 truncate font-mono mt-1.5" title={svc.image}>
                     {shortImage(svc.image)}
-                    {svc.port
+                    {!project.is_background && svc.port
                       ? svc.mapped_port && svc.mapped_port > 0
                         ? ` | ${svc.mapped_port}:${svc.port}`
                         : ` | :${svc.port}`

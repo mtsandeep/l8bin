@@ -118,6 +118,14 @@ pub async fn update_project_settings(
     {
         return Err((StatusCode::BAD_REQUEST, "background projects cannot enable auto-stop or request-driven auto-start".to_string()));
     }
+    if existing.as_ref().unwrap().is_background
+        && matches!(resolved_domain, Some(Some(_)))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "background projects cannot configure a custom domain".to_string(),
+        ));
+    }
     let old_domain = existing.as_ref().unwrap().custom_domain.clone();
 
     let now = chrono::Utc::now().timestamp();

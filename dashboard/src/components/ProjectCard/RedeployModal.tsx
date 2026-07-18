@@ -35,8 +35,13 @@ export default function RedeployModal({
         </div>
         <div className="px-5 py-4 space-y-3">
           <div className="text-xs text-slate-400">
-            Pull latest <span className="text-slate-300 font-mono">{shortImage(appImage)}</span> and restart on port{' '}
-            <span className="text-slate-300">{appPort}</span>
+            Pull latest <span className="text-slate-300 font-mono">{shortImage(appImage)}</span> and restart
+            {!project.is_background && (
+              <>
+                {' '}
+                on port <span className="text-slate-300">{appPort}</span>
+              </>
+            )}
           </div>
           {volumes.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer">
