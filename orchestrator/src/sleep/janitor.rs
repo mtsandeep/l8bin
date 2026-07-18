@@ -124,8 +124,6 @@ async fn sweep(
                         stop_local_container(state, &project.id, container_id).await;
                     }
                 }
-                let proxy_name = litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
-                stop_local_container_by_name(state, &project.id, &proxy_name).await;
             } else {
                 let node_id = match project.node_id.as_deref() {
                     Some(n) if n != "local" => n.to_string(),
@@ -136,8 +134,6 @@ async fn sweep(
                         stop_remote_container(state, &project.id, &node_id, container_id, false).await;
                     }
                 }
-                let proxy_name = litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
-                stop_remote_container(state, &project.id, &node_id, &proxy_name, true).await;
             }
         } else if let Some((_svc_name, cid)) = containers.first() {
             // Single-service: stop the one container
@@ -149,6 +145,17 @@ async fn sweep(
                     stop_remote_container(state, &project.id, node_id, container_id, false).await;
                 }
             }
+        }
+
+        let proxy_name = litebin_common::types::container_name(
+            &project.id,
+            litebin_common::types::DOCKER_PROXY_SERVICE,
+            None,
+        );
+        if is_local {
+            stop_local_container_by_name(state, &project.id, &proxy_name).await;
+        } else if let Some(node_id) = project.node_id.as_deref() {
+            stop_remote_container(state, &project.id, node_id, &proxy_name, true).await;
         }
     }
 
@@ -170,7 +177,7 @@ async fn stop_local_container(state: &AppState, project_id: &str, container_id: 
     }
 }
 
-/// Stop a local container by name (used for docker-socket-proxy which is not in project_services).
+/// Remove a managed sidecar that is not stored in project_services.
 async fn stop_local_container_by_name(state: &AppState, project_id: &str, container_name: &str) {
     let prefix = format!("litebin-{}.", project_id);
     if let Ok(containers) = state.docker.list_containers_by_prefix(&prefix).await {

@@ -71,6 +71,7 @@ pub async fn start_services(
     // 1. Read + parse compose.yaml, or build single-service plan from projects row
     let extra_env = read_local_project_env(project_id);
     let compose_yaml = litebin_common::docker::DockerManager::read_compose(project_id);
+    let is_single_image = compose_yaml.is_none();
 
     let mut plan = if let Some(yaml) = compose_yaml {
         let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env)
@@ -158,6 +159,14 @@ pub async fn start_services(
     // 2. Ensure per-project network + connect Caddy + optionally orchestrator
     state.docker.ensure_project_network(project_id, None).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("network error: {e}")))?;
+    if proxy_injected {
+        let network = litebin_common::types::docker_observe_network_name(project_id, None);
+        state.docker.ensure_named_network(&network).await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Docker observation network error: {e}")))?;
+    } else {
+        let network = litebin_common::types::docker_observe_network_name(project_id, None);
+        let _ = state.docker.remove_named_network(&network).await;
+    }
 
     let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
         .unwrap_or_else(|_| "litebin-caddy".into());
@@ -326,6 +335,9 @@ pub async fn start_services(
                             match docker.start_existing_container(existing_cid).await {
                                 Ok(()) => {
                                     any_started.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    if let Ok(mut started) = started_containers.lock() {
+                                        started.push((svc.clone(), existing_cid.clone()));
+                                    }
                                     // Re-resolve mapped port from Docker (may have been cleared on previous stop)
                                     let actual_port = if existing_port == 0 && run_config.is_public {
                                         docker.inspect_mapped_port(existing_cid).await.ok().flatten().unwrap_or(0)
@@ -359,6 +371,9 @@ pub async fn start_services(
                 };
 
                 tracing::info!(service = %svc, container_id = %container_id, port = %mapped_port, "service started");
+                if let Ok(mut started) = started_containers.lock() {
+                    started.push((svc.clone(), container_id.clone()));
+                }
 
                 if svc == litebin_common::types::DOCKER_PROXY_SERVICE {
                     if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
@@ -392,11 +407,6 @@ pub async fn start_services(
                     }
                 } else if let Err(e) = status::set_service_running(&db, &run_config.project_id, &svc, &container_id, Some(mapped_port as i64)).await {
                     tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service running (new container)");
-                }
-
-                // Track for rollback
-                if let Ok(mut started) = started_containers.lock() {
-                    started.push((svc, container_id.clone()));
                 }
 
                 Ok(StartedService {
@@ -480,7 +490,7 @@ pub async fn start_services(
             }
         }
 
-        // If the docker-socket-proxy was started in this level, wait for it
+        // If the Docker observation proxy was started in this level, wait for it
         // to be network-ready before starting the next level. Services that
         // mount docker.sock need the proxy to be accepting connections.
         let proxy_cid = started_containers.lock()
@@ -488,9 +498,9 @@ pub async fn start_services(
             .and_then(|s| s.iter().find(|(name, _)| name == litebin_common::types::DOCKER_PROXY_SERVICE).map(|(_, cid)| cid.clone()));
         if let Some(proxy_cid) = proxy_cid {
             if let Err(e) = state.docker.wait_for_network_ready(&proxy_cid).await {
-                tracing::warn!(error = %e, "docker-socket-proxy network readiness timeout, continuing");
+                tracing::warn!(error = %e, "Docker observation proxy network readiness timeout, continuing");
             } else {
-                tracing::info!(container_id = %proxy_cid, "docker-socket-proxy is network-ready");
+                tracing::info!(container_id = %proxy_cid, "Docker observation proxy is network-ready");
             }
         }
     }
@@ -502,10 +512,25 @@ pub async fn start_services(
     if opts.services.is_none() {
         // Full start: retain denormalized public fields for web projects, then
         // derive the project status from the actual per-service outcomes.
+        let single_container_id = if is_single_image {
+            started_containers.lock().ok().and_then(|started| {
+                started
+                    .iter()
+                    .find(|(name, _)| name == "web")
+                    .map(|(_, container_id)| container_id.clone())
+            })
+        } else {
+            None
+        };
+        let persisted_container_id = if public_container_id.is_empty() {
+            single_container_id
+        } else {
+            Some(public_container_id)
+        };
         if let Err(e) = sqlx::query(
             "UPDATE projects SET container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
         )
-        .bind(if public_container_id.is_empty() { None } else { Some(public_container_id) })
+        .bind(persisted_container_id)
         .bind(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) })
         .bind(now)
         .bind(now)
@@ -707,7 +732,14 @@ pub async fn recreate_services(
     let count = if service_count > 0 { service_count } else { services.len() };
     let action = if pull_images { "redeployed" } else { "recreated" };
 
-    let warnings = if !project.allow_docker_access {
+    let docker_observe = crate::capabilities::has_capability(
+        &state.db,
+        project_id,
+        litebin_common::capabilities::ProjectCapability::DockerObserve,
+    )
+    .await
+    .unwrap_or(false);
+    let warnings = if !docker_observe {
         let compose_path = std::path::PathBuf::from("projects").join(project_id).join("compose.yaml");
         let compose_yaml = std::fs::read_to_string(&compose_path).unwrap_or_default();
         if compose_yaml.contains("/docker.sock") {

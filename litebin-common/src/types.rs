@@ -12,9 +12,7 @@ pub const COMPOSE_FILE_NAMES: &[&str] = &[
     "docker-compose.yaml",
 ];
 
-/// Service name for the docker-socket-proxy sidecar injected when
-/// "Allow Docker access" is enabled. Used across agent, orchestrator,
-/// and litebin-common for container naming, label filtering, and proxy detection.
+/// Reserved service name for LiteBin's managed Docker observation proxy.
 pub const DOCKER_PROXY_SERVICE: &str = "litebin-docker-proxy";
 
 // ── Port constants ───────────────────────────────────────────────────────────
@@ -305,8 +303,7 @@ impl Default for ImageStats {
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HealthReport {
     pub version: String,
-    /// Agent API feature level. Missing on older agents and deserializes as 0.
-    #[serde(default)]
+    /// Agent API protocol version, reserved for compatibility checks.
     pub protocol_version: u32,
     pub architecture: String,
     pub memory_available: u64,
@@ -402,10 +399,10 @@ pub struct RunServiceConfig {
     /// When true, all ports from compose are bound directly on the host
     /// (bypassing Caddy). Only meaningful for compose services.
     pub allow_raw_ports: bool,
-    /// When true, Docker socket access is allowed and docker-socket-proxy is injected.
-    pub allow_docker_access: bool,
     /// True only for services approved to use LiteBin's read-only Docker observation proxy.
     pub docker_observe: bool,
+    /// Internal marker authorizing the managed sidecar to mount the daemon socket.
+    pub is_managed_docker_proxy: bool,
 }
 
 impl RunServiceConfig {
@@ -457,8 +454,8 @@ impl RunServiceConfig {
             bollard_create_body: None,
             bollard_host_config: None,
             allow_raw_ports: false,
-            allow_docker_access: false,
             docker_observe: false,
+            is_managed_docker_proxy: false,
         }
     }
 }
@@ -494,8 +491,33 @@ pub fn project_network_name(project_id: &str, instance_id: Option<&str>) -> Stri
     }
 }
 
+pub fn docker_observe_network_name(project_id: &str, instance_id: Option<&str>) -> String {
+    format!("{}-docker-observe", project_network_name(project_id, instance_id))
+}
+
 /// Managed image used for the endpoint-allowlisted Docker observation proxy.
 pub const DOCKER_OBSERVE_PROXY_IMAGE: &str = "haproxy:3.0-alpine";
+pub const DOCKER_OBSERVE_HAPROXY_CONFIG: &str = r#"global
+    log stdout format raw local0
+
+defaults
+    log global
+    mode http
+    timeout connect 5s
+    timeout client 1h
+    timeout server 1h
+
+frontend docker_observe
+    bind *:2375
+    acl read_method method GET HEAD
+    acl observe_endpoint path_reg -i ^/(v[0-9.]+/)?(_ping|version|info|events|containers/json|containers/[^/]+/(json|stats|logs))$
+    http-request deny deny_status 403 unless read_method
+    http-request deny deny_status 403 unless observe_endpoint
+    default_backend docker_socket
+
+backend docker_socket
+    server docker /var/run/docker.sock
+"#;
 
 /// Build the project data directory path.
 /// - Primary: `projects/{project_id}/data/`

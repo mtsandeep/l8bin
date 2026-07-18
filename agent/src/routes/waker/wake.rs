@@ -6,7 +6,6 @@ use axum::{
 use serde_json::json;
 
 use crate::{AgentState, WakeGuard};
-use litebin_common::docker::DockerErrorKind;
 use litebin_common::proxy::{is_hop_by_hop, wants_json};
 
 use super::caddy::{find_public_service_upstream, rebuild_local_caddy};
@@ -142,22 +141,10 @@ pub async fn wake(
         return not_found_page();
     };
 
-    // Detect multi-service project: check if there are multiple containers with the prefix
-    let is_multi_service = {
-        let prefix = format!("litebin-{}.", subdomain);
-        match state.docker.list_containers_by_prefix(&prefix).await {
-            Ok(containers) => containers.len() > 1,
-            Err(e) => {
-                match DockerErrorKind::from_anyhow(&e) {
-                    DockerErrorKind::NotFound | DockerErrorKind::Connection => false,
-                    _ => {
-                        tracing::warn!(subdomain = %subdomain, error = %e, "waker: unexpected error listing containers for multi-service check");
-                        false
-                    }
-                }
-            }
-        }
-    };
+    // A Docker observation sidecar does not make a single-image project
+    // multi-service. The persisted Compose file is the source of truth.
+    let is_multi_service =
+        litebin_common::docker::DockerManager::read_compose(&subdomain).is_some();
 
     // Check if container is running
     let is_running = state
@@ -327,8 +314,14 @@ pub async fn wake(
                     let result = async {
                         // Check if .env has changed — if so, recreate to pick up new vars
                         let env_changed = crate::routes::containers::env_has_changed(&subdomain_clone);
+                        let docker_observe = state_clone
+                            .project_meta
+                            .read()
+                            .ok()
+                            .and_then(|meta| meta.get(&subdomain_clone).cloned())
+                            .is_some_and(|meta| meta.docker_observe);
 
-                        if env_changed {
+                        if env_changed || docker_observe {
                             // Read metadata to recreate without asking orchestrator
                             let meta = crate::routes::containers::read_project_metadata(&subdomain_clone);
                             match meta {
@@ -367,8 +360,14 @@ pub async fn wake(
                                         updated_at: 0,
                                     };
 
-                                    let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
-                                    let (new_container_id, port) = state_clone.docker.run_service_container(&config).await?;
+                                    let (new_container_id, port) =
+                                        crate::routes::containers::run_single_plan(
+                                            &state_clone,
+                                            &project,
+                                            extra_env,
+                                            docker_observe,
+                                        )
+                                        .await?;
                                     crate::routes::containers::write_env_snapshot(&subdomain_clone);
 
                                     rebuild_local_caddy(&state_clone).await?;

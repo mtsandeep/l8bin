@@ -11,6 +11,17 @@ use super::caddy::rebuild_local_caddy;
 
 type HmacSha256 = Hmac<Sha256>;
 
+async fn rollback_wake_containers(
+    docker: &litebin_common::docker::DockerManager,
+    container_ids: &Arc<std::sync::Mutex<Vec<String>>>,
+) {
+    let ids = container_ids.lock().map(|ids| ids.clone()).unwrap_or_default();
+    for container_id in ids.iter().rev() {
+        let _ = docker.stop_container(container_id).await;
+        let _ = docker.remove_container(container_id).await;
+    }
+}
+
 /// Wake a multi-service project: read compose.yaml, parse topological order,
 /// start all service containers in dependency order, rebuild Caddy, report to master.
 pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> anyhow::Result<()> {
@@ -75,6 +86,10 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 
     // Ensure per-project network
     state.docker.ensure_project_network(project_id, None).await?;
+    if proxy_injected {
+        let network = litebin_common::types::docker_observe_network_name(project_id, None);
+        state.docker.ensure_named_network(&network).await?;
+    }
 
     // Connect Caddy to the project network
     let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
@@ -119,6 +134,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     let mut public_container_id: Option<String> = None;
     let mut public_mapped_port: Option<u16> = None;
     let any_created = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let changed_container_ids = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
 
     // Start services level by level — parallel within each level
     for level in &plan.service_levels {
@@ -135,6 +151,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
             let needs_completed = completed_wait_set.contains(svc_name) || is_oneshot;
             let pid = project_id.to_string();
             let any_created = any_created.clone();
+            let changed_container_ids = changed_container_ids.clone();
 
             tasks.spawn(async move {
                 let cname = litebin_common::types::container_name(&pid, &svc, None);
@@ -173,6 +190,9 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                             .start_existing_container(&existing_id)
                             .await
                             .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
+                        if let Ok(mut ids) = changed_container_ids.lock() {
+                            ids.push(existing_id.clone());
+                        }
                         tracing::info!(
                             project_id = %pid,
                             service = %svc,
@@ -190,6 +210,9 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                     .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
 
                 any_created.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Ok(mut ids) = changed_container_ids.lock() {
+                    ids.push(container_id.clone());
+                }
 
                 if svc == litebin_common::types::DOCKER_PROXY_SERVICE {
                     if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
@@ -244,30 +267,16 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                 }
                 Ok(Err(e)) => {
                     tracing::error!(error = %e, "wake_multi_service: failed to start service");
-                    if proxy_injected {
-                        let _ = state
-                            .docker
-                            .remove_by_service_name(
-                                project_id,
-                                litebin_common::types::DOCKER_PROXY_SERVICE,
-                                None,
-                            )
-                            .await;
-                    }
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    rollback_wake_containers(&state.docker, &changed_container_ids).await;
                     anyhow::bail!("{}", e);
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "wake_multi_service: service task panicked");
-                    if proxy_injected {
-                        let _ = state
-                            .docker
-                            .remove_by_service_name(
-                                project_id,
-                                litebin_common::types::DOCKER_PROXY_SERVICE,
-                                None,
-                            )
-                            .await;
-                    }
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    rollback_wake_containers(&state.docker, &changed_container_ids).await;
                     anyhow::bail!("service task panicked");
                 }
             }

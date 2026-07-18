@@ -1,10 +1,40 @@
 use std::collections::HashMap;
 
-/// Returns true if the bind source is the Docker daemon socket.
-/// Matches `/var/run/docker.sock`, `/run/docker.sock`, etc. — not other `.sock` files.
-#[inline]
-fn is_docker_sock(path: &str) -> bool {
-    path.ends_with("/docker.sock")
+fn normalize_unix_path(path: &str) -> Option<String> {
+    if !path.starts_with('/') {
+        return None;
+    }
+    let mut components: Vec<&str> = Vec::new();
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            value => components.push(value),
+        }
+    }
+    Some(format!("/{}", components.join("/")))
+}
+
+pub fn bind_source_exposes_docker_socket(source: &str) -> bool {
+    let Some(source) = normalize_unix_path(source) else {
+        return false;
+    };
+    ["/var/run/docker.sock", "/run/docker.sock"]
+        .iter()
+        .any(|socket| {
+            source == *socket
+                || source == "/"
+                || socket.starts_with(&format!("{source}/"))
+        })
+}
+
+pub(crate) fn is_docker_socket_source(source: &str) -> bool {
+    matches!(
+        normalize_unix_path(source).as_deref(),
+        Some("/var/run/docker.sock" | "/run/docker.sock")
+    )
 }
 
 pub(crate) fn sanitize_docker_socket_binds(
@@ -18,10 +48,22 @@ pub(crate) fn sanitize_docker_socket_binds(
         .iter()
         .filter(|bind| {
             let source = bind.split(':').next().unwrap_or("");
-            !is_docker_sock(source)
+            !bind_source_exposes_docker_socket(source)
         })
         .cloned()
         .collect()
+}
+
+pub(crate) fn merge_service_env(
+    mut existing: Vec<String>,
+    overrides: &[String],
+    replace_docker_host: bool,
+) -> Vec<String> {
+    if replace_docker_host {
+        existing.retain(|value| !value.starts_with("DOCKER_HOST="));
+    }
+    existing.extend(overrides.iter().cloned());
+    existing
 }
 
 use bollard::models::{
@@ -39,9 +81,115 @@ use crate::types::{
     project_network_name,
 };
 
-use super::{DockerManager, RunningContainer};
+use super::{DockerErrorKind, DockerManager, RunningContainer};
 
 impl DockerManager {
+    /// Remove containers left by older unsafe Docker-socket access paths.
+    pub async fn cleanup_unsafe_docker_socket_containers(&self) -> anyhow::Result<usize> {
+        let containers = self
+            .docker
+            .list_containers(Some(ListContainersOptions {
+                all: true,
+                ..Default::default()
+            }))
+            .await?;
+        let mut removed = 0;
+
+        for container in containers {
+            let Some(container_id) = container.id.as_deref() else {
+                continue;
+            };
+            let names = container.names.as_deref().unwrap_or_default();
+            let is_proxy_name = names.iter().any(|name| {
+                name.ends_with(".litebin-docker-proxy")
+                    || name.ends_with(".docker-socket-proxy")
+            });
+            let is_litebin_workload = container
+                .labels
+                .as_ref()
+                .is_some_and(|labels| labels.contains_key("litebin.project_id"));
+            if !is_proxy_name && !is_litebin_workload {
+                continue;
+            }
+
+            let inspect = self.docker.inspect_container(container_id, None).await?;
+            let exposes_socket = inspect.mounts.as_ref().is_some_and(|mounts| {
+                mounts.iter().any(|mount| {
+                    mount
+                        .source
+                        .as_deref()
+                        .is_some_and(bind_source_exposes_docker_socket)
+                })
+            });
+            if !exposes_socket {
+                continue;
+            }
+
+            let image = inspect
+                .config
+                .as_ref()
+                .and_then(|config| config.image.as_deref());
+            let managed_name = names
+                .iter()
+                .find(|name| name.ends_with(".litebin-docker-proxy"))
+                .map(|name| name.trim_start_matches('/'));
+            let project_id = managed_name.and_then(|name| {
+                name.strip_prefix("litebin-")
+                    .and_then(|name| name.strip_suffix(".litebin-docker-proxy"))
+            });
+            let has_managed_config_mount = project_id.is_some_and(|project_id| {
+                let expected_suffix =
+                    format!("/projects/{project_id}/docker-observe/haproxy.cfg");
+                inspect.mounts.as_ref().is_some_and(|mounts| {
+                    mounts.iter().any(|mount| {
+                        mount.destination.as_deref()
+                            == Some("/usr/local/etc/haproxy/haproxy.cfg")
+                            && mount.rw == Some(false)
+                            && mount.source.as_deref().is_some_and(|source| {
+                                source.replace('\\', "/").ends_with(&expected_suffix)
+                            })
+                    })
+                })
+            });
+            let has_private_network = inspect
+                .network_settings
+                .as_ref()
+                .and_then(|settings| settings.networks.as_ref())
+                .is_some_and(|networks| {
+                    networks.len() == 1
+                        && networks.keys().all(|name| name.ends_with("-docker-observe"))
+                });
+            let config_is_current = project_id.is_some_and(|project_id| {
+                std::fs::read_to_string(
+                    std::path::PathBuf::from("projects")
+                        .join(project_id)
+                        .join("docker-observe")
+                        .join("haproxy.cfg"),
+                )
+                .is_ok_and(|config| config == crate::types::DOCKER_OBSERVE_HAPROXY_CONFIG)
+            });
+            let is_current_proxy = is_proxy_name
+                && image == Some(crate::types::DOCKER_OBSERVE_PROXY_IMAGE)
+                && has_managed_config_mount
+                && has_private_network
+                && config_is_current;
+            if is_current_proxy {
+                continue;
+            }
+
+            let _ = self.stop_container(container_id).await;
+            self.remove_container(container_id).await?;
+            removed += 1;
+            tracing::warn!(
+                container_id,
+                ?names,
+                "removed container using an obsolete unsafe Docker socket path"
+            );
+        }
+
+        Ok(removed)
+    }
+
     /// Inspect a container and return the mapped host port.
     /// Returns `None` if no port mapping is found (container may have exited
     /// or port bindings haven't been applied yet).
@@ -159,47 +307,70 @@ impl DockerManager {
         project_id: &str,
         volumes: &[String],
     ) -> anyhow::Result<()> {
+        let mut cleanup_errors = Vec::new();
         // 1. Stop + remove all containers matching the project prefix
         let prefix = format!("litebin-{}.", project_id);
-        if let Ok(container_ids) = self.list_containers_by_prefix(&prefix).await {
-            for cid in &container_ids {
-                let _ = self.stop_container(cid).await;
-                let _ = self.remove_container(cid).await;
-                tracing::info!(project = %project_id, container_id = %cid, "cleanup: removed container");
+        match self.list_containers_by_prefix(&prefix).await {
+            Ok(container_ids) => {
+                for cid in &container_ids {
+                    let _ = self.stop_container(cid).await;
+                    if let Err(e) = self.remove_container(cid).await {
+                        cleanup_errors.push(format!("remove container {cid}: {e}"));
+                    } else {
+                        tracing::info!(project = %project_id, container_id = %cid, "cleanup: removed container");
+                    }
+                }
             }
+            Err(e) => cleanup_errors.push(format!("list project containers: {e}")),
         }
 
         // 2. Also try single-service container name
         let single_name = format!("litebin-{}", project_id);
-        if let Ok(single_ids) = self.list_containers_by_prefix(&single_name).await {
-            for cid in &single_ids {
-                if !cid.starts_with(&prefix) {
-                    // avoid double-remove
+        match self.list_containers_by_prefix(&single_name).await {
+            Ok(single_ids) => {
+                for cid in &single_ids {
                     let _ = self.stop_container(cid).await;
-                    let _ = self.remove_container(cid).await;
+                    if let Err(e) = self.remove_container(cid).await {
+                        if DockerErrorKind::from_anyhow(&e) != DockerErrorKind::NotFound {
+                            cleanup_errors.push(format!("remove container {cid}: {e}"));
+                        }
+                    }
                 }
             }
+            Err(e) => cleanup_errors.push(format!("list single-service container: {e}")),
         }
 
         // 3. Remove volumes
         for vol_name in volumes {
             if let Err(e) = self.remove_volume_by_name(vol_name).await {
                 tracing::warn!(project = %project_id, volume = %vol_name, error = %e, "cleanup: failed to remove volume");
+                cleanup_errors.push(format!("remove volume {vol_name}: {e}"));
             }
         }
 
         // 4. Remove per-project network
-        let _ = self.remove_project_network(project_id, None).await;
+        if let Err(e) = self.remove_project_network(project_id, None).await {
+            cleanup_errors.push(format!("remove project network: {e}"));
+        }
+        let observe_network = crate::types::docker_observe_network_name(project_id, None);
+        if let Err(e) = self.remove_named_network(&observe_network).await {
+            cleanup_errors.push(format!("remove Docker observation network: {e}"));
+        }
 
         // 5. Remove project directory if it exists
         let project_dir = std::path::Path::new("projects").join(project_id);
         if project_dir.is_dir() {
             if let Err(e) = std::fs::remove_dir_all(&project_dir) {
                 tracing::warn!(project = %project_id, error = %e, "cleanup: failed to remove project directory");
+                cleanup_errors.push(format!("remove project directory: {e}"));
             }
         }
 
-        Ok(())
+        if cleanup_errors.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!(cleanup_errors.join("; "))
+        }
     }
 
     /// Read the compose.yaml for a project. Returns None if the file doesn't exist.
@@ -277,7 +448,7 @@ impl DockerManager {
 
         // Workloads never receive the raw Docker socket. Only LiteBin's managed
         // observation proxy may mount it.
-        let is_docker_proxy = config.service_name == crate::types::DOCKER_PROXY_SERVICE;
+        let is_docker_proxy = config.is_managed_docker_proxy;
         let filtered_binds: Option<Vec<String>> = if is_docker_proxy {
             config.binds.clone()
         } else if let Some(ref binds) = config.binds {
@@ -383,9 +554,11 @@ impl DockerManager {
 
             // Apply LiteBin env overrides
             if !config.env.is_empty() {
-                let mut existing = body.env.unwrap_or_default();
-                existing.extend(config.env.iter().cloned());
-                body.env = Some(existing);
+                body.env = Some(merge_service_env(
+                    body.env.unwrap_or_default(),
+                    &config.env,
+                    config.docker_observe,
+                ));
             }
 
             // Merge exposed ports: keep compose-declared ports, add LiteBin public port
@@ -405,18 +578,25 @@ impl DockerManager {
 
             body.host_config = Some(host);
 
-            // Connect to per-project network so services can resolve each other by name
-            let net_name = project_network_name(&config.project_id, config.instance_id.as_deref());
+            // Connect to the managed networks selected by the run plan.
+            let networks = config.networks.clone().unwrap_or_else(|| {
+                vec![crate::types::NetworkConfig {
+                    name: project_network_name(&config.project_id, config.instance_id.as_deref()),
+                    aliases: Some(vec![config.service_name.clone()]),
+                }]
+            });
             body.networking_config = Some(NetworkingConfig {
                 endpoints_config: Some({
                     let mut map = HashMap::new();
-                    map.insert(
-                        net_name,
-                        EndpointSettings {
-                            aliases: Some(vec![config.service_name.clone()]),
-                            ..Default::default()
-                        },
-                    );
+                    for network in networks {
+                        map.insert(
+                            network.name,
+                            EndpointSettings {
+                                aliases: network.aliases,
+                                ..Default::default()
+                            },
+                        );
+                    }
                     map
                 }),
             });
@@ -424,10 +604,8 @@ impl DockerManager {
             // Set hostname to service name for DNS resolution within the network
             body.hostname = Some(config.service_name.clone());
 
-            // Label all containers with project_id for docker-socket-proxy filtering,
-            // and standard Docker Compose labels for tooling compatibility.
-            // Skip litebin-docker-proxy itself so it can't be managed through its own proxy.
-            if config.service_name != crate::types::DOCKER_PROXY_SERVICE {
+            // Add LiteBin and standard Compose labels to workload containers.
+            if !config.is_managed_docker_proxy {
                 let mut labels = HashMap::new();
                 labels.insert("litebin.project_id".to_string(), config.project_id.clone());
                 labels.insert(
@@ -453,7 +631,11 @@ impl DockerManager {
             }
             let mut host_config = HostConfig {
                 binds: translated_binds,
-                network_mode: Some(self.network.clone()),
+                network_mode: if config.networks.is_some() {
+                    None
+                } else {
+                    Some(self.network.clone())
+                },
                 ..Default::default()
             };
             lb_host_overrides(&mut host_config);
@@ -462,6 +644,23 @@ impl DockerManager {
             if let Some(port) = config.port {
                 env.push(format!("PORT={}", port));
             }
+
+            let networking_config = config.networks.as_ref().map(|networks| NetworkingConfig {
+                endpoints_config: Some(
+                    networks
+                        .iter()
+                        .map(|network| {
+                            (
+                                network.name.clone(),
+                                EndpointSettings {
+                                    aliases: network.aliases.clone(),
+                                    ..Default::default()
+                                },
+                            )
+                        })
+                        .collect(),
+                ),
+            });
 
             ContainerCreateBody {
                 image: Some(config.image.clone()),
@@ -473,7 +672,9 @@ impl DockerManager {
                 host_config: Some(host_config),
                 env: if env.is_empty() { None } else { Some(env) },
                 cmd: config.cmd.as_deref().and_then(|c| shlex::split(c)),
-                labels: if config.service_name == crate::types::DOCKER_PROXY_SERVICE {
+                hostname: Some(config.service_name.clone()),
+                networking_config,
+                labels: if config.is_managed_docker_proxy {
                     None
                 } else {
                     Some({

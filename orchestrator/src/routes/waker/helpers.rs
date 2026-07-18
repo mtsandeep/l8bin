@@ -81,8 +81,17 @@ pub(super) async fn remote_recreate(
 ) -> Result<(), Response> {
     let image = project.image.as_deref()
         .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "no image").into_response())?;
-    let internal_port = project.internal_port
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "no port configured").into_response())?;
+    let internal_port = project.internal_port;
+    let docker_observe = crate::capabilities::has_capability(
+        &state.db,
+        &project.id,
+        litebin_common::capabilities::ProjectCapability::DockerObserve,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(project = %project.id, error = %e, "waker: capability lookup failed");
+        (StatusCode::INTERNAL_SERVER_ERROR, "capability lookup failed").into_response()
+    })?;
 
     let resp = client
         .post(format!("{}/containers/recreate", base_url))
@@ -102,6 +111,7 @@ pub(super) async fn remote_recreate(
                     }
                 }
             }),
+            "docker_observe": docker_observe,
         }))
         .send()
         .await
@@ -249,6 +259,18 @@ pub(super) async fn start_stopped_container(state: &AppState, project: &crate::d
         };
 
         let base_url = agent_base_url(&state.config, &node);
+        let docker_observe = crate::capabilities::has_capability(
+            &state.db,
+            subdomain,
+            litebin_common::capabilities::ProjectCapability::DockerObserve,
+        )
+        .await
+        .map_err(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "capability lookup failed").into_response()
+        })?;
+        if docker_observe {
+            return remote_recreate(state, project, &client, &base_url).await;
+        }
 
         // Use the smart start endpoint — agent will compare .env hashes and
         // recreate only if env has changed since last injection.

@@ -32,10 +32,10 @@ LiteBin does not run `docker compose up`. It parses Compose YAML, maps supported
 Grants are stored in `project_capabilities`. Approve them from:
 
 - Dashboard Deploy New App → **Parse and validate** step
-- Dashboard project Settings → **Capabilities** (Compose projects)
+- Dashboard project Settings → **Capabilities**
 - CLI: interactive `l8b ship` prompt, or `l8b deploy --grant-capability docker-observe`
 
-Docker socket mounts are always stripped, even when declared read-only. Approved requesting services receive `DOCKER_HOST`; the proxy permits only read-only observation endpoints. It does not filter results by project, so responses may expose host-wide metadata, environment values, and logs. Mutating Docker access is unavailable.
+Docker socket mounts are always stripped, even when declared read-only. Approved requesting services receive `DOCKER_HOST`; the managed HAProxy sidecar permits only read-only observation endpoints. It does not filter results by project, so responses may expose host-wide metadata, environment values, and logs. Mutating Docker access is unavailable.
 
 ---
 

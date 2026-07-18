@@ -311,6 +311,7 @@ async fn main() -> Result<()> {
                     memory,
                     cpu,
                     !no_auto_stop,
+                    &grant_capability,
                 )
                 .await?;
 

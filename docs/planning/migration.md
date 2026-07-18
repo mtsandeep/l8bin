@@ -225,7 +225,7 @@ For remote→remote migration (future): source agent exports via `docker save`, 
 ### project-meta Sync
 
 After migration, the orchestrator must push updated `project-meta` to both agents:
-- **Target agent:** include the migrated project with its flags (`auto_start_enabled`, `allow_raw_ports`, `allow_docker_access`)
+- **Target agent:** include the migrated project with its flags (`auto_start_enabled`, `allow_raw_ports`, `docker_observe`)
 - **Source agent:** exclude the migrated project (so source doesn't try to auto-wake it). Done after cleanup step, not during migration — source stays in meta while dual-running so it can still be stopped/restarted normally if needed. If maintenance mode is enabled, the source Caddy handles the project's domains directly (503 page), so the waker/meta is less relevant but still kept for consistency.
 
 The existing `POST /internal/project-meta` endpoint replaces the entire map, so this is safe.

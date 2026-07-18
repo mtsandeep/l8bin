@@ -12,40 +12,6 @@ use crate::AppState;
 use litebin_common::types::{ProjectStatus, DeployType};
 use crate::status::{self, ProjectUpdateFields};
 
-const DOCKER_OBSERVE_AGENT_PROTOCOL: u64 = 2;
-
-fn validate_docker_observe_protocol(protocol: Option<u64>) -> Result<(), String> {
-    let protocol = protocol.unwrap_or(0);
-    if protocol < DOCKER_OBSERVE_AGENT_PROTOCOL {
-        return Err(format!(
-            "docker-observe requires agent protocol {} or newer (node reports {})",
-            DOCKER_OBSERVE_AGENT_PROTOCOL, protocol
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) async fn ensure_docker_observe_agent(
-    client: &reqwest::Client,
-    base_url: &str,
-) -> Result<(), String> {
-    let response = client
-        .get(format!("{base_url}/health"))
-        .send()
-        .await
-        .map_err(|e| format!("failed to check agent protocol: {e}"))?;
-    let health: serde_json::Value = response
-        .error_for_status()
-        .map_err(|e| format!("agent health check failed: {e}"))?
-        .json()
-        .await
-        .map_err(|e| format!("invalid agent health response: {e}"))?;
-    let protocol = health
-        .get("protocol_version")
-        .and_then(serde_json::Value::as_u64);
-    validate_docker_observe_protocol(protocol)
-}
-
 #[utoipa::path(
     post,
     path = "/deploy/compose",
@@ -89,7 +55,6 @@ pub async fn deploy_compose(
     let mut is_background = None;
     let mut custom_domain = None;
     let mut allow_raw_ports = None;
-    let mut allow_docker_access = None;
     let mut grant_capabilities_raw = None;
     let mut compose_content = None;
     let mut target_services_raw = None;
@@ -131,9 +96,6 @@ pub async fn deploy_compose(
             }
             "allow_raw_ports" => {
                 allow_raw_ports = field.text().await.ok().and_then(|v| v.parse::<bool>().ok());
-            }
-            "allow_docker_access" => {
-                allow_docker_access = field.text().await.ok().and_then(|v| v.parse::<bool>().ok());
             }
             "grant_capabilities" => {
                 grant_capabilities_raw = field.text().await.ok();
@@ -300,15 +262,6 @@ pub async fn deploy_compose(
         ).into_response();
     }
 
-    if allow_docker_access == Some(true) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "allow_docker_access is unavailable; explicitly grant docker-observe for read-only host observation"
-            })),
-        ).into_response();
-    }
-
     // Apply capability grants from the explicit list and the legacy raw-ports flag.
     let pending_grants = {
         use litebin_common::capabilities::ProjectCapability;
@@ -339,18 +292,6 @@ pub async fn deploy_compose(
         }
         to_grant
     };
-    if pending_grants.contains(
-        &litebin_common::capabilities::ProjectCapability::DockerAccess,
-    ) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "docker-access is unavailable; use docker-observe for read-only host observation"
-            })),
-        )
-            .into_response();
-    }
-
     // Enforce required capabilities before mutating the project row.
     {
         let existing_grants = match crate::capabilities::granted_ids(&state.db, &project_id).await {
@@ -499,10 +440,10 @@ pub async fn deploy_compose(
         ProjectStatus::Deploying
     };
 
-    // On redeploy, preserve existing allow_raw_ports/allow_docker_access unless explicitly provided
-    let (db_allow_raw_ports, db_allow_docker_access) = if is_update && allow_raw_ports.is_none() && allow_docker_access.is_none() {
-        let existing = match sqlx::query_as::<_, (bool, bool)>(
-            "SELECT allow_raw_ports, allow_docker_access FROM projects WHERE id = ?"
+    // On redeploy, preserve existing raw-port access unless explicitly provided.
+    let db_allow_raw_ports = if is_update && allow_raw_ports.is_none() {
+        let existing = match sqlx::query_scalar::<_, bool>(
+            "SELECT allow_raw_ports FROM projects WHERE id = ?"
         )
         .bind(&project_id)
         .fetch_optional(&state.db)
@@ -510,20 +451,16 @@ pub async fn deploy_compose(
         {
             Ok(row) => row,
             Err(e) => {
-                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to read allow_raw_ports/allow_docker_access, using defaults");
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to read allow_raw_ports, using defaults");
                 None
             }
         };
-        match existing {
-            Some((rp, da)) => (Some(rp), Some(da)),
-            None => (allow_raw_ports, allow_docker_access),
-        }
+        existing.or(allow_raw_ports)
     } else {
-        (allow_raw_ports, allow_docker_access)
+        allow_raw_ports
     };
 
     let allow_raw_ports = db_allow_raw_ports.unwrap_or(false);
-    let allow_docker_access = db_allow_docker_access.unwrap_or(false);
 
     // Upsert project row
     let result = sqlx::query(
@@ -565,7 +502,7 @@ pub async fn deploy_compose(
     .bind(auto_start)
     .bind(&custom_domain)
     .bind(allow_raw_ports)
-    .bind(allow_docker_access)
+    .bind(false)
     .bind(service_count)
     .bind(&service_summary)
     .bind(DeployType::Compose)
@@ -790,15 +727,6 @@ pub async fn deploy_compose(
             };
 
             let base_url = agent_base_url(&state.config, &node);
-            if docker_observe {
-                if let Err(e) = ensure_docker_observe_agent(&client, &base_url).await {
-                    return (
-                        StatusCode::BAD_GATEWAY,
-                        Json(json!({"error": e})),
-                    )
-                        .into_response();
-                }
-            }
             let stage_resp = match client
                 .post(&format!("{}/containers/batch-run", base_url))
                 .json(&json!({
@@ -900,19 +828,6 @@ pub async fn deploy_compose(
         };
 
         let base_url = agent_base_url(&state.config, &node);
-        if docker_observe {
-            if let Err(e) = ensure_docker_observe_agent(&client, &base_url).await {
-                if let Err(status_err) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
-                    tracing::warn!(project_id = %project_id, error = %status_err, "compose deploy: failed to transition to Error");
-                }
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    Json(json!({"error": e})),
-                )
-                    .into_response();
-            }
-        }
-
         // Read per-service resource overrides and global defaults to send to agent
         let service_resources: std::collections::HashMap<String, serde_json::Value> = match sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
             "SELECT service_name, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ?",
@@ -1266,16 +1181,4 @@ pub async fn deploy_compose(
         })),
     )
         .into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_docker_observe_protocol;
-
-    #[test]
-    fn docker_observe_rejects_agents_without_protocol_support() {
-        assert!(validate_docker_observe_protocol(None).is_err());
-        assert!(validate_docker_observe_protocol(Some(1)).is_err());
-        assert!(validate_docker_observe_protocol(Some(2)).is_ok());
-    }
 }

@@ -17,16 +17,102 @@ use super::types::{
 
 // ── Single-Container Lifecycle Handlers ──────────────────────────────────────
 
-fn update_background_meta(state: &AgentState, project_id: &str, is_background: bool) {
+fn update_project_meta(
+    state: &AgentState,
+    project_id: &str,
+    is_background: bool,
+    docker_observe: bool,
+) {
     {
         let mut meta = state.project_meta.write().unwrap();
         let entry = meta.entry(project_id.to_string()).or_default();
         entry.is_background = is_background;
+        entry.docker_observe = docker_observe;
         if is_background {
             entry.auto_start_enabled = false;
         }
     }
     crate::save_project_meta_to_file(&state.project_meta.read().unwrap());
+}
+
+pub(crate) async fn run_single_plan(
+    state: &AgentState,
+    project: &litebin_common::types::Project,
+    extra_env: Vec<String>,
+    docker_observe: bool,
+) -> anyhow::Result<(String, u16)> {
+    let project_id = &project.id;
+    state
+        .docker
+        .remove_by_service_name(
+            project_id,
+            litebin_common::types::DOCKER_PROXY_SERVICE,
+            None,
+        )
+        .await?;
+
+    let config = litebin_common::types::RunServiceConfig::from_project(project, extra_env);
+    let mut plan = litebin_common::compose_run::ComposeRunPlan::single_service(config);
+    let proxy_injected = if docker_observe {
+        plan.inject_docker_observe_proxy(project_id)?
+    } else {
+        false
+    };
+
+    state.docker.ensure_project_network(project_id, None).await?;
+    if proxy_injected {
+        state
+            .docker
+            .pull_image_with_opts(
+                litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE,
+                false,
+            )
+            .await?;
+        let network =
+            litebin_common::types::docker_observe_network_name(project_id, None);
+        state.docker.ensure_named_network(&network).await?;
+    } else {
+        let network =
+            litebin_common::types::docker_observe_network_name(project_id, None);
+        let _ = state.docker.remove_named_network(&network).await;
+    }
+
+    let mut started = Vec::new();
+    let mut workload = None;
+    for service_name in &plan.service_order {
+        let config = plan
+            .configs
+            .iter()
+            .find(|config| &config.service_name == service_name)
+            .ok_or_else(|| anyhow::anyhow!("missing run config for {service_name}"))?;
+        match state.docker.run_service_container(config).await {
+            Ok((container_id, mapped_port)) => {
+                started.push(container_id.clone());
+                if config.is_managed_docker_proxy {
+                    if let Err(error) =
+                        state.docker.wait_for_healthy(&container_id, true).await
+                    {
+                        for id in started.iter().rev() {
+                            let _ = state.docker.stop_container(id).await;
+                            let _ = state.docker.remove_container(id).await;
+                        }
+                        return Err(error);
+                    }
+                } else {
+                    workload = Some((container_id, mapped_port));
+                }
+            }
+            Err(error) => {
+                for id in started.iter().rev() {
+                    let _ = state.docker.stop_container(id).await;
+                    let _ = state.docker.remove_container(id).await;
+                }
+                return Err(error);
+            }
+        }
+    }
+
+    workload.ok_or_else(|| anyhow::anyhow!("single-image workload was not started"))
 }
 
 /// POST /containers/run
@@ -36,7 +122,12 @@ pub async fn run_container(
     State(state): State<AgentState>,
     Json(req): Json<RunRequest>,
 ) -> impl IntoResponse {
-    update_background_meta(&state, &req.project_id, req.internal_port.is_none());
+    update_project_meta(
+        &state,
+        &req.project_id,
+        req.internal_port.is_none(),
+        req.docker_observe,
+    );
     if req.stage_only {
         ensure_project_dir_and_env(&req.project_id);
         write_project_metadata(
@@ -105,8 +196,7 @@ pub async fn run_container(
         updated_at: 0,
     };
 
-    let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
-    match state.docker.run_service_container(&config).await {
+    match run_single_plan(&state, &project, extra_env, req.docker_observe).await {
         Ok((container_id, mapped_port)) => {
             // Rebuild agent Caddy config so the new container gets a route
             if let Err(e) = super::super::waker::rebuild_local_caddy(&state).await {
@@ -134,7 +224,12 @@ pub async fn recreate_container(
     Json(req): Json<RunRequest>,
 ) -> impl IntoResponse {
     tracing::info!(project = %req.project_id, image = %req.image, "recreate request received");
-    update_background_meta(&state, &req.project_id, req.internal_port.is_none());
+    update_project_meta(
+        &state,
+        &req.project_id,
+        req.internal_port.is_none(),
+        req.docker_observe,
+    );
 
     let _ = state.docker.remove_by_name(&req.project_id).await;
 
@@ -173,8 +268,7 @@ pub async fn recreate_container(
         updated_at: 0,
     };
 
-    let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
-    match state.docker.run_service_container(&config).await {
+    match run_single_plan(&state, &project, extra_env, req.docker_observe).await {
         Ok((container_id, mapped_port)) => {
             // Rebuild agent Caddy config so the new container gets a route
             if let Err(e) = super::super::waker::rebuild_local_caddy(&state).await {

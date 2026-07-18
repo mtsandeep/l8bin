@@ -225,7 +225,10 @@ impl DockerManager {
         instance_id: Option<&str>,
     ) -> anyhow::Result<()> {
         let network_name = project_network_name(project_id, instance_id);
+        self.ensure_named_network(&network_name).await
+    }
 
+    pub async fn ensure_named_network(&self, network_name: &str) -> anyhow::Result<()> {
         let networks = self.docker.list_networks(None).await?;
         let exists = networks.iter().any(|n| {
             n.name
@@ -237,7 +240,7 @@ impl DockerManager {
         if !exists {
             self.docker
                 .create_network(NetworkCreateRequest {
-                    name: network_name.clone(),
+                    name: network_name.to_string(),
                     driver: Some("bridge".to_string()),
                     ..Default::default()
                 })
@@ -255,7 +258,11 @@ impl DockerManager {
         instance_id: Option<&str>,
     ) -> anyhow::Result<()> {
         let network_name = project_network_name(project_id, instance_id);
-        match self.docker.remove_network(&network_name).await {
+        self.remove_named_network(&network_name).await
+    }
+
+    pub async fn remove_named_network(&self, network_name: &str) -> anyhow::Result<()> {
+        match self.docker.remove_network(network_name).await {
             Ok(_) => {
                 tracing::info!(network = %network_name, "removed per-project docker network");
                 Ok(())

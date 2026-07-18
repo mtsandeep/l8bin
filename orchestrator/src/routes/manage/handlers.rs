@@ -10,7 +10,7 @@ use litebin_common::types::{DeployType, ProjectStatus};
 use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
-use super::helpers::{MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, project_is_staged, read_local_project_env, sync_caddy};
+use super::helpers::{MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, project_is_staged, sync_caddy};
 use super::multi_service::{StartServicesOpts, start_services, stop_services, recreate_services};
 
 /// POST /projects/:id/stop
@@ -267,13 +267,7 @@ pub async fn start_project(
         )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
-        if docker_observe {
-            crate::routes::deploy::compose::ensure_docker_observe_agent(&client, &base_url)
-                .await
-                .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
-        }
-
-        let resp = client
+        let resp = match client
             .post(format!("{}/containers/batch-run", base_url))
             .json(&json!({
                 "project_id": &project_id,
@@ -281,6 +275,7 @@ pub async fn start_project(
                 "service_order": &svc_names,
                 "allow_raw_ports": project.allow_raw_ports,
                 "docker_observe": docker_observe,
+                "is_background": project.is_background,
                 "service_resources": service_resources,
                 "default_memory_limit_mb": default_mem,
                 "default_cpu_limit": default_cpu,
@@ -288,15 +283,53 @@ pub async fn start_project(
             }))
             .send()
             .await
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
+        {
+            Ok(response) => response,
+            Err(e) => {
+                let _ = status::transition(
+                    &state.db,
+                    &project_id,
+                    ProjectStatus::Error,
+                    &ProjectUpdateFields::default(),
+                    None,
+                )
+                .await;
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("agent unreachable: {e}"),
+                ));
+            }
+        };
 
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
+            let _ = status::transition(
+                &state.db,
+                &project_id,
+                ProjectStatus::Error,
+                &ProjectUpdateFields::default(),
+                None,
+            )
+            .await;
             return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("remote start failed: {body}")));
         }
 
         let batch_result: serde_json::Value = resp.json().await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
+        let service_errors: Vec<String> = batch_result["services"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|service| {
+                service["error"].as_str().map(|error| {
+                    format!(
+                        "{}: {}",
+                        service["service_name"].as_str().unwrap_or("unknown"),
+                        error
+                    )
+                })
+            })
+            .collect();
 
         if let Some(svc_results) = batch_result["services"].as_array() {
             for svc in svc_results {
@@ -314,6 +347,13 @@ pub async fn start_project(
                 }
             }
         }
+        if !service_errors.is_empty() {
+            let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("one or more services failed to start: {}", service_errors.join("; ")),
+            ));
+        }
 
         status::derive_and_set_project_status(&state.db, &project_id).await;
         let _ = state.route_sync_tx.send(());
@@ -329,9 +369,21 @@ pub async fn start_project(
         let image = project.image.as_deref()
             .ok_or((StatusCode::BAD_REQUEST, "project has no image".to_string()))?;
         let internal_port = project.internal_port;
+        let docker_observe = crate::capabilities::has_capability(
+            &state.db,
+            &project_id,
+            litebin_common::capabilities::ProjectCapability::DockerObserve,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
+        let volumes = project
+            .volumes
+            .as_deref()
+            .and_then(|volumes| serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(volumes).ok());
 
-        // First start after staging has no container yet — create it on the agent.
-        if project.container_id.is_none() {
+        // Observation-enabled services are recreated so their private proxy and
+        // network are restored together with the workload.
+        if project.container_id.is_none() || docker_observe {
             let resp = client
                 .post(format!("{}/containers/run", base_url))
                 .json(&json!({
@@ -341,6 +393,8 @@ pub async fn start_project(
                     "cmd": project.cmd,
                     "memory_limit_mb": project.memory_limit_mb,
                     "cpu_limit": project.cpu_limit,
+                    "volumes": volumes,
+                    "docker_observe": docker_observe,
                 }))
                 .send()
                 .await
@@ -428,6 +482,8 @@ pub async fn start_project(
                             "cmd": project.cmd,
                             "memory_limit_mb": project.memory_limit_mb,
                             "cpu_limit": project.cpu_limit,
+                            "volumes": volumes,
+                            "docker_observe": docker_observe,
                         }))
                         .send()
                         .await
@@ -536,31 +592,26 @@ pub async fn delete_project(
         // Remote: call agent cleanup endpoint
         let node_id = project.node_id.as_deref().unwrap();
         let volumes = build_volume_list(&project);
-        match nodes::client::get_node_client(&state.node_clients, node_id) {
-            Ok(client) => {
-                match get_node_from_db(&state.db, node_id).await {
-                    Ok(node) => {
-                        let base_url = agent_base_url(&state.config, &node);
-                        if let Err(e) = client
-                            .post(&format!("{}/containers/cleanup", base_url))
-                            .json(&json!({
-                                "project_id": project_id,
-                                "volumes": volumes,
-                            }))
-                            .send()
-                            .await
-                        {
-                            tracing::warn!(project_id = %project_id, error = %e, "delete: failed to cleanup on agent");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(node_id = %node_id, error = ?e, "delete: node not found, skipping remote cleanup");
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(node_id = %node_id, error = %e, "delete: node client unavailable, skipping remote cleanup");
-            }
+        let client = nodes::client::get_node_client(&state.node_clients, node_id)
+            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
+        let node = get_node_from_db(&state.db, node_id).await?;
+        let base_url = agent_base_url(&state.config, &node);
+        let response = client
+            .post(&format!("{}/containers/cleanup", base_url))
+            .json(&json!({
+                "project_id": project_id,
+                "volumes": volumes,
+            }))
+            .send()
+            .await
+            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent cleanup failed: {e}")))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                format!("agent cleanup returned {status}: {body}"),
+            ));
         }
     }
 
@@ -711,18 +762,16 @@ pub async fn recreate_project(
             )
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
-            if docker_observe {
-                crate::routes::deploy::compose::ensure_docker_observe_agent(&client, &base_url)
-                    .await
-                    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
-            }
-
             let pull = body.as_ref().and_then(|b| b.0.pull_images).unwrap_or(false);
+            let target_services = body.as_ref().and_then(|b| b.0.services.clone());
+            let target_set = target_services
+                .as_ref()
+                .map(|services| services.iter().cloned().collect());
 
             // Capture old image digests before batch-run (for cleanup after redeploy with pull)
             let old_digests: std::collections::HashMap<String, String> = if pull {
                 crate::routes::manage::capture_service_digests(
-                    &state, &project_id, Some(node_id), None,
+                    &state, &project_id, Some(node_id), target_set.as_ref(),
                 ).await
             } else {
                 std::collections::HashMap::new()
@@ -734,8 +783,10 @@ pub async fn recreate_project(
                     "project_id": &project_id,
                     "compose_yaml": &compose_yaml,
                     "service_order": &svc_names,
+                    "target_services": target_services,
                     "allow_raw_ports": project.allow_raw_ports,
                     "docker_observe": docker_observe,
+                    "is_background": project.is_background,
                     "service_resources": service_resources,
                     "default_memory_limit_mb": default_mem,
                     "default_cpu_limit": default_cpu,
@@ -745,17 +796,52 @@ pub async fn recreate_project(
                 .await
             {
                 Ok(r) => r,
-                Err(e) => return Err((StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}"))),
+                Err(e) => {
+                    let _ = status::transition(
+                        &state.db,
+                        &project_id,
+                        ProjectStatus::Error,
+                        &ProjectUpdateFields::default(),
+                        None,
+                    )
+                    .await;
+                    return Err((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        format!("agent unreachable: {e}"),
+                    ));
+                }
             };
 
             if !resp.status().is_success() {
                 let resp_body = resp.text().await.unwrap_or_default();
+                let _ = status::transition(
+                    &state.db,
+                    &project_id,
+                    ProjectStatus::Error,
+                    &ProjectUpdateFields::default(),
+                    None,
+                )
+                .await;
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("remote recreate failed: {resp_body}")));
             }
 
             // Update project_services with results from agent
             let batch_result: serde_json::Value = resp.json().await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
+            let service_errors: Vec<String> = batch_result["services"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|service| {
+                    service["error"].as_str().map(|error| {
+                        format!(
+                            "{}: {}",
+                            service["service_name"].as_str().unwrap_or("unknown"),
+                            error
+                        )
+                    })
+                })
+                .collect();
 
             if let Some(svc_results) = batch_result["services"].as_array() {
                 for svc in svc_results {
@@ -772,6 +858,13 @@ pub async fn recreate_project(
                         }
                     }
                 }
+            }
+            if !service_errors.is_empty() {
+                let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("one or more services failed to recreate: {}", service_errors.join("; ")),
+                ));
             }
 
             let _ = state.route_sync_tx.send(());
@@ -814,10 +907,18 @@ pub async fn recreate_project(
         Some(img) => img,
         None => return Err((StatusCode::BAD_REQUEST, "project has no image deployed yet".to_string())),
     };
-    let internal_port = match project.internal_port {
-        Some(p) => p,
-        None => return Err((StatusCode::BAD_REQUEST, "project has no port configured yet".to_string())),
-    };
+    let internal_port = project.internal_port;
+    let docker_observe = crate::capabilities::has_capability(
+        &state.db,
+        &project_id,
+        litebin_common::capabilities::ProjectCapability::DockerObserve,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
+    let volumes = project
+        .volumes
+        .as_deref()
+        .and_then(|volumes| serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(volumes).ok());
 
     let is_remote = node_id != "local";
 
@@ -850,6 +951,8 @@ pub async fn recreate_project(
                 "cmd": project.cmd,
                 "memory_limit_mb": project.memory_limit_mb,
                 "cpu_limit": project.cpu_limit,
+                "volumes": volumes,
+                "docker_observe": docker_observe,
             }))
             .send()
             .await
@@ -863,13 +966,12 @@ pub async fn recreate_project(
         let result: serde_json::Value = resp.json().await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
         let container_id = result["container_id"].as_str().unwrap_or("").to_string();
-        let port = result["mapped_port"].as_u64()
-            .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port in response".to_string()))? as u16;
+        let port = result["mapped_port"].as_u64().unwrap_or(0) as u16;
 
         // Update DB
         status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
                 container_id: Some(Some(container_id)),
-                mapped_port: Some(Some(port as i64)),
+                mapped_port: Some(if project.is_background { None } else { Some(port as i64) }),
                 last_active_at: Some(now),
                 ..Default::default()
             }, None)
@@ -878,25 +980,23 @@ pub async fn recreate_project(
 
         port
     } else {
-        // Local path: remove old container, recreate without pull
-        let _ = state.docker.remove_by_name(&project_id).await;
-
-        let extra_env = read_local_project_env(&project_id);
-
-        let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
-        let (container_id, mapped_port) = state.docker.run_service_container(&config).await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to recreate: {e}")))?;
-
-        status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
-                container_id: Some(Some(container_id)),
-                mapped_port: Some(Some(mapped_port as i64)),
-                last_active_at: Some(now),
-                ..Default::default()
-            }, None)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
-
-        mapped_port
+        start_services(&state, &project, StartServicesOpts {
+            force_recreate: true,
+            pull_images: false,
+            force_pull: false,
+            services: None,
+            connect_orchestrator: true,
+            rollback_on_failure: true,
+        })
+        .await?;
+        sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT mapped_port FROM projects WHERE id = ?",
+        )
+        .bind(&project_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+        .unwrap_or(0) as u16
     };
 
     sync_caddy(&state).await;

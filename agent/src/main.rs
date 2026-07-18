@@ -91,8 +91,6 @@ pub struct ProjectMetaEntry {
     #[serde(default)]
     pub allow_raw_ports: bool,
     #[serde(default)]
-    pub allow_docker_access: bool,
-    #[serde(default)]
     pub docker_observe: bool,
     /// Global default memory limit (MB) from orchestrator settings.
     #[serde(default)]
@@ -183,6 +181,10 @@ async fn main() -> Result<()> {
         cpu_limit,
     )?;
     docker.detect_host_projects_dir().await;
+    let removed_unsafe = docker.cleanup_unsafe_docker_socket_containers().await?;
+    if removed_unsafe > 0 {
+        tracing::warn!(count = removed_unsafe, "removed unsafe legacy Docker socket containers");
+    }
     let docker = Arc::new(docker);
 
     // Connect agent to all existing project networks so it can proxy to containers

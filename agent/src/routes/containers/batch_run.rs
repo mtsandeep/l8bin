@@ -27,8 +27,6 @@ pub struct BatchRunRequest {
     /// If Some, only recreate these services (partial redeploy). If None, deploy all.
     pub target_services: Option<Vec<String>>,
     pub allow_raw_ports: Option<bool>,
-    #[serde(rename = "allow_docker_access")]
-    pub _allow_docker_access: Option<bool>,
     pub docker_observe: Option<bool>,
     #[serde(default = "default_false")]
     pub is_background: bool,
@@ -70,6 +68,23 @@ pub struct ServiceRunResult {
     pub container_id: Option<String>,
     pub mapped_port: Option<u16>,
     pub error: Option<String>,
+}
+
+async fn rollback_started_containers(
+    docker: &litebin_common::docker::DockerManager,
+    project_id: &str,
+    service_names: &[String],
+    container_ids: &[String],
+) {
+    for container_id in container_ids.iter().rev() {
+        let _ = docker.stop_container(container_id).await;
+        let _ = docker.remove_container(container_id).await;
+    }
+    for service_name in service_names {
+        let _ = docker
+            .remove_by_service_name(project_id, service_name, None)
+            .await;
+    }
 }
 
 /// POST /containers/batch-run
@@ -182,6 +197,9 @@ pub async fn batch_run(
                 Json(ErrorResponse { error: format!("failed to prepare Docker observation proxy: {e}") }),
             ).into_response();
         }
+    } else {
+        let network = litebin_common::types::docker_observe_network_name(&req.project_id, None);
+        let _ = state.docker.remove_named_network(&network).await;
     }
 
     // Apply per-service resource overrides from orchestrator (dashboard-set memory/CPU)
@@ -250,6 +268,15 @@ pub async fn batch_run(
             Json(ErrorResponse { error: format!("failed to create project network: {e}") }),
         ).into_response();
     }
+    if proxy_injected {
+        let network = litebin_common::types::docker_observe_network_name(&req.project_id, None);
+        if let Err(e) = state.docker.ensure_named_network(&network).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: format!("failed to create Docker observation network: {e}") }),
+            ).into_response();
+        }
+    }
 
     // Connect Caddy to the project network
     let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
@@ -309,6 +336,13 @@ pub async fn batch_run(
 
     // Start services level by level — parallel within each level
     let mut results: Vec<ServiceRunResult> = Vec::new();
+    let mut started_container_ids: Vec<String> = Vec::new();
+    let operation_services: Vec<String> = plan
+        .service_order
+        .iter()
+        .filter(|service| target_set.as_ref().is_none_or(|targets| targets.contains(*service)))
+        .cloned()
+        .collect();
     for level in &plan.service_levels {
         let mut tasks: JoinSet<ServiceRunResult> = JoinSet::new();
 
@@ -369,14 +403,20 @@ pub async fn batch_run(
                     // unless the managed proxy becomes healthy.
                     if r.service_name == litebin_common::types::DOCKER_PROXY_SERVICE {
                         let Some(ref cid) = r.container_id else {
+                            tasks.abort_all();
+                            while tasks.join_next().await.is_some() {}
+                            rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
                             return (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(ErrorResponse { error: "Docker observation proxy failed to start".into() }),
                             ).into_response();
                         };
                         if let Err(e) = state.docker.wait_for_healthy(cid, true).await {
+                            tasks.abort_all();
+                            while tasks.join_next().await.is_some() {}
                             let _ = state.docker.stop_container(cid).await;
                             let _ = state.docker.remove_container(cid).await;
+                            rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
                             return (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(ErrorResponse {
@@ -385,30 +425,41 @@ pub async fn batch_run(
                             ).into_response();
                         }
                     }
+                    if let Some(ref container_id) = r.container_id {
+                        started_container_ids.push(container_id.clone());
+                    }
                     results.push(r)
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "batch-run: service task panicked");
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse { error: format!("service task failed: {e}") }),
+                    ).into_response();
                 }
             }
         }
-    }
-
-    if proxy_injected && results.iter().any(|result| result.error.is_some()) {
-        if let Err(e) = state
-            .docker
-            .remove_by_service_name(
-                &req.project_id,
-                litebin_common::types::DOCKER_PROXY_SERVICE,
-                None,
+        let level_errors: Vec<String> = results
+            .iter()
+            .filter_map(|result| {
+                result
+                    .error
+                    .as_ref()
+                    .map(|error| format!("{}: {}", result.service_name, error))
+            })
+            .collect();
+        if !level_errors.is_empty() {
+            rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("one or more services failed: {}", level_errors.join("; ")),
+                }),
             )
-            .await
-        {
-            tracing::warn!(
-                project = %req.project_id,
-                error = %e,
-                "failed to clean up Docker observation proxy after deployment error"
-            );
+                .into_response();
         }
     }
 

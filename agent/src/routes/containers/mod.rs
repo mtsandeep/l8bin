@@ -13,5 +13,6 @@ pub use lifecycle::{
     cleanup_project, recreate_container, remove_container, run_container, start_container,
     stop_container,
 };
+pub(crate) use lifecycle::run_single_plan;
 pub use metadata::read_project_metadata;
 pub use stats::{batch_container_stats, container_disk_usage, container_logs, container_status};

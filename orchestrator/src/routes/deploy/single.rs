@@ -41,6 +41,7 @@ pub struct DeployRequest {
     pub custom_domain: Option<String>,
     pub volumes: Option<Vec<VolumeMount>>,
     pub cleanup_volumes: Option<bool>,
+    pub grant_capabilities: Option<Vec<String>>,
     /// When true on a first deploy, persist project metadata and create the runtime
     /// `.env` without starting containers. Ignored for redeploys of configured projects.
     #[serde(default)]
@@ -199,6 +200,22 @@ async fn execute_deploy(
     is_update: bool,
 ) -> axum::response::Response {
     let now = chrono::Utc::now().timestamp();
+    let granted_capabilities = match payload
+        .grant_capabilities
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|id| {
+            litebin_common::capabilities::ProjectCapability::parse(id)
+                .ok_or_else(|| format!("unknown capability '{id}'"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response();
+        }
+    };
 
     // PUT requests that omit workload type preserve the current project setting.
     let existing_background: Option<bool> = if is_update {
@@ -400,6 +417,21 @@ async fn execute_deploy(
         ).into_response();
     }
 
+    if let Err(error) = crate::capabilities::grant_many(
+        &state.db,
+        &payload.project_id,
+        &granted_capabilities,
+        Some(&user_id),
+    )
+    .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("failed to store capability grants: {error}")})),
+        )
+            .into_response();
+    }
+
     // 3. Read project back from DB (so cmd reflects stored value, not just payload)
     let project = match sqlx::query_as::<_, crate::db::models::Project>(
         "SELECT * FROM projects WHERE id = ?"
@@ -490,6 +522,9 @@ async fn execute_deploy(
                     "memory_limit_mb": project.memory_limit_mb,
                     "cpu_limit": project.cpu_limit,
                     "volumes": payload.volumes,
+                    "docker_observe": granted_capabilities.contains(
+                        &litebin_common::capabilities::ProjectCapability::DockerObserve
+                    ),
                     "stage_only": true,
                 }))
                 .send()
@@ -590,12 +625,28 @@ async fn execute_deploy(
 
                 // Start the container
                 crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Creating container...");
-                let extra_env = crate::routes::manage::read_local_project_env(&payload_clone.project_id);
-                let config = litebin_common::types::RunServiceConfig::from_project(&project_clone, extra_env);
-                let result = state_clone.docker.run_service_container(&config).await?;
-                crate::routes::manage::write_local_env_snapshot(&payload_clone.project_id);
+                crate::routes::manage::start_services(
+                    &state_clone,
+                    &project_clone,
+                    crate::routes::manage::StartServicesOpts {
+                        force_recreate: true,
+                        pull_images: false,
+                        force_pull: false,
+                        services: None,
+                        connect_orchestrator: true,
+                        rollback_on_failure: true,
+                    },
+                )
+                .await
+                .map_err(|(_, error)| anyhow::anyhow!(error))?;
+                let result: (String, i64) = sqlx::query_as(
+                    "SELECT container_id, COALESCE(mapped_port, 0) FROM projects WHERE id = ?",
+                )
+                .bind(&payload_clone.project_id)
+                .fetch_one(&state_clone.db)
+                .await?;
                 crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Container started on port {}", result.1));
-                result
+                (result.0, result.1 as u16)
             } else {
                 // --- Remote node path ---
                 crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Deploying to remote node {}...", &node_id_clone));
@@ -617,7 +668,13 @@ async fn execute_deploy(
                         "cmd": project_clone.cmd,
                         "memory_limit_mb": project_clone.memory_limit_mb,
                         "cpu_limit": project_clone.cpu_limit,
-                        "volumes": payload_clone.volumes,
+                        "volumes": project_clone
+                            .volumes
+                            .as_deref()
+                            .and_then(|volumes| serde_json::from_str::<Vec<VolumeMount>>(volumes).ok()),
+                        "docker_observe": granted_capabilities.contains(
+                            &litebin_common::capabilities::ProjectCapability::DockerObserve
+                        ),
                     }))
                     .send()
                     .await?;

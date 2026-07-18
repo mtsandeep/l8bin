@@ -19,7 +19,6 @@ use crate::{
     nodes,
     routes::manage::{
         agent_base_url, ensure_project_dir_and_env, get_node_from_db,
-        start_services, StartServicesOpts,
     },
     status,
 };
@@ -153,7 +152,6 @@ pub struct ImportGroupRequest {
     pub env_file_found: bool,
     pub name: Option<String>,
     pub description: Option<String>,
-    pub allow_docker_access: Option<bool>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -247,13 +245,16 @@ async fn import_single_group(
     let project_id = &group.project_id;
     let mut warnings: Vec<String> = Vec::new();
     let now = chrono::Utc::now().timestamp();
-    if group.allow_docker_access == Some(true) {
+    if group.containers.iter().any(|container| {
+        container.volumes.iter().any(|volume| {
+            litebin_common::docker::bind_source_exposes_docker_socket(&volume.source)
+        })
+    }) {
         return Err(
-            "allow_docker_access is unavailable; scan/import capability selection is deferred"
+            "cannot import a running container whose host mounts expose the Docker daemon socket; redeploy it from sanitized Compose instead"
                 .into(),
         );
     }
-
     // Validate project ID doesn't already exist
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?")
         .bind(project_id)
@@ -340,7 +341,7 @@ async fn import_single_group(
     .bind(group.deploy_type.to_string())
     .bind(&group.name)
     .bind(&group.description)
-    .bind(group.allow_docker_access.unwrap_or(false) as i64)
+    .bind(0_i64)
     .bind(now)
     .bind(now)
     .execute(&state.db)
@@ -404,22 +405,9 @@ async fn import_single_group(
         "containers": container_specs,
         "compose_yaml": compose_yaml,
         "env_content": env_content,
-        "allow_docker_access": group.allow_docker_access.unwrap_or(false),
     });
 
     let mut migrated_ids: Vec<String> = Vec::new();
-
-    // ── 3b. Warn if docker.sock present without allow_docker_access ───────
-    if !group.allow_docker_access.unwrap_or(false) {
-        let has_sock = group.containers.iter().any(|c| {
-            c.volumes.iter().any(|v| {
-                v.source.contains("/docker.sock") || v.destination.contains("/docker.sock")
-            })
-        });
-        if has_sock {
-            warnings.push("Containers have Docker socket mounts but 'Allow Docker access' is disabled — the socket will not be available after redeploy".into());
-        }
-    }
 
     // ── 4. Docker import ─────────────────────────────────────────────────
     if group.node_id == "local" {
@@ -474,43 +462,6 @@ async fn import_single_group(
     // Transition project status from Importing → derived status (typically Running)
     // since all services were inserted as Running above.
     status::derive_and_set_project_status(&state.db, project_id).await;
-
-    // If allow_docker_access is enabled, start services to create the docker-proxy
-    // sidecar. Existing containers will use the fast-path (already running).
-    if group.allow_docker_access.unwrap_or(false) && group.node_id == "local" {
-        let project = match sqlx::query_as::<_, crate::db::models::Project>(
-            "SELECT * FROM projects WHERE id = ?",
-        )
-        .bind(project_id)
-        .fetch_one(&state.db)
-        .await
-        {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(project_id = %project_id, error = %e, "import: failed to fetch project for proxy creation");
-                return Ok((
-                    ImportedGroup {
-                        project_id: project_id.clone(),
-                        node_id: group.node_id.clone(),
-                        containers_imported: migrated_ids,
-                        warnings,
-                    },
-                    group.setup_routing,
-                ));
-            }
-        };
-        if let Err(e) = start_services(&state, &project, StartServicesOpts {
-            force_recreate: false,
-            pull_images: false,
-            force_pull: false,
-            services: None,
-            connect_orchestrator: true,
-            rollback_on_failure: false,
-        }).await {
-            tracing::warn!(project_id = %project_id, error = ?e, "import: failed to create docker-proxy sidecar");
-            warnings.push("docker-proxy sidecar creation failed after import".into());
-        }
-    }
 
     Ok((
         ImportedGroup {

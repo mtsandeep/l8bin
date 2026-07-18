@@ -202,6 +202,10 @@ async fn main() -> anyhow::Result<()> {
     // Verify Docker connectivity
     docker.ping().await?;
     tracing::info!("docker connection verified");
+    let removed_unsafe = docker.cleanup_unsafe_docker_socket_containers().await?;
+    if removed_unsafe > 0 {
+        tracing::warn!(count = removed_unsafe, "removed unsafe legacy Docker socket containers");
+    }
 
     // Connect orchestrator to all existing project networks so it can proxy to containers
     let orchestrator_id = std::env::var("ORCHESTRATOR_CONTAINER_NAME")

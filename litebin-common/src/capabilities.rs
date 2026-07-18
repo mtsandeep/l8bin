@@ -9,9 +9,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectCapability {
-    /// Legacy mutating Docker access grant. Kept for stored-row compatibility only.
-    #[serde(rename = "docker-access")]
-    DockerAccess,
     /// Observe the host Docker daemon through LiteBin's read-only proxy.
     #[serde(rename = "docker-observe")]
     DockerObserve,
@@ -28,7 +25,6 @@ impl ProjectCapability {
 
     pub fn id(self) -> &'static str {
         match self {
-            ProjectCapability::DockerAccess => "docker-access",
             ProjectCapability::DockerObserve => "docker-observe",
             ProjectCapability::RawPorts => "raw-ports",
         }
@@ -36,7 +32,6 @@ impl ProjectCapability {
 
     pub fn label(self) -> &'static str {
         match self {
-            ProjectCapability::DockerAccess => "Docker access (unavailable)",
             ProjectCapability::DockerObserve => "Docker observation",
             ProjectCapability::RawPorts => "Raw host ports",
         }
@@ -44,9 +39,6 @@ impl ProjectCapability {
 
     pub fn description(self) -> &'static str {
         match self {
-            ProjectCapability::DockerAccess => {
-                "Reserved for future object-authorized mutating Docker access. This capability is not available."
-            }
             ProjectCapability::DockerObserve => {
                 "Allows selected services to read host-wide container information through LiteBin's \
                  endpoint-allowlisted proxy. The raw Docker socket is never mounted into the workload."
@@ -60,9 +52,6 @@ impl ProjectCapability {
 
     pub fn risk(self) -> &'static str {
         match self {
-            ProjectCapability::DockerAccess => {
-                "Unavailable — safe project-scoped mutation requires object-level authorization."
-            }
             ProjectCapability::DockerObserve => {
                 "High — responses may expose host-wide container metadata, environment values, and logs."
             }
@@ -74,7 +63,6 @@ impl ProjectCapability {
 
     pub fn parse(id: &str) -> Option<Self> {
         match id {
-            "docker-access" => Some(ProjectCapability::DockerAccess),
             "docker-observe" => Some(ProjectCapability::DockerObserve),
             "raw-ports" => Some(ProjectCapability::RawPorts),
             _ => None,

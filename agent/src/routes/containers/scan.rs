@@ -26,7 +26,6 @@ pub struct ImportRequest {
     pub containers: Vec<ContainerImportSpec>,
     pub compose_yaml: Option<String>,
     pub env_content: Option<String>,
-    pub allow_docker_access: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -69,6 +68,37 @@ pub async fn import_containers(
 ) -> impl IntoResponse {
     let mut results = Vec::new();
     let mut errors = Vec::new();
+
+    for spec in &req.containers {
+        let inspect = match state.docker.inspect_container(&spec.container_id).await {
+            Ok(inspect) => inspect,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("cannot inspect container before import: {e}")
+                    })),
+                )
+                    .into_response();
+            }
+        };
+        let exposes_socket = inspect.mounts.as_ref().is_some_and(|mounts| {
+            mounts.iter().any(|mount| {
+                mount.source.as_deref().is_some_and(
+                    litebin_common::docker::bind_source_exposes_docker_socket,
+                )
+            })
+        });
+        if exposes_socket {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "cannot import a container whose host mounts expose the Docker daemon socket"
+                })),
+            )
+                .into_response();
+        }
+    }
 
     // 1. Rename each container (live — container keeps running)
     for spec in &req.containers {
@@ -138,14 +168,6 @@ pub async fn import_containers(
                 tracing::info!(path = ?env_path, "import: wrote .env");
             }
         }
-    }
-
-    // Legacy mutating Docker access is intentionally unavailable.
-    if req.allow_docker_access.unwrap_or(false) {
-        errors.push(
-            "allow_docker_access is unavailable; scan/import Docker observation selection is deferred"
-                .into(),
-        );
     }
 
     (StatusCode::OK, Json(ImportResponse { results, errors })).into_response()

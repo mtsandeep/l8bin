@@ -108,32 +108,17 @@ pub async fn revoke(
 
 /// Sync legacy `allow_*` boolean columns from capability grants.
 async fn sync_legacy_flags(db: &SqlitePool, project_id: &str) -> Result<(), sqlx::Error> {
-    let docker = has_capability(db, project_id, ProjectCapability::DockerObserve).await?;
     let raw = has_capability(db, project_id, ProjectCapability::RawPorts).await?;
     sqlx::query(
         "UPDATE projects SET allow_docker_access = ?, allow_raw_ports = ?, updated_at = ? WHERE id = ?",
     )
-    .bind(docker)
+    .bind(false)
     .bind(raw)
     .bind(chrono::Utc::now().timestamp())
     .bind(project_id)
     .execute(db)
     .await?;
     Ok(())
-}
-
-/// Resolve effective flags for container runtime (prefer grants, fall back to legacy columns).
-#[allow(dead_code)]
-pub async fn effective_flags(
-    db: &SqlitePool,
-    project_id: &str,
-    legacy_docker: bool,
-    legacy_raw: bool,
-) -> Result<(bool, bool), sqlx::Error> {
-    let grants = granted_ids(db, project_id).await?;
-    let docker = grants.contains(ProjectCapability::DockerObserve.id()) || legacy_docker;
-    let raw = grants.contains(ProjectCapability::RawPorts.id()) || legacy_raw;
-    Ok((docker, raw))
 }
 
 /// Capabilities required by a report that are not yet granted.

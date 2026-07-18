@@ -158,13 +158,6 @@ pub async fn grant_project_capabilities(
 ) -> Result<Json<Vec<ProjectCapabilityStatus>>, (StatusCode, String)> {
     ensure_project(&state, &id).await?;
     let caps = parse_capability_ids(&payload.capabilities).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    if caps.contains(&ProjectCapability::DockerAccess) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "docker-access is unavailable; use docker-observe for read-only host observation"
-                .to_string(),
-        ));
-    }
     let granted_by = auth_session.user.map(|u| u.id);
     capabilities::grant_many(&state.db, &id, &caps, granted_by.as_deref())
         .await

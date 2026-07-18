@@ -80,6 +80,48 @@ fn raw_docker_socket_is_retained_only_for_managed_proxy() {
 }
 
 #[test]
+fn ancestor_binds_that_expose_docker_socket_are_removed() {
+    let binds = vec![
+        "/:/host:ro".to_string(),
+        "/var:/host-var".to_string(),
+        "/var/run/..:/host-var-normalized".to_string(),
+        "/safe:/safe".to_string(),
+    ];
+    let sanitized = super::container::sanitize_docker_socket_binds(&binds, false);
+    assert_eq!(sanitized, vec!["/safe:/safe"]);
+}
+
+#[test]
+fn unrelated_socket_names_are_not_removed() {
+    let binds = vec![
+        "/tmp/my-docker.sock:/tmp/docker.sock".to_string(),
+        "/safe:/safe".to_string(),
+    ];
+    let sanitized = super::container::sanitize_docker_socket_binds(&binds, false);
+    assert_eq!(sanitized, binds);
+}
+
+#[test]
+fn managed_docker_host_replaces_compose_value_once() {
+    let merged = super::container::merge_service_env(
+        vec![
+            "DOCKER_HOST=tcp://attacker:2375".into(),
+            "KEEP=value".into(),
+            "DOCKER_HOST=unix:///var/run/docker.sock".into(),
+        ],
+        &["DOCKER_HOST=tcp://litebin-docker-proxy:2375".into()],
+        true,
+    );
+    assert_eq!(
+        merged,
+        vec![
+            "KEEP=value",
+            "DOCKER_HOST=tcp://litebin-docker-proxy:2375"
+        ]
+    );
+}
+
+#[test]
 fn classify_anyhow_without_bollard_as_other() {
     let anyhow_err: anyhow::Error = anyhow::anyhow!("some unrelated error");
     assert_eq!(DockerErrorKind::from_anyhow(&anyhow_err), DockerErrorKind::Other);

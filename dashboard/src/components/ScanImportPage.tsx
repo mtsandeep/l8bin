@@ -52,7 +52,7 @@ interface EditableGroup {
   name: string;
   description: string;
   allowRawPorts: boolean;
-  allowDockerAccess: boolean;
+  hasDockerSocket: boolean;
   selected: boolean;
 }
 
@@ -128,8 +128,8 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
           name: '',
           description: '',
           allowRawPorts: false,
-          allowDockerAccess: hasDockerSock(g.containers),
-          selected: true,
+          hasDockerSocket: hasDockerSock(g.containers),
+          selected: !hasDockerSock(g.containers),
         });
       }
 
@@ -148,8 +148,8 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
             name: '',
             description: '',
             allowRawPorts: false,
-            allowDockerAccess: hasDockerSock(g.containers),
-            selected: true,
+            hasDockerSocket: hasDockerSock(g.containers),
+            selected: !hasDockerSock(g.containers),
           });
         }
       }
@@ -167,11 +167,14 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
 
   // ── Step 2: Selection ──────────────────────────────────────────────────────
   const toggleSelect = (idx: number) =>
-    setGroups((gs) => gs.map((g, i) => (i === idx ? { ...g, selected: !g.selected } : g)));
+    setGroups((gs) =>
+      gs.map((g, i) => (i === idx && !g.hasDockerSocket ? { ...g, selected: !g.selected } : g)),
+    );
 
   const toggleAll = () => {
-    const allSelected = groups.every((g) => g.selected);
-    setGroups((gs) => gs.map((g) => ({ ...g, selected: !allSelected })));
+    const importable = groups.filter((g) => !g.hasDockerSocket);
+    const allSelected = importable.every((g) => g.selected);
+    setGroups((gs) => gs.map((g) => ({ ...g, selected: g.hasDockerSocket ? false : !allSelected })));
   };
 
   const selectedCount = groups.filter((g) => g.selected).length;
@@ -354,12 +357,14 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
                     disabled={scanning}
                     className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors cursor-pointer disabled:opacity-40"
                   >
-                    {groups.every((g) => g.selected) ? (
+                    {groups.filter((g) => !g.hasDockerSocket).every((g) => g.selected) ? (
                       <CheckSquare size={13} className="text-violet-400" />
                     ) : (
                       <Square size={13} />
                     )}
-                    {groups.every((g) => g.selected) ? 'Deselect all' : 'Select all'}
+                    {groups.filter((g) => !g.hasDockerSocket).every((g) => g.selected)
+                      ? 'Deselect all'
+                      : 'Select all'}
                   </button>
                 </div>
               </div>
@@ -370,7 +375,7 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
                     key={`${g.nodeId}-${g.originalGroup.group_key}`}
                     group={g}
                     onToggle={() => toggleSelect(idx)}
-                    selectable
+                    selectable={!g.hasDockerSocket}
                   />
                 ))}
               </div>
@@ -461,16 +466,16 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
                                 {g.originalGroup.containers.length} service
                                 {g.originalGroup.containers.length !== 1 ? 's' : ''}
                               </p>
-                              {(g.allowRawPorts || g.allowDockerAccess) && (
+                              {(g.allowRawPorts || g.hasDockerSocket) && (
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {g.allowRawPorts && (
                                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300 border border-sky-400/20">
                                       raw ports
                                     </span>
                                   )}
-                                  {g.allowDockerAccess && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300 border border-sky-400/20">
-                                      docker access
+                                  {g.hasDockerSocket && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-400/10 text-red-300 border border-red-400/20">
+                                      Docker socket import blocked
                                     </span>
                                   )}
                                 </div>
@@ -725,6 +730,11 @@ function GroupCard({
             {g.env_file_found && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-400 border border-sky-400/20">
                 .env
+              </span>
+            )}
+            {group.hasDockerSocket && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-400/10 text-red-300 border border-red-400/20">
+                import blocked: Docker socket mount
               </span>
             )}
           </div>

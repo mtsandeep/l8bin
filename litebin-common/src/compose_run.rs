@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bollard::models::{ContainerCreateBody, HealthConfig, HostConfig};
 use compose_bollard::{BollardMappingOptions, ComposeFile, ComposeParser};
 
-use crate::types::{is_windows_drive_path, RunServiceConfig};
+use crate::types::{is_windows_drive_path, NetworkConfig, RunServiceConfig};
 
 /// Result of building service configs from a compose file.
 /// Contains everything needed to deploy/wake a multi-service project.
@@ -31,6 +31,12 @@ impl ComposeRunPlan {
         extra_env: &[String],
         instance_id: Option<&str>,
     ) -> anyhow::Result<Self> {
+        if compose.services.contains_key(crate::types::DOCKER_PROXY_SERVICE) {
+            anyhow::bail!(
+                "service name '{}' is reserved for LiteBin's managed Docker observation proxy",
+                crate::types::DOCKER_PROXY_SERVICE
+            );
+        }
         let service_levels = compose
             .topological_levels()
             .map_err(|e| anyhow::anyhow!("dependency error: {}", e))?;
@@ -108,13 +114,31 @@ impl ComposeRunPlan {
             .join("docker-observe");
         std::fs::create_dir_all(&config_dir)?;
         let proxy_config_path = config_dir.join("haproxy.cfg");
-        std::fs::write(&proxy_config_path, docker_observe_haproxy_config())?;
+        std::fs::write(
+            &proxy_config_path,
+            crate::types::DOCKER_OBSERVE_HAPROXY_CONFIG,
+        )?;
+        let instance_id = self.configs.first().and_then(|config| config.instance_id.clone());
+        let project_network =
+            crate::types::project_network_name(project_id, instance_id.as_deref());
+        let observe_network =
+            crate::types::docker_observe_network_name(project_id, instance_id.as_deref());
 
         for config in &mut self.configs {
             if config_requests_docker_socket(config) {
                 config.docker_observe = true;
                 config.env.retain(|value| !value.starts_with("DOCKER_HOST="));
                 config.env.push(format!("DOCKER_HOST=tcp://{}:2375", proxy_name));
+                config.networks = Some(vec![
+                    NetworkConfig {
+                        name: project_network.clone(),
+                        aliases: Some(vec![config.service_name.clone()]),
+                    },
+                    NetworkConfig {
+                        name: observe_network.clone(),
+                        aliases: None,
+                    },
+                ]);
             }
         }
 
@@ -122,6 +146,7 @@ impl ComposeRunPlan {
         // run_service_container(), which connects to the per-project network.
         let create_body = ContainerCreateBody {
             image: Some(crate::types::DOCKER_OBSERVE_PROXY_IMAGE.to_string()),
+            user: Some("0:0".to_string()),
             healthcheck: Some(HealthConfig {
                 test: Some(vec![
                     "CMD".into(),
@@ -150,7 +175,7 @@ impl ComposeRunPlan {
         let proxy_config = RunServiceConfig {
             project_id: project_id.to_string(),
             service_name: proxy_name.clone(),
-            instance_id: None,
+            instance_id,
             image: crate::types::DOCKER_OBSERVE_PROXY_IMAGE.to_string(),
             port: None,
             cmd: None,
@@ -164,7 +189,10 @@ impl ComposeRunPlan {
             tmpfs: None,
             read_only: None,
             extra_hosts: None,
-            networks: None,
+            networks: Some(vec![NetworkConfig {
+                name: observe_network,
+                aliases: Some(vec![proxy_name.clone()]),
+            }]),
             binds: Some(vec![
                 "/var/run/docker.sock:/var/run/docker.sock".to_string(),
                 format!(
@@ -176,8 +204,8 @@ impl ComposeRunPlan {
             bollard_create_body: Some(create_body),
             bollard_host_config: Some(host_config),
             allow_raw_ports: false,
-            allow_docker_access: false,
             docker_observe: true,
+            is_managed_docker_proxy: true,
         };
 
         // Insert at the beginning of service_order and into its own topological
@@ -292,8 +320,8 @@ fn build_configs(
                 bollard_create_body: Some(bollard_config.create_body),
                 bollard_host_config: Some(bollard_config.host_config),
                 allow_raw_ports: false,
-                allow_docker_access: false,
                 docker_observe: false,
+                is_managed_docker_proxy: false,
             })
         })
         .collect()
@@ -304,33 +332,9 @@ fn config_requests_docker_socket(config: &RunServiceConfig) -> bool {
         binds.iter().any(|bind| {
             bind.split(':')
                 .next()
-                .is_some_and(|source| source.ends_with("/docker.sock"))
+                .is_some_and(crate::docker::is_docker_socket_source)
         })
     })
-}
-
-fn docker_observe_haproxy_config() -> &'static str {
-    r#"global
-    log stdout format raw local0
-
-defaults
-    log global
-    mode http
-    timeout connect 5s
-    timeout client 1h
-    timeout server 1h
-
-frontend docker_observe
-    bind *:2375
-    acl read_method method GET HEAD
-    acl observe_endpoint path_reg -i ^/(v[0-9.]+/)?(_ping|version|info|events|containers/json|containers/[^/]+/(json|stats|logs))$
-    http-request deny deny_status 403 unless read_method
-    http-request deny deny_status 403 unless observe_endpoint
-    default_backend docker_socket
-
-backend docker_socket
-    server docker /var/run/docker.sock
-"#
 }
 
 /// Scope volume names in a compose volume spec with the project ID.
@@ -404,6 +408,17 @@ services:
             )
         }));
         assert!(!app.env.iter().any(|v| v.starts_with("DOCKER_HOST=")));
+        let observe_network = crate::types::docker_observe_network_name(&project_id, None);
+        assert!(observer
+            .networks
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|network| network.name == observe_network));
+        assert!(app.networks.is_none());
+        assert_eq!(proxy.networks.as_ref().unwrap().len(), 1);
+        assert_eq!(proxy.networks.as_ref().unwrap()[0].name, observe_network);
+        assert!(proxy.is_managed_docker_proxy);
         assert!(proxy
             .binds
             .as_ref()
@@ -422,6 +437,8 @@ services:
         assert!(generated.contains("containers/[^/]+/(json|stats|logs)"));
         assert!(!generated.contains("/exec"));
         assert!(!generated.contains("/archive"));
+        assert!(generated.contains("deny_status 403 unless read_method"));
+        assert!(generated.contains("deny_status 403 unless observe_endpoint"));
 
         let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
     }
@@ -435,5 +452,169 @@ services:
             .service_order
             .iter()
             .any(|name| name == crate::types::DOCKER_PROXY_SERVICE));
+    }
+
+    #[test]
+    fn reserved_proxy_service_name_is_rejected_by_run_plan() {
+        let yaml = "services:\n  litebin-docker-proxy:\n    image: attacker/image\n";
+        let error = match build_compose_run_plan(yaml, "reserved-name", &[], None) {
+            Ok(_) => panic!("reserved proxy service name was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("reserved"));
+    }
+
+    #[test]
+    fn single_image_socket_request_uses_observation_proxy() {
+        let project = crate::types::Project {
+            id: "single-observer".into(),
+            user_id: "test".into(),
+            name: None,
+            description: None,
+            is_background: true,
+            image: Some("example/observer".into()),
+            internal_port: None,
+            mapped_port: None,
+            container_id: None,
+            node_id: None,
+            status: crate::types::ProjectStatus::Stopped,
+            cmd: None,
+            memory_limit_mb: None,
+            cpu_limit: None,
+            custom_domain: None,
+            volumes: crate::types::serialize_volumes(&[crate::types::VolumeMount {
+                path: "/var/run/docker.sock".into(),
+                name: Some("/var/run/docker.sock".into()),
+            }]),
+            auto_stop_enabled: false,
+            auto_stop_timeout_mins: 0,
+            auto_start_enabled: false,
+            allow_raw_ports: false,
+            allow_docker_access: false,
+            last_active_at: None,
+            service_count: None,
+            service_summary: None,
+            deploy_type: Some(crate::types::DeployType::Image),
+            created_at: 0,
+            updated_at: 0,
+        };
+        let config = crate::types::RunServiceConfig::from_project(&project, Vec::new());
+        let mut plan = ComposeRunPlan::single_service(config);
+        assert!(plan
+            .inject_docker_observe_proxy(&project.id)
+            .unwrap());
+        let workload = plan
+            .configs
+            .iter()
+            .find(|config| config.service_name == "web")
+            .unwrap();
+        assert!(workload.docker_observe);
+        assert_eq!(workload.networks.as_ref().unwrap().len(), 2);
+        assert!(workload
+            .env
+            .iter()
+            .any(|value| value == "DOCKER_HOST=tcp://litebin-docker-proxy:2375"));
+        let _ = std::fs::remove_dir_all(
+            std::path::PathBuf::from("projects").join(&project.id),
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a local Docker daemon and pulls haproxy"]
+    async fn live_haproxy_allows_observation_and_denies_mutation() {
+        let project_id = format!(
+            "haproxy-policy-{}",
+            std::process::id()
+        );
+        let yaml = r#"
+services:
+  observer:
+    image: alpine:3.20
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+"#;
+        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None).unwrap();
+        assert!(plan.inject_docker_observe_proxy(&project_id).unwrap());
+        let proxy = plan
+            .configs
+            .iter_mut()
+            .find(|config| config.is_managed_docker_proxy)
+            .unwrap();
+        let config_path = std::fs::canonicalize(
+            std::path::PathBuf::from("projects")
+                .join(&project_id)
+                .join("docker-observe")
+                .join("haproxy.cfg"),
+        )
+        .unwrap();
+        let config_path = config_path
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_string();
+        proxy.binds.as_mut().unwrap()[1] = format!(
+            "{config_path}:/usr/local/etc/haproxy/haproxy.cfg:ro"
+        );
+        proxy.is_public = true;
+        proxy.port = Some(2375);
+
+        let mut docker = crate::docker::DockerManager::new(
+            "bridge".into(),
+            128 * 1024 * 1024,
+            0.25,
+        )
+        .unwrap();
+        docker.detect_host_projects_dir().await;
+        docker
+            .pull_image_with_opts(crate::types::DOCKER_OBSERVE_PROXY_IMAGE, false)
+            .await
+            .unwrap();
+        docker.ensure_project_network(&project_id, None).await.unwrap();
+        let observe_network =
+            crate::types::docker_observe_network_name(&project_id, None);
+        docker.ensure_named_network(&observe_network).await.unwrap();
+
+        let (container_id, port) = docker.run_service_container(proxy).await.unwrap();
+        let policy_result: anyhow::Result<_> = async {
+            docker.wait_for_healthy(&container_id, true).await?;
+            let client = reqwest::Client::new();
+            let base = format!("http://127.0.0.1:{port}");
+            let ping = client.get(format!("{base}/_ping")).send().await?;
+            let version = client.get(format!("{base}/version")).send().await?;
+            let mutation = client
+                .post(format!("{base}/containers/create"))
+                .send()
+                .await?;
+            let delete = client
+                .delete(format!("{base}/containers/not-real"))
+                .send()
+                .await?;
+            let unlisted = client
+                .get(format!("{base}/images/json"))
+                .send()
+                .await?;
+            Ok((
+                ping.status(),
+                version.status(),
+                mutation.status(),
+                delete.status(),
+                unlisted.status(),
+            ))
+        }
+        .await;
+
+        let _ = docker.stop_container(&container_id).await;
+        let _ = docker.remove_container(&container_id).await;
+        let _ = docker.remove_named_network(&observe_network).await;
+        let _ = docker.remove_project_network(&project_id, None).await;
+        let _ = std::fs::remove_dir_all(
+            std::path::PathBuf::from("projects").join(&project_id),
+        );
+
+        let (ping, version, mutation, delete, unlisted) = policy_result.unwrap();
+        assert!(ping.is_success());
+        assert!(version.is_success());
+        assert_eq!(mutation, reqwest::StatusCode::FORBIDDEN);
+        assert_eq!(delete, reqwest::StatusCode::FORBIDDEN);
+        assert_eq!(unlisted, reqwest::StatusCode::FORBIDDEN);
     }
 }

@@ -77,7 +77,6 @@ export interface Project {
   auto_stop_timeout_mins: number;
   auto_start_enabled: boolean;
   allow_raw_ports: boolean;
-  allow_docker_access: boolean;
   custom_domain: string | null;
   service_count: number | null;
   service_summary: string | null;
@@ -144,7 +143,6 @@ export interface ProjectSettings {
   auto_stop_timeout_mins?: number;
   auto_start_enabled?: boolean;
   allow_raw_ports?: boolean;
-  allow_docker_access?: boolean;
   cmd?: string;
   memory_limit_mb?: number | null;
   cpu_limit?: number | null;
@@ -157,6 +155,7 @@ export interface DeployPayload {
   is_background: boolean;
   name?: string;
   description?: string;
+  grant_capabilities?: string[];
   node_id?: string | null;
   auto_stop_enabled?: boolean;
   auto_stop_timeout_mins?: number;
@@ -636,8 +635,6 @@ export interface ComposeDeployPayload {
   auto_start_enabled?: boolean;
   /** @deprecated prefer grant_capabilities */
   allow_raw_ports?: boolean;
-  /** @deprecated prefer grant_capabilities */
-  allow_docker_access?: boolean;
   grant_capabilities?: string[];
 }
 
@@ -654,8 +651,6 @@ export async function deployComposeProject(payload: ComposeDeployPayload): Promi
     form.append('auto_stop_timeout_mins', String(payload.auto_stop_timeout_mins));
   if (payload.auto_start_enabled !== undefined) form.append('auto_start_enabled', String(payload.auto_start_enabled));
   if (payload.allow_raw_ports !== undefined) form.append('allow_raw_ports', String(payload.allow_raw_ports));
-  if (payload.allow_docker_access !== undefined)
-    form.append('allow_docker_access', String(payload.allow_docker_access));
   if (payload.grant_capabilities && payload.grant_capabilities.length > 0) {
     form.append('grant_capabilities', payload.grant_capabilities.join(','));
   }
@@ -875,7 +870,6 @@ export interface ImportGroupPayload {
   env_file_found: boolean;
   name?: string;
   description?: string;
-  allow_docker_access?: boolean;
 }
 
 export interface ImportedGroup {

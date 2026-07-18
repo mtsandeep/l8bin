@@ -780,8 +780,8 @@ pub async fn push_project_meta_to_agent(
     config: &Config,
 ) {
     // Query all projects for this node
-    let rows: Vec<(String, bool, bool, bool, bool)> = match sqlx::query_as(
-        "SELECT id, auto_start_enabled, allow_raw_ports, allow_docker_access, is_background FROM projects WHERE node_id = ?",
+    let rows: Vec<(String, bool, bool, bool)> = match sqlx::query_as(
+        "SELECT id, auto_start_enabled, allow_raw_ports, is_background FROM projects WHERE node_id = ?",
     )
     .bind(node_id)
     .fetch_all(db)
@@ -794,18 +794,14 @@ pub async fn push_project_meta_to_agent(
         }
     };
 
-    let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _, _, _)| (id.clone(), *auto)).collect();
+    let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _, _)| (id.clone(), *auto)).collect();
     let background_projects: HashMap<String, bool> = rows.iter()
-        .filter(|(_, _, _, _, background)| *background)
-        .map(|(id, _, _, _, _)| (id.clone(), true))
+        .filter(|(_, _, _, background)| *background)
+        .map(|(id, _, _, _)| (id.clone(), true))
         .collect();
     let allow_raw_ports: HashMap<String, bool> = rows.iter()
-        .filter(|(_, _, raw, _, _)| *raw)
-        .map(|(id, _, _, _, _)| (id.clone(), true))
-        .collect();
-    let allow_docker_access: HashMap<String, bool> = rows.iter()
-        .filter(|(_, _, _, docker, _)| *docker)
-        .map(|(id, _, _, _, _)| (id.clone(), true))
+        .filter(|(_, _, raw, _)| *raw)
+        .map(|(id, _, _, _)| (id.clone(), true))
         .collect();
     let docker_observe: HashMap<String, bool> = sqlx::query_scalar::<_, String>(
         "SELECT pc.project_id FROM project_capabilities pc \
@@ -865,7 +861,6 @@ pub async fn push_project_meta_to_agent(
         "projects": projects,
         "background_projects": background_projects,
         "allow_raw_ports": allow_raw_ports,
-        "allow_docker_access": allow_docker_access,
         "docker_observe": docker_observe,
         "default_memory_limit_mb": default_mem,
         "default_cpu_limit": default_cpu,

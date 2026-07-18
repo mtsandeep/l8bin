@@ -1534,6 +1534,7 @@ async fn build_and_deploy(
         None,
         None,
         true,
+        &[],
         is_new_project,
     )
     .await?;

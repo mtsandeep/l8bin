@@ -340,7 +340,7 @@ LiteBin always strips raw Docker socket mounts, including mounts marked read-onl
 1. Open the project settings in the dashboard
 2. Grant **Docker observation**
 
-LiteBin creates an endpoint-allowlisted, read-only proxy and injects `DOCKER_HOST` only into services that declared the socket. Observation is host-wide: responses may include metadata, environment values, and logs from other projects on that node.
+LiteBin creates a managed HAProxy sidecar with an endpoint-allowlisted, read-only policy and injects `DOCKER_HOST` only into services that declared the socket. Observation is host-wide: responses may include metadata, environment values, and logs from other projects on that node.
 
 Without `docker-observe`, the raw socket is removed and no replacement is provided. Mutating Docker access is not supported.
 

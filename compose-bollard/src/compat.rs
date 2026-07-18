@@ -238,8 +238,37 @@ fn finding(
 }
 
 fn is_docker_sock_source(source: &str) -> bool {
-    let path = source.split(':').next().unwrap_or(source).trim();
-    path.ends_with("docker.sock") || path == "/var/run/docker.sock" || path == "//var/run/docker.sock"
+    matches!(
+        normalize_unix_path(source).as_deref(),
+        Some("/var/run/docker.sock" | "/run/docker.sock")
+    )
+}
+
+fn docker_socket_is_below(source: &str) -> bool {
+    let Some(source) = normalize_unix_path(source) else {
+        return false;
+    };
+    ["/var/run/docker.sock", "/run/docker.sock"]
+        .iter()
+        .any(|socket| source == "/" || socket.starts_with(&format!("{source}/")))
+}
+
+fn normalize_unix_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    if !path.starts_with('/') {
+        return None;
+    }
+    let mut components = Vec::new();
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            value => components.push(value),
+        }
+    }
+    Some(format!("/{}", components.join("/")))
 }
 
 fn volume_source(volume: &str) -> &str {
@@ -453,6 +482,15 @@ fn analyze_service(
 ) {
     let prefix = format!("services.{svc_name}");
     let is_public = public_service == Some(svc_name);
+    if svc_name == "litebin-docker-proxy" {
+        findings.push(finding(
+            &prefix,
+            Some(svc_name.into()),
+            FindingDisposition::Unsupported,
+            "service name 'litebin-docker-proxy' is reserved for LiteBin's managed Docker observation proxy",
+            None,
+        ));
+    }
 
     // Supported fields that are present
     let present_supported: &[(&str, bool)] = &[
@@ -710,6 +748,14 @@ fn analyze_volumes(
                 "the raw socket is always removed; with docker-observe, DOCKER_HOST points to LiteBin's endpoint-allowlisted read-only proxy",
                 None,
             ));
+        } else if docker_socket_is_below(source) {
+            findings.push(finding(
+                format!("{prefix} ({vol})"),
+                Some(svc_name.into()),
+                FindingDisposition::Unsupported,
+                "host bind contains the Docker daemon socket; mount a declared docker.sock path and grant docker-observe instead",
+                None,
+            ));
         }
     }
 }
@@ -780,6 +826,38 @@ services:
         );
         assert!(r.ok);
         assert_eq!(r.required_capabilities, vec!["docker-observe".to_string()]);
+    }
+
+    #[test]
+    fn docker_socket_ancestor_bind_is_unsupported() {
+        let r = report(
+            r#"
+services:
+  agent:
+    image: example/agent
+    volumes:
+      - /var:/host-var:ro
+"#,
+        );
+        assert!(!r.ok);
+        assert!(r
+            .unsupported()
+            .any(|finding| finding.message.contains("contains the Docker daemon socket")));
+    }
+
+    #[test]
+    fn managed_proxy_service_name_is_reserved() {
+        let r = report(
+            r#"
+services:
+  litebin-docker-proxy:
+    image: attacker/image
+"#,
+        );
+        assert!(!r.ok);
+        assert!(r
+            .unsupported()
+            .any(|finding| finding.message.contains("reserved")));
     }
 
     #[test]

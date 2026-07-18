@@ -2,7 +2,6 @@ import { ExternalLink, Loader2, Plus, Route, Settings, Trash2, X as XIcon } from
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createProjectRoute,
-  DeployType,
   deleteProjectRoute,
   fetchProjectCapabilities,
   fetchProjectRoutes,
@@ -54,7 +53,6 @@ export default function SettingsPopover({
   onRefresh,
   onClose,
 }: SettingsPopoverProps) {
-  const isCompose = project.deploy_type === DeployType.Compose;
   const [settingsTab, setSettingsTab] = useState<'general' | 'routes' | 'capabilities'>('general');
 
   // Routes state
@@ -193,10 +191,10 @@ export default function SettingsPopover({
 
   // Load capabilities when switching to capabilities tab
   useEffect(() => {
-    if (settingsTab === 'capabilities' && isCompose) {
+    if (settingsTab === 'capabilities') {
       loadCapabilities();
     }
-  }, [settingsTab, isCompose, loadCapabilities]);
+  }, [settingsTab, loadCapabilities]);
 
   const [saving, setSaving] = useState(false);
 
@@ -289,8 +287,7 @@ export default function SettingsPopover({
           >
             Routes
           </button>}
-          {isCompose && (
-            <button
+          <button
               type="button"
               onClick={() => setSettingsTab('capabilities')}
               className={`flex-1 px-3 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
@@ -300,8 +297,7 @@ export default function SettingsPopover({
               }`}
             >
               Capabilities
-            </button>
-          )}
+          </button>
         </div>
 
         {settingsTab === 'general' && (
@@ -618,7 +614,7 @@ export default function SettingsPopover({
           </div>
         )}
 
-        {settingsTab === 'capabilities' && isCompose && (
+        {settingsTab === 'capabilities' && (
           <div className="space-y-3">
             {capabilitiesLoading ? (
               <div className="flex items-center justify-center py-4">
@@ -713,7 +709,7 @@ export default function SettingsPopover({
                         </p>
                         {requested.length === 0 ? (
                           <p className="text-[11px] text-slate-500 px-0.5">
-                            Current compose file does not request any capabilities.
+                            This project does not currently request any capabilities.
                           </p>
                         ) : (
                           requested.map((cap) => renderCap(cap, { showReason: true }))

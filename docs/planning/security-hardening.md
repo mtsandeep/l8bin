@@ -30,7 +30,7 @@ These are landed and form the current security baseline. Future hardening propos
 - **`pids_limit: 4096`** — fork-bomb protection.
 - **Memory + CPU limits** — per-project defaults with overrides.
 - **Per-project networks for multi-service** — `litebin-{project_id}` network per compose project. Services within a project can reach each other; cross-project traffic is blocked.
-- **Docker socket stripping** — compose-declared docker.sock mounts are removed unless the project has `allow_docker_access` enabled.
+- **Docker socket stripping** — workload mounts that expose docker.sock are always removed; approved Compose services receive `DOCKER_HOST` through the `docker-observe` proxy.
 
 ### Network isolation (current state)
 - All management containers (orchestrator, dashboard, caddy) and all single-service apps share `litebin-network`.
