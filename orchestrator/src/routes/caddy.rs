@@ -53,7 +53,7 @@ pub async fn ask(
     }
 
     // 2. Exact custom_domain match
-    let custom_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE custom_domain = ?")
+    let custom_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?")
         .bind(domain)
         .fetch_one(&state.db)
         .await
@@ -72,7 +72,7 @@ pub async fn ask(
 
     // 3. www variant: if queried domain starts with "www.", check bare domain too
     if let Some(bare) = domain.strip_prefix("www.") {
-        let www_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE custom_domain = ?")
+        let www_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?")
             .bind(bare)
             .fetch_one(&state.db)
             .await
@@ -96,7 +96,7 @@ pub async fn ask(
         // Case A: "{alias}.{project_id}" — project-scoped alias (e.g., api2.test.localhost)
         if let Some((alias, project_id)) = rest.rsplit_once('.') {
             let route_exists = match sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM project_routes WHERE project_id = ? AND route_type = 'alias' AND subdomain = ?"
+                "SELECT COUNT(*) FROM project_routes r JOIN projects p ON p.id = r.project_id WHERE p.is_background = 0 AND r.project_id = ? AND r.route_type = 'alias' AND r.subdomain = ?"
             )
             .bind(project_id)
             .bind(alias)
@@ -118,7 +118,7 @@ pub async fn ask(
 
         // Case B: "{alias}" — domain-level alias (e.g., api2.localhost)
         let route_exists = match sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM project_routes WHERE route_type = 'alias' AND subdomain = ?"
+            "SELECT COUNT(*) FROM project_routes r JOIN projects p ON p.id = r.project_id WHERE p.is_background = 0 AND r.route_type = 'alias' AND r.subdomain = ?"
         )
         .bind(rest)
         .fetch_one(&state.db)

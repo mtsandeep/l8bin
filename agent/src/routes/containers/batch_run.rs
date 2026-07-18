@@ -28,6 +28,8 @@ pub struct BatchRunRequest {
     pub target_services: Option<Vec<String>>,
     pub allow_raw_ports: Option<bool>,
     pub allow_docker_access: Option<bool>,
+    #[serde(default = "default_false")]
+    pub is_background: bool,
     /// Whether to force-pull images (true) or skip if already present locally (false).
     #[serde(default = "default_false")]
     pub force_pull: bool,
@@ -83,6 +85,15 @@ pub async fn batch_run(
 
     // Ensure project directory exists
     ensure_project_dir_and_env(&req.project_id);
+    {
+        let mut meta = state.project_meta.write().unwrap();
+        let entry = meta.entry(req.project_id.clone()).or_default();
+        entry.is_background = req.is_background;
+        if req.is_background {
+            entry.auto_start_enabled = false;
+        }
+    }
+    crate::save_project_meta_to_file(&state.project_meta.read().unwrap());
 
     // Store compose.yaml
     let compose_path = projects_dir().join(&req.project_id).join("compose.yaml");
@@ -117,6 +128,13 @@ pub async fn batch_run(
             Json(ErrorResponse { error: format!("invalid compose: {e}") }),
         ).into_response(),
     };
+
+    if req.is_background {
+        plan.pub_service_name = None;
+        for config in plan.configs.iter_mut() {
+            config.is_public = false;
+        }
+    }
 
     // Apply allow_raw_ports flag from orchestrator
     if req.allow_raw_ports.unwrap_or(false) {
@@ -269,6 +287,7 @@ pub async fn batch_run(
             }
 
             let run_config = configs_map[svc_name].clone();
+            let is_public = run_config.is_public;
             let docker = state.docker.clone();
             let svc = svc_name.clone();
             let pid = req.project_id.clone();
@@ -286,7 +305,7 @@ pub async fn batch_run(
                         ServiceRunResult {
                             service_name: svc,
                             container_id: Some(container_id),
-                            mapped_port: Some(mapped_port),
+                            mapped_port: is_public.then_some(mapped_port),
                             error: None,
                         }
                     }

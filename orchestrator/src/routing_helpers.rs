@@ -75,6 +75,9 @@ pub async fn resolve_routes(
     let mut routes = Vec::with_capacity(projects.len());
 
     for project in projects {
+        if project.is_background {
+            continue;
+        }
         // Compose deploys don't bind host ports (traffic flows via Docker network),
         // so mapped_port is NULL for them. internal_port is the app's actual listen
         // port and is what the upstream dial address is built from below.
@@ -161,7 +164,7 @@ async fn resolve_sleeping_custom_domain_routes(
     orchestrator_upstream: &str,
 ) -> anyhow::Result<Vec<ProjectRoute>> {
     let sleeping = sqlx::query_as::<_, Project>(
-        "SELECT * FROM projects WHERE status IN ('stopped', 'stopping') AND custom_domain IS NOT NULL AND custom_domain != ''",
+        "SELECT * FROM projects WHERE is_background = 0 AND status IN ('stopped', 'stopping') AND custom_domain IS NOT NULL AND custom_domain != ''",
     )
     .fetch_all(db)
     .await?;
@@ -216,6 +219,23 @@ pub async fn resolve_all_routes(
 
     let mut routes = resolve_routes(&all_running, db, domain).await?;
 
+    let background_projects = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE is_background = 1")
+        .fetch_all(db).await?;
+    for project in background_projects {
+        routes.push(ProjectRoute {
+            project_id: project.id.clone(),
+            subdomain_host: format!("{}.{}", project.id, domain),
+            upstream: orchestrator_upstream.to_string(),
+            custom_domain: None,
+            node_id: Some("local".to_string()),
+            node_public_ip: None,
+            host_rewrite: None,
+            upstream_tls: false,
+            container_upstream: None,
+            custom_routes: vec![],
+        });
+    }
+
     // Degraded projects (some services stopped) — route to orchestrator so waker can recover
     let degraded = sqlx::query_as::<_, Project>(
         "SELECT * FROM projects WHERE status = 'degraded'",
@@ -224,6 +244,9 @@ pub async fn resolve_all_routes(
     .await?;
 
     for project in &degraded {
+        if project.is_background {
+            continue;
+        }
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         let (upstream, node_public_ip) = if is_local {
             let local_ip: Option<String> = sqlx::query_scalar(

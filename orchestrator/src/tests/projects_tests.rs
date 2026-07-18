@@ -139,6 +139,74 @@ async fn deploy_without_timeout_fields_yields_defaults() {
     assert_eq!(body["auto_stop_enabled"], json!(true));
     assert_eq!(body["auto_stop_timeout_mins"], json!(15));
     assert_eq!(body["auto_start_enabled"], json!(true));
+    assert_eq!(body["is_background"], json!(false));
+}
+
+#[tokio::test]
+async fn background_migration_defaults_existing_style_rows_to_web() {
+    let (server, db) = logged_in_server_with_db().await;
+    let user_id = get_user_id(&server).await;
+    let columns: Vec<(String,)> = sqlx::query_as(
+        "SELECT name FROM pragma_table_info('projects') WHERE name = 'is_background'",
+    ).fetch_all(&db).await.unwrap();
+    assert_eq!(columns.len(), 1);
+
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query("INSERT INTO projects (id, user_id, status, created_at, updated_at) VALUES ('default-web', ?, 'pending', ?, ?)")
+        .bind(user_id).bind(now).bind(now).execute(&db).await.unwrap();
+    let is_background: bool = sqlx::query_scalar(
+        "SELECT is_background FROM projects WHERE id = 'default-web'",
+    ).fetch_one(&db).await.unwrap();
+    assert!(!is_background);
+}
+
+#[tokio::test]
+async fn background_project_cannot_enable_sleep_or_request_wake() {
+    let (server, db) = logged_in_server_with_db().await;
+    let user_id = get_user_id(&server).await;
+    insert_project(&db, "worker-settings", &user_id).await;
+    sqlx::query("UPDATE projects SET is_background = 1, auto_stop_enabled = 0, auto_start_enabled = 0 WHERE id = ?")
+        .bind("worker-settings").execute(&db).await.unwrap();
+
+    server.patch("/projects/worker-settings/settings")
+        .json(&json!({"auto_stop_enabled": true})).await
+        .assert_status(StatusCode::BAD_REQUEST);
+    server.patch("/projects/worker-settings/settings")
+        .json(&json!({"auto_start_enabled": true})).await
+        .assert_status(StatusCode::BAD_REQUEST);
+
+    let row: (bool, bool) = sqlx::query_as(
+        "SELECT auto_stop_enabled, auto_start_enabled FROM projects WHERE id = ?",
+    ).bind("worker-settings").fetch_one(&db).await.unwrap();
+    assert_eq!(row, (false, false));
+}
+
+#[tokio::test]
+async fn background_route_uses_master_fallback_and_keeps_custom_domain_dormant() {
+    let (server, db) = logged_in_server_with_db().await;
+    let user_id = get_user_id(&server).await;
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query(
+        r#"INSERT INTO nodes
+           (id, name, host, agent_port, status, fail_count, created_at, updated_at)
+           VALUES ('remote-node', 'Remote', 'remote.example.test', 8443, 'online', 0, ?, ?)"#,
+    ).bind(now).bind(now).execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO projects
+           (id, user_id, is_background, status, node_id, custom_domain,
+            auto_stop_enabled, auto_start_enabled, created_at, updated_at)
+           VALUES ('remote-worker', ?, 1, 'running', 'remote-node', 'worker.example.com',
+                   0, 0, ?, ?)"#,
+    ).bind(user_id).bind(now).bind(now).execute(&db).await.unwrap();
+
+    let routes = crate::routing_helpers::resolve_all_routes(
+        &db, "example.test", "litebin-orchestrator:5080",
+    ).await.unwrap();
+    let route = routes.iter().find(|route| route.project_id == "remote-worker").unwrap();
+    assert_eq!(route.node_id.as_deref(), Some("local"));
+    assert_eq!(route.upstream, "litebin-orchestrator:5080");
+    assert!(route.custom_domain.is_none());
+    assert!(route.custom_routes.is_empty());
 }
 
 /// Requirements 2.1, 2.2 — GET /projects/:id returns all three timeout fields.

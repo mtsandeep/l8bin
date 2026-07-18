@@ -10,6 +10,7 @@ use serde::Deserialize;
 use crate::auth::backend::PasswordBackend;
 use crate::db::models::Project;
 use crate::AppState;
+use litebin_common::types::DeployType;
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateSettingsRequest {
@@ -111,6 +112,11 @@ pub async fn update_project_settings(
 
     if existing.is_none() {
         return Err((StatusCode::NOT_FOUND, format!("project '{}' not found", id)));
+    }
+    if existing.as_ref().unwrap().is_background
+        && (payload.auto_stop_enabled == Some(true) || payload.auto_start_enabled == Some(true))
+    {
+        return Err((StatusCode::BAD_REQUEST, "background projects cannot enable auto-stop or request-driven auto-start".to_string()));
     }
     let old_domain = existing.as_ref().unwrap().custom_domain.clone();
 
@@ -255,7 +261,7 @@ pub async fn update_project_settings(
     }
 
     // For multi-service projects, also update the public service in project_services
-    if (has_memory_limit_mb || has_cpu_limit) && existing.as_ref().unwrap().service_count.unwrap_or(1) > 1 {
+    if (has_memory_limit_mb || has_cpu_limit) && existing.as_ref().unwrap().deploy_type == Some(DeployType::Compose) {
         let mut set_svc: Vec<&str> = Vec::new();
         if has_memory_limit_mb { set_svc.push("memory_limit_mb = ?"); }
         if has_cpu_limit { set_svc.push("cpu_limit = ?"); }

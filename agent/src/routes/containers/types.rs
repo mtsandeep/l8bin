@@ -10,7 +10,7 @@ fn default_false() -> bool {
 #[derive(Deserialize)]
 pub struct RunRequest {
     pub image: String,
-    pub internal_port: i64,
+    pub internal_port: Option<i64>,
     pub project_id: String,
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
@@ -25,7 +25,7 @@ pub struct RunRequest {
 #[derive(Serialize)]
 pub struct RunResponse {
     pub container_id: String,
-    pub mapped_port: u16,
+    pub mapped_port: Option<u16>,
 }
 
 #[derive(Deserialize)]

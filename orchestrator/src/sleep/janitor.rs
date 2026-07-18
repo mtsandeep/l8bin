@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use litebin_common::types::{Node, ProjectStatus};
+use litebin_common::types::{DeployType, Node, ProjectStatus};
 use litebin_common::docker::DockerErrorKind;
 
 use crate::status::{self, ProjectUpdateFields};
@@ -38,7 +38,7 @@ async fn sweep(
     let now = chrono::Utc::now().timestamp();
 
     let candidates = sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE status = 'running' AND auto_stop_enabled = 1",
+        "SELECT * FROM projects WHERE is_background = 0 AND status = 'running' AND auto_stop_enabled = 1",
     )
     .fetch_all(&state.db)
     .await?;
@@ -62,7 +62,7 @@ async fn sweep(
     // service status, so we need the container_ids while services still show 'running').
     let mut service_containers: std::collections::HashMap<String, Vec<(String, Option<String>)>> = std::collections::HashMap::new();
     for project in &idle_projects {
-        let rows: Vec<(String, Option<String>)> = if project.service_count.unwrap_or(1) > 1 {
+        let rows: Vec<(String, Option<String>)> = if project.deploy_type == Some(DeployType::Compose) {
             match sqlx::query_as(
                 "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL AND container_id != ''",
             )
@@ -116,7 +116,7 @@ async fn sweep(
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         let containers = service_containers.get(&project.id).cloned().unwrap_or_default();
 
-        if project.service_count.unwrap_or(1) > 1 {
+        if project.deploy_type == Some(DeployType::Compose) {
             // Multi-service: stop all service containers
             if is_local {
                 for (_svc_name, cid) in containers.iter().rev() {

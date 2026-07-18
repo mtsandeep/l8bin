@@ -63,7 +63,7 @@ mod prop_tests {
         let now = chrono::Utc::now().timestamp();
 
         let candidates = sqlx::query_as::<_, crate::db::models::Project>(
-            "SELECT * FROM projects WHERE status = 'running' AND auto_stop_enabled = 1",
+            "SELECT * FROM projects WHERE is_background = 0 AND status = 'running' AND auto_stop_enabled = 1",
         )
         .fetch_all(db)
         .await

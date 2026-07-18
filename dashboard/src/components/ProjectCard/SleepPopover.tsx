@@ -70,6 +70,11 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
             {settingsError}
           </div>
         )}
+        {!project.is_background && (
+          <p className="text-[11px] leading-relaxed text-amber-300/80">
+            Auto-stop stops every service in this project. Disable it for scheduled jobs, queue workers, or other tasks that must remain running.
+          </p>
+        )}
         <label className="flex items-center justify-between gap-2 cursor-pointer">
           <span className="text-xs text-slate-300">Auto-stop when idle</span>
           <button

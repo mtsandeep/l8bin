@@ -220,7 +220,7 @@ pub async fn start_project(
             connect_orchestrator: true,
             rollback_on_failure: false,
         }).await.map_err(|(s, e)| (s, e))?;
-    } else if project.service_count.unwrap_or(1) > 1 || is_compose {
+    } else if is_compose {
         // Remote multi-service: use agent batch-run (same as deploy/recreate)
         let node_id = project.node_id.as_deref().unwrap();
         let client = nodes::client::get_node_client(&state.node_clients, node_id)
@@ -318,8 +318,7 @@ pub async fn start_project(
 
         let image = project.image.as_deref()
             .ok_or((StatusCode::BAD_REQUEST, "project has no image".to_string()))?;
-        let internal_port = project.internal_port
-            .ok_or((StatusCode::BAD_REQUEST, "project has no port configured".to_string()))?;
+        let internal_port = project.internal_port;
 
         // First start after staging has no container yet — create it on the agent.
         if project.container_id.is_none() {
@@ -346,12 +345,11 @@ pub async fn start_project(
             let result: serde_json::Value = resp.json().await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
             let new_cid = result["container_id"].as_str().unwrap_or("").to_string();
-            let port = result["mapped_port"].as_u64()
-                .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port".to_string()))? as i64;
+            let port = result["mapped_port"].as_u64().map(|p| p as i64);
 
             status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
                 container_id: Some(Some(new_cid.clone())),
-                mapped_port: Some(Some(port)),
+                mapped_port: Some(port),
                 last_active_at: Some(now),
                 ..Default::default()
             }, None).await
@@ -359,12 +357,13 @@ pub async fn start_project(
 
             if let Err(e) = sqlx::query(
                 "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit)
-                 VALUES (?, 'web', ?, ?, ?, 1, 'running', ?, ?, ?, ?)",
+                 VALUES (?, 'web', ?, ?, ?, ?, 'running', ?, ?, ?, ?)",
             )
             .bind(&project_id)
             .bind(image)
             .bind(internal_port)
             .bind(port)
+            .bind(!project.is_background)
             .bind(&new_cid)
             .bind(&project.cmd)
             .bind(project.memory_limit_mb)
@@ -392,7 +391,7 @@ pub async fn start_project(
                         .and_then(|v| v["mapped_port"].as_u64())
                         .map(|p| p as i64);
                     status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
-                        mapped_port: port.map(Some),
+                        mapped_port: Some(if project.is_background { None } else { port }),
                         last_active_at: Some(now),
                         ..Default::default()
                     }, None).await
@@ -432,12 +431,11 @@ pub async fn start_project(
                     let result: serde_json::Value = resp.json().await
                         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
                     let new_cid = result["container_id"].as_str().unwrap_or("").to_string();
-                    let port = result["mapped_port"].as_u64()
-                        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "missing mapped_port".to_string()))? as i64;
+                    let port = result["mapped_port"].as_u64().map(|p| p as i64);
 
                     status::transition(&state.db, &project_id, ProjectStatus::Running, &ProjectUpdateFields {
                         container_id: Some(Some(new_cid)),
-                        mapped_port: Some(Some(port)),
+                        mapped_port: Some(port),
                         last_active_at: Some(now),
                         ..Default::default()
                     }, None).await
@@ -458,7 +456,7 @@ pub async fn start_project(
 
 /// Build a list of scoped volume names for a project (from DB for multi-service, from JSON for single-service).
 fn build_volume_list(project: &crate::db::models::Project) -> Vec<String> {
-    if project.service_count.unwrap_or(1) > 1 {
+    if project.deploy_type == Some(DeployType::Compose) {
         // Multi-service: volumes are in project_volumes table (already scoped at deploy time)
         // For remote delete, we pass what we have from the project record
         // The agent will discover volumes from its own state
@@ -517,7 +515,7 @@ pub async fn delete_project(
         .unwrap_or(true);
 
     if is_local {
-        if project.service_count.unwrap_or(1) > 1 {
+        if project.deploy_type == Some(DeployType::Compose) {
             super::multi_service::delete_all_services(&state, &project_id).await;
         } else {
             // Collect volumes for single-service local cleanup
@@ -643,7 +641,7 @@ pub async fn recreate_project(
     // Single-service compose projects also need this path for docker-proxy injection
     // and compose-based orchestration (env files, volumes, etc.).
     let is_compose = matches!(project.deploy_type, Some(DeployType::Compose));
-    if project.service_count.unwrap_or(1) > 1 || is_compose {
+    if is_compose {
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         if !is_local {
             // Remote multi-service recreate: call agent batch-run

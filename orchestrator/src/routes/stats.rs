@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::nodes;
 use crate::status;
 use crate::AppState;
-use litebin_common::types::ProjectStatus;
+use litebin_common::types::{DeployType, ProjectStatus};
 use super::manage::{agent_base_url, get_node_from_db, sync_caddy};
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -123,7 +123,7 @@ async fn project_container_ids(
     db: &sqlx::SqlitePool,
     project: &crate::db::models::Project,
 ) -> (Vec<String>, bool) {
-    if project.service_count.unwrap_or(1) > 1 {
+    if project.deploy_type == Some(DeployType::Compose) {
         let services: Vec<(Option<String>,)> = sqlx::query_as(
             "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
         )
@@ -1035,7 +1035,7 @@ pub async fn project_logs(
     let tail = query.tail.unwrap_or(100);
 
     // Resolve the container_id to tail logs from
-    let (container_id, service_name) = if project.service_count.unwrap_or(1) > 1 {
+    let (container_id, service_name) = if project.deploy_type == Some(DeployType::Compose) {
         // Multi-service: look up specific service or fall back to public service
         if let Some(ref svc) = query.service {
             let row: Option<(Option<String>,)> = sqlx::query_as(

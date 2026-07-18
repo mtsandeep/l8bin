@@ -35,6 +35,7 @@ use crate::status::{self, ProjectUpdateFields};
 /// - `auto_stop_enabled` (optional text field, "true"/"false")
 /// - `auto_stop_timeout_mins` (optional text field)
 /// - `auto_start_enabled` (optional text field, "true"/"false")
+/// - `is_background` (optional text field, "true"/"false")
 /// - `custom_domain` (optional text field)
 /// - `compose` (file field — the docker-compose.yaml content)
 pub async fn deploy_compose(
@@ -51,6 +52,7 @@ pub async fn deploy_compose(
     let mut auto_stop_enabled = None;
     let mut auto_stop_timeout_mins = None;
     let mut auto_start_enabled = None;
+    let mut is_background = None;
     let mut custom_domain = None;
     let mut allow_raw_ports = None;
     let mut allow_docker_access = None;
@@ -86,6 +88,9 @@ pub async fn deploy_compose(
             }
             "auto_start_enabled" => {
                 auto_start_enabled = field.text().await.ok().and_then(|v| v.parse::<bool>().ok());
+            }
+            "is_background" => {
+                is_background = field.text().await.ok().and_then(|v| v.parse::<bool>().ok());
             }
             "custom_domain" => {
                 custom_domain = field.text().await.ok();
@@ -217,13 +222,17 @@ pub async fn deploy_compose(
         ).into_response(),
     };
 
-    // 4. Public service detection (warning only if none found)
-    let public_service = match compose.detect_public_service() {
-        Ok(s) => s,
-        Err(e) => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("public service conflict: {e}")})),
-        ).into_response(),
+    let existing_background: Option<bool> = sqlx::query_scalar("SELECT is_background FROM projects WHERE id = ?")
+        .bind(&project_id).fetch_optional(&state.db).await.ok().flatten();
+    let is_background = is_background.or(existing_background).unwrap_or(false);
+
+    let public_service = if is_background {
+        None
+    } else {
+        match compose.detect_public_service() {
+            Ok(s) => s,
+            Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("public service conflict: {e}")}))).into_response(),
+        }
     };
 
     // 5. Compatibility report — reject unsupported fields; require capability grants
@@ -331,9 +340,9 @@ pub async fn deploy_compose(
     }
 
     let now = chrono::Utc::now().timestamp();
-    let auto_stop = auto_stop_enabled.unwrap_or(true);
+    let auto_stop = if is_background { false } else { auto_stop_enabled.unwrap_or(true) };
     let auto_stop_mins = auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
-    let auto_start = auto_start_enabled.unwrap_or(true);
+    let auto_start = if is_background { false } else { auto_start_enabled.unwrap_or(true) };
 
     // On redeploy, preserve existing sleep settings unless explicitly provided
     let existing_status: Option<ProjectStatus> = match sqlx::query_scalar(
@@ -354,7 +363,9 @@ pub async fn deploy_compose(
     let stage_only = stage_only_requested
         && matches!(existing_status, None | Some(ProjectStatus::Pending | ProjectStatus::Unconfigured));
 
-    let (auto_stop, auto_stop_mins, auto_start) = if is_update && auto_stop_enabled.is_none() && auto_start_enabled.is_none() {
+    let (auto_stop, auto_stop_mins, auto_start) = if is_background {
+        (false, auto_stop_mins, false)
+    } else if is_update && auto_stop_enabled.is_none() && auto_start_enabled.is_none() {
         let existing = sqlx::query_as::<_, (bool, i64, bool)>(
             "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?"
         )
@@ -380,6 +391,7 @@ pub async fn deploy_compose(
         project_id = %project_id,
         services = start_order.len(),
         public = ?public_service,
+        is_background,
         "compose deploy request received"
     );
 
@@ -423,10 +435,9 @@ pub async fn deploy_compose(
     }
 
     // Determine the public service's port for the projects row
-    let public_svc_name = public_service.as_deref().unwrap_or(&start_order[0]);
-    let public_svc = &compose.services[public_svc_name];
-    let public_port: Option<i64> = public_svc.exposed_ports().first().map(|(p, _)| *p as i64);
-    let public_image = public_svc.image.clone().unwrap_or_default();
+    let public_svc = public_service.as_deref().map(|name| &compose.services[name]);
+    let public_port: Option<i64> = public_svc.and_then(|svc| svc.exposed_ports().first().map(|(p, _)| *p as i64));
+    let public_image: Option<String> = public_svc.and_then(|svc| svc.image.clone());
 
     // Build service_count and service_summary
     let service_count = compose.services.len() as i64;
@@ -471,12 +482,15 @@ pub async fn deploy_compose(
     // Upsert project row
     let result = sqlx::query(
         r#"
-        INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, allow_raw_ports, allow_docker_access, service_count, service_summary, deploy_type, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, user_id, name, description, is_background, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, allow_raw_ports, allow_docker_access, service_count, service_summary, deploy_type, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id = excluded.user_id,
+            is_background = excluded.is_background,
             image = excluded.image,
             internal_port = excluded.internal_port,
+            container_id = CASE WHEN excluded.is_background = 1 THEN NULL ELSE projects.container_id END,
+            mapped_port = CASE WHEN excluded.is_background = 1 THEN NULL ELSE projects.mapped_port END,
             status = CASE WHEN excluded.status = 'running' THEN projects.status ELSE excluded.status END,
             name = CASE WHEN excluded.name IS NOT NULL THEN excluded.name ELSE COALESCE(projects.name, excluded.name) END,
             description = CASE WHEN excluded.description IS NOT NULL THEN excluded.description ELSE COALESCE(projects.description, excluded.description) END,
@@ -496,6 +510,7 @@ pub async fn deploy_compose(
     .bind(&user_id)
     .bind(&name)
     .bind(&description)
+    .bind(is_background)
     .bind(&public_image)
     .bind(public_port)
     .bind(project_status)
@@ -568,7 +583,7 @@ pub async fn deploy_compose(
             .and_then(|p| p.first())
             .and_then(|p| p.split(':').last()?.parse().ok())
             .map(|p: u16| p as i64);
-        let is_public = public_service.as_deref() == Some(svc_name.as_str());
+        let is_public = !is_background && public_service.as_deref() == Some(svc_name.as_str());
         let is_oneshot = oneshot_names.contains(svc_name);
         let depends_on = svc.depends_on.as_ref()
             .and_then(|d| serde_json::to_string(d).ok());
@@ -719,6 +734,7 @@ pub async fn deploy_compose(
                     "project_id": project_id,
                     "compose_yaml": compose_yaml,
                     "service_order": start_order,
+                    "is_background": is_background,
                     "stage_only": true,
                 }))
                 .send()
@@ -776,7 +792,7 @@ pub async fn deploy_compose(
                 "status": "unconfigured",
                 "project_id": project_id,
                 "node_id": target_node_id,
-                "url": format!("https://{}.{}", project_id, state.config.domain),
+                "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.config.domain)) },
                 "message": "Deployment staged. Configure runtime secrets, then start the project.",
             })),
         ).into_response();
@@ -851,6 +867,7 @@ pub async fn deploy_compose(
                 "target_services": target_services,
                 "allow_raw_ports": project.allow_raw_ports,
                 "allow_docker_access": project.allow_docker_access,
+                "is_background": project.is_background,
                 "service_resources": service_resources,
                 "default_memory_limit_mb": default_mem,
                 "default_cpu_limit": default_cpu,
@@ -898,6 +915,10 @@ pub async fn deploy_compose(
             }
         };
 
+        let service_errors: Vec<String> = batch_result["services"].as_array().into_iter().flatten()
+            .filter_map(|svc| svc["error"].as_str().map(|error| format!("{}: {}", svc["service_name"].as_str().unwrap_or("unknown"), error)))
+            .collect();
+
         // Update project_services with container IDs and ports from agent response
         if let Some(services) = batch_result["services"].as_array() {
             for svc in services {
@@ -917,12 +938,9 @@ pub async fn deploy_compose(
             }
 
             // Set project's denormalized container_id to the public service
-            let pub_svc_name = public_service.as_deref().unwrap_or("");
-            let public_service = services.iter().find(|s| {
-                s["service_name"].as_str() == Some(pub_svc_name)
-            });
+            let public_result = public_service.as_deref().and_then(|name| services.iter().find(|s| s["service_name"].as_str() == Some(name)));
 
-            if let Some(pub_svc) = public_service {
+            if let Some(pub_svc) = public_result {
                 let cid = pub_svc["container_id"].as_str().unwrap_or("").to_string();
                 let port = pub_svc["mapped_port"].as_u64().map(|p| p as i64);
                 if let Err(e) = status::transition(
@@ -941,6 +959,11 @@ pub async fn deploy_compose(
                 }
             }
         }
+        if !service_errors.is_empty() {
+            let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "one or more services failed to start", "service_errors": service_errors}))).into_response();
+        }
+        status::derive_and_set_project_status(&state.db, &project_id).await;
 
         // Trigger route sync
         let _ = state.route_sync_tx.send(());
@@ -967,7 +990,7 @@ pub async fn deploy_compose(
             Json(json!({
                 "status": "deployed",
                 "project_id": project_id,
-                "url": format!("https://{}.{}", project_id, state.config.domain),
+                "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.config.domain)) },
                 "warnings": agent_warnings,
             })),
         ).into_response();
@@ -1105,12 +1128,9 @@ pub async fn deploy_compose(
                 .sync_routes(&route_entries, &state_clone.config.domain, &orchestrator_upstream, &state_clone.config.dashboard_subdomain, &state_clone.config.poke_subdomain, true)
                 .await;
 
-            let url = format!("https://{}.{}", project_id_clone, state_clone.config.domain);
-
             tracing::info!(
                 project_id = %project_id_clone,
                 services = start_order_clone.len(),
-                url = %url,
                 "compose deploy complete"
             );
 
@@ -1156,7 +1176,7 @@ pub async fn deploy_compose(
         Json(json!({
             "status": "deploying",
             "project_id": project_id,
-            "url": format!("https://{}.{}", project_id, state.config.domain),
+            "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.config.domain)) },
             "message": "Compose deployment started in background",
             "warnings": sock_warnings,
         })),

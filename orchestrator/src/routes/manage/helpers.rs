@@ -86,6 +86,7 @@ mod tests {
             user_id: "u1".into(),
             name: None,
             description: None,
+            is_background: false,
             image: image.map(|s| s.to_string()),
             internal_port: Some(80),
             mapped_port: None,

@@ -7,6 +7,7 @@ use crate::{AgentState, ProjectMetaEntry};
 #[derive(serde::Deserialize)]
 pub struct ProjectMetaRequest {
     pub projects: HashMap<String, bool>,
+    pub background_projects: Option<HashMap<String, bool>>,
     pub allow_raw_ports: Option<HashMap<String, bool>>,
     pub allow_docker_access: Option<HashMap<String, bool>>,
     /// Global default memory limit (MB) from orchestrator settings.
@@ -27,12 +28,19 @@ pub async fn update_project_meta(
     let mut meta: HashMap<String, ProjectMetaEntry> = req.projects.into_iter()
         .map(|(id, auto)| (id, ProjectMetaEntry {
             auto_start_enabled: auto,
+            is_background: false,
             allow_raw_ports: false,
             allow_docker_access: false,
             default_memory_limit_mb: req.default_memory_limit_mb,
             default_cpu_limit: req.default_cpu_limit,
         }))
         .collect();
+
+    if let Some(background_projects) = req.background_projects {
+        for (id, val) in background_projects {
+            meta.entry(id).or_default().is_background = val;
+        }
+    }
 
     if let Some(raw_ports) = req.allow_raw_ports {
         for (id, val) in raw_ports {

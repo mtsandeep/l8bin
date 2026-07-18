@@ -111,6 +111,7 @@ mod tests {
             user_id: "user1".to_string(),
             name: None,
             description: None,
+            is_background: false,
             image: Some("img".to_string()),
             internal_port: Some(3000),
             mapped_port: None,

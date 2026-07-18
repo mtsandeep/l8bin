@@ -184,6 +184,35 @@ async fn waker_refuses_auto_start_when_pending() {
     assert_eq!(row.0, "pending");
 }
 
+#[tokio::test]
+async fn background_project_hostname_returns_generic_404_without_state_change() {
+    let (server, db) = test_server_with_db().await;
+    seed_user(&db).await;
+    let last_active_at = chrono::Utc::now().timestamp() - 3600;
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query(
+        r#"INSERT INTO projects
+           (id, user_id, is_background, image, internal_port, status,
+            auto_stop_enabled, auto_start_enabled, last_active_at, created_at, updated_at)
+           VALUES ('worker-only', 'test-user', 1, 'worker:latest', NULL, 'running',
+                   0, 0, ?, ?, ?)"#,
+    )
+    .bind(last_active_at).bind(now).bind(now)
+    .execute(&db).await.unwrap();
+
+    let resp = server.get("/")
+        .add_header(axum::http::header::HOST, "worker-only.localhost")
+        .add_header(axum::http::header::ACCEPT, "text/html").await;
+    resp.assert_status(StatusCode::NOT_FOUND);
+    assert!(!resp.text().to_lowercase().contains("background project"));
+
+    let row: (String, i64) = sqlx::query_as(
+        "SELECT status, last_active_at FROM projects WHERE id = 'worker-only'",
+    ).fetch_one(&db).await.unwrap();
+    assert_eq!(row.0, "running");
+    assert_eq!(row.1, last_active_at);
+}
+
 #[cfg(test)]
 mod prop_tests {
     use proptest::prelude::*;

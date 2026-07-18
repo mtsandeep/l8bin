@@ -43,7 +43,15 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
     };
 
     // List all running litebin containers with their ports
-    let containers = state.docker.list_running_litebin_containers().await?;
+    let mut containers = state.docker.list_running_litebin_containers().await?;
+    {
+        let project_meta = state.project_meta.read().unwrap();
+        containers.retain(|container| {
+            !project_meta.get(&container.project_id)
+                .map(|entry| entry.is_background)
+                .unwrap_or(false)
+        });
+    }
 
     let config = match state.last_caddy_config.read().unwrap().clone() {
         Some(base) => merge_routes_with_persisted(&base, &containers, &domain),
@@ -115,7 +123,7 @@ fn merge_routes_with_persisted(
     for (project_id, svc_containers) in &by_project {
         let subdomain_host = format!("{}.{}", project_id, domain);
 
-        if svc_containers.len() > 1 {
+        if DockerManager::read_compose(project_id).is_some() {
             // Multi-service: route to agent wake server (health-checked per-request)
             route_map.insert(
                 subdomain_host.clone(),
@@ -158,7 +166,7 @@ fn merge_routes_with_persisted(
             }
         }
 
-        let upstream_for_cd = if svc_containers.len() > 1 {
+        let upstream_for_cd = if DockerManager::read_compose(project_id).is_some() {
             wake_server_upstream.to_string()
         } else {
             format!("{}:{}", svc_containers[0].container_name, svc_containers[0].internal_port)
@@ -229,7 +237,7 @@ fn build_config_from_scratch(
     let wake_server_upstream = "host.docker.internal:8444";
     for (project_id, svc_containers) in &by_project {
         let host = format!("{}.{}", project_id, domain);
-        if svc_containers.len() > 1 {
+        if DockerManager::read_compose(project_id).is_some() {
             // Multi-service: route to agent wake server (health-checked per-request)
             routes.push(json!({
                 "match": [{ "host": [host] }],
@@ -355,8 +363,14 @@ pub async fn caddy_ask(
     // Check 1: subdomain of the configured domain
     if let Some(domain) = get_domain(&state) {
         let suffix = format!(".{}", domain);
-        if requested.ends_with(&suffix) || requested == domain {
-            return StatusCode::OK;
+        if let Some(project_id) = requested.strip_suffix(&suffix) {
+            let approved = state.project_meta.read().unwrap()
+                .get(project_id)
+                .map(|entry| !entry.is_background)
+                .unwrap_or(false);
+            if approved {
+                return StatusCode::OK;
+            }
         }
     }
 

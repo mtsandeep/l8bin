@@ -34,6 +34,7 @@ pub struct ProjectResponse {
     pub user_id: String,
     pub name: Option<String>,
     pub description: Option<String>,
+    pub is_background: bool,
     pub node_id: Option<String>,
     pub status: String,
     pub last_active_at: Option<i64>,
@@ -53,6 +54,9 @@ pub struct ProjectResponse {
 
 /// Build PublicStats for a single-service project (no project_services row).
 fn public_stats_from_project(project: &Project) -> Option<ServiceInfo> {
+    if project.is_background {
+        return None;
+    }
     let image = project.image.as_deref()?.to_string();
     if image.is_empty() {
         return None;
@@ -94,7 +98,7 @@ async fn to_project_response(
     project: &Project,
     db: &sqlx::SqlitePool,
 ) -> ProjectResponse {
-    let public_stats = if project.service_count.unwrap_or(1) > 1 || project.deploy_type == Some(DeployType::Compose) {
+    let public_stats = if project.deploy_type == Some(DeployType::Compose) {
         // Multi-service: look up the public service from project_services
         let row: Option<(String, String, Option<i64>, Option<i64>, bool, ProjectStatus, Option<String>, Option<String>, Option<i64>, Option<f64>)> = sqlx::query_as(
             "SELECT service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ? AND is_public = 1 LIMIT 1"
@@ -156,6 +160,7 @@ async fn to_project_response(
         user_id: project.user_id.clone(),
         name: project.name.clone(),
         description: project.description.clone(),
+        is_background: project.is_background,
         node_id: project.node_id.clone(),
         status: project.status.to_string(),
         last_active_at: project.last_active_at,

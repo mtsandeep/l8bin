@@ -83,6 +83,13 @@ pub async fn start_services(
         litebin_common::compose_run::ComposeRunPlan::single_service(config)
     };
 
+    if project.is_background {
+        plan.pub_service_name = None;
+        for config in &mut plan.configs {
+            config.is_public = false;
+        }
+    }
+
     // 1b. Apply per-service overrides from project_services (dashboard-set memory/cpu)
     let db_overrides: Vec<(String, Option<i64>, Option<f64>)> = match sqlx::query_as(
         "SELECT service_name, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ?",
@@ -450,15 +457,22 @@ pub async fn start_services(
     let now = chrono::Utc::now().timestamp();
 
     if opts.services.is_none() {
-        // Full start: all services started, set project to "running"
-        if let Err(e) = status::transition(&state.db, project_id, ProjectStatus::Running, &ProjectUpdateFields {
-            container_id: Some(if public_container_id.is_empty() { None } else { Some(public_container_id) }),
-            mapped_port: Some(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) }),
-            last_active_at: Some(now),
-            ..Default::default()
-        }, None).await {
-            tracing::error!(project_id = %project_id, error = %e, "start services: failed to transition to Running after full start");
+        // Full start: retain denormalized public fields for web projects, then
+        // derive the project status from the actual per-service outcomes.
+        if let Err(e) = sqlx::query(
+            "UPDATE projects SET container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(if public_container_id.is_empty() { None } else { Some(public_container_id) })
+        .bind(if public_mapped_port == 0 { None } else { Some(public_mapped_port as i64) })
+        .bind(now)
+        .bind(now)
+        .bind(project_id)
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!(project_id = %project_id, error = %e, "start services: failed to update project container fields");
         }
+        status::derive_and_set_project_status(&state.db, project_id).await;
     } else {
         // Partial start: derive project status from aggregate service states
         if !public_container_id.is_empty() {

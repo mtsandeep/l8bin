@@ -9,7 +9,7 @@ use super::env::projects_dir;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ProjectMetadata {
     pub image: String,
-    pub internal_port: i64,
+    pub internal_port: Option<i64>,
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
@@ -22,7 +22,7 @@ pub fn metadata_path(project_id: &str) -> std::path::PathBuf {
 }
 
 /// Write project metadata to disk after successful container creation.
-pub fn write_project_metadata(project_id: &str, image: &str, internal_port: i64, cmd: Option<&str>, memory_limit_mb: Option<i64>, cpu_limit: Option<f64>, volumes: Option<Vec<VolumeMount>>) {
+pub fn write_project_metadata(project_id: &str, image: &str, internal_port: Option<i64>, cmd: Option<&str>, memory_limit_mb: Option<i64>, cpu_limit: Option<f64>, volumes: Option<Vec<VolumeMount>>) {
     let meta = ProjectMetadata {
         image: image.to_string(),
         internal_port,

@@ -88,7 +88,7 @@ pub async fn wake_for_host(
         // Custom domain URL (e.g., app.example.com) — look up by custom_domain
         let host_clean = host.split(':').next().unwrap_or(host);
         match sqlx::query_as::<_, crate::db::models::Project>(
-            "SELECT * FROM projects WHERE custom_domain = ?",
+            "SELECT * FROM projects WHERE is_background = 0 AND custom_domain = ?",
         )
         .bind(host_clean)
         .fetch_optional(&state.db)
@@ -109,6 +109,10 @@ pub async fn wake_for_host(
             return (StatusCode::NOT_FOUND, not_found_page_html()).into_response();
         }
     };
+
+    if project.is_background {
+        return (StatusCode::NOT_FOUND, not_found_page_html()).into_response();
+    }
 
     // Use project.id as the canonical key for everything (wake locks, display, etc.)
     let project_id = project.id.clone();
@@ -153,7 +157,7 @@ pub async fn wake_for_host(
     }
 
     // Unified running/degraded path for ALL projects
-    let is_multi = project.service_count.unwrap_or(1) > 1;
+    let is_multi = project.deploy_type == Some(litebin_common::types::DeployType::Compose);
     if project.status == ProjectStatus::Running || project.status == ProjectStatus::Degraded {
         // Remote: no Docker checks possible, return loading page
         if is_remote {

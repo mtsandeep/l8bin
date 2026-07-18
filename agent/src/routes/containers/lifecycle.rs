@@ -17,6 +17,18 @@ use super::types::{
 
 // ── Single-Container Lifecycle Handlers ──────────────────────────────────────
 
+fn update_background_meta(state: &AgentState, project_id: &str, is_background: bool) {
+    {
+        let mut meta = state.project_meta.write().unwrap();
+        let entry = meta.entry(project_id.to_string()).or_default();
+        entry.is_background = is_background;
+        if is_background {
+            entry.auto_start_enabled = false;
+        }
+    }
+    crate::save_project_meta_to_file(&state.project_meta.read().unwrap());
+}
+
 /// POST /containers/run
 /// Pull image and run container. Docker auto-assigns the host port.
 /// Returns container_id and mapped_port.
@@ -24,6 +36,7 @@ pub async fn run_container(
     State(state): State<AgentState>,
     Json(req): Json<RunRequest>,
 ) -> impl IntoResponse {
+    update_background_meta(&state, &req.project_id, req.internal_port.is_none());
     if req.stage_only {
         ensure_project_dir_and_env(&req.project_id);
         write_project_metadata(
@@ -38,7 +51,7 @@ pub async fn run_container(
         tracing::info!(project = %req.project_id, "container run staged (no containers started)");
         return (StatusCode::OK, Json(RunResponse {
             container_id: String::new(),
-            mapped_port: 0,
+            mapped_port: None,
         })).into_response();
     }
 
@@ -67,8 +80,9 @@ pub async fn run_container(
         user_id: String::new(),
         name: None,
         description: None,
+        is_background: req.internal_port.is_none(),
         image: Some(req.image.clone()),
-        internal_port: Some(req.internal_port),
+        internal_port: req.internal_port,
         mapped_port: None,
         container_id: None,
         node_id: None,
@@ -100,7 +114,7 @@ pub async fn run_container(
             }
             write_env_snapshot(&req.project_id);
             write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, req.volumes.clone());
-            (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
+            (StatusCode::OK, Json(RunResponse { container_id, mapped_port: req.internal_port.map(|_| mapped_port) })).into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -120,6 +134,7 @@ pub async fn recreate_container(
     Json(req): Json<RunRequest>,
 ) -> impl IntoResponse {
     tracing::info!(project = %req.project_id, image = %req.image, "recreate request received");
+    update_background_meta(&state, &req.project_id, req.internal_port.is_none());
 
     let _ = state.docker.remove_by_name(&req.project_id).await;
 
@@ -133,8 +148,9 @@ pub async fn recreate_container(
         user_id: String::new(),
         name: None,
         description: None,
+        is_background: req.internal_port.is_none(),
         image: Some(req.image.clone()),
-        internal_port: Some(req.internal_port),
+        internal_port: req.internal_port,
         mapped_port: None,
         container_id: None,
         node_id: None,
@@ -166,7 +182,7 @@ pub async fn recreate_container(
             }
             write_env_snapshot(&req.project_id);
             write_project_metadata(&req.project_id, &req.image, req.internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, req.volumes.clone());
-            (StatusCode::OK, Json(RunResponse { container_id, mapped_port })).into_response()
+            (StatusCode::OK, Json(RunResponse { container_id, mapped_port: req.internal_port.map(|_| mapped_port) })).into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -212,6 +228,7 @@ pub async fn start_container(
                 user_id: String::new(),
                 name: None,
                 description: None,
+                is_background: false,
                 image: Some(image.clone()),
                 internal_port: Some(internal_port),
                 mapped_port: None,
@@ -243,7 +260,7 @@ pub async fn start_container(
                 tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
             }
                     write_env_snapshot(project_id);
-                    write_project_metadata(project_id, &image, internal_port, req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, None);
+                    write_project_metadata(project_id, &image, Some(internal_port), req.cmd.as_deref(), req.memory_limit_mb, req.cpu_limit, None);
                     (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
                 }
                 Err(e) => (

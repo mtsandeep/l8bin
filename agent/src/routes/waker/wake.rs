@@ -125,6 +125,14 @@ pub async fn wake(
         }
     };
 
+    let is_background = state.project_meta.read().unwrap()
+        .get(&subdomain)
+        .map(|entry| entry.is_background)
+        .unwrap_or(false);
+    if is_background {
+        return not_found_page();
+    }
+
     // Try to find the container — single-service name first, then multi-service prefix
     let container_id = if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}", subdomain)).await {
         id
@@ -334,8 +342,9 @@ pub async fn wake(
                                         user_id: String::new(),
                                         name: None,
                                         description: None,
+                                        is_background: false,
                                         image: Some(meta.image.clone()),
-                                        internal_port: Some(meta.internal_port),
+                                        internal_port: meta.internal_port,
                                         mapped_port: None,
                                         container_id: None,
                                         node_id: None,

@@ -68,6 +68,7 @@ export interface Project {
   id: string;
   name: string | null;
   description: string | null;
+  is_background: boolean;
   node_id: string | null;
   status: ProjectStatus;
   last_active_at: number | null;

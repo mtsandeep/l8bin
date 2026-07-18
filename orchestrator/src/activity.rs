@@ -74,7 +74,7 @@ async fn update_active_projects(
     qb.push_bind(now);
     qb.push(", updated_at = ");
     qb.push_bind(now);
-    qb.push(" WHERE status = 'running' AND auto_stop_enabled = 1 AND (");
+    qb.push(" WHERE is_background = 0 AND status = 'running' AND auto_stop_enabled = 1 AND (");
 
     if !subdomain_ids.is_empty() {
         qb.push("id IN (");

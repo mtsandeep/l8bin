@@ -547,8 +547,8 @@ impl CloudflareDnsRouter {
         // DNS records are only removed when a project is deleted (or Cloudflare is cleared),
         // never when a project is stopped — so that stopped projects still resolve and
         // reach the waker via the catch-all route.
-        let all_projects: Vec<(String, Option<String>, Option<String>)> = match sqlx::query_as(
-            "SELECT id, node_id, custom_domain FROM projects",
+        let all_projects: Vec<(String, Option<String>, Option<String>, bool)> = match sqlx::query_as(
+            "SELECT id, node_id, custom_domain, is_background FROM projects",
         )
         .fetch_all(&self.db)
         .await
@@ -560,9 +560,15 @@ impl CloudflareDnsRouter {
             }
         };
 
-        for (project_id, node_id, custom_domain) in &all_projects {
-            let ip = match node_id.as_deref() {
-                Some(nid) if nid != "local" => {
+        for (project_id, node_id, custom_domain, is_background) in &all_projects {
+            let ip = match (*is_background, node_id.as_deref()) {
+                (true, _) => {
+                    if self.config.public_ip.is_empty() {
+                        continue;
+                    }
+                    self.config.public_ip.clone()
+                }
+                (false, Some(nid)) if nid != "local" => {
                     let row: Option<(Option<String>,)> = match sqlx::query_as(
                         "SELECT public_ip FROM nodes WHERE id = ?",
                     )
@@ -600,17 +606,19 @@ impl CloudflareDnsRouter {
             desired.insert(format!("{}.{}", project_id, domain), ip.clone());
 
             // Custom domain A record (if any)
-            if let Some(cd) = custom_domain {
-                desired.insert(cd.clone(), ip.clone());
+            if !*is_background {
+                if let Some(cd) = custom_domain {
+                    desired.insert(cd.clone(), ip.clone());
 
                 // Also add the www variant as a redirect handled by Caddy,
                 // but we still need a DNS record pointing to the same IP
-                let www = if cd.starts_with("www.") {
-                    cd[4..].to_string()
-                } else {
-                    format!("www.{}", cd)
-                };
-                desired.insert(www, ip);
+                    let www = if cd.starts_with("www.") {
+                        cd[4..].to_string()
+                    } else {
+                        format!("www.{}", cd)
+                    };
+                    desired.insert(www, ip);
+                }
             }
         }
 
@@ -721,25 +729,29 @@ impl RoutingProvider for CloudflareDnsRouter {
         }
         tracing::info!(local_count = local_projects.len(), "master caddy config loaded");
 
-        // 2. Agent Caddys — push config for remote projects
-        for (node_id, agent_projects) in &by_node {
-            if node_id == "local" {
-                continue;
-            }
+        // 2. Agent Caddys — include nodes with no active routes so stale
+        // project/custom-domain routes are removed when a project becomes background.
+        let remote_node_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM nodes WHERE id != 'local' AND status != 'decommissioned'",
+        )
+        .fetch_all(&self.db)
+        .await?;
+        for node_id in remote_node_ids {
+            let agent_projects = by_node.get(&node_id).cloned().unwrap_or_default();
 
             let agent_config = Self::build_agent_caddy_config(
-                agent_projects,
+                &agent_projects,
                 domain,
                 &self.config.public_ip, // orchestrator reachable for /caddy/ask
             );
 
-            if let Err(e) = self.push_agent_caddy(node_id, &agent_config).await {
+            if let Err(e) = self.push_agent_caddy(&node_id, &agent_config).await {
                 tracing::warn!(node_id, error = %e, "failed to push caddy config to agent");
             }
 
             // Push project metadata (auto_start_enabled flags) to agent
             push_project_meta_to_agent(
-                node_id,
+                &node_id,
                 &self.db,
                 &self.node_clients,
                 &self.config,
@@ -768,8 +780,8 @@ pub async fn push_project_meta_to_agent(
     config: &Config,
 ) {
     // Query all projects for this node
-    let rows: Vec<(String, bool, bool, bool)> = match sqlx::query_as(
-        "SELECT id, auto_start_enabled, allow_raw_ports, allow_docker_access FROM projects WHERE node_id = ?",
+    let rows: Vec<(String, bool, bool, bool, bool)> = match sqlx::query_as(
+        "SELECT id, auto_start_enabled, allow_raw_ports, allow_docker_access, is_background FROM projects WHERE node_id = ?",
     )
     .bind(node_id)
     .fetch_all(db)
@@ -782,14 +794,18 @@ pub async fn push_project_meta_to_agent(
         }
     };
 
-    let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _, _)| (id.clone(), *auto)).collect();
-    let allow_raw_ports: HashMap<String, bool> = rows.iter()
-        .filter(|(_, _, raw, _)| *raw)
-        .map(|(id, _, _, _)| (id.clone(), true))
+    let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _, _, _)| (id.clone(), *auto)).collect();
+    let background_projects: HashMap<String, bool> = rows.iter()
+        .filter(|(_, _, _, _, background)| *background)
+        .map(|(id, _, _, _, _)| (id.clone(), true))
         .collect();
-    let allow_docker_access: HashMap<String, bool> = rows.into_iter()
-        .filter(|(_, _, _, docker)| *docker)
-        .map(|(id, _, _, _)| (id, true))
+    let allow_raw_ports: HashMap<String, bool> = rows.iter()
+        .filter(|(_, _, raw, _, _)| *raw)
+        .map(|(id, _, _, _, _)| (id.clone(), true))
+        .collect();
+    let allow_docker_access: HashMap<String, bool> = rows.iter()
+        .filter(|(_, _, _, docker, _)| *docker)
+        .map(|(id, _, _, _, _)| (id.clone(), true))
         .collect();
 
     let client = match get_node_client(node_clients, node_id) {
@@ -835,6 +851,7 @@ pub async fn push_project_meta_to_agent(
 
     let body = json!({
         "projects": projects,
+        "background_projects": background_projects,
         "allow_raw_ports": allow_raw_ports,
         "allow_docker_access": allow_docker_access,
         "default_memory_limit_mb": default_mem,

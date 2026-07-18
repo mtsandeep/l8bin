@@ -24,7 +24,9 @@ pub struct DeployResponse {
 pub struct DeployRequest {
     pub project_id: String,
     pub image: String,
-    pub port: i64,
+    pub port: Option<i64>,
+    #[serde(default)]
+    pub is_background: bool,
     pub name: Option<String>,
     pub description: Option<String>,
     pub node_id: Option<String>, // optional override
@@ -196,13 +198,22 @@ async fn execute_deploy(
 ) -> axum::response::Response {
     let now = chrono::Utc::now().timestamp();
 
-    let auto_stop_enabled = payload.auto_stop_enabled.unwrap_or(true);
+    if payload.is_background && payload.port.is_some() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "background projects must not provide an HTTP port"}))).into_response();
+    }
+    if !payload.is_background && payload.port.is_none() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "web projects require an HTTP port"}))).into_response();
+    }
+
+    let auto_stop_enabled = if payload.is_background { false } else { payload.auto_stop_enabled.unwrap_or(true) };
     let auto_stop_timeout_mins = payload.auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
-    let auto_start_enabled = payload.auto_start_enabled.unwrap_or(true);
+    let auto_start_enabled = if payload.is_background { false } else { payload.auto_start_enabled.unwrap_or(true) };
 
     // On redeploy, preserve existing sleep settings unless explicitly provided
     let preserve_sleep = is_update && payload.auto_stop_enabled.is_none() && payload.auto_start_enabled.is_none();
-    let (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled) = if preserve_sleep {
+    let (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled) = if payload.is_background {
+        (false, auto_stop_timeout_mins, false)
+    } else if preserve_sleep {
         let existing = sqlx::query_as::<_, (bool, i64, bool)>(
             "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?"
         )
@@ -233,7 +244,8 @@ async fn execute_deploy(
     tracing::info!(
         project_id = %payload.project_id,
         image = %payload.image,
-        port = %payload.port,
+        port = ?payload.port,
+        is_background = payload.is_background,
         is_update = is_update,
         stage_only = stage_only,
         "deploy request received"
@@ -288,10 +300,11 @@ async fn execute_deploy(
     let result = if is_update {
         sqlx::query(
             r#"
-            INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO projects (id, user_id, name, description, is_background, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 user_id = excluded.user_id,
+                is_background = excluded.is_background,
                 image = excluded.image,
                 internal_port = excluded.internal_port,
                 status = ?,
@@ -312,6 +325,7 @@ async fn execute_deploy(
         .bind(&user_id)
         .bind(&payload.name)
         .bind(&payload.description)
+        .bind(payload.is_background)
         .bind(&payload.image)
         .bind(payload.port)
         .bind(initial_status.clone())
@@ -332,14 +346,15 @@ async fn execute_deploy(
         // Create-only: plain INSERT, no ON CONFLICT
         sqlx::query(
             r#"
-            INSERT INTO projects (id, user_id, name, description, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO projects (id, user_id, name, description, is_background, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit, custom_domain, volumes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&payload.project_id)
         .bind(&user_id)
         .bind(&payload.name)
         .bind(&payload.description)
+        .bind(payload.is_background)
         .bind(&payload.image)
         .bind(payload.port)
         .bind(initial_status.clone())
@@ -509,7 +524,7 @@ async fn execute_deploy(
                 "status": "unconfigured",
                 "project_id": payload.project_id,
                 "node_id": node_id,
-                "url": format!("https://{}.{}", payload.project_id, state.config.domain),
+                "url": if payload.is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", payload.project_id, state.config.domain)) },
                 "message": "Deployment staged. Configure runtime secrets, then start the project.",
             })),
         ).into_response();
@@ -600,8 +615,7 @@ async fn execute_deploy(
                 let cid = run_json["container_id"].as_str()
                     .ok_or_else(|| anyhow::anyhow!("missing container_id in run response"))?
                     .to_string();
-                let port = run_json["mapped_port"].as_u64()
-                    .ok_or_else(|| anyhow::anyhow!("missing mapped_port in run response"))? as u16;
+                let port = run_json["mapped_port"].as_u64().unwrap_or(0) as u16;
                 (cid, port)
             };
 
@@ -612,7 +626,7 @@ async fn execute_deploy(
                 ProjectStatus::Running,
                 &ProjectUpdateFields {
                     container_id: Some(Some(container_id.clone())),
-                    mapped_port: Some(Some(mapped_port as i64)),
+                    mapped_port: Some(if payload_clone.is_background { None } else { Some(mapped_port as i64) }),
                     node_id: Some(node_id_clone.clone()),
                     last_active_at: Some(chrono::Utc::now().timestamp()),
                 },
@@ -622,12 +636,13 @@ async fn execute_deploy(
             // Create project_services row for single-service deploy
             sqlx::query(
                 "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit)
-                 VALUES (?, 'web', ?, ?, ?, 1, 'running', ?, ?, ?, ?)",
+                 VALUES (?, 'web', ?, ?, ?, ?, 'running', ?, ?, ?, ?)",
             )
             .bind(&payload_clone.project_id)
             .bind(&payload_clone.image)
             .bind(payload_clone.port)
-            .bind(mapped_port as i64)
+            .bind(if payload_clone.is_background { None } else { Some(mapped_port as i64) })
+            .bind(!payload_clone.is_background)
             .bind(&container_id)
             .bind(&project_clone.cmd)
             .bind(project_clone.memory_limit_mb)
@@ -720,13 +735,11 @@ async fn execute_deploy(
                 }
             }
 
-            let url = format!("https://{}.{}", payload_clone.project_id, state_clone.config.domain);
             tracing::info!(
                 project_id = %payload_clone.project_id,
                 container_id = %container_id,
                 mapped_port = %mapped_port,
                 node_id = %node_id_clone,
-                url = %url,
                 "deploy complete"
             );
 
@@ -752,7 +765,7 @@ async fn execute_deploy(
         Json(json!({
             "status": "deploying",
             "project_id": payload.project_id,
-            "url": format!("https://{}.{}", payload.project_id, state.config.domain),
+            "url": if payload.is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", payload.project_id, state.config.domain)) },
             "message": "Deployment started in background"
         })),
     )

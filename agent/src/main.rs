@@ -87,6 +87,8 @@ pub(crate) fn save_caddy_config_to_file(config: &serde_json::Value) {
 pub struct ProjectMetaEntry {
     pub auto_start_enabled: bool,
     #[serde(default)]
+    pub is_background: bool,
+    #[serde(default)]
     pub allow_raw_ports: bool,
     #[serde(default)]
     pub allow_docker_access: bool,
