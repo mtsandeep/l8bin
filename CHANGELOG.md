@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-07-19
+
 ### Added
 - **Compose compatibility report** — Deploy validates Compose files and reports supported, translated, overridden, permission-required, and unsupported fields instead of silently ignoring them.
 - **Project capabilities** — Explicit grants (`docker-access`, `raw-ports`) replace ad-hoc permission toggles. Compose deploy can request them; users approve in CLI/`l8b deploy --grant-capability` or the dashboard validation step. Existing Compose projects manage grants under Settings → Capabilities.
