@@ -7,6 +7,14 @@ pub async fn select_node(
     project: &Project,
     override_node_id: Option<String>,
 ) -> anyhow::Result<String> {
+    select_node_for_sticky(db, project.node_id.as_deref(), override_node_id).await
+}
+
+pub async fn select_node_for_sticky(
+    db: &SqlitePool,
+    sticky_node_id: Option<&str>,
+    override_node_id: Option<String>,
+) -> anyhow::Result<String> {
     // 1. Override path — validate node exists and is online
     if let Some(override_id) = override_node_id {
         let node = sqlx::query_as::<_, Node>(
@@ -23,7 +31,7 @@ pub async fn select_node(
     }
 
     // 2. Sticky path: if project has a node_id referencing an online node
-    if let Some(ref node_id) = project.node_id {
+    if let Some(node_id) = sticky_node_id {
         let node = sqlx::query_as::<_, Node>(
             "SELECT * FROM nodes WHERE id = ? AND status = 'online'"
         )
@@ -32,7 +40,7 @@ pub async fn select_node(
         .await?;
 
         if node.is_some() {
-            return Ok(node_id.clone());
+            return Ok(node_id.to_string());
         }
     }
 

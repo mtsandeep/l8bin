@@ -11,7 +11,7 @@ pub use env::{env_has_changed, read_project_env, write_env_snapshot};
 pub use scan::{get_compose_file, import_containers, scan_containers};
 pub use lifecycle::{
     cleanup_project, recreate_container, remove_container, run_container, start_container,
-    stop_container,
+    stop_container, stop_project, stop_service,
 };
 pub(crate) use lifecycle::run_single_plan;
 pub use metadata::read_project_metadata;

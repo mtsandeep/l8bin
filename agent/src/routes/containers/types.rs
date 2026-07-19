@@ -56,6 +56,27 @@ pub struct StopRequest {
 }
 
 #[derive(Deserialize)]
+pub struct StopServiceRequest {
+    pub project_id: String,
+    pub service_name: String,
+}
+
+#[derive(Serialize)]
+pub struct StopServiceResponse {
+    pub stopped: bool,
+}
+
+#[derive(Deserialize)]
+pub struct StopProjectRequest {
+    pub project_id: String,
+}
+
+#[derive(Serialize)]
+pub struct StopProjectResponse {
+    pub stopped_containers: usize,
+}
+
+#[derive(Deserialize)]
 pub struct RemoveRequest {
     pub container_id: String,
 }

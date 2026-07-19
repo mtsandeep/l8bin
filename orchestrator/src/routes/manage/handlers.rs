@@ -11,7 +11,24 @@ use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
 
 use super::helpers::{MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, project_is_staged, sync_caddy};
-use super::multi_service::{StartServicesOpts, start_services, stop_services, recreate_services};
+use super::multi_service::{
+    StartServicesOpts, approved_docker_observe_requesters, proxy_needed_after_stop,
+    recreate_services, start_services, stop_services,
+};
+
+fn can_attempt_full_stop(status: &ProjectStatus) -> bool {
+    matches!(
+        status,
+        ProjectStatus::Running
+            | ProjectStatus::Degraded
+            | ProjectStatus::Stopping
+            | ProjectStatus::Error
+    )
+}
+
+fn uses_compose_lifecycle(deploy_type: Option<&DeployType>) -> bool {
+    deploy_type == Some(&DeployType::Compose)
+}
 
 /// POST /projects/:id/stop
 #[utoipa::path(
@@ -42,7 +59,7 @@ pub async fn stop_project(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    if !matches!(project.status, ProjectStatus::Running | ProjectStatus::Degraded) {
+    if !can_attempt_full_stop(&project.status) {
         return Err((
             StatusCode::BAD_REQUEST,
             format!("project is not running (status: {})", project.status),
@@ -57,7 +74,7 @@ pub async fn stop_project(
         .unwrap_or(false);
 
     // Set status to 'stopping' immediately and return — actual stop happens in background
-    status::transition(&state.db, &project_id, ProjectStatus::Stopping, &ProjectUpdateFields::default(), None)
+    status::set_project_stopping_only(&state.db, &project_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
@@ -67,69 +84,79 @@ pub async fn stop_project(
     tracing::info!(project = %project_id, "project stopping (async)");
 
     // Spawn background task to do the actual Docker stop
+    let semaphore = state
+        .project_locks
+        .entry(project_id.clone())
+        .or_insert_with(|| Arc::new(Semaphore::new(1)))
+        .clone();
     let project_id_bg = project_id.clone();
     let node_id_bg = project.node_id.clone();
     tokio::spawn(async move {
+        let _permit = semaphore.acquire().await.unwrap();
         let project_id = project_id_bg;
 
-        if is_remote {
-            // Remote: call agent to stop all service containers
-            let node_id = node_id_bg.unwrap_or_default();
-            let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!(project = %project_id, error = %e, "stop: node client unavailable");
-                    return;
-                }
-            };
-            let node = match get_node_from_db(&state.db, &node_id).await {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::error!(project = %project_id, error = ?e, "stop: failed to get node");
-                    return;
-                }
-            };
-            let base_url = agent_base_url(&state.config, &node);
-            let container_ids: Vec<String> = match sqlx::query_scalar(
-                "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL AND container_id != ''",
-            )
-            .bind(&project_id)
-            .fetch_all(&state.db)
-            .await
-            {
-                Ok(ids) => ids,
-                Err(e) => {
-                    tracing::warn!(project_id = %project_id, error = %e, "stop: failed to fetch container IDs");
-                    Vec::new()
-                }
-            };
-            for cid in &container_ids {
-                if let Err(e) = client
-                    .post(&format!("{}/containers/stop", base_url))
-                    .json(&json!({"container_id": cid}))
+        let stop_result: Result<(), String> = async {
+            if is_remote {
+                // Remote: let the agent select workloads by project identity so a
+                // replacement with an unpersisted container ID is still stopped.
+                let node_id = node_id_bg.unwrap_or_default();
+                let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        return Err(format!("node client unavailable: {e}"));
+                    }
+                };
+                let node = match get_node_from_db(&state.db, &node_id).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        return Err(format!("failed to get node: {e:?}"));
+                    }
+                };
+                let base_url = agent_base_url(&state.config, &node);
+                let response = client
+                    .post(&format!("{}/containers/stop-project", base_url))
+                    .json(&json!({"project_id": &project_id}))
                     .send()
                     .await
-                {
-                    tracing::warn!(project_id = %project_id, container_id = %cid, error = %e, "stop: failed to stop container on agent");
+                    .map_err(|e| format!("agent project stop response unavailable: {e}"))?;
+                if !response.status().is_success() {
+                    return Err(format!(
+                        "agent project stop failed: {}",
+                        response.text().await.unwrap_or_default()
+                    ));
                 }
+                status::set_non_oneshot_services_stopped(&state.db, &project_id)
+                    .await
+                    .map_err(|e| format!("failed to persist stopped services: {e}"))?;
+                status::derive_and_set_project_status(&state.db, &project_id).await;
+            } else {
+                // Local: stop all service containers (works for single and multi-service)
+                stop_services(&state, &project_id, None)
+                    .await
+                    .map_err(|(_, error)| error)?;
             }
-            // Always remove any managed observation proxy, including stale revoked ones.
-            let proxy_name = litebin_common::types::container_name(&project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
-            if let Err(e) = client
-                .post(&format!("{}/containers/remove", base_url))
-                .json(&json!({"container_id": proxy_name}))
-                .send()
-                .await
-            {
-                tracing::warn!(project_id = %project_id, error = %e, "stop: failed to remove Docker observation proxy on agent");
+            Ok(())
+        }
+        .await;
+
+        let status_result = if stop_result.is_ok() {
+            let derived = status::derive_and_set_project_status(&state.db, &project_id).await;
+            if derived == ProjectStatus::Stopped {
+                status::set_project_stopped_only(&state.db, &project_id).await
+            } else {
+                let _ = status::set_project_error_only(&state.db, &project_id).await;
+                Err(anyhow::anyhow!(
+                    "project remained {derived} after all stop operations completed"
+                ))
             }
         } else {
-            // Local: stop all service containers (works for single and multi-service)
-            stop_services(&state, &project_id, None).await;
+            status::set_project_error_only(&state.db, &project_id).await
+        };
+        if let Err(e) = status_result {
+            tracing::warn!(project_id = %project_id, error = %e, "stop: failed to persist final project status");
         }
-
-        if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await {
-            tracing::warn!(project_id = %project_id, error = %e, "stop: failed to transition to Stopped");
+        if let Err(error) = stop_result {
+            tracing::error!(project_id = %project_id, %error, "project stop failed");
         }
 
         sync_caddy(&state).await;
@@ -204,7 +231,7 @@ pub async fn start_project(
     }
 
     let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
-    let is_compose = matches!(project.deploy_type, Some(DeployType::Compose));
+    let is_compose = uses_compose_lifecycle(project.deploy_type.as_ref());
     let first_start = project.status == ProjectStatus::Unconfigured;
 
     if is_local {
@@ -310,7 +337,29 @@ pub async fn start_project(
         };
 
         if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
+            let body = match resp.text().await {
+                Ok(body) => body,
+                Err(error) => {
+                    let _ = status::transition(
+                        &state.db,
+                        &project_id,
+                        ProjectStatus::Error,
+                        &ProjectUpdateFields::default(),
+                        None,
+                    )
+                    .await;
+                    return Err((
+                        StatusCode::BAD_GATEWAY,
+                        format!("failed to read remote start error response: {error}"),
+                    ));
+                }
+            };
+            super::multi_service::apply_remote_batch_failure_metadata(
+                &state,
+                &project_id,
+                &body,
+            )
+            .await;
             let _ = status::transition(
                 &state.db,
                 &project_id,
@@ -322,8 +371,23 @@ pub async fn start_project(
             return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("remote start failed: {body}")));
         }
 
-        let batch_result: serde_json::Value = resp.json().await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
+        let batch_result: serde_json::Value = match resp.json().await {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = status::transition(
+                    &state.db,
+                    &project_id,
+                    ProjectStatus::Error,
+                    &ProjectUpdateFields::default(),
+                    None,
+                )
+                .await;
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to parse response: {e}"),
+                ));
+            }
+        };
         let service_errors: Vec<String> = batch_result["services"]
             .as_array()
             .into_iter()
@@ -530,7 +594,7 @@ pub async fn start_project(
 
 /// Build a list of scoped volume names for a project (from DB for multi-service, from JSON for single-service).
 fn build_volume_list(project: &crate::db::models::Project) -> Vec<String> {
-    if project.deploy_type == Some(DeployType::Compose) {
+    if uses_compose_lifecycle(project.deploy_type.as_ref()) {
         // Multi-service: volumes are in project_volumes table (already scoped at deploy time)
         // For remote delete, we pass what we have from the project record
         // The agent will discover volumes from its own state
@@ -589,7 +653,7 @@ pub async fn delete_project(
         .unwrap_or(true);
 
     if is_local {
-        if project.deploy_type == Some(DeployType::Compose) {
+        if uses_compose_lifecycle(project.deploy_type.as_ref()) {
             super::multi_service::delete_all_services(&state, &project_id).await;
         } else {
             // Collect volumes for single-service local cleanup
@@ -709,7 +773,7 @@ pub async fn recreate_project(
     // Multi-service or compose: stop all, remove all, then re-deploy from compose.yaml.
     // Single-service compose projects also need this path for docker-proxy injection
     // and compose-based orchestration (env files, volumes, etc.).
-    let is_compose = matches!(project.deploy_type, Some(DeployType::Compose));
+    let is_compose = uses_compose_lifecycle(project.deploy_type.as_ref());
     if is_compose {
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         if !is_local {
@@ -813,14 +877,18 @@ pub async fn recreate_project(
             {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = status::transition(
-                        &state.db,
-                        &project_id,
-                        ProjectStatus::Error,
-                        &ProjectUpdateFields::default(),
-                        None,
-                    )
-                    .await;
+                    if target_services.is_some() {
+                        let _ = status::set_project_error_only(&state.db, &project_id).await;
+                    } else {
+                        let _ = status::transition(
+                            &state.db,
+                            &project_id,
+                            ProjectStatus::Error,
+                            &ProjectUpdateFields::default(),
+                            None,
+                        )
+                        .await;
+                    }
                     return Err((
                         StatusCode::SERVICE_UNAVAILABLE,
                         format!("agent unreachable: {e}"),
@@ -829,21 +897,71 @@ pub async fn recreate_project(
             };
 
             if !resp.status().is_success() {
-                let resp_body = resp.text().await.unwrap_or_default();
-                let _ = status::transition(
-                    &state.db,
+                let resp_body = match resp.text().await {
+                    Ok(body) => body,
+                    Err(error) => {
+                        if target_services.is_some() {
+                            let _ =
+                                status::set_project_error_only(&state.db, &project_id).await;
+                        } else {
+                            let _ = status::transition(
+                                &state.db,
+                                &project_id,
+                                ProjectStatus::Error,
+                                &ProjectUpdateFields::default(),
+                                None,
+                            )
+                            .await;
+                        }
+                        return Err((
+                            StatusCode::BAD_GATEWAY,
+                            format!("failed to read remote recreate error response: {error}"),
+                        ));
+                    }
+                };
+                super::multi_service::apply_remote_batch_failure_metadata(
+                    &state,
                     &project_id,
-                    ProjectStatus::Error,
-                    &ProjectUpdateFields::default(),
-                    None,
+                    &resp_body,
                 )
                 .await;
+                if target_services.is_some() {
+                    let _ = status::set_project_error_only(&state.db, &project_id).await;
+                } else {
+                    let _ = status::transition(
+                        &state.db,
+                        &project_id,
+                        ProjectStatus::Error,
+                        &ProjectUpdateFields::default(),
+                        None,
+                    )
+                    .await;
+                }
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("remote recreate failed: {resp_body}")));
             }
 
             // Update project_services with results from agent
-            let batch_result: serde_json::Value = resp.json().await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?;
+            let batch_result: serde_json::Value = match resp.json().await {
+                Ok(result) => result,
+                Err(e) => {
+                    if target_services.is_some() {
+                        let _ = status::set_project_error_only(&state.db, &project_id).await;
+                    } else {
+                        let _ = status::transition(
+                            &state.db,
+                            &project_id,
+                            ProjectStatus::Error,
+                            &ProjectUpdateFields::default(),
+                            None,
+                        )
+                        .await;
+                    }
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("failed to parse response: {e}"),
+                    ));
+                }
+            };
             let service_errors: Vec<String> = batch_result["services"]
                 .as_array()
                 .into_iter()
@@ -1054,6 +1172,18 @@ pub async fn start_service(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
+    if project.node_id.as_deref().is_some_and(|node| node != "local") {
+        return recreate_project(
+            State(state),
+            Path(project_id),
+            Some(Json(RecreateRequest {
+                services: Some(vec![service_name]),
+                pull_images: Some(false),
+            })),
+        )
+        .await;
+    }
+
     let mut services = HashSet::new();
     services.insert(service_name.clone());
 
@@ -1094,7 +1224,7 @@ pub async fn stop_service(
     State(state): State<AppState>,
     Path((project_id, service_name)): Path<(String, String)>,
 ) -> Result<Json<MessageResponse>, (StatusCode, String)> {
-    let _project = sqlx::query_as::<_, crate::db::models::Project>(
+    let project = sqlx::query_as::<_, crate::db::models::Project>(
         "SELECT * FROM projects WHERE id = ?",
     )
     .bind(&project_id)
@@ -1103,9 +1233,89 @@ pub async fn stop_service(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
-    let mut services = HashSet::new();
-    services.insert(service_name.clone());
-    stop_services(&state, &project_id, Some(&services)).await;
+    if let Some(node_id) = project.node_id.as_deref().filter(|node| *node != "local") {
+        let requesters = approved_docker_observe_requesters(&state, &project).await?;
+        let client = nodes::client::get_node_client(&state.node_clients, node_id).map_err(|e| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("node client unavailable: {e}"),
+            )
+        })?;
+        let node = get_node_from_db(&state.db, node_id).await?;
+        let response = client
+            .post(format!(
+                "{}/containers/stop-service",
+                agent_base_url(&state.config, &node)
+            ))
+            .json(&json!({
+                "project_id": &project_id,
+                "service_name": &service_name,
+            }))
+            .send()
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("agent unreachable: {e}"),
+                )
+            })?;
+        if !response.status().is_success() {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                format!(
+                    "remote service stop failed: {}",
+                    response.text().await.unwrap_or_default()
+                ),
+            ));
+        }
+        status::set_service_stopped(&state.db, &project_id, &service_name)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+        status::derive_and_set_project_status(&state.db, &project_id).await;
+        let running_services: HashSet<String> = sqlx::query_scalar(
+            "SELECT service_name FROM project_services WHERE project_id = ? AND status IN ('running', 'stopping')",
+        )
+        .bind(&project_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+        .into_iter()
+        .collect();
+        let no_additional_stops = HashSet::new();
+        if !proxy_needed_after_stop(
+            &requesters,
+            &running_services,
+            Some(&no_additional_stops),
+        ) {
+            let client = nodes::client::get_node_client(&state.node_clients, node_id)
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
+            let node = get_node_from_db(&state.db, node_id).await?;
+            let proxy_name = litebin_common::types::container_name(
+                &project_id,
+                litebin_common::types::DOCKER_PROXY_SERVICE,
+                None,
+            );
+            let response = client
+                .post(format!("{}/containers/remove", agent_base_url(&state.config, &node)))
+                .json(&json!({ "container_id": proxy_name }))
+                .send()
+                .await
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("failed to remove Docker observation proxy: {e}")))?;
+            if !response.status().is_success() {
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    format!(
+                        "remote Docker observation proxy cleanup failed: {}",
+                        response.text().await.unwrap_or_default()
+                    ),
+                ));
+            }
+        }
+    } else {
+        let mut services = HashSet::new();
+        services.insert(service_name.clone());
+        stop_services(&state, &project_id, Some(&services)).await?;
+    }
 
     // Derive project status from aggregate service states
     status::derive_and_set_project_status(&state.db, &project_id).await;
@@ -1148,6 +1358,18 @@ pub async fn restart_service(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
+    if project.node_id.as_deref().is_some_and(|node| node != "local") {
+        return recreate_project(
+            State(state),
+            Path(project_id),
+            Some(Json(RecreateRequest {
+                services: Some(vec![service_name]),
+                pull_images: Some(false),
+            })),
+        )
+        .await;
+    }
+
     let mut services = HashSet::new();
     services.insert(service_name.clone());
 
@@ -1167,4 +1389,46 @@ pub async fn restart_service(
         message: format!("service '{}' restarted", service_name),
         ..Default::default()
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{can_attempt_full_stop, uses_compose_lifecycle};
+    use litebin_common::types::{DeployType, ProjectStatus};
+
+    #[test]
+    fn full_stop_accepts_retryable_runtime_states_only() {
+        for status in [
+            ProjectStatus::Running,
+            ProjectStatus::Degraded,
+            ProjectStatus::Stopping,
+            ProjectStatus::Error,
+        ] {
+            assert!(can_attempt_full_stop(&status), "{status}");
+        }
+
+        for status in [
+            ProjectStatus::Pending,
+            ProjectStatus::Stopped,
+            ProjectStatus::Deploying,
+            ProjectStatus::Importing,
+            ProjectStatus::Unconfigured,
+            ProjectStatus::Completed,
+        ] {
+            assert!(!can_attempt_full_stop(&status), "{status}");
+        }
+    }
+
+    #[test]
+    fn one_service_lifecycle_routing_uses_deploy_type_not_service_count() {
+        // Service count is deliberately not an input to this decision.
+        assert!(uses_compose_lifecycle(Some(&DeployType::Compose)));
+        assert!(!uses_compose_lifecycle(Some(&DeployType::Image)));
+        assert!(!uses_compose_lifecycle(None));
+
+        // Full stop is deliberately identity-based and remains retryable for
+        // both deployment types, including a one-service background Compose.
+        assert!(can_attempt_full_stop(&ProjectStatus::Running));
+        assert!(can_attempt_full_stop(&ProjectStatus::Error));
+    }
 }

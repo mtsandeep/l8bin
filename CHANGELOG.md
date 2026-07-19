@@ -17,6 +17,10 @@ All notable changes to this project will be documented in this file.
 - **Dashboard log viewer strips ANSI** — Container logs with terminal color codes render as plain text instead of raw escape sequences like `\u001b[95m`.
 - **`/compose/validate` proxied to orchestrator** — Added `/compose/*` to Caddy API path matchers so validation requests no longer hit the dashboard (405).
 - **Completed service status display** — One-shot jobs are excluded from running/degraded counts and use a distinct completed indicator in service views.
+- **Docker observation lifecycle safety** — Reuses healthy observation proxies during partial operations, recreates dependent host-network observers when an ephemeral endpoint changes, and removes the proxy after the final requester stops.
+- **Identity-safe remote stopping** — Full-project and per-service remote stops resolve current containers by deterministic project and service identity, so retries remain correct after replacement responses are lost.
+- **Host-network deployment preflight** — Validates the selected node's live host-network eligibility before persisting project state, capability grants, services, volumes, or staged artifacts.
+- **Compose project disk usage** — Aggregates root filesystem usage across current Compose service containers, including one-service background projects without a project-level container ID.
 
 ## [0.3.4] - 2026-07-17
 

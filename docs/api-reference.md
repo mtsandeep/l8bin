@@ -32,7 +32,8 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/deploy/compose` | Session or token | Deploy a Compose project. Multipart includes `project_id`, `compose`, and explicit `is_background`; public-service selection is ignored for background projects. Returns `{status, project_id, url}`, where `url` is `null` for background projects. |
+| `POST` | `/deploy/compose` | Session or token | Deploy a Compose project. Multipart includes `project_id`, `compose`, and optional `is_background`. The field explicitly sets workload type; omission preserves an existing type or defaults a new project to Web. Compose content never infers the type. Public-service selection is ignored for Background projects. Returns `{status, project_id, url}`, where `url` is `null` for Background projects. |
+| `POST` | `/compose/validate` | Session or token | Validate Compose compatibility for an explicit `is_background` value and return findings, required capabilities, missing grants, and the capability catalog. |
 
 ### Projects
 
@@ -80,6 +81,14 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `PATCH` | `/projects/:id/settings` | Session | Update project settings: `{name, description, custom_domain, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, cmd, memory_limit_mb, cpu_limit}` |
+
+### Project Capabilities
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/projects/:id/capabilities` | Session | List capability status for a project |
+| `POST` | `/projects/:id/capabilities` | Session | Grant capabilities: `{capabilities: ["docker-observe", "host-network"]}` |
+| `DELETE` | `/projects/:id/capabilities/:capability` | Session | Revoke a capability and reconcile affected workloads |
 
 ### Project Stats & Logs
 

@@ -26,7 +26,7 @@ It's built for engineers who want their side projects, demos, and portfolio apps
 | **Docker** (runtime) | Standard container format, works with any registry, familiar tooling |
 | **Docker Compose** (multi-service) | Deploy multi-container apps from `docker-compose.yml` — per-project networks, dependency-ordered startup, selective service rebuilds |
 | **No Kubernetes** | LiteBin manages 1-50 apps on 1-5 servers. K8s adds complexity with no benefit at this scale |
-| **Scale-to-zero by default** | Side projects sit idle 99% of the time. Sleeping containers saves resources without losing the ability to serve traffic on demand |
+| **Scale-to-zero for web apps** | Idle web projects can sleep and wake on HTTP requests, saving resources without losing on-demand availability |
 
 ## Routing Modes
 

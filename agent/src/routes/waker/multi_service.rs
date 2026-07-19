@@ -64,21 +64,47 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     // Inject read-only Docker observation only when explicitly granted.
     let docker_observe = state.project_meta.read().unwrap()
         .get(project_id).map(|e| e.docker_observe).unwrap_or(false);
-    state
-        .docker
-        .remove_by_service_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
-        .await?;
     let proxy_injected = if docker_observe {
         plan.inject_docker_observe_proxy(project_id)?
     } else {
         false
     };
-    if proxy_injected {
+    let host_observers = plan.host_docker_observer_names();
+    let current_proxy = if proxy_injected {
+        state
+            .docker
+            .current_docker_observe_proxy(project_id)
+            .await?
+    } else {
+        None
+    };
+    let reusable_proxy = current_proxy
+        .as_ref()
+        .is_some_and(|(_, port)| host_observers.is_empty() || port.is_some());
+    let force_recreate_services = if reusable_proxy {
+        if let Some((_, Some(port))) = current_proxy {
+            plan.inject_host_docker_proxy_endpoint(port);
+        }
+        plan.reuse_existing_docker_observe_proxy();
+        std::collections::HashSet::new()
+    } else {
+        host_observers
+    };
+    if proxy_injected && !reusable_proxy {
         state
             .docker
             .pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false)
             .await
             .map_err(|e| anyhow::anyhow!("failed to prepare Docker observation proxy: {e}"))?;
+    } else if !proxy_injected {
+        state
+            .docker
+            .remove_by_service_name(
+                project_id,
+                litebin_common::types::DOCKER_PROXY_SERVICE,
+                None,
+            )
+            .await?;
     }
 
     // Apply global defaults for services without explicit limits
@@ -153,7 +179,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 
     // Start services level by level — parallel within each level
     for level in &plan.service_levels {
-        let mut tasks: JoinSet<Result<(String, u16, bool), String>> = JoinSet::new();
+        let mut tasks: JoinSet<Result<(String, String, u16, bool), String>> = JoinSet::new();
 
         for svc_name in level {
             let run_config = configs_map[svc_name].clone();
@@ -168,12 +194,20 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
             let pid = project_id.to_string();
             let any_created = any_created.clone();
             let changed_container_ids = changed_container_ids.clone();
+            let force_recreate = force_recreate_services.contains(svc_name);
 
             tasks.spawn(async move {
                 let cname = litebin_common::types::container_name(&pid, &svc, None);
 
                 // Check if container already exists and is running
                 if let Ok(Some(existing_id)) = docker.find_container_by_name(&cname).await {
+                    if force_recreate {
+                        docker.stop_container(&existing_id).await.ok();
+                        docker
+                            .remove_container(&existing_id)
+                            .await
+                            .map_err(|e| format!("failed to replace service '{}': {}", svc, e))?;
+                    } else {
                     if docker.is_container_running(&existing_id).await.unwrap_or(false) {
                         tracing::info!(
                             project_id = %pid,
@@ -181,7 +215,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                             "wake_multi_service: service already running, skipping"
                         );
                         let port = run_config.port.unwrap_or(80) as u16;
-                        return Ok((existing_id, port, is_public));
+                        return Ok((svc.clone(), existing_id, port, is_public));
                     }
 
                     // One-shot already exited successfully — leave it alone
@@ -196,14 +230,14 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                                 "wake_multi_service: one-shot already completed, skipping"
                             );
                             let port = run_config.port.unwrap_or(80) as u16;
-                            return Ok((existing_id, port, is_public));
+                            return Ok((svc.clone(), existing_id, port, is_public));
                         }
                         // Failed or unknown exit — recreate
                         let _ = docker.remove_container(&existing_id).await;
                     } else {
                         // Long-running container exists but is stopped — start it
                         docker
-                            .start_existing_container(&existing_id)
+                            .start_existing_container(&existing_id, &svc, is_oneshot)
                             .await
                             .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
                         if let Ok(mut ids) = changed_container_ids.lock() {
@@ -216,7 +250,8 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                             "wake_multi_service: started existing stopped container"
                         );
                         let port = run_config.port.unwrap_or(80) as u16;
-                        return Ok((existing_id, port, is_public));
+                        return Ok((svc.clone(), existing_id, port, is_public));
+                    }
                     }
                 }
 
@@ -268,29 +303,34 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                     "wake_multi_service: service created"
                 );
 
-                Ok((container_id, mapped_port, is_public))
+                Ok((svc, container_id, mapped_port, is_public))
             });
         }
 
         // Collect results from this level
         while let Some(result) = tasks.join_next().await {
             match result {
-                Ok(Ok((container_id, mapped_port, is_public))) => {
-                    if configs_map
-                        .get(litebin_common::types::DOCKER_PROXY_SERVICE)
-                        .is_some_and(|config| config.port == Some(2375))
-                        && container_id
-                            == changed_container_ids
-                                .lock()
-                                .ok()
-                                .and_then(|ids| ids.last().cloned())
-                                .unwrap_or_default()
+                Ok(Ok((service_name, container_id, mapped_port, is_public))) => {
+                    if service_name == litebin_common::types::DOCKER_PROXY_SERVICE
+                        && configs_map
+                            .values()
+                            .any(|config| config.host_network && config.docker_observe)
                     {
-                        let port = state
+                        let port = match state
                             .docker
                             .inspect_mapped_port_for(&container_id, "2375/tcp")
-                            .await?
-                            .ok_or_else(|| anyhow::anyhow!("Docker observation proxy did not receive its required loopback mapping"))?;
+                            .await
+                        {
+                            Ok(Some(port)) => port,
+                            Ok(None) => {
+                                rollback_wake_containers(&state.docker, &changed_container_ids).await;
+                                anyhow::bail!("Docker observation proxy did not receive its required loopback mapping");
+                            }
+                            Err(error) => {
+                                rollback_wake_containers(&state.docker, &changed_container_ids).await;
+                                return Err(error);
+                            }
+                        };
                         for config in configs_map.values_mut() {
                             if config.host_network && config.docker_observe {
                                 config.env.retain(|value| !value.starts_with("DOCKER_HOST="));

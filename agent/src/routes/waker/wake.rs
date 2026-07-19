@@ -385,7 +385,7 @@ pub async fn wake(
                         // Fast path: env unchanged, just start the existing container
                         state_clone
                             .docker
-                            .start_existing_container(&container_id_clone)
+                            .start_existing_container(&container_id_clone, "web", false)
                             .await?;
 
                         // Wait briefly for port assignment

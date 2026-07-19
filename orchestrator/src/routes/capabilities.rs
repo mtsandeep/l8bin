@@ -363,3 +363,190 @@ async fn ensure_project(state: &AppState, id: &str) -> Result<(), (StatusCode, S
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::extract::{Path, State};
+    use dashmap::DashMap;
+    use litebin_common::routing::{MasterProxyRouter, RoutingProvider};
+    use sqlx::SqlitePool;
+    use tokio::sync::RwLock;
+
+    use super::revoke_project_capability;
+    use crate::AppState;
+
+    async fn live_state() -> anyhow::Result<AppState> {
+        let db = SqlitePool::connect("sqlite::memory:").await?;
+        sqlx::migrate!("src/db/migrations").run(&db).await?;
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO nodes (id, name, host, agent_port, status, fail_count, created_at, updated_at)
+             VALUES ('local', 'Local', 'localhost', 0, 'online', 0, ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&db)
+        .await?;
+
+        let mut docker = litebin_common::docker::DockerManager::new(
+            "litebin-live-tests".into(),
+            128 * 1024 * 1024,
+            0.25,
+        )?;
+        docker.detect_host_projects_dir().await;
+        let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(Arc::new(
+            MasterProxyRouter::new(
+                litebin_common::caddy::CaddyClient::new("http://127.0.0.1:1"),
+                String::new(),
+            ),
+        )));
+        let (route_sync_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        Ok(AppState {
+            config: Arc::new(crate::tests::helpers::test_config()),
+            db,
+            docker: Arc::new(docker),
+            router,
+            node_clients: Arc::new(DashMap::new()),
+            disk_cache: Arc::new(DashMap::new()),
+            project_locks: Arc::new(DashMap::new()),
+            wake_failures: Arc::new(DashMap::new()),
+            route_sync_tx,
+            proxy_client: reqwest::Client::new(),
+            multi_svc_health_check: Arc::new(DashMap::new()),
+            deploy_logs: Arc::new(DashMap::new()),
+        })
+    }
+
+    async fn cleanup(state: &AppState, project_id: &str) {
+        let _ = state
+            .docker
+            .cleanup_project_resources(project_id, &[])
+            .await;
+        let _ = std::fs::remove_dir_all(
+            std::path::PathBuf::from("projects").join(project_id),
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a local rootful Docker daemon, /var/run/docker.sock, registry access, and permission to create containers and networks"]
+    async fn live_revoke_handler_removes_proxy_access_and_database_grant() {
+        let project_id = format!("live-revoke-observe-{}", std::process::id());
+        let state = live_state().await.unwrap();
+        cleanup(&state, &project_id).await;
+
+        let result: anyhow::Result<()> = async {
+            let now = chrono::Utc::now().timestamp();
+            sqlx::query(
+                "INSERT INTO projects
+                 (id, user_id, status, node_id, is_background, created_at, updated_at)
+                 VALUES (?, 'system', 'running', 'local', 1, ?, ?)",
+            )
+            .bind(&project_id)
+            .bind(now)
+            .bind(now)
+            .execute(&state.db)
+            .await?;
+            crate::capabilities::grant_many(
+                &state.db,
+                &project_id,
+                &[litebin_common::capabilities::ProjectCapability::DockerObserve],
+                None,
+            )
+            .await?;
+
+            let compose = r#"services:
+  collector:
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "exec sleep 300"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+"#;
+            let mut plan = litebin_common::compose_run::build_compose_run_plan(
+                compose,
+                &project_id,
+                &[],
+                None,
+            )?;
+            anyhow::ensure!(plan.inject_docker_observe_proxy(&project_id)?);
+            state
+                .docker
+                .pull_image_with_opts(
+                    litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE,
+                    false,
+                )
+                .await?;
+            state
+                .docker
+                .ensure_project_network(&project_id, None)
+                .await?;
+            let observe_network =
+                litebin_common::types::docker_observe_network_name(&project_id, None);
+            state.docker.ensure_named_network(&observe_network).await?;
+            let proxy = plan
+                .configs
+                .iter()
+                .find(|config| config.is_managed_docker_proxy)
+                .ok_or_else(|| anyhow::anyhow!("managed proxy config missing"))?;
+            let (proxy_id, proxy_port) = state.docker.run_service_container(proxy).await?;
+            state.docker.wait_for_healthy(&proxy_id, true).await?;
+
+            let client = reqwest::Client::new();
+            let before = client
+                .get(format!("http://127.0.0.1:{proxy_port}/version"))
+                .send()
+                .await?;
+            anyhow::ensure!(
+                before.status().is_success(),
+                "proxy access was unavailable before revoke"
+            );
+
+            let response = revoke_project_capability(
+                State(state.clone()),
+                Path((project_id.clone(), "docker-observe".into())),
+            )
+            .await
+            .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?;
+            anyhow::ensure!(
+                response
+                    .0
+                    .iter()
+                    .find(|entry| entry.info.id == "docker-observe")
+                    .is_some_and(|entry| !entry.granted),
+                "handler response retained the grant"
+            );
+            anyhow::ensure!(
+                !crate::capabilities::has_capability(
+                    &state.db,
+                    &project_id,
+                    litebin_common::capabilities::ProjectCapability::DockerObserve,
+                )
+                .await?,
+                "database grant survived revoke"
+            );
+            anyhow::ensure!(
+                state
+                    .docker
+                    .find_container_by_name(&litebin_common::types::container_name(
+                        &project_id,
+                        litebin_common::types::DOCKER_PROXY_SERVICE,
+                        None,
+                    ))
+                    .await?
+                    .is_none(),
+                "proxy container survived revoke"
+            );
+            let after = client
+                .get(format!("http://127.0.0.1:{proxy_port}/version"))
+                .send()
+                .await;
+            anyhow::ensure!(after.is_err(), "revoked proxy endpoint remained reachable");
+            Ok(())
+        }
+        .await;
+
+        cleanup(&state, &project_id).await;
+        result.unwrap();
+    }
+}

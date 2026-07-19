@@ -12,6 +12,83 @@ use crate::AppState;
 use litebin_common::types::{ProjectStatus, DeployType};
 use crate::status::{self, ProjectUpdateFields};
 
+#[derive(Debug)]
+enum TargetPreflightError {
+    Selection(anyhow::Error),
+    Eligibility(anyhow::Error),
+}
+
+async fn resolve_target_before_mutation<F, Fut>(
+    db: &sqlx::SqlitePool,
+    sticky_node_id: Option<&str>,
+    override_node_id: Option<String>,
+    requires_host_network: bool,
+    check_host_network: F,
+) -> Result<String, TargetPreflightError>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let target_node_id =
+        nodes::selector::select_node_for_sticky(db, sticky_node_id, override_node_id)
+            .await
+            .map_err(TargetPreflightError::Selection)?;
+    if requires_host_network {
+        check_host_network(target_node_id.clone())
+            .await
+            .map_err(TargetPreflightError::Eligibility)?;
+    }
+    Ok(target_node_id)
+}
+
+async fn require_live_host_network_target(
+    state: &AppState,
+    target_node_id: &str,
+) -> anyhow::Result<()> {
+    if target_node_id == "local" {
+        let host = state.docker.host_info().await.ok();
+        return litebin_common::docker::require_host_network_eligible(
+            host.as_ref().and_then(|info| info.os_type.as_deref()),
+            host.as_ref()
+                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.rootless),
+            Some(3),
+        );
+    }
+
+    let node = crate::routes::manage::get_node_from_db(&state.db, target_node_id)
+        .await
+        .map_err(|error| anyhow::anyhow!("failed to load selected node: {error:?}"))?;
+    let client = nodes::client::get_node_client(&state.node_clients, target_node_id)
+        .map_err(|error| anyhow::anyhow!("selected agent client is unavailable: {error:?}"))?;
+    let health_url = format!("{}/health", agent_base_url(&state.config, &node));
+    let response = client
+        .get(health_url)
+        .send()
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "failed to contact selected agent for host-network eligibility: {error}"
+            )
+        })?;
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "selected agent health check returned {}",
+            response.status()
+        );
+    }
+    let health = response
+        .json::<litebin_common::types::HealthReport>()
+        .await
+        .map_err(|error| anyhow::anyhow!("failed to read selected agent health: {error}"))?;
+    litebin_common::docker::require_host_network_eligible(
+        health.docker_os_type.as_deref(),
+        health.docker_operating_system.as_deref(),
+        health.docker_rootless,
+        Some(health.protocol_version as i64),
+    )
+}
+
 #[utoipa::path(
     post,
     path = "/deploy/compose",
@@ -294,7 +371,7 @@ pub async fn deploy_compose(
         to_grant
     };
     // Enforce required capabilities before mutating the project row.
-    {
+    let effective_grants = {
         let existing_grants = match crate::capabilities::granted_ids(&state.db, &project_id).await {
             Ok(g) => g,
             Err(e) => {
@@ -325,7 +402,16 @@ pub async fn deploy_compose(
                 })),
             ).into_response();
         }
-    }
+        effective
+    };
+    let requests_host_network = compose
+        .services
+        .values()
+        .any(|service| service.uses_host_network());
+    debug_assert!(
+        !requests_host_network || effective_grants.contains("host-network"),
+        "required host-network capability was checked above"
+    );
 
     let now = chrono::Utc::now().timestamp();
     let auto_stop = if is_background { false } else { auto_stop_enabled.unwrap_or(true) };
@@ -391,18 +477,48 @@ pub async fn deploy_compose(
         .clone();
     let _permit = semaphore.acquire().await.unwrap();
 
-    // Capture old per-service image digests for cleanup after redeploy
-    let existing_node_id: Option<String> = if is_update {
+    // Re-read the sticky node under the deploy lock so a queued redeploy sees
+    // the target selected by the deploy that ran immediately before it.
+    let existing_node_id: Option<String> =
         sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
             .bind(&project_id)
             .fetch_optional(&state.db)
             .await
             .ok()
-            .flatten()
-    } else {
-        None
+            .flatten();
+
+    // Resolve the sticky/override/automatic target and validate host-network
+    // eligibility before changing project state, grants, artifacts, or stage metadata.
+    let preflight_state = &state;
+    let target_node_id = match resolve_target_before_mutation(
+        &state.db,
+        existing_node_id.as_deref(),
+        node_id,
+        requests_host_network,
+        |target_node_id| async move {
+            require_live_host_network_target(preflight_state, &target_node_id).await
+        },
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(TargetPreflightError::Selection(error)) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": format!("{error:?}")})),
+            )
+                .into_response();
+        }
+        Err(TargetPreflightError::Eligibility(error)) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": error.to_string()})),
+            )
+                .into_response();
+        }
     };
 
+    // Capture old per-service image digests for cleanup after redeploy.
     let old_service_digests = if is_update {
         crate::routes::manage::capture_service_digests(
             &state, &project_id, existing_node_id.as_deref(), None,
@@ -688,78 +804,6 @@ pub async fn deploy_compose(
         }
     }
 
-    let target_node_id = match nodes::selector::select_node(&state.db, &project, node_id.clone()).await {
-        Ok(id) => id,
-        Err(e) => {
-            if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
-                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
-            }
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": format!("{:?}", e)})),
-            ).into_response();
-        }
-    };
-    if compose.services.values().any(|service| service.uses_host_network()) {
-        let eligibility = if target_node_id == "local" {
-            let host = state.docker.host_info().await.ok();
-            litebin_common::docker::require_host_network_eligible(
-                host.as_ref().and_then(|info| info.os_type.as_deref()),
-                host.as_ref()
-                    .and_then(|info| info.operating_system.as_deref()),
-                host.as_ref().and_then(|info| info.rootless),
-                Some(3),
-            )
-        } else {
-            match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
-                Ok(node) => match nodes::client::get_node_client(
-                    &state.node_clients,
-                    &target_node_id,
-                ) {
-                    Ok(client) => {
-                        let health_url =
-                            format!("{}/health", agent_base_url(&state.config, &node));
-                        match client.get(health_url).send().await {
-                            Ok(response) if response.status().is_success() => {
-                                match response.json::<litebin_common::types::HealthReport>().await {
-                                    Ok(health) => {
-                                        litebin_common::docker::require_host_network_eligible(
-                                            health.docker_os_type.as_deref(),
-                                            health.docker_operating_system.as_deref(),
-                                            health.docker_rootless,
-                                            Some(health.protocol_version as i64),
-                                        )
-                                    }
-                                    Err(error) => Err(anyhow::anyhow!(
-                                        "failed to read selected agent health: {error}"
-                                    )),
-                                }
-                            }
-                            Ok(response) => Err(anyhow::anyhow!(
-                                "selected agent health check returned {}",
-                                response.status()
-                            )),
-                            Err(error) => Err(anyhow::anyhow!(
-                                "failed to contact selected agent for host-network eligibility: {error}"
-                            )),
-                        }
-                    }
-                    Err(error) => Err(anyhow::anyhow!(
-                        "selected agent client is unavailable: {error:?}"
-                    )),
-                },
-                Err(error) => Err(anyhow::anyhow!("failed to load selected node: {error:?}")),
-            }
-        };
-        if let Err(error) = eligibility {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({"error": error.to_string()})),
-            )
-                .into_response();
-        }
-    }
-
     // Persist sticky node selection even for staged first deploys.
     if let Err(e) = sqlx::query(
         "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
@@ -933,7 +977,6 @@ pub async fn deploy_compose(
             .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(256);
         let default_cpu: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
             .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(0.5);
-
         let batch_resp = match client
             .post(&format!("{}/containers/batch-run", base_url))
             .json(&json!({
@@ -956,7 +999,12 @@ pub async fn deploy_compose(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "remote batch-run request failed");
-                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                let project_error = if target_services.is_some() {
+                    status::set_project_error_only(&state.db, &project_id).await
+                } else {
+                    status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await
+                };
+                if let Err(e) = project_error {
                 tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
             }
                 return (
@@ -968,9 +1016,44 @@ pub async fn deploy_compose(
 
         if !batch_resp.status().is_success() {
             let status_code = batch_resp.status();
-            let body = batch_resp.text().await.unwrap_or_default();
+            let body = match batch_resp.text().await {
+                Ok(body) => body,
+                Err(error) => {
+                    let project_error = if target_services.is_some() {
+                        status::set_project_error_only(&state.db, &project_id).await
+                    } else {
+                        status::transition(
+                            &state.db,
+                            &project_id,
+                            ProjectStatus::Error,
+                            &ProjectUpdateFields::default(),
+                            None,
+                        )
+                        .await
+                    };
+                    if let Err(status_error) = project_error {
+                        tracing::warn!(project_id = %project_id, error = %status_error, "compose deploy: failed to transition to Error");
+                    }
+                    return (
+                        StatusCode::BAD_GATEWAY,
+                        Json(json!({"error": format!("failed to read remote batch-run error response: {error}")})),
+                    )
+                        .into_response();
+                }
+            };
             tracing::error!(status = %status_code, body = %body, "remote batch-run failed");
-            if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+            crate::routes::manage::multi_service::apply_remote_batch_failure_metadata(
+                &state,
+                &project_id,
+                &body,
+            )
+            .await;
+            let project_error = if target_services.is_some() {
+                status::set_project_error_only(&state.db, &project_id).await
+            } else {
+                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await
+            };
+            if let Err(e) = project_error {
                 tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
             }
             return (
@@ -982,9 +1065,21 @@ pub async fn deploy_compose(
         let batch_result: serde_json::Value = match batch_resp.json().await {
             Ok(v) => v,
             Err(e) => {
-                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
-                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
-            }
+                let project_error = if target_services.is_some() {
+                    status::set_project_error_only(&state.db, &project_id).await
+                } else {
+                    status::transition(
+                        &state.db,
+                        &project_id,
+                        ProjectStatus::Error,
+                        &ProjectUpdateFields::default(),
+                        None,
+                    )
+                    .await
+                };
+                if let Err(status_error) = project_error {
+                    tracing::warn!(project_id = %project_id, error = %status_error, "compose deploy: failed to transition to Error");
+                }
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": format!("failed to parse batch-run response: {e}")})),
@@ -1106,9 +1201,10 @@ pub async fn deploy_compose(
                                 if let Some(svc_name) = trimmed.strip_prefix(&prefix) {
                                     if target_set.contains(svc_name) {
                                         let _ = state_clone.docker.stop_container(cid).await;
-                                        let _ = state_clone.docker.remove_container(cid).await;
-                                        if let Err(e) = status::set_service_stopped(&state_clone.db, &project_id_clone, svc_name).await {
-                                            tracing::warn!(project_id = %project_id_clone, service = %svc_name, error = %e, "compose partial redeploy: failed to set service stopped");
+                                        if state_clone.docker.remove_container(cid).await.is_ok() {
+                                            if let Err(e) = status::set_service_removed(&state_clone.db, &project_id_clone, svc_name).await {
+                                                tracing::warn!(project_id = %project_id_clone, service = %svc_name, error = %e, "compose partial redeploy: failed to clear removed service metadata");
+                                            }
                                         }
                                     }
                                 }
@@ -1137,8 +1233,30 @@ pub async fn deploy_compose(
                 let prefix = format!("litebin-{}.", project_id_clone);
                 if let Ok(all_containers) = state_clone.docker.list_containers_by_prefix(&prefix).await {
                     for cid in &all_containers {
+                        let service_name = state_clone
+                            .docker
+                            .inspect_container(cid)
+                            .await
+                            .ok()
+                            .and_then(|inspect| inspect.name)
+                            .and_then(|name| {
+                                name.trim_start_matches('/')
+                                    .strip_prefix(&prefix)
+                                    .map(str::to_owned)
+                            });
                         let _ = state_clone.docker.stop_container(cid).await;
-                        let _ = state_clone.docker.remove_container(cid).await;
+                        if state_clone.docker.remove_container(cid).await.is_ok() {
+                            if let Some(service_name) = service_name {
+                                if service_name != litebin_common::types::DOCKER_PROXY_SERVICE {
+                                    let _ = status::set_service_removed(
+                                        &state_clone.db,
+                                        &project_id_clone,
+                                        &service_name,
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1235,7 +1353,12 @@ pub async fn deploy_compose(
         if let Err(e) = result {
             tracing::error!(project_id = %project_id_clone, error = %e, "background compose deploy failed");
             crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, &format!("Deploy failed: {}", e));
-            if let Err(e) = status::transition(&state_clone.db, &project_id_clone, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+            let project_error = if target_services_clone.is_some() {
+                status::set_project_error_only(&state_clone.db, &project_id_clone).await
+            } else {
+                status::transition(&state_clone.db, &project_id_clone, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await
+            };
+            if let Err(e) = project_error {
                 tracing::warn!(project_id = %project_id_clone, error = %e, "compose deploy: failed to transition to Error in background task");
             }
         }
@@ -1259,4 +1382,113 @@ pub async fn deploy_compose(
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_target_before_mutation, TargetPreflightError};
+    use sqlx::SqlitePool;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    async fn preflight_db() -> SqlitePool {
+        let db = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE nodes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                host TEXT NOT NULL,
+                architecture TEXT,
+                version TEXT,
+                public_ip TEXT,
+                agent_port INTEGER NOT NULL DEFAULT 8443,
+                region TEXT,
+                status TEXT NOT NULL DEFAULT 'offline',
+                total_memory INTEGER,
+                total_cpu REAL,
+                available_memory INTEGER,
+                disk_free INTEGER,
+                disk_total INTEGER,
+                container_count INTEGER NOT NULL DEFAULT 0,
+                last_seen_at INTEGER,
+                fail_count INTEGER NOT NULL DEFAULT 0,
+                agent_secret TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO nodes (
+                id, name, host, status, created_at, updated_at
+             ) VALUES ('local', 'Local', 'localhost', 'online', 1, 1)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE mutation_guard (
+                project_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                node_id TEXT,
+                artifact TEXT
+            )",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO mutation_guard (project_id, status, node_id, artifact)
+             VALUES ('existing', 'running', 'local', 'original')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn host_network_eligibility_failure_precedes_deploy_mutations() {
+        let db = preflight_db().await;
+        let eligibility_checked = Arc::new(AtomicBool::new(false));
+        let checked = eligibility_checked.clone();
+
+        let result = resolve_target_before_mutation(
+            &db,
+            Some("local"),
+            None,
+            true,
+            move |target_node_id| async move {
+                checked.store(true, Ordering::SeqCst);
+                assert_eq!(target_node_id, "local");
+                anyhow::bail!("ineligible live host")
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(TargetPreflightError::Eligibility(_))));
+        assert!(eligibility_checked.load(Ordering::SeqCst));
+        let existing: (String, Option<String>, String) = sqlx::query_as(
+            "SELECT status, node_id, artifact
+             FROM mutation_guard WHERE project_id = 'existing'",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(
+            existing,
+            ("running".into(), Some("local".into()), "original".into())
+        );
+        let new_project_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM mutation_guard WHERE project_id = 'new-project'",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(new_project_count, 0);
+    }
 }

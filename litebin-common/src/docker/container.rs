@@ -1,5 +1,15 @@
 use std::collections::HashMap;
 
+pub(crate) fn is_idempotent_container_stop_error(error: &bollard::errors::Error) -> bool {
+    matches!(
+        error,
+        bollard::errors::Error::DockerResponseServerError {
+            status_code: 304 | 404,
+            ..
+        }
+    )
+}
+
 fn normalize_unix_path(path: &str) -> Option<String> {
     if !path.starts_with('/') {
         return None;
@@ -66,6 +76,31 @@ pub(crate) fn merge_service_env(
     existing
 }
 
+pub(crate) fn managed_proxy_loopback_binding(
+    config: &RunServiceConfig,
+) -> Option<(String, PortBinding)> {
+    (config.is_managed_docker_proxy && config.port == Some(2375)).then(|| {
+        (
+            "2375/tcp".to_string(),
+            PortBinding {
+                host_ip: Some("127.0.0.1".to_string()),
+                host_port: Some("0".to_string()),
+            },
+        )
+    })
+}
+
+pub(crate) fn project_cleanup_container_prefixes(project_id: &str) -> [String; 2] {
+    [
+        format!("litebin-{project_id}."),
+        format!("litebin-{project_id}"),
+    ]
+}
+
+pub(crate) fn project_cleanup_observe_network(project_id: &str) -> String {
+    crate::types::docker_observe_network_name(project_id, None)
+}
+
 use bollard::models::{
     ContainerCreateBody, EndpointSettings, HostConfig, HostConfigLogConfig, NetworkingConfig,
     PortBinding, RestartPolicy, RestartPolicyNameEnum,
@@ -83,7 +118,183 @@ use crate::types::{
 
 use super::{DockerErrorKind, DockerManager, RunningContainer};
 
+const HOST_NETWORK_STABILIZATION_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+const HOST_NETWORK_STABILIZATION_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+const STARTUP_LOG_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+const STARTUP_LOG_TAIL_LINES: usize = 40;
+pub(crate) const STARTUP_LOG_MAX_CHARS: usize = 4_096;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum StartupProcessState {
+    RunningOrUnknown,
+    Exited(Option<i64>),
+}
+
+pub(crate) fn should_stabilize_startup(
+    host_network: bool,
+    is_oneshot: bool,
+    is_managed_proxy: bool,
+) -> bool {
+    host_network && !is_oneshot && !is_managed_proxy
+}
+
+pub(crate) fn startup_process_state(
+    running: Option<bool>,
+    exit_code: Option<i64>,
+) -> StartupProcessState {
+    if running == Some(false) {
+        StartupProcessState::Exited(exit_code)
+    } else {
+        StartupProcessState::RunningOrUnknown
+    }
+}
+
+pub(crate) fn sanitize_startup_log_chunks<'a>(chunks: impl IntoIterator<Item = &'a str>) -> String {
+    use std::collections::VecDeque;
+
+    #[derive(Clone, Copy)]
+    enum EscapeState {
+        Text,
+        Escape,
+        Csi,
+        Osc,
+        OscEscape,
+    }
+
+    let mut state = EscapeState::Text;
+    let mut tail = VecDeque::with_capacity(STARTUP_LOG_MAX_CHARS);
+    let push = |character: char, tail: &mut VecDeque<char>| {
+        if tail.len() == STARTUP_LOG_MAX_CHARS {
+            tail.pop_front();
+        }
+        tail.push_back(character);
+    };
+
+    for chunk in chunks {
+        for character in chunk.chars() {
+            match state {
+                EscapeState::Text => match character {
+                    '\u{1b}' => state = EscapeState::Escape,
+                    '\r' => push('\n', &mut tail),
+                    '\n' | '\t' => push(character, &mut tail),
+                    value if value.is_control() => {}
+                    value => push(value, &mut tail),
+                },
+                EscapeState::Escape => {
+                    state = match character {
+                        '[' => EscapeState::Csi,
+                        ']' => EscapeState::Osc,
+                        _ => EscapeState::Text,
+                    };
+                }
+                EscapeState::Csi => {
+                    if ('@'..='~').contains(&character) {
+                        state = EscapeState::Text;
+                    }
+                }
+                EscapeState::Osc => match character {
+                    '\u{7}' => state = EscapeState::Text,
+                    '\u{1b}' => state = EscapeState::OscEscape,
+                    _ => {}
+                },
+                EscapeState::OscEscape => {
+                    state = if character == '\\' {
+                        EscapeState::Text
+                    } else {
+                        EscapeState::Osc
+                    };
+                }
+            }
+        }
+    }
+
+    tail.into_iter().collect::<String>().trim().to_string()
+}
+
 impl DockerManager {
+    /// Return a healthy, current managed observation proxy and its exact
+    /// loopback mapping. A bridged-only proxy legitimately has no mapping.
+    pub async fn current_docker_observe_proxy(
+        &self,
+        project_id: &str,
+    ) -> anyhow::Result<Option<(String, Option<u16>)>> {
+        let name = container_name(
+            project_id,
+            crate::types::DOCKER_PROXY_SERVICE,
+            None,
+        );
+        let Some(container_id) = self.find_container_by_name(&name).await? else {
+            return Ok(None);
+        };
+        let inspect = self.docker.inspect_container(&container_id, None).await?;
+        let expected_mount_suffix =
+            format!("/projects/{project_id}/docker-observe/haproxy.cfg");
+        let has_current_mount = inspect.mounts.as_ref().is_some_and(|mounts| {
+            mounts.iter().any(|mount| {
+                mount.destination.as_deref()
+                    == Some("/usr/local/etc/haproxy/haproxy.cfg")
+                    && mount.rw == Some(false)
+                    && mount.source.as_deref().is_some_and(|source| {
+                        source
+                            .replace('\\', "/")
+                            .ends_with(&expected_mount_suffix)
+                    })
+            })
+        });
+        let expected_network =
+            crate::types::docker_observe_network_name(project_id, None);
+        let has_private_network = inspect
+            .network_settings
+            .as_ref()
+            .and_then(|settings| settings.networks.as_ref())
+            .is_some_and(|networks| {
+                networks.len() == 1 && networks.contains_key(&expected_network)
+            });
+        let healthy = inspect
+            .state
+            .as_ref()
+            .is_some_and(|state| {
+                state.running == Some(true)
+                    && state
+                        .health
+                        .as_ref()
+                        .and_then(|health| health.status.as_ref())
+                        == Some(&bollard::models::HealthStatusEnum::HEALTHY)
+            });
+        let config_is_current = std::fs::read_to_string(
+            std::path::PathBuf::from("projects")
+                .join(project_id)
+                .join("docker-observe")
+                .join("haproxy.cfg"),
+        )
+        .is_ok_and(|config| config == crate::types::DOCKER_OBSERVE_HAPROXY_CONFIG);
+        let image_is_current = inspect
+            .config
+            .as_ref()
+            .and_then(|config| config.image.as_deref())
+            == Some(crate::types::DOCKER_OBSERVE_PROXY_IMAGE);
+
+        if !(has_current_mount
+            && has_private_network
+            && healthy
+            && config_is_current
+            && image_is_current)
+        {
+            return Ok(None);
+        }
+
+        let mapped_port = inspect
+            .network_settings
+            .as_ref()
+            .and_then(|settings| settings.ports.as_ref())
+            .and_then(|ports| ports.get("2375/tcp"))
+            .and_then(|bindings| bindings.as_ref())
+            .and_then(|bindings| bindings.first())
+            .and_then(|binding| binding.host_port.as_deref())
+            .and_then(|port| port.parse().ok());
+        Ok(Some((container_id, mapped_port)))
+    }
+
     /// Remove containers left by older unsafe Docker-socket access paths.
     pub async fn cleanup_unsafe_docker_socket_containers(&self) -> anyhow::Result<usize> {
         let containers = self
@@ -228,12 +439,24 @@ impl DockerManager {
             .and_then(|port| port.parse().ok()))
     }
 
-    /// Start an existing stopped container (preserves port mappings)
-    pub async fn start_existing_container(&self, container_id: &str) -> anyhow::Result<()> {
+    /// Start an existing stopped service container (preserves port mappings).
+    /// Host-network daemons must remain alive through the bounded startup window
+    /// before this returns success.
+    pub async fn start_existing_container(
+        &self,
+        container_id: &str,
+        service_name: &str,
+        is_oneshot: bool,
+    ) -> anyhow::Result<()> {
         tracing::info!(container_id = %container_id, "starting existing container");
+        let host_network = self.container_uses_host_network(container_id).await?;
         self.docker
             .start_container(container_id, None::<StartContainerOptions>)
             .await?;
+        if should_stabilize_startup(host_network, is_oneshot, false) {
+            self.wait_for_host_network_startup(container_id, service_name)
+                .await?;
+        }
         Ok(())
     }
 
@@ -248,7 +471,7 @@ impl DockerManager {
 
     pub async fn stop_container(&self, container_id: &str) -> anyhow::Result<()> {
         tracing::info!(container_id = %container_id, "stopping container");
-        self.docker
+        if let Err(error) = self.docker
             .stop_container(
                 container_id,
                 Some(StopContainerOptions {
@@ -256,8 +479,31 @@ impl DockerManager {
                     signal: None,
                 }),
             )
-            .await?;
+            .await
+        {
+            if is_idempotent_container_stop_error(&error) {
+                tracing::debug!(container_id = %container_id, "container already stopped or absent");
+                return Ok(());
+            }
+            return Err(error.into());
+        }
         Ok(())
+    }
+
+    /// Stop the current primary container selected by project/service identity.
+    /// This is idempotent when the container is absent or already stopped.
+    pub async fn stop_primary_service_container(
+        &self,
+        project_id: &str,
+        service_name: &str,
+    ) -> anyhow::Result<bool> {
+        let name = crate::types::primary_service_container_name(project_id, service_name)
+            .ok_or_else(|| anyhow::anyhow!("invalid project/service identity"))?;
+        let Some(container_id) = self.find_container_by_name(&name).await? else {
+            return Ok(false);
+        };
+        self.stop_container(&container_id).await?;
+        Ok(true)
     }
 
     pub async fn remove_container(&self, container_id: &str) -> anyhow::Result<()> {
@@ -336,7 +582,7 @@ impl DockerManager {
     ) -> anyhow::Result<()> {
         let mut cleanup_errors = Vec::new();
         // 1. Stop + remove all containers matching the project prefix
-        let prefix = format!("litebin-{}.", project_id);
+        let [prefix, single_name] = project_cleanup_container_prefixes(project_id);
         match self.list_containers_by_prefix(&prefix).await {
             Ok(container_ids) => {
                 for cid in &container_ids {
@@ -352,7 +598,6 @@ impl DockerManager {
         }
 
         // 2. Also try single-service container name
-        let single_name = format!("litebin-{}", project_id);
         match self.list_containers_by_prefix(&single_name).await {
             Ok(single_ids) => {
                 for cid in &single_ids {
@@ -379,7 +624,7 @@ impl DockerManager {
         if let Err(e) = self.remove_project_network(project_id, None).await {
             cleanup_errors.push(format!("remove project network: {e}"));
         }
-        let observe_network = crate::types::docker_observe_network_name(project_id, None);
+        let observe_network = project_cleanup_observe_network(project_id);
         if let Err(e) = self.remove_named_network(&observe_network).await {
             cleanup_errors.push(format!("remove Docker observation network: {e}"));
         }
@@ -459,14 +704,10 @@ impl DockerManager {
 
         // A managed observation proxy remains private/bridged. Host-network
         // requesters reach it only through an ephemeral loopback publication.
-        if config.is_managed_docker_proxy && config.port == Some(2375) {
-            let port_key = "2375/tcp".to_string();
+        if let Some((port_key, binding)) = managed_proxy_loopback_binding(config) {
             port_bindings.insert(
                 port_key.clone(),
-                Some(vec![PortBinding {
-                    host_ip: Some("127.0.0.1".to_string()),
-                    host_port: Some("0".to_string()),
-                }]),
+                Some(vec![binding]),
             );
             exposed_ports.push(port_key);
         }
@@ -789,6 +1030,15 @@ impl DockerManager {
             .start_container(&container_id, None::<StartContainerOptions>)
             .await?;
 
+        if should_stabilize_startup(
+            config.host_network,
+            config.is_oneshot,
+            config.is_managed_docker_proxy,
+        ) {
+            self.wait_for_host_network_startup(&container_id, &config.service_name)
+                .await?;
+        }
+
         // Get the mapped port for public services (non-fatal).
         // Containers that crash immediately (e.g. missing docker.sock) will
         // have no port mapping — return 0 and let status polling resolve it.
@@ -1081,6 +1331,80 @@ impl DockerManager {
         Ok(state.and_then(|s| s.exit_code))
     }
 
+    async fn wait_for_host_network_startup(
+        &self,
+        container_id: &str,
+        service_name: &str,
+    ) -> anyhow::Result<()> {
+        let deadline = tokio::time::Instant::now() + HOST_NETWORK_STABILIZATION_WINDOW;
+        loop {
+            let info = self.docker.inspect_container(container_id, None).await?;
+            let state = info.state.as_ref();
+            match startup_process_state(
+                state.and_then(|state| state.running),
+                state.and_then(|state| state.exit_code),
+            ) {
+                StartupProcessState::RunningOrUnknown => {}
+                StartupProcessState::Exited(exit_code) => {
+                    let exit_context = exit_code
+                        .map(|code| format!("exit code {code}"))
+                        .unwrap_or_else(|| "exit code unavailable".to_string());
+                    let logs = tokio::time::timeout(
+                        STARTUP_LOG_FETCH_TIMEOUT,
+                        self.startup_log_tail(container_id),
+                    )
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or_default();
+                    if logs.is_empty() {
+                        anyhow::bail!(
+                            "host-network service '{}' container '{}' exited during the {}s startup stabilization window ({})",
+                            service_name,
+                            container_id,
+                            HOST_NETWORK_STABILIZATION_WINDOW.as_secs(),
+                            exit_context
+                        );
+                    }
+                    anyhow::bail!(
+                        "host-network service '{}' container '{}' exited during the {}s startup stabilization window ({}); recent logs:\n{}",
+                        service_name,
+                        container_id,
+                        HOST_NETWORK_STABILIZATION_WINDOW.as_secs(),
+                        exit_context,
+                        logs
+                    );
+                }
+            }
+
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Ok(());
+            }
+            tokio::time::sleep(
+                HOST_NETWORK_STABILIZATION_POLL.min(deadline.saturating_duration_since(now)),
+            )
+            .await;
+        }
+    }
+
+    async fn startup_log_tail(&self, container_id: &str) -> anyhow::Result<String> {
+        let options = LogsOptions {
+            stdout: true,
+            stderr: true,
+            tail: STARTUP_LOG_TAIL_LINES.to_string(),
+            ..Default::default()
+        };
+        let mut stream = self.docker.logs(container_id, Some(options));
+        let mut chunks = Vec::new();
+        while let Some(result) = stream.next().await {
+            chunks.push(result?.to_string());
+        }
+        Ok(sanitize_startup_log_chunks(
+            chunks.iter().map(String::as_str),
+        ))
+    }
+
     /// Wait for a container to have a valid IP address on its network (not "invalid" or empty).
     /// Docker sometimes assigns "invalid" IP briefly after container creation.
     /// Polls every 200ms, timeout 10s.
@@ -1163,6 +1487,33 @@ impl DockerManager {
         Ok(containers.into_iter().filter_map(|c| c.id).collect())
     }
 
+    /// List every workload container belonging to a project, including stopped
+    /// containers and replacements whose IDs are not known by the orchestrator.
+    pub async fn list_project_workload_containers(
+        &self,
+        project_id: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let containers = self
+            .docker
+            .list_containers(Some(ListContainersOptions {
+                all: true,
+                ..Default::default()
+            }))
+            .await?;
+
+        Ok(containers
+            .into_iter()
+            .filter(|container| {
+                is_project_workload_container(
+                    project_id,
+                    container.names.as_deref().unwrap_or_default(),
+                    container.labels.as_ref(),
+                )
+            })
+            .filter_map(|container| container.id)
+            .collect())
+    }
+
     /// List all running litebin containers. Returns parsed container info using the
     /// centralized naming convention (`litebin-{project_id}`, `litebin-{project_id}-{service}`, etc.).
     pub async fn list_running_litebin_containers(&self) -> anyhow::Result<Vec<RunningContainer>> {
@@ -1233,4 +1584,44 @@ impl DockerManager {
 
         Ok(lines)
     }
+}
+
+pub(crate) fn is_project_workload_container(
+    project_id: &str,
+    names: &[String],
+    labels: Option<&HashMap<String, String>>,
+) -> bool {
+    let labeled_project = labels.and_then(|labels| labels.get("litebin.project_id"));
+    if labeled_project.is_some_and(|value| value != project_id) {
+        return false;
+    }
+
+    let proxy_name = container_name(
+        project_id,
+        crate::types::DOCKER_PROXY_SERVICE,
+        None,
+    );
+    let is_proxy = names
+        .iter()
+        .any(|name| name.trim_start_matches('/') == proxy_name)
+        || labels
+            .and_then(|labels| labels.get("com.docker.compose.service"))
+            .is_some_and(|service| service == crate::types::DOCKER_PROXY_SERVICE);
+    if is_proxy {
+        return false;
+    }
+
+    if labeled_project.map(String::as_str) == Some(project_id) {
+        return true;
+    }
+
+    let single_name = container_name(project_id, "web", None);
+    let service_prefix = format!("litebin-{project_id}.");
+    names.iter().any(|name| {
+        let name = name.trim_start_matches('/');
+        name == single_name
+            || name
+                .strip_prefix(&service_prefix)
+                .is_some_and(|service| !service.is_empty())
+    })
 }

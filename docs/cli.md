@@ -66,7 +66,7 @@ l8b deploy --project <PROJECT_ID> [options]
 |------|---------|-------------|
 | `--project` | *(required)* | Project ID, used as subdomain (`<id>.example.com`) |
 | `--port` | `3000` | Internal port the app listens on inside the container |
-| `--background` | *off* | Run without managed HTTP ingress or URL; keeps auto-stop/request wake disabled |
+| `--background` | *off* | Use the always-on Background lifecycle with no managed HTTP ingress or URL; disables auto-stop and request wake |
 | `--path` | `.` | Path to the project directory |
 | `--dockerfile` | auto-detect | Path to Dockerfile relative to `--path` |
 | `--node` | auto-select | Target node ID |
@@ -142,6 +142,12 @@ l8b deploy --project myapp --no-auto-stop
 
 ```bash
 l8b deploy --project my-worker --background
+```
+
+The same flag applies to Compose deployments. It explicitly sets the project type; Compose services and ports do not infer it:
+
+```bash
+l8b deploy --project my-services --compose --background
 ```
 
 **Compose deploy** (multi-service with docker-compose.yml):

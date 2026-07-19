@@ -67,6 +67,7 @@ hmac = "0.12"
 rpassword = "7"
 
 [dev-dependencies]
+litebin-agent = { path = "../agent" }
 proptest = "1"
 axum-test = "17"
 tower = { version = "0.5", features = ["util"] }

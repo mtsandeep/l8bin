@@ -23,6 +23,39 @@ pub struct ComposeRunPlan {
 }
 
 impl ComposeRunPlan {
+    /// Service names that declared a Docker socket in their stored run plan.
+    /// This is intentionally based on declarations, not workload image names.
+    pub fn docker_socket_requester_names(&self) -> std::collections::HashSet<String> {
+        self.configs
+            .iter()
+            .filter(|config| config_requests_docker_socket(config))
+            .map(|config| config.service_name.clone())
+            .collect()
+    }
+
+    /// Names of host-network workloads whose immutable environment points at
+    /// the managed observation proxy's ephemeral loopback port.
+    pub fn host_docker_observer_names(&self) -> std::collections::HashSet<String> {
+        self.configs
+            .iter()
+            .filter(|config| config.host_network && config.docker_observe)
+            .map(|config| config.service_name.clone())
+            .collect()
+    }
+
+    /// Exclude the proxy from this operation while retaining the observation
+    /// settings already injected into workload configs.
+    pub fn reuse_existing_docker_observe_proxy(&mut self) {
+        self.service_order
+            .retain(|name| name != crate::types::DOCKER_PROXY_SERVICE);
+        for level in &mut self.service_levels {
+            level.retain(|name| name != crate::types::DOCKER_PROXY_SERVICE);
+        }
+        self.service_levels.retain(|level| !level.is_empty());
+        self.configs
+            .retain(|config| !config.is_managed_docker_proxy);
+    }
+
     /// Build a `ComposeRunPlan` from a pre-parsed `ComposeFile`.
     /// Use this when you've already parsed/validated the compose (e.g. deploy path).
     pub fn from_compose(
@@ -241,6 +274,16 @@ impl ComposeRunPlan {
                     .push(format!("DOCKER_HOST=tcp://127.0.0.1:{mapped_port}"));
             }
         }
+    }
+
+    /// Expand a partial replacement so a new ephemeral proxy endpoint is
+    /// installed atomically with every host-network requester that embeds it.
+    pub fn expand_for_docker_proxy_replacement(
+        &self,
+        targets: &mut std::collections::HashSet<String>,
+    ) {
+        targets.insert(crate::types::DOCKER_PROXY_SERVICE.to_string());
+        targets.extend(self.host_docker_observer_names());
     }
 
     /// Build a minimal `ComposeRunPlan` for a single-service project.
@@ -482,6 +525,88 @@ services:
     }
 
     #[test]
+    fn revoked_observation_removes_proxy_and_raw_workload_access() {
+        let yaml = r#"
+services:
+  collector:
+    image: registry.invalid/generic-collector:fixture
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+  unrelated:
+    image: registry.invalid/generic-worker:fixture
+"#;
+        let mut granted =
+            build_compose_run_plan(yaml, "observe-revoked", &[], None).unwrap();
+        assert!(granted
+            .inject_docker_observe_proxy("observe-revoked")
+            .unwrap());
+        assert!(granted
+            .service_order
+            .iter()
+            .any(|service| service == crate::types::DOCKER_PROXY_SERVICE));
+
+        let revoked =
+            build_compose_run_plan(yaml, "observe-revoked", &[], None).unwrap();
+        assert!(revoked
+            .service_order
+            .iter()
+            .all(|service| service != crate::types::DOCKER_PROXY_SERVICE));
+        let collector = revoked
+            .configs
+            .iter()
+            .find(|config| config.service_name == "collector")
+            .unwrap();
+        assert!(!collector.docker_observe);
+        assert!(!collector
+            .env
+            .iter()
+            .any(|value| value.starts_with("DOCKER_HOST=")));
+        assert!(crate::docker::sanitize_docker_socket_binds(
+            collector.binds.as_ref().unwrap(),
+            false,
+        )
+        .is_empty());
+        let unrelated = revoked
+            .configs
+            .iter()
+            .find(|config| config.service_name == "unrelated")
+            .unwrap();
+        assert!(!unrelated.docker_observe);
+        assert!(unrelated.binds.is_none());
+
+        let _ = std::fs::remove_dir_all(
+            std::path::PathBuf::from("projects").join("observe-revoked"),
+        );
+    }
+
+    #[test]
+    fn requester_names_come_from_bridged_and_host_socket_declarations() {
+        let yaml = r#"
+services:
+  arbitrary-bridge-name:
+    image: example/not-special
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+  arbitrary-host-name:
+    image: example/also-not-special
+    network_mode: host
+    volumes:
+      - /run/docker.sock:/run/docker.sock
+  unrelated:
+    image: example/not-an-observer
+"#;
+        let plan = build_compose_run_plan(yaml, "requester-names", &[], None).unwrap();
+
+        assert_eq!(
+            plan.docker_socket_requester_names(),
+            std::collections::HashSet::from([
+                "arbitrary-bridge-name".into(),
+                "arbitrary-host-name".into(),
+            ])
+        );
+    }
+
+    #[test]
     fn host_observer_uses_loopback_proxy_without_raw_ports() {
         let project_id = format!("host-observer-{}", std::process::id());
         let yaml = r#"
@@ -508,7 +633,154 @@ services:
         plan.inject_host_docker_proxy_endpoint(49152);
         let workload = plan.configs.iter().find(|config| config.service_name == "agent").unwrap();
         assert!(workload.env.iter().any(|value| value == "DOCKER_HOST=tcp://127.0.0.1:49152"));
+        let mut targets = std::collections::HashSet::from(["unrelated".to_string()]);
+        plan.expand_for_docker_proxy_replacement(&mut targets);
+        assert!(targets.contains("agent"));
+        assert!(targets.contains(crate::types::DOCKER_PROXY_SERVICE));
+
+        plan.reuse_existing_docker_observe_proxy();
+        assert!(!plan
+            .service_order
+            .iter()
+            .any(|name| name == crate::types::DOCKER_PROXY_SERVICE));
+        assert!(plan
+            .configs
+            .iter()
+            .all(|config| !config.is_managed_docker_proxy));
         let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
+    }
+
+    #[test]
+    fn background_host_observer_acceptance_preserves_full_security_run_plan() {
+        for listen in [None, Some("LISTEN: \"45123\"\n")] {
+            let project_id = format!(
+                "generic-host-observer-{}-{}",
+                std::process::id(),
+                listen.is_some()
+            );
+            let yaml = format!(
+                r#"
+services:
+  collector:
+    image: registry.invalid/generic-host-agent:fixture
+    network_mode: host
+    environment:
+      OUTBOUND_URL: https://receiver.invalid/v1/events
+{listen}    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./agent-data:/var/lib/generic-agent
+"#,
+                listen = listen
+                    .map(|value| format!("      {value}"))
+                    .unwrap_or_default(),
+            );
+
+            let (compose, report) = compose_bollard::analyze_compose_yaml_for_workload(
+                &yaml,
+                None,
+                Some(&project_id),
+                true,
+            )
+            .unwrap();
+            assert!(report.ok, "findings: {:#?}", report.findings);
+            assert_eq!(
+                report.required_capabilities,
+                vec!["docker-observe".to_string(), "host-network".to_string()]
+            );
+            assert!(compose.services["collector"].ports.is_none());
+            assert_eq!(compose.detect_public_service().unwrap(), None);
+
+            let mut plan =
+                ComposeRunPlan::from_compose(&compose, &project_id, &[], None).unwrap();
+            assert_eq!(plan.pub_service_name, None);
+            let workload = &plan.configs[0];
+            assert!(workload.host_network);
+            assert!(!workload.is_public);
+            assert_eq!(workload.port, None);
+            assert!(!workload.allow_raw_ports);
+            assert!(workload.networks.is_none());
+            assert_eq!(
+                workload.binds.as_ref().unwrap(),
+                &vec![
+                    "/var/run/docker.sock:/var/run/docker.sock:ro".to_string(),
+                    format!(
+                        "projects/{project_id}/agent-data:/var/lib/generic-agent"
+                    ),
+                ]
+            );
+            let compose_env = workload
+                .bollard_create_body
+                .as_ref()
+                .and_then(|body| body.env.as_ref())
+                .unwrap();
+            assert!(compose_env
+                .iter()
+                .any(|value| value == "OUTBOUND_URL=https://receiver.invalid/v1/events"));
+            assert_eq!(
+                compose_env.iter().any(|value| value == "LISTEN=45123"),
+                listen.is_some()
+            );
+
+            let runtime_binds = crate::docker::sanitize_docker_socket_binds(
+                workload.binds.as_ref().unwrap(),
+                false,
+            );
+            assert_eq!(
+                runtime_binds,
+                vec![format!(
+                    "projects/{project_id}/agent-data:/var/lib/generic-agent"
+                )]
+            );
+
+            assert!(plan.inject_docker_observe_proxy(&project_id).unwrap());
+            let workload = plan
+                .configs
+                .iter()
+                .find(|config| config.service_name == "collector")
+                .unwrap();
+            assert!(workload.docker_observe);
+            assert!(workload.host_network);
+            assert!(workload.networks.is_none());
+            assert!(!workload
+                .env
+                .iter()
+                .any(|value| value.starts_with("DOCKER_HOST=")));
+
+            let proxy = plan
+                .configs
+                .iter()
+                .find(|config| config.is_managed_docker_proxy)
+                .unwrap();
+            assert!(!proxy.host_network);
+            assert!(!proxy.is_public);
+            assert!(!proxy.allow_raw_ports);
+            assert_eq!(proxy.port, Some(2375));
+            assert_eq!(proxy.networks.as_ref().unwrap().len(), 1);
+            assert_eq!(
+                proxy.networks.as_ref().unwrap()[0].name,
+                crate::types::docker_observe_network_name(&project_id, None)
+            );
+            let (port_key, binding) =
+                crate::docker::managed_proxy_loopback_binding(proxy).unwrap();
+            assert_eq!(port_key, "2375/tcp");
+            assert_eq!(binding.host_ip.as_deref(), Some("127.0.0.1"));
+            assert_eq!(binding.host_port.as_deref(), Some("0"));
+
+            plan.inject_host_docker_proxy_endpoint(49161);
+            let workload = plan
+                .configs
+                .iter()
+                .find(|config| config.service_name == "collector")
+                .unwrap();
+            assert!(workload
+                .env
+                .iter()
+                .any(|value| value == "DOCKER_HOST=tcp://127.0.0.1:49161"));
+
+            let _ = std::fs::remove_dir_all(
+                std::path::PathBuf::from("projects").join(project_id),
+            );
+        }
     }
 
     #[test]

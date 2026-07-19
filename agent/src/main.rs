@@ -1,127 +1,18 @@
 mod activity;
-mod config;
-mod routes;
 mod tls;
 
-use std::collections::HashMap;
-
 use anyhow::Result;
-use axum::{
-    Router,
-    routing::{get, post},
-};
+use axum::{Router, routing::get};
 use dashmap::DashMap;
+use litebin_agent::{
+    AgentState, Config, build_router, load_caddy_config_from_file,
+    load_project_meta_from_file, load_registration_from_file, routes,
+};
 use litebin_common::caddy::CaddyClient;
 use litebin_common::docker::DockerManager;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Notify;
 use tracing::info;
-
-use config::AgentRegistration;
-
-pub struct WakeGuard {
-    pub notify: Notify,
-    pub success: std::sync::atomic::AtomicBool,
-    pub completed: std::sync::atomic::AtomicBool,
-}
-
-#[derive(Clone)]
-pub struct AgentState {
-    pub config: Arc<config::Config>,
-    pub docker: Arc<DockerManager>,
-    pub caddy: Option<Arc<CaddyClient>>,
-    pub wake_locks: Arc<DashMap<String, Arc<WakeGuard>>>,
-    pub registration: Arc<std::sync::RwLock<Option<AgentRegistration>>>,
-    pub last_caddy_config: Arc<std::sync::RwLock<Option<serde_json::Value>>>,
-    pub project_meta: Arc<std::sync::RwLock<HashMap<String, ProjectMetaEntry>>>,
-    // Reverse proxy client for multi-service projects (always routed through agent waker)
-    pub proxy_client: reqwest::Client,
-    // Per-project throttle for multi-service health checks (5s cooldown)
-    pub multi_svc_health_check: Arc<DashMap<String, std::time::Instant>>,
-}
-
-const REGISTRATION_FILE: &str = "data/agent-state.json";
-const CADDY_CONFIG_FILE: &str = "data/caddy-config.json";
-const PROJECT_META_FILE: &str = "data/project-meta.json";
-
-fn load_registration_from_file() -> Result<Option<AgentRegistration>> {
-    let data = std::fs::read_to_string(REGISTRATION_FILE)?;
-    let reg: AgentRegistration = serde_json::from_str(&data)?;
-    tracing::info!(node_id = %reg.node_id, "loaded persisted registration from file");
-    Ok(Some(reg))
-}
-
-pub fn save_registration_to_file(reg: &AgentRegistration) -> Result<()> {
-    if let Some(parent) = std::path::Path::new(REGISTRATION_FILE).parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let data = serde_json::to_string_pretty(reg)?;
-    std::fs::write(REGISTRATION_FILE, data)?;
-    tracing::info!(node_id = %reg.node_id, "persisted registration to file");
-    Ok(())
-}
-
-pub(crate) fn load_caddy_config_from_file() -> Option<serde_json::Value> {
-    let data = std::fs::read_to_string(CADDY_CONFIG_FILE).ok()?;
-    let config: serde_json::Value = serde_json::from_str(&data).ok()?;
-    tracing::info!("loaded persisted caddy config from file");
-    Some(config)
-}
-
-pub(crate) fn save_caddy_config_to_file(config: &serde_json::Value) {
-    if let Some(parent) = std::path::Path::new(CADDY_CONFIG_FILE).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    match serde_json::to_string_pretty(config) {
-        Ok(data) => {
-            if let Err(e) = std::fs::write(CADDY_CONFIG_FILE, data) {
-                tracing::warn!(error = %e, "failed to persist caddy config to file");
-            }
-        }
-        Err(e) => tracing::warn!(error = %e, "failed to serialize caddy config"),
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
-pub struct ProjectMetaEntry {
-    pub auto_start_enabled: bool,
-    #[serde(default)]
-    pub is_background: bool,
-    #[serde(default)]
-    pub allow_raw_ports: bool,
-    #[serde(default)]
-    pub docker_observe: bool,
-    #[serde(default)]
-    pub host_network: bool,
-    /// Global default memory limit (MB) from orchestrator settings.
-    #[serde(default)]
-    pub default_memory_limit_mb: Option<i64>,
-    /// Global default CPU limit from orchestrator settings.
-    #[serde(default)]
-    pub default_cpu_limit: Option<f64>,
-}
-
-pub(crate) fn load_project_meta_from_file() -> Option<HashMap<String, ProjectMetaEntry>> {
-    let data = std::fs::read_to_string(PROJECT_META_FILE).ok()?;
-    let meta: HashMap<String, ProjectMetaEntry> = serde_json::from_str(&data).ok()?;
-    tracing::info!("loaded persisted project meta from file");
-    Some(meta)
-}
-
-pub(crate) fn save_project_meta_to_file(meta: &HashMap<String, ProjectMetaEntry>) {
-    if let Some(parent) = std::path::Path::new(PROJECT_META_FILE).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    match serde_json::to_string_pretty(meta) {
-        Ok(data) => {
-            if let Err(e) = std::fs::write(PROJECT_META_FILE, data) {
-                tracing::warn!(error = %e, "failed to persist project meta to file");
-            }
-        }
-        Err(e) => tracing::warn!(error = %e, "failed to serialize project meta"),
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -141,7 +32,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let mut cfg = config::Config::from_env()?;
+    let mut cfg = Config::from_env()?;
 
     // Auto-detect public IP if not set
     if cfg.public_ip.is_empty() {
@@ -159,10 +50,9 @@ async fn main() -> Result<()> {
     let cfg = Arc::new(cfg);
 
     // Load persisted registration (if agent was previously registered)
-    let registration: Arc<std::sync::RwLock<Option<AgentRegistration>>> =
-        Arc::new(std::sync::RwLock::new(
-            load_registration_from_file().ok().flatten(),
-        ));
+    let registration = Arc::new(std::sync::RwLock::new(
+        load_registration_from_file().ok().flatten(),
+    ));
 
     // Ensure projects directory exists
     std::fs::create_dir_all("projects")?;
@@ -201,10 +91,9 @@ async fn main() -> Result<()> {
         ));
 
     // Load persisted project meta (project_id → auto_start_enabled + allow_raw_ports)
-    let project_meta: Arc<std::sync::RwLock<HashMap<String, ProjectMetaEntry>>> =
-        Arc::new(std::sync::RwLock::new(
-            load_project_meta_from_file().unwrap_or_default(),
-        ));
+    let project_meta = Arc::new(std::sync::RwLock::new(
+        load_project_meta_from_file().unwrap_or_default(),
+    ));
 
     let state = AgentState {
         config: cfg.clone(),
@@ -297,33 +186,7 @@ async fn main() -> Result<()> {
         });
     }
 
-    let app = Router::new()
-        .route("/health", get(routes::health::health))
-        .route("/internal/register", post(routes::register::register))
-        .route("/internal/project-meta", post(routes::project_meta::update_project_meta))
-        .route("/containers/run", post(routes::containers::run_container))
-        .route("/containers/recreate", post(routes::containers::recreate_container))
-        .route("/containers/start", post(routes::containers::start_container))
-        .route("/containers/stop", post(routes::containers::stop_container))
-        .route("/containers/remove", post(routes::containers::remove_container))
-        .route("/containers/{id}/status", get(routes::containers::container_status))
-        .route("/containers/{id}/logs", get(routes::containers::container_logs))
-        .route("/containers/{id}/disk-usage", get(routes::containers::container_disk_usage))
-        .route("/containers/stats", post(routes::containers::batch_container_stats))
-        .route("/containers/batch-run", post(routes::containers::batch_run))
-        .route("/containers/cleanup", post(routes::containers::cleanup_project))
-        .route("/containers/scan", get(routes::containers::scan_containers))
-        .route("/containers/import", post(routes::containers::import_containers))
-        .route("/containers/compose-file", get(routes::containers::get_compose_file))
-        .route("/images/load", post(routes::images::load_image))
-        .route("/images/inspect", get(routes::images::inspect_image))
-        .route("/images/remove-unused", post(routes::images::remove_unused_image))
-        .route("/images/prune", post(routes::images::prune_images))
-        .route("/volumes/export", post(routes::volumes::export_volume))
-        .route("/volumes/import", post(routes::volumes::import_volume))
-        .route("/caddy/sync", post(routes::caddy::sync_caddy))
-        .fallback(routes::waker::wake)
-        .with_state(state);
+    let app = build_router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], cfg.agent_port));
 

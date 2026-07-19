@@ -6,7 +6,7 @@ use tracing::{debug, warn};
 
 use litebin_common::heartbeat;
 
-use crate::AgentState;
+use litebin_agent::AgentState;
 
 type HmacSha256 = Hmac<Sha256>;
 

@@ -12,7 +12,8 @@ use super::env::{env_has_changed, ensure_project_dir_and_env, read_project_env, 
 use super::metadata::write_project_metadata;
 use super::types::{
     CleanupRequest, ErrorResponse, RemoveRequest, RunRequest, RunResponse, StartRequest,
-    StartResponse, StopRequest,
+    StartResponse, StopProjectRequest, StopProjectResponse, StopRequest, StopServiceRequest,
+    StopServiceResponse,
 };
 
 // ── Single-Container Lifecycle Handlers ──────────────────────────────────────
@@ -407,7 +408,11 @@ pub async fn start_container(
     }
 
     // Fast path: env unchanged, just start the existing container
-    if let Err(e) = state.docker.start_existing_container(&req.container_id).await {
+    if let Err(e) = state
+        .docker
+        .start_existing_container(&req.container_id, "web", false)
+        .await
+    {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -449,6 +454,123 @@ pub async fn stop_container(
         )
             .into_response(),
     }
+}
+
+/// POST /containers/stop-service
+/// Stop the current primary container selected by deterministic service identity.
+pub async fn stop_service(
+    State(state): State<AgentState>,
+    Json(req): Json<StopServiceRequest>,
+) -> impl IntoResponse {
+    if litebin_common::types::primary_service_container_name(&req.project_id, &req.service_name)
+        .is_none()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid project_id or service_name".into(),
+            }),
+        )
+            .into_response();
+    }
+
+    match state
+        .docker
+        .stop_primary_service_container(&req.project_id, &req.service_name)
+        .await
+    {
+        Ok(stopped) => (StatusCode::OK, Json(StopServiceResponse { stopped })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /containers/stop-project
+/// Stop all workloads selected by project identity and remove the managed
+/// observation proxy without deleting any other project resources.
+pub async fn stop_project(
+    State(state): State<AgentState>,
+    Json(req): Json<StopProjectRequest>,
+) -> impl IntoResponse {
+    if req.project_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "project_id must not be empty".into(),
+            }),
+        )
+            .into_response();
+    }
+
+    let mut failures = Vec::new();
+    let workload_ids = match state
+        .docker
+        .list_project_workload_containers(&req.project_id)
+        .await
+    {
+        Ok(ids) => ids,
+        Err(error) => {
+            failures.push(format!("list workloads: {error}"));
+            Vec::new()
+        }
+    };
+
+    for container_id in &workload_ids {
+        if let Err(error) = state.docker.stop_container(container_id).await {
+            failures.push(format!("stop container {container_id}: {error}"));
+        }
+    }
+
+    if let Err(error) = state
+        .docker
+        .remove_by_service_name(
+            &req.project_id,
+            litebin_common::types::DOCKER_PROXY_SERVICE,
+            None,
+        )
+        .await
+    {
+        failures.push(format!("remove managed observation proxy: {error}"));
+    }
+
+    if !failures.is_empty() {
+        let shown = failures
+            .iter()
+            .take(5)
+            .map(|failure| failure.chars().take(200).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!(
+                    "project stop failed ({} error{}): {}{}",
+                    failures.len(),
+                    if failures.len() == 1 { "" } else { "s" },
+                    shown,
+                    if failures.len() > 5 {
+                        "; additional errors omitted"
+                    } else {
+                        ""
+                    }
+                ),
+            }),
+        )
+            .into_response();
+    }
+
+    (
+        StatusCode::OK,
+        Json(StopProjectResponse {
+            stopped_containers: workload_ids.len(),
+        }),
+    )
+        .into_response()
 }
 
 /// POST /containers/remove

@@ -207,7 +207,7 @@ async fn require_auth_or_401(
     next.run(request).await
 }
 
-fn test_config() -> Config {
+pub(crate) fn test_config() -> Config {
     Config {
         domain: "localhost".to_string(),
         caddy_admin_url: "http://localhost:2019".to_string(),

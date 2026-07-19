@@ -488,6 +488,43 @@ pub fn container_name(project_id: &str, service_name: &str, instance_id: Option<
     }
 }
 
+/// Return the deterministic primary container name when the identity can be
+/// represented unambiguously by LiteBin's naming convention.
+pub fn primary_service_container_name(project_id: &str, service_name: &str) -> Option<String> {
+    let valid_project_id = !project_id.is_empty()
+        && project_id.len() <= 63
+        && !project_id.starts_with('-')
+        && !project_id.ends_with('-')
+        && project_id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    let valid_service_name = !service_name.is_empty()
+        && service_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !valid_project_id || !valid_service_name {
+        return None;
+    }
+
+    let name = container_name(project_id, service_name, None);
+    if is_primary_service_container_name(&name, project_id, service_name) {
+        Some(name)
+    } else {
+        None
+    }
+}
+
+/// Check whether a Docker name is the primary container for this exact service identity.
+pub fn is_primary_service_container_name(
+    name: &str,
+    project_id: &str,
+    service_name: &str,
+) -> bool {
+    parse_container_name(name).is_some_and(|(parsed_project, parsed_service, instance_id)| {
+        parsed_project == project_id && parsed_service == service_name && instance_id.is_none()
+    })
+}
+
 /// Build the per-project Docker network name.
 /// - Primary: `litebin-{project_id}`
 /// - With instance: `litebin-{project_id}-{instance_id}`
@@ -564,4 +601,55 @@ pub fn parse_container_name(name: &str) -> Option<(String, String, Option<String
     }
 
     None
+}
+
+#[cfg(test)]
+mod container_identity_tests {
+    use super::{is_primary_service_container_name, primary_service_container_name};
+
+    #[test]
+    fn primary_service_identity_uses_canonical_names() {
+        assert_eq!(
+            primary_service_container_name("my-project", "web").as_deref(),
+            Some("litebin-my-project")
+        );
+        assert_eq!(
+            primary_service_container_name("my-project", "api").as_deref(),
+            Some("litebin-my-project.api")
+        );
+    }
+
+    #[test]
+    fn primary_service_identity_rejects_ambiguous_identifiers() {
+        assert_eq!(primary_service_container_name("my.project", "api"), None);
+        assert_eq!(primary_service_container_name("my-project", "api.v2"), None);
+        assert_eq!(primary_service_container_name("", "web"), None);
+        assert_eq!(primary_service_container_name("my-project", ""), None);
+        assert_eq!(primary_service_container_name("my-project", "../api"), None);
+        assert_eq!(primary_service_container_name("MY-PROJECT", "api"), None);
+    }
+
+    #[test]
+    fn primary_service_selection_is_exact_and_excludes_instances() {
+        assert!(is_primary_service_container_name(
+            "/litebin-my-project.api",
+            "my-project",
+            "api"
+        ));
+        assert!(!is_primary_service_container_name(
+            "/litebin-my-project.api.staging",
+            "my-project",
+            "api"
+        ));
+        assert!(!is_primary_service_container_name(
+            "/litebin-my-project.api-v2",
+            "my-project",
+            "api"
+        ));
+        assert!(!is_primary_service_container_name(
+            "/litebin-other.api",
+            "my-project",
+            "api"
+        ));
+    }
 }

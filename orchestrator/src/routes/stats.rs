@@ -117,30 +117,79 @@ fn enrich_services(
     }).collect()
 }
 
+fn select_disk_usage_container_ids(
+    deploy_type: Option<&DeployType>,
+    project_container_id: Option<&str>,
+    service_container_ids: &[Option<String>],
+) -> Vec<String> {
+    let candidates: Vec<&str> = if deploy_type == Some(&DeployType::Compose) {
+        service_container_ids
+            .iter()
+            .filter_map(|container_id| container_id.as_deref())
+            .collect()
+    } else {
+        project_container_id.into_iter().collect()
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|container_id| !container_id.is_empty())
+        .filter(|container_id| seen.insert((*container_id).to_string()))
+        .map(str::to_string)
+        .collect()
+}
+
+fn aggregate_root_fs_bytes(sizes: impl IntoIterator<Item = u64>) -> Result<u64, &'static str> {
+    sizes.into_iter().try_fold(0_u64, |total, size| {
+        total.checked_add(size).ok_or("disk usage total overflowed")
+    })
+}
+
+fn logs_use_service_selection(deploy_type: Option<&DeployType>) -> bool {
+    deploy_type == Some(&DeployType::Compose)
+}
+
+async fn load_project_container_ids(
+    db: &sqlx::SqlitePool,
+    project: &crate::db::models::Project,
+) -> Result<Vec<String>, sqlx::Error> {
+    if project.deploy_type == Some(DeployType::Compose) {
+        let services: Vec<(Option<String>,)> = sqlx::query_as(
+            "SELECT container_id FROM project_services WHERE project_id = ? ORDER BY service_name",
+        )
+        .bind(&project.id)
+        .fetch_all(db)
+        .await?;
+        let service_container_ids: Vec<Option<String>> = services
+            .into_iter()
+            .map(|(container_id,)| container_id)
+            .collect();
+        Ok(select_disk_usage_container_ids(
+            project.deploy_type.as_ref(),
+            project.container_id.as_deref(),
+            &service_container_ids,
+        ))
+    } else {
+        Ok(select_disk_usage_container_ids(
+            project.deploy_type.as_ref(),
+            project.container_id.as_deref(),
+            &[],
+        ))
+    }
+}
+
 /// Collect all container IDs for a project (single or multi-service).
 /// Returns (container_ids, is_multi_service).
 async fn project_container_ids(
     db: &sqlx::SqlitePool,
     project: &crate::db::models::Project,
 ) -> (Vec<String>, bool) {
-    if project.deploy_type == Some(DeployType::Compose) {
-        let services: Vec<(Option<String>,)> = sqlx::query_as(
-            "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
-        )
-        .bind(&project.id)
-        .fetch_all(db)
+    let is_compose = project.deploy_type == Some(DeployType::Compose);
+    let ids = load_project_container_ids(db, project)
         .await
         .unwrap_or_default();
-        let ids: Vec<String> = services.into_iter()
-            .filter_map(|(cid,)| cid)
-            .collect();
-        (ids, true)
-    } else {
-        let ids = project.container_id.clone()
-            .map(|cid| vec![cid])
-            .unwrap_or_default();
-        (ids, false)
-    }
+    (ids, is_compose)
 }
 
 /// Batch-load services for all given project IDs.
@@ -366,6 +415,39 @@ mod tests {
             inactive_project_status(ProjectStatus::Stopped, &services),
             ProjectStatus::Stopped
         );
+    }
+
+    #[test]
+    fn one_service_background_compose_uses_service_container_id() {
+        let service_ids = vec![Some("background-worker".to_string())];
+
+        assert_eq!(
+            select_disk_usage_container_ids(Some(&DeployType::Compose), None, &service_ids,),
+            vec!["background-worker".to_string()]
+        );
+    }
+
+    #[test]
+    fn compose_disk_usage_aggregates_all_current_service_containers() {
+        let service_ids = vec![Some("web".to_string()), None, Some("worker".to_string())];
+        let ids = select_disk_usage_container_ids(
+            Some(&DeployType::Compose),
+            Some("legacy-project-container"),
+            &service_ids,
+        );
+
+        assert_eq!(ids, vec!["web".to_string(), "worker".to_string()]);
+        assert_eq!(
+            aggregate_root_fs_bytes([2 * 1024_u64, 3 * 1024_u64]),
+            Ok(5 * 1024_u64)
+        );
+    }
+
+    #[test]
+    fn one_service_compose_logs_select_the_service_row() {
+        assert!(logs_use_service_selection(Some(&DeployType::Compose)));
+        assert!(!logs_use_service_selection(Some(&DeployType::Image)));
+        assert!(!logs_use_service_selection(None));
     }
 }
 
@@ -956,10 +1038,17 @@ pub async fn project_disk_usage(
         }));
     }
 
-    let container_id = project
-        .container_id
-        .as_deref()
-        .ok_or((StatusCode::BAD_REQUEST, "no container id".to_string()))?;
+    let container_ids = load_project_container_ids(&state.db, &project)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+    if container_ids.is_empty() {
+        let message = if project.deploy_type == Some(DeployType::Compose) {
+            "no active service container ids"
+        } else {
+            "no container id"
+        };
+        return Err((StatusCode::BAD_REQUEST, message.to_string()));
+    }
 
     let is_remote = project
         .node_id
@@ -967,35 +1056,71 @@ pub async fn project_disk_usage(
         .map(|n| n != "local")
         .unwrap_or(false);
 
-    let usage = if is_remote {
+    let mut root_fs_sizes = Vec::with_capacity(container_ids.len());
+    if is_remote {
         let node_id = project.node_id.as_deref().unwrap();
-        let client = nodes::client::get_node_client(&state.node_clients, node_id)
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
+        let client = nodes::client::get_node_client(&state.node_clients, node_id).map_err(|e| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("node client unavailable: {e}"),
+            )
+        })?;
         let node = get_node_from_db(&state.db, node_id).await?;
         let base_url = agent_base_url(&state.config, &node);
 
-        let resp = client
-            .get(&format!("{}/containers/{}/disk-usage", base_url, container_id))
-            .send()
-            .await
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
+        for container_id in &container_ids {
+            let resp = client
+                .get(&format!(
+                    "{}/containers/{}/disk-usage",
+                    base_url, container_id
+                ))
+                .send()
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        format!("agent unreachable for container '{container_id}': {e}"),
+                    )
+                })?;
 
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent disk-usage failed: {body}")));
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("agent disk-usage failed for container '{container_id}': {body}"),
+                ));
+            }
+
+            let usage: litebin_common::docker::DiskUsage = resp.json().await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "failed to parse disk-usage response for container '{container_id}': {e}"
+                    ),
+                )
+            })?;
+            root_fs_sizes.push(usage.size_root_fs);
         }
-
-        resp.json().await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse response: {e}")))?
     } else {
-        state.docker.disk_usage(container_id)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("disk-usage error: {e}")))?
-    };
+        for container_id in &container_ids {
+            let usage = state.docker.disk_usage(container_id).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("disk-usage error for container '{container_id}': {e}"),
+                )
+            })?;
+            root_fs_sizes.push(usage.size_root_fs);
+        }
+    }
 
-    let size_gb = usage.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0);
+    let total_bytes = aggregate_root_fs_bytes(root_fs_sizes)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let size_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
-    Ok(Json(DiskUsageResponse { project_id, size_gb }))
+    Ok(Json(DiskUsageResponse {
+        project_id,
+        size_gb,
+    }))
 }
 
 /// GET /projects/:id/logs?tail=100&service=frontend
@@ -1035,7 +1160,7 @@ pub async fn project_logs(
     let tail = query.tail.unwrap_or(100);
 
     // Resolve the container_id to tail logs from
-    let (container_id, service_name) = if project.deploy_type == Some(DeployType::Compose) {
+    let (container_id, service_name) = if logs_use_service_selection(project.deploy_type.as_ref()) {
         // Multi-service: look up specific service or fall back to public service
         if let Some(ref svc) = query.service {
             let row: Option<(Option<String>,)> = sqlx::query_as(

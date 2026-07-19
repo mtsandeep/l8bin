@@ -1,5 +1,5 @@
 import { ChevronDown, Moon } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { type Project, updateProjectSettings } from '../../api';
 import { useToast } from '../ToastContext';
 
@@ -15,6 +15,7 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
   const [autoStart, setAutoStart] = useState(project.auto_start_enabled);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
+  const autoStopWarningId = useId();
   const initialRef = useRef({ autoStop, timeoutMins, autoStart });
   const ref = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
@@ -81,6 +82,7 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
             type="button"
             role="switch"
             aria-checked={autoStop}
+            aria-describedby={autoStopWarningId}
             onClick={() => setAutoStop(!autoStop)}
             className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStop ? 'bg-violet-500' : 'bg-slate-600'}`}
           >
@@ -89,6 +91,12 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
             />
           </button>
         </label>}
+        {!project.is_background && (
+          <p id={autoStopWarningId} className="text-[11px] leading-relaxed text-slate-400">
+            Auto-stop stops every service in this project. Disable it for scheduled jobs, queue workers, or other tasks
+            that must remain running.
+          </p>
+        )}
         {!project.is_background && autoStop && (
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-slate-300">Idle timeout (mins)</span>

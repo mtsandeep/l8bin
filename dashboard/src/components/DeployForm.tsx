@@ -776,6 +776,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                     type="button"
                     role="switch"
                     aria-checked={autoStop}
+                    aria-describedby="deploy-auto-stop-warning"
                     onClick={() => setAutoStop((v) => !v)}
                     className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${
                       autoStop ? 'bg-violet-500' : 'bg-slate-600'
@@ -788,6 +789,10 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                     />
                   </button>
                 </label>
+                <p id="deploy-auto-stop-warning" className="text-[11px] leading-relaxed text-slate-500">
+                  Auto-stop stops every service in this project. Disable it for scheduled jobs, queue workers, or other
+                  tasks that must remain running.
+                </p>
 
                 {autoStop && (
                   <div className="flex items-center justify-between gap-2">
