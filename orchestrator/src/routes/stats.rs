@@ -1,12 +1,12 @@
-use axum::{extract::Path, extract::Query, extract::State, http::StatusCode, Json};
+use axum::{Json, extract::Path, extract::Query, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::manage::{agent_base_url, get_node_from_db, sync_caddy};
+use crate::AppState;
 use crate::nodes;
 use crate::status;
-use crate::AppState;
 use litebin_common::types::{DeployType, ProjectStatus};
-use super::manage::{agent_base_url, get_node_from_db, sync_caddy};
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ServiceVolumeInfo {
@@ -89,32 +89,35 @@ fn enrich_services(
     stopped_cids: &std::collections::HashSet<String>,
     disk_cache: &dashmap::DashMap<String, i64>,
 ) -> Vec<ServiceInfo> {
-    services.iter().map(|(svc, cid)| {
-        let mut enriched = svc.clone();
-        if let Some(container_id) = cid {
-            if stopped_cids.contains(container_id) {
-                if enriched.status != ProjectStatus::Completed {
-                    enriched.status = ProjectStatus::Stopped;
+    services
+        .iter()
+        .map(|(svc, cid)| {
+            let mut enriched = svc.clone();
+            if let Some(container_id) = cid {
+                if stopped_cids.contains(container_id) {
+                    if enriched.status != ProjectStatus::Completed {
+                        enriched.status = ProjectStatus::Stopped;
+                    }
+                    enriched.cpu_percent = None;
+                    enriched.memory_usage = None;
+                    if let Some(bytes) = disk_cache.get(container_id) {
+                        enriched.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                    }
+                    return enriched;
                 }
-                enriched.cpu_percent = None;
-                enriched.memory_usage = None;
-                if let Some(bytes) = disk_cache.get(container_id) {
-                    enriched.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                if let Some(&(cpu, mem_usage, mem_limit, disk, cpu_limit)) = stats_map.get(container_id) {
+                    enriched.cpu_percent = Some(cpu);
+                    enriched.memory_usage = Some(mem_usage);
+                    enriched.memory_limit_mb = Some((mem_limit / (1024 * 1024)) as i64);
+                    enriched.disk_gb = Some(disk);
+                    if enriched.cpu_limit.is_none() {
+                        enriched.cpu_limit = cpu_limit;
+                    }
                 }
-                return enriched;
             }
-            if let Some(&(cpu, mem_usage, mem_limit, disk, cpu_limit)) = stats_map.get(container_id) {
-                enriched.cpu_percent = Some(cpu);
-                enriched.memory_usage = Some(mem_usage);
-                enriched.memory_limit_mb = Some((mem_limit / (1024 * 1024)) as i64);
-                enriched.disk_gb = Some(disk);
-                if enriched.cpu_limit.is_none() {
-                    enriched.cpu_limit = cpu_limit;
-                }
-            }
-        }
-        enriched
-    }).collect()
+            enriched
+        })
+        .collect()
 }
 
 fn select_disk_usage_container_ids(
@@ -123,10 +126,7 @@ fn select_disk_usage_container_ids(
     service_container_ids: &[Option<String>],
 ) -> Vec<String> {
     let candidates: Vec<&str> = if deploy_type == Some(&DeployType::Compose) {
-        service_container_ids
-            .iter()
-            .filter_map(|container_id| container_id.as_deref())
-            .collect()
+        service_container_ids.iter().filter_map(|container_id| container_id.as_deref()).collect()
     } else {
         project_container_id.into_iter().collect()
     };
@@ -141,9 +141,7 @@ fn select_disk_usage_container_ids(
 }
 
 fn aggregate_root_fs_bytes(sizes: impl IntoIterator<Item = u64>) -> Result<u64, &'static str> {
-    sizes.into_iter().try_fold(0_u64, |total, size| {
-        total.checked_add(size).ok_or("disk usage total overflowed")
-    })
+    sizes.into_iter().try_fold(0_u64, |total, size| total.checked_add(size).ok_or("disk usage total overflowed"))
 }
 
 fn logs_use_service_selection(deploy_type: Option<&DeployType>) -> bool {
@@ -155,40 +153,28 @@ async fn load_project_container_ids(
     project: &crate::db::models::Project,
 ) -> Result<Vec<String>, sqlx::Error> {
     if project.deploy_type == Some(DeployType::Compose) {
-        let services: Vec<(Option<String>,)> = sqlx::query_as(
-            "SELECT container_id FROM project_services WHERE project_id = ? ORDER BY service_name",
-        )
-        .bind(&project.id)
-        .fetch_all(db)
-        .await?;
-        let service_container_ids: Vec<Option<String>> = services
-            .into_iter()
-            .map(|(container_id,)| container_id)
-            .collect();
+        let services: Vec<(Option<String>,)> =
+            sqlx::query_as("SELECT container_id FROM project_services WHERE project_id = ? ORDER BY service_name")
+                .bind(&project.id)
+                .fetch_all(db)
+                .await?;
+        let service_container_ids: Vec<Option<String>> =
+            services.into_iter().map(|(container_id,)| container_id).collect();
         Ok(select_disk_usage_container_ids(
             project.deploy_type.as_ref(),
             project.container_id.as_deref(),
             &service_container_ids,
         ))
     } else {
-        Ok(select_disk_usage_container_ids(
-            project.deploy_type.as_ref(),
-            project.container_id.as_deref(),
-            &[],
-        ))
+        Ok(select_disk_usage_container_ids(project.deploy_type.as_ref(), project.container_id.as_deref(), &[]))
     }
 }
 
 /// Collect all container IDs for a project (single or multi-service).
 /// Returns (container_ids, is_multi_service).
-async fn project_container_ids(
-    db: &sqlx::SqlitePool,
-    project: &crate::db::models::Project,
-) -> (Vec<String>, bool) {
+async fn project_container_ids(db: &sqlx::SqlitePool, project: &crate::db::models::Project) -> (Vec<String>, bool) {
     let is_compose = project.deploy_type == Some(DeployType::Compose);
-    let ids = load_project_container_ids(db, project)
-        .await
-        .unwrap_or_default();
+    let ids = load_project_container_ids(db, project).await.unwrap_or_default();
     (ids, is_compose)
 }
 
@@ -210,7 +196,22 @@ async fn batch_load_services(
         placeholders
     );
 
-    let mut builder = sqlx::query_as::<_, (String, String, String, Option<i64>, Option<i64>, bool, ProjectStatus, Option<String>, Option<String>, Option<i64>, Option<f64>)>(&query);
+    let mut builder = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            Option<i64>,
+            Option<i64>,
+            bool,
+            ProjectStatus,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            Option<f64>,
+        ),
+    >(&query);
     for pid in project_ids {
         builder = builder.bind(pid);
     }
@@ -224,8 +225,22 @@ async fn batch_load_services(
     };
 
     // Group by project_id
-    let mut map: std::collections::HashMap<String, Vec<(ServiceInfo, Option<String>)>> = std::collections::HashMap::new();
-    for (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit) in rows {
+    let mut map: std::collections::HashMap<String, Vec<(ServiceInfo, Option<String>)>> =
+        std::collections::HashMap::new();
+    for (
+        project_id,
+        service_name,
+        image,
+        port,
+        mapped_port,
+        is_public,
+        status,
+        container_id,
+        cmd,
+        memory_limit_mb,
+        cpu_limit,
+    ) in rows
+    {
         map.entry(project_id).or_default().push((
             ServiceInfo {
                 service_name,
@@ -269,10 +284,7 @@ async fn batch_load_services(
             if let Some(services) = map.get_mut(&pid) {
                 for (svc, _) in services.iter_mut() {
                     if svc.service_name == svc_name {
-                        svc.volumes.push(ServiceVolumeInfo {
-                            volume_name: vol_name,
-                            container_path,
-                        });
+                        svc.volumes.push(ServiceVolumeInfo { volume_name: vol_name, container_path });
                         break;
                     }
                 }
@@ -290,14 +302,9 @@ fn make_stats_response(
     services: Vec<ServiceInfo>,
 ) -> StatsResponse {
     // Completed one-shots do not participate in the runtime aggregate.
-    let long_running: Vec<&ServiceInfo> = services
-        .iter()
-        .filter(|service| service.status != ProjectStatus::Completed)
-        .collect();
-    let running_count = long_running
-        .iter()
-        .filter(|service| service.status == ProjectStatus::Running)
-        .count();
+    let long_running: Vec<&ServiceInfo> =
+        services.iter().filter(|service| service.status != ProjectStatus::Completed).collect();
+    let running_count = long_running.iter().filter(|service| service.status == ProjectStatus::Running).count();
 
     let effective_status = if status != ProjectStatus::Running || services.is_empty() {
         status
@@ -308,24 +315,13 @@ fn make_stats_response(
     } else {
         ProjectStatus::Running
     };
-    StatsResponse {
-        project_id,
-        status: effective_status.to_string(),
-        last_active_at,
-        services,
-    }
+    StatsResponse { project_id, status: effective_status.to_string(), last_active_at, services }
 }
 
-fn inactive_project_status(
-    project_status: ProjectStatus,
-    services: &[ServiceInfo],
-) -> ProjectStatus {
+fn inactive_project_status(project_status: ProjectStatus, services: &[ServiceInfo]) -> ProjectStatus {
     if project_status.is_transient() {
         project_status
-    } else if services
-        .iter()
-        .any(|service| service.status == ProjectStatus::Running)
-    {
+    } else if services.iter().any(|service| service.status == ProjectStatus::Running) {
         ProjectStatus::Degraded
     } else {
         ProjectStatus::Stopped
@@ -411,10 +407,7 @@ mod tests {
             service("db", ProjectStatus::Stopped),
         ];
 
-        assert_eq!(
-            inactive_project_status(ProjectStatus::Stopped, &services),
-            ProjectStatus::Stopped
-        );
+        assert_eq!(inactive_project_status(ProjectStatus::Stopped, &services), ProjectStatus::Stopped);
     }
 
     #[test]
@@ -430,17 +423,11 @@ mod tests {
     #[test]
     fn compose_disk_usage_aggregates_all_current_service_containers() {
         let service_ids = vec![Some("web".to_string()), None, Some("worker".to_string())];
-        let ids = select_disk_usage_container_ids(
-            Some(&DeployType::Compose),
-            Some("legacy-project-container"),
-            &service_ids,
-        );
+        let ids =
+            select_disk_usage_container_ids(Some(&DeployType::Compose), Some("legacy-project-container"), &service_ids);
 
         assert_eq!(ids, vec!["web".to_string(), "worker".to_string()]);
-        assert_eq!(
-            aggregate_root_fs_bytes([2 * 1024_u64, 3 * 1024_u64]),
-            Ok(5 * 1024_u64)
-        );
+        assert_eq!(aggregate_root_fs_bytes([2 * 1024_u64, 3 * 1024_u64]), Ok(5 * 1024_u64));
     }
 
     #[test]
@@ -471,12 +458,10 @@ pub async fn all_project_stats(
     // Stats endpoint just reads DB — no need to sync on every poll.
     let mut caddy_dirty = false;
 
-    let projects = sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+    let projects = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects")
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
     // Batch-load services for ALL projects upfront
     let all_ids: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
@@ -491,7 +476,8 @@ pub async fn all_project_stats(
     // For local projects: (project_id, Vec<container_id>)
     let mut local_projects: Vec<(String, Vec<String>)> = Vec::new();
     // For remote projects: node_id -> Vec<(project_id, Vec<container_id>)>
-    let mut remote_by_node: std::collections::HashMap<String, Vec<(String, Vec<String>)>> = std::collections::HashMap::new();
+    let mut remote_by_node: std::collections::HashMap<String, Vec<(String, Vec<String>)>> =
+        std::collections::HashMap::new();
     // Stopped local projects that need per-service disk lookups: (project_id, services_raw)
     let mut disk_lookups: Vec<(String, Vec<(ServiceInfo, Option<String>)>)> = Vec::new();
 
@@ -543,10 +529,7 @@ pub async fn all_project_stats(
         if node_id == "local" {
             local_projects.push((project.id.clone(), container_ids));
         } else {
-            remote_by_node
-                .entry(node_id.to_string())
-                .or_default()
-                .push((project.id.clone(), container_ids));
+            remote_by_node.entry(node_id.to_string()).or_default().push((project.id.clone(), container_ids));
         }
     }
 
@@ -575,7 +558,8 @@ pub async fn all_project_stats(
         }
         // Use the actual project status — preserve transient/setup states
         // and only derive stopped/degraded when the project is in a stable terminal state
-        let project_status = projects.iter().find(|p| p.id == project_id).map(|p| p.status.clone()).unwrap_or(ProjectStatus::Stopped);
+        let project_status =
+            projects.iter().find(|p| p.id == project_id).map(|p| p.status.clone()).unwrap_or(ProjectStatus::Stopped);
         let status = inactive_project_status(project_status, &services);
         results.push(make_stats_response(
             project_id.clone(),
@@ -616,10 +600,8 @@ pub async fn all_project_stats(
     }
 
     // Build per-project results from container data
-    let container_running: std::collections::HashSet<String> = container_results.iter()
-        .filter(|(_, r)| r.is_some())
-        .map(|(cid, _)| cid.clone())
-        .collect();
+    let container_running: std::collections::HashSet<String> =
+        container_results.iter().filter(|(_, r)| r.is_some()).map(|(cid, _)| cid.clone()).collect();
 
     for (project_id, container_ids) in &local_projects {
         let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
@@ -644,10 +626,8 @@ pub async fn all_project_stats(
                     }
                 };
                 // Find matching stats result
-                let (cpu, mem_usage, mem_limit) = container_results.iter()
-                    .find(|(c, _)| c == cid)
-                    .and_then(|(_, r)| *r)
-                    .unwrap_or((0.0, 0, 0));
+                let (cpu, mem_usage, mem_limit) =
+                    container_results.iter().find(|(c, _)| c == cid).and_then(|(_, r)| *r).unwrap_or((0.0, 0, 0));
                 per_container.insert(cid.clone(), (cpu, mem_usage, mem_limit, disk, cpu_limit));
             } else {
                 stopped_cids.insert(cid.clone());
@@ -661,14 +641,17 @@ pub async fn all_project_stats(
         }
 
         if !any_running {
-            let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(mut svc, cid)| {
-                if let Some(container_id) = cid {
-                    if let Some(bytes) = state.disk_cache.get(&container_id) {
-                        svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+            let services: Vec<ServiceInfo> = services_raw
+                .into_iter()
+                .map(|(mut svc, cid)| {
+                    if let Some(container_id) = cid {
+                        if let Some(bytes) = state.disk_cache.get(&container_id) {
+                            svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                        }
                     }
-                }
-                svc
-            }).collect();
+                    svc
+                })
+                .collect();
             results.push(make_stats_response(
                 project_id.clone(),
                 ProjectStatus::Stopped,
@@ -685,7 +668,6 @@ pub async fn all_project_stats(
             last_active_map.get(project_id).copied().flatten(),
             services,
         ));
-
     }
 
     tracing::info!(elapsed_ms = t2.elapsed().as_millis(), "stats: local docker stats");
@@ -694,12 +676,12 @@ pub async fn all_project_stats(
     let t3 = std::time::Instant::now();
     for (node_id, projects_containers) in &remote_by_node {
         // Flatten all container IDs for the batch request
-        let all_container_ids: Vec<String> = projects_containers.iter()
-            .flat_map(|(_, cids)| cids.iter().cloned())
-            .collect();
+        let all_container_ids: Vec<String> =
+            projects_containers.iter().flat_map(|(_, cids)| cids.iter().cloned()).collect();
 
         // Map container_id -> project_id
-        let cid_to_pid: std::collections::HashMap<String, String> = projects_containers.iter()
+        let cid_to_pid: std::collections::HashMap<String, String> = projects_containers
+            .iter()
             .flat_map(|(pid, cids)| cids.iter().map(move |cid| (cid.clone(), pid.clone())))
             .collect();
 
@@ -778,13 +760,15 @@ pub async fn all_project_stats(
 
         // Collect per-container stats and group by project
         let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
-        let mut project_stats: std::collections::HashMap<String, (f64, u64, u64, f64)> = std::collections::HashMap::new();
+        let mut project_stats: std::collections::HashMap<String, (f64, u64, u64, f64)> =
+            std::collections::HashMap::new();
         let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         match resp.json::<Vec<serde_json::Value>>().await {
             Ok(items) => {
                 // Collect container states per project for DB sync
-                let mut container_states_by_project: std::collections::HashMap<String, Vec<(String, bool)>> = std::collections::HashMap::new();
+                let mut container_states_by_project: std::collections::HashMap<String, Vec<(String, bool)>> =
+                    std::collections::HashMap::new();
 
                 for item in &items {
                     let cid = item["container_id"].as_str().unwrap_or("");
@@ -847,14 +831,17 @@ pub async fn all_project_stats(
                     services,
                 ));
             } else {
-                let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(mut svc, cid)| {
-                    if let Some(container_id) = cid {
-                        if let Some(bytes) = state.disk_cache.get(&container_id) {
-                            svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                let services: Vec<ServiceInfo> = services_raw
+                    .into_iter()
+                    .map(|(mut svc, cid)| {
+                        if let Some(container_id) = cid {
+                            if let Some(bytes) = state.disk_cache.get(&container_id) {
+                                svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+                            }
                         }
-                    }
-                    svc
-                }).collect();
+                        svc
+                    })
+                    .collect();
                 results.push(make_stats_response(
                     project_id.clone(),
                     ProjectStatus::Stopped,
@@ -901,14 +888,12 @@ pub async fn project_stats(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
-    let mut project = sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE id = ?",
-    )
-    .bind(&project_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
-    .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+    let mut project = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+        .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
     // Sync status from Docker for local projects
     let node_id = project.node_id.as_deref().unwrap_or("local");
@@ -918,20 +903,16 @@ pub async fn project_stats(
             sync_caddy(&state).await;
         }
         // Re-read project to get updated status
-        project = sqlx::query_as::<_, crate::db::models::Project>(
-            "SELECT * FROM projects WHERE id = ?",
-        )
-        .bind(&project_id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+        project = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+            .bind(&project_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
     }
 
     // Load services for this project (after sync so services are fresh)
-    let services_raw = batch_load_services(&state.db, &[project_id.clone()])
-        .await
-        .remove(&project_id)
-        .unwrap_or_default();
+    let services_raw =
+        batch_load_services(&state.db, &[project_id.clone()]).await.remove(&project_id).unwrap_or_default();
 
     if project.status != ProjectStatus::Running {
         return Ok(Json(make_stats_response(
@@ -993,12 +974,7 @@ pub async fn project_stats(
     }
 
     let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
-    Ok(Json(make_stats_response(
-        project_id,
-        project.status,
-        project.last_active_at,
-        services,
-    )))
+    Ok(Json(make_stats_response(project_id, project.status, project.last_active_at, services)))
 }
 
 /// GET /projects/:id/disk-usage
@@ -1022,20 +998,15 @@ pub async fn project_disk_usage(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
 ) -> Result<Json<DiskUsageResponse>, (StatusCode, String)> {
-    let project = sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE id = ?",
-    )
-    .bind(&project_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
-    .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+    let project = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+        .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
     if project.status != ProjectStatus::Running {
-        return Ok(Json(DiskUsageResponse {
-            project_id,
-            size_gb: 0.0,
-        }));
+        return Ok(Json(DiskUsageResponse { project_id, size_gb: 0.0 }));
     }
 
     let container_ids = load_project_container_ids(&state.db, &project)
@@ -1050,37 +1021,23 @@ pub async fn project_disk_usage(
         return Err((StatusCode::BAD_REQUEST, message.to_string()));
     }
 
-    let is_remote = project
-        .node_id
-        .as_deref()
-        .map(|n| n != "local")
-        .unwrap_or(false);
+    let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 
     let mut root_fs_sizes = Vec::with_capacity(container_ids.len());
     if is_remote {
         let node_id = project.node_id.as_deref().unwrap();
-        let client = nodes::client::get_node_client(&state.node_clients, node_id).map_err(|e| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!("node client unavailable: {e}"),
-            )
-        })?;
+        let client = nodes::client::get_node_client(&state.node_clients, node_id)
+            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
         let node = get_node_from_db(&state.db, node_id).await?;
         let base_url = agent_base_url(&state.config, &node);
 
         for container_id in &container_ids {
             let resp = client
-                .get(&format!(
-                    "{}/containers/{}/disk-usage",
-                    base_url, container_id
-                ))
+                .get(&format!("{}/containers/{}/disk-usage", base_url, container_id))
                 .send()
                 .await
                 .map_err(|e| {
-                    (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        format!("agent unreachable for container '{container_id}': {e}"),
-                    )
+                    (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable for container '{container_id}': {e}"))
                 })?;
 
             if !resp.status().is_success() {
@@ -1094,9 +1051,7 @@ pub async fn project_disk_usage(
             let usage: litebin_common::docker::DiskUsage = resp.json().await.map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(
-                        "failed to parse disk-usage response for container '{container_id}': {e}"
-                    ),
+                    format!("failed to parse disk-usage response for container '{container_id}': {e}"),
                 )
             })?;
             root_fs_sizes.push(usage.size_root_fs);
@@ -1104,23 +1059,17 @@ pub async fn project_disk_usage(
     } else {
         for container_id in &container_ids {
             let usage = state.docker.disk_usage(container_id).await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("disk-usage error for container '{container_id}': {e}"),
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("disk-usage error for container '{container_id}': {e}"))
             })?;
             root_fs_sizes.push(usage.size_root_fs);
         }
     }
 
-    let total_bytes = aggregate_root_fs_bytes(root_fs_sizes)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let total_bytes =
+        aggregate_root_fs_bytes(root_fs_sizes).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let size_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
-    Ok(Json(DiskUsageResponse {
-        project_id,
-        size_gb,
-    }))
+    Ok(Json(DiskUsageResponse { project_id, size_gb }))
 }
 
 /// GET /projects/:id/logs?tail=100&service=frontend
@@ -1148,14 +1097,12 @@ pub async fn project_logs(
     Path(project_id): Path<String>,
     Query(query): Query<LogsQuery>,
 ) -> Result<Json<LogsResponse>, (StatusCode, String)> {
-    let project = sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE id = ?",
-    )
-    .bind(&project_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
-    .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+    let project = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+        .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
     let tail = query.tail.unwrap_or(100);
 
@@ -1163,14 +1110,13 @@ pub async fn project_logs(
     let (container_id, service_name) = if logs_use_service_selection(project.deploy_type.as_ref()) {
         // Multi-service: look up specific service or fall back to public service
         if let Some(ref svc) = query.service {
-            let row: Option<(Option<String>,)> = sqlx::query_as(
-                "SELECT container_id FROM project_services WHERE project_id = ? AND service_name = ?"
-            )
-            .bind(&project_id)
-            .bind(svc)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+            let row: Option<(Option<String>,)> =
+                sqlx::query_as("SELECT container_id FROM project_services WHERE project_id = ? AND service_name = ?")
+                    .bind(&project_id)
+                    .bind(svc)
+                    .fetch_optional(&state.db)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
             match row.and_then(|(cid,)| cid) {
                 Some(cid) => (cid, Some(svc.clone())),
                 None => return Err((StatusCode::NOT_FOUND, format!("service '{}' not found", svc))),
@@ -1178,7 +1124,7 @@ pub async fn project_logs(
         } else {
             // Default to public service
             let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-                "SELECT container_id, service_name FROM project_services WHERE project_id = ? AND is_public = 1"
+                "SELECT container_id, service_name FROM project_services WHERE project_id = ? AND is_public = 1",
             )
             .bind(&project_id)
             .fetch_optional(&state.db)
@@ -1204,17 +1150,15 @@ pub async fn project_logs(
         }
     } else {
         // Single-service
-        let cid = project.container_id.as_deref()
+        let cid = project
+            .container_id
+            .as_deref()
             .ok_or((StatusCode::BAD_REQUEST, "no container id".to_string()))?
             .to_string();
         (cid, None)
     };
 
-    let is_remote = project
-        .node_id
-        .as_deref()
-        .map(|n| n != "local")
-        .unwrap_or(false);
+    let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 
     let lines = if is_remote {
         let node_id = project.node_id.as_deref().unwrap();
@@ -1248,11 +1192,7 @@ pub async fn project_logs(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("logs error: {e}")))?
     };
 
-    Ok(Json(LogsResponse {
-        project_id,
-        service_name,
-        lines,
-    }))
+    Ok(Json(LogsResponse { project_id, service_name, lines }))
 }
 
 /// GET /projects/:id/deploy-logs — Returns in-memory deploy log lines for a project.
@@ -1268,11 +1208,9 @@ pub async fn project_logs(
     tag = "stats",
     security(("session_auth" = []))
 )]
-pub async fn deploy_logs(
-    State(state): State<AppState>,
-    Path(project_id): Path<String>,
-) -> Json<serde_json::Value> {
-    let lines = state.deploy_logs
+pub async fn deploy_logs(State(state): State<AppState>, Path(project_id): Path<String>) -> Json<serde_json::Value> {
+    let lines = state
+        .deploy_logs
         .get(&project_id)
         .and_then(|entry| {
             let guard = entry.lock().ok()?;

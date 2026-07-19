@@ -23,26 +23,17 @@ impl ComposeFile {
             for dep in service.dependency_names() {
                 // Validate ghost dependency
                 if !self.services.contains_key(&dep) {
-                    return Err(ComposeError::GhostDependency {
-                        service: name.clone(),
-                        dep,
-                    });
+                    return Err(ComposeError::GhostDependency { service: name.clone(), dep });
                 }
                 in_degree.entry(dep.clone()).or_insert(0);
                 *in_degree.entry(name.clone()).or_insert(0) += 1;
-                dependents
-                    .entry(dep)
-                    .or_default()
-                    .push(name.clone());
+                dependents.entry(dep).or_default().push(name.clone());
             }
         }
 
         // Kahn's algorithm
-        let mut queue: Vec<String> = in_degree
-            .iter()
-            .filter(|&(_, &deg)| deg == 0)
-            .map(|(name, _)| name.clone())
-            .collect();
+        let mut queue: Vec<String> =
+            in_degree.iter().filter(|&(_, &deg)| deg == 0).map(|(name, _)| name.clone()).collect();
         queue.sort();
 
         let mut order = Vec::new();
@@ -61,14 +52,8 @@ impl ComposeFile {
         }
 
         if order.len() != self.services.len() {
-            let remaining: Vec<String> = in_degree
-                .keys()
-                .filter(|n| !order.contains(n))
-                .cloned()
-                .collect();
-            return Err(ComposeError::CycleDetected {
-                chain: remaining.join(" -> "),
-            });
+            let remaining: Vec<String> = in_degree.keys().filter(|n| !order.contains(n)).cloned().collect();
+            return Err(ComposeError::CycleDetected { chain: remaining.join(" -> ") });
         }
 
         Ok(order)
@@ -92,26 +77,17 @@ impl ComposeFile {
         for (name, service) in &self.services {
             for dep in service.dependency_names() {
                 if !self.services.contains_key(&dep) {
-                    return Err(ComposeError::GhostDependency {
-                        service: name.clone(),
-                        dep,
-                    });
+                    return Err(ComposeError::GhostDependency { service: name.clone(), dep });
                 }
                 in_degree.entry(dep.clone()).or_insert(0);
                 *in_degree.entry(name.clone()).or_insert(0) += 1;
-                dependents
-                    .entry(dep)
-                    .or_default()
-                    .push(name.clone());
+                dependents.entry(dep).or_default().push(name.clone());
             }
         }
 
         let mut levels = Vec::new();
-        let mut current_level: Vec<String> = in_degree
-            .iter()
-            .filter(|&(_, &deg)| deg == 0)
-            .map(|(name, _)| name.clone())
-            .collect();
+        let mut current_level: Vec<String> =
+            in_degree.iter().filter(|&(_, &deg)| deg == 0).map(|(name, _)| name.clone()).collect();
         current_level.sort();
 
         while !current_level.is_empty() {
@@ -134,14 +110,8 @@ impl ComposeFile {
 
         if levels.iter().flatten().count() != self.services.len() {
             let all_started: Vec<String> = levels.iter().flatten().cloned().collect();
-            let remaining: Vec<String> = in_degree
-                .keys()
-                .filter(|n| !all_started.contains(n))
-                .cloned()
-                .collect();
-            return Err(ComposeError::CycleDetected {
-                chain: remaining.join(" -> "),
-            });
+            let remaining: Vec<String> = in_degree.keys().filter(|n| !all_started.contains(n)).cloned().collect();
+            return Err(ComposeError::CycleDetected { chain: remaining.join(" -> ") });
         }
 
         Ok(levels)
@@ -151,12 +121,7 @@ impl ComposeFile {
     pub fn detect_cycles(&self) -> Option<Vec<String>> {
         match self.topological_sort() {
             Ok(_) => None,
-            Err(ComposeError::CycleDetected { chain }) => Some(
-                chain
-                    .split(" -> ")
-                    .map(|s| s.to_string())
-                    .collect(),
-            ),
+            Err(ComposeError::CycleDetected { chain }) => Some(chain.split(" -> ").map(|s| s.to_string()).collect()),
             _ => None,
         }
     }
@@ -182,12 +147,8 @@ impl ComposeFile {
     /// 4. None (error)
     pub fn detect_public_service(&self) -> Result<Option<String>> {
         // Priority 1: explicit label
-        let labeled: Vec<&String> = self
-            .services
-            .iter()
-            .filter(|(_, svc)| svc.is_public_by_label())
-            .map(|(name, _)| name)
-            .collect();
+        let labeled: Vec<&String> =
+            self.services.iter().filter(|(_, svc)| svc.is_public_by_label()).map(|(name, _)| name).collect();
         if labeled.len() > 1 {
             return Err(ComposeError::MultiplePublicServices {
                 services: labeled.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
@@ -201,11 +162,7 @@ impl ComposeFile {
         let well_known: Vec<&String> = self
             .services
             .iter()
-            .filter(|(_, svc)| {
-                svc.exposed_ports()
-                    .iter()
-                    .any(|(port, _)| *port == 80 || *port == 443)
-            })
+            .filter(|(_, svc)| svc.exposed_ports().iter().any(|(port, _)| *port == 80 || *port == 443))
             .map(|(name, _)| name)
             .collect();
         if well_known.len() == 1 {
@@ -213,12 +170,8 @@ impl ComposeFile {
         }
 
         // Priority 3: any service with a port
-        let with_port: Vec<&String> = self
-            .services
-            .iter()
-            .filter(|(_, svc)| !svc.exposed_ports().is_empty())
-            .map(|(name, _)| name)
-            .collect();
+        let with_port: Vec<&String> =
+            self.services.iter().filter(|(_, svc)| !svc.exposed_ports().is_empty()).map(|(name, _)| name).collect();
         if with_port.len() == 1 {
             return Ok(Some((*with_port[0]).clone()));
         }
@@ -230,8 +183,8 @@ impl ComposeFile {
 
 #[cfg(test)]
 mod tests {
-    use proptest::prop_assert_eq;
     use crate::ComposeParser;
+    use proptest::prop_assert_eq;
 
     #[test]
     fn topological_sort_linear() {
@@ -350,10 +303,7 @@ services:
       litebin.public: "true"
 "#;
         let compose = ComposeParser::parse(yaml).unwrap();
-        assert_eq!(
-            compose.detect_public_service().unwrap(),
-            Some("web".to_string())
-        );
+        assert_eq!(compose.detect_public_service().unwrap(), Some("web".to_string()));
     }
 
     #[test]
@@ -368,10 +318,7 @@ services:
       - "80:8080"
 "#;
         let compose = ComposeParser::parse(yaml).unwrap();
-        assert_eq!(
-            compose.detect_public_service().unwrap(),
-            Some("web".to_string())
-        );
+        assert_eq!(compose.detect_public_service().unwrap(), Some("web".to_string()));
     }
 
     #[test]
@@ -384,10 +331,7 @@ services:
       - "3000"
 "#;
         let compose = ComposeParser::parse(yaml).unwrap();
-        assert_eq!(
-            compose.detect_public_service().unwrap(),
-            Some("web".to_string())
-        );
+        assert_eq!(compose.detect_public_service().unwrap(), Some("web".to_string()));
     }
 
     #[test]

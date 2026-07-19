@@ -6,9 +6,8 @@ pub mod parse;
 pub mod validate;
 
 pub use compat::{
-    analyze_compose, analyze_compose_for_workload, analyze_compose_yaml,
-    analyze_compose_yaml_for_workload, CompatibilityFinding, CompatibilityReport,
-    FindingDisposition,
+    CompatibilityFinding, CompatibilityReport, FindingDisposition, analyze_compose, analyze_compose_for_workload,
+    analyze_compose_yaml, analyze_compose_yaml_for_workload,
 };
 pub use error::{ComposeError, Result};
 pub use mapping::{BollardMappingOptions, ComposeBollardConfig};

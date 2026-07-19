@@ -16,9 +16,7 @@ pub struct HealthResponse {
     ),
     tag = "health",
 )]
-pub async fn health_check(
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> Json<HealthResponse> {
+pub async fn health_check(axum::extract::State(state): axum::extract::State<AppState>) -> Json<HealthResponse> {
     // Quick Docker ping to verify connectivity
     let status = match state.docker.ping().await {
         Ok(_) => "ok".to_string(),
@@ -30,11 +28,7 @@ pub async fn health_check(
 
 // --- System stats for LiteBin stack services ---
 
-const STACK_CONTAINERS: &[&str] = &[
-    "litebin-orchestrator",
-    "litebin-dashboard",
-    "litebin-caddy",
-];
+const STACK_CONTAINERS: &[&str] = &["litebin-orchestrator", "litebin-dashboard", "litebin-caddy"];
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct ServiceStats {
@@ -53,23 +47,14 @@ async fn fetch_service_stats(
     docker: &litebin_common::docker::DockerManager,
     container_name: &str,
 ) -> Option<ServiceStats> {
-    let (stats_res, disk_res) = tokio::join!(
-        docker.container_stats(container_name),
-        docker.disk_usage(container_name),
-    );
+    let (stats_res, disk_res) =
+        tokio::join!(docker.container_stats(container_name), docker.disk_usage(container_name),);
 
     let stats = stats_res.ok()?;
-    let disk = disk_res.unwrap_or(litebin_common::docker::DiskUsage {
-        size_rw: 0,
-        size_root_fs: 0,
-        cpu_limit: None,
-    });
+    let disk = disk_res.unwrap_or(litebin_common::docker::DiskUsage { size_rw: 0, size_root_fs: 0, cpu_limit: None });
 
     Some(ServiceStats {
-        name: container_name
-            .strip_prefix("litebin-")
-            .unwrap_or(container_name)
-            .to_string(),
+        name: container_name.strip_prefix("litebin-").unwrap_or(container_name).to_string(),
         memory_usage: stats.memory_usage,
         cpu_percent: stats.cpu_percent,
         disk_usage: disk.size_root_fs,
@@ -85,16 +70,11 @@ async fn fetch_service_stats(
     tag = "health",
     security(("session_auth" = [])),
 )]
-pub async fn system_stats(
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> Json<SystemStatsResponse> {
+pub async fn system_stats(axum::extract::State(state): axum::extract::State<AppState>) -> Json<SystemStatsResponse> {
     let docker = &state.docker;
     let mut services = Vec::new();
 
-    let futures: Vec<_> = STACK_CONTAINERS
-        .iter()
-        .map(|name| fetch_service_stats(docker, name))
-        .collect();
+    let futures: Vec<_> = STACK_CONTAINERS.iter().map(|name| fetch_service_stats(docker, name)).collect();
 
     let results = futures_util::future::join_all(futures).await;
     for s in results.into_iter().flatten() {

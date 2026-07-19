@@ -1,4 +1,4 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use litebin_common::types::HealthReport;
 use sysinfo::System;
 
@@ -17,11 +17,7 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
     let (disk_free, disk_total) = litebin_common::sys::disk_space();
 
     // Container count from Docker
-    let container_count = state
-        .docker
-        .running_container_count()
-        .await
-        .unwrap_or(0);
+    let container_count = state.docker.running_container_count().await.unwrap_or(0);
 
     let image_stats = state.docker.image_stats().await;
     let docker_host = state.docker.host_info().await.ok();
@@ -31,9 +27,7 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
         protocol_version: 3,
         architecture: std::env::consts::ARCH.to_string(),
         docker_os_type: docker_host.as_ref().and_then(|info| info.os_type.clone()),
-        docker_operating_system: docker_host
-            .as_ref()
-            .and_then(|info| info.operating_system.clone()),
+        docker_operating_system: docker_host.as_ref().and_then(|info| info.operating_system.clone()),
         docker_rootless: docker_host.as_ref().and_then(|info| info.rootless),
         memory_available,
         memory_total,
@@ -42,10 +36,6 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
         disk_total,
         container_count,
         image_stats,
-        public_ip: if state.config.public_ip.is_empty() {
-            None
-        } else {
-            Some(state.config.public_ip.clone())
-        },
+        public_ip: if state.config.public_ip.is_empty() { None } else { Some(state.config.public_ip.clone()) },
     })
 }

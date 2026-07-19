@@ -1,19 +1,13 @@
 use axum::http::StatusCode;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::helpers::{test_server, test_server_with_db};
 
 /// Register + login, return the server (session cookie is preserved by TestServer).
 async fn logged_in_server() -> axum_test::TestServer {
     let server = test_server().await;
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "testuser", "password": "pass"}))
-        .await;
-    server
-        .post("/auth/login")
-        .json(&json!({"username": "testuser", "password": "pass"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "testuser", "password": "pass"})).await;
+    server.post("/auth/login").json(&json!({"username": "testuser", "password": "pass"})).await;
     server
 }
 
@@ -29,10 +23,7 @@ async fn list_projects_empty_initially() {
 #[tokio::test]
 async fn list_projects_requires_auth() {
     let server = test_server().await;
-    server
-        .get("/projects")
-        .await
-        .assert_status(StatusCode::UNAUTHORIZED);
+    server.get("/projects").await.assert_status(StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -46,28 +37,19 @@ async fn new_project_starts_pending() {
 #[tokio::test]
 async fn delete_nonexistent_project_returns_404() {
     let server = logged_in_server().await;
-    server
-        .delete("/projects/does-not-exist")
-        .await
-        .assert_status(StatusCode::NOT_FOUND);
+    server.delete("/projects/does-not-exist").await.assert_status(StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn stop_nonexistent_project_returns_404() {
     let server = logged_in_server().await;
-    server
-        .post("/projects/does-not-exist/stop")
-        .await
-        .assert_status(StatusCode::NOT_FOUND);
+    server.post("/projects/does-not-exist/stop").await.assert_status(StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn stats_nonexistent_project_returns_404() {
     let server = logged_in_server().await;
-    server
-        .get("/projects/does-not-exist/stats")
-        .await
-        .assert_status(StatusCode::NOT_FOUND);
+    server.get("/projects/does-not-exist/stats").await.assert_status(StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -84,14 +66,8 @@ async fn project_lifecycle_via_db() {
 /// Register + login using the server that also exposes the DB pool.
 async fn logged_in_server_with_db() -> (axum_test::TestServer, sqlx::SqlitePool) {
     let (server, db) = test_server_with_db().await;
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "testuser", "password": "pass"}))
-        .await;
-    server
-        .post("/auth/login")
-        .json(&json!({"username": "testuser", "password": "pass"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "testuser", "password": "pass"})).await;
+    server.post("/auth/login").json(&json!({"username": "testuser", "password": "pass"})).await;
     (server, db)
 }
 
@@ -115,10 +91,7 @@ async fn insert_project(db: &sqlx::SqlitePool, project_id: &str, user_id: &str) 
 /// Fetch the user_id for a logged-in session via GET /auth/me.
 async fn get_user_id(server: &axum_test::TestServer) -> String {
     let resp = server.get("/auth/me").await;
-    resp.json::<Value>()["id"]
-        .as_str()
-        .unwrap()
-        .to_string()
+    resp.json::<Value>()["id"].as_str().unwrap().to_string()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -146,17 +119,25 @@ async fn deploy_without_timeout_fields_yields_defaults() {
 async fn background_migration_defaults_existing_style_rows_to_web() {
     let (server, db) = logged_in_server_with_db().await;
     let user_id = get_user_id(&server).await;
-    let columns: Vec<(String,)> = sqlx::query_as(
-        "SELECT name FROM pragma_table_info('projects') WHERE name = 'is_background'",
-    ).fetch_all(&db).await.unwrap();
+    let columns: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM pragma_table_info('projects') WHERE name = 'is_background'")
+            .fetch_all(&db)
+            .await
+            .unwrap();
     assert_eq!(columns.len(), 1);
 
     let now = chrono::Utc::now().timestamp();
-    sqlx::query("INSERT INTO projects (id, user_id, status, created_at, updated_at) VALUES ('default-web', ?, 'pending', ?, ?)")
-        .bind(user_id).bind(now).bind(now).execute(&db).await.unwrap();
-    let is_background: bool = sqlx::query_scalar(
-        "SELECT is_background FROM projects WHERE id = 'default-web'",
-    ).fetch_one(&db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO projects (id, user_id, status, created_at, updated_at) VALUES ('default-web', ?, 'pending', ?, ?)",
+    )
+    .bind(user_id)
+    .bind(now)
+    .bind(now)
+    .execute(&db)
+    .await
+    .unwrap();
+    let is_background: bool =
+        sqlx::query_scalar("SELECT is_background FROM projects WHERE id = 'default-web'").fetch_one(&db).await.unwrap();
     assert!(!is_background);
 }
 
@@ -166,28 +147,42 @@ async fn background_project_cannot_enable_sleep_or_request_wake() {
     let user_id = get_user_id(&server).await;
     insert_project(&db, "worker-settings", &user_id).await;
     sqlx::query("UPDATE projects SET is_background = 1, auto_stop_enabled = 0, auto_start_enabled = 0 WHERE id = ?")
-        .bind("worker-settings").execute(&db).await.unwrap();
+        .bind("worker-settings")
+        .execute(&db)
+        .await
+        .unwrap();
 
-    server.patch("/projects/worker-settings/settings")
-        .json(&json!({"auto_stop_enabled": true})).await
+    server
+        .patch("/projects/worker-settings/settings")
+        .json(&json!({"auto_stop_enabled": true}))
+        .await
         .assert_status(StatusCode::BAD_REQUEST);
-    server.patch("/projects/worker-settings/settings")
-        .json(&json!({"auto_start_enabled": true})).await
+    server
+        .patch("/projects/worker-settings/settings")
+        .json(&json!({"auto_start_enabled": true}))
+        .await
         .assert_status(StatusCode::BAD_REQUEST);
-    server.patch("/projects/worker-settings/settings")
-        .json(&json!({"custom_domain": "worker.example.com"})).await
+    server
+        .patch("/projects/worker-settings/settings")
+        .json(&json!({"custom_domain": "worker.example.com"}))
+        .await
         .assert_status(StatusCode::BAD_REQUEST);
-    server.post("/projects/worker-settings/routes")
+    server
+        .post("/projects/worker-settings/routes")
         .json(&json!({
             "route_type": "path",
             "path": "/api",
             "upstream": "http://worker:8080"
-        })).await
+        }))
+        .await
         .assert_status(StatusCode::BAD_REQUEST);
 
-    let row: (bool, bool, Option<String>) = sqlx::query_as(
-        "SELECT auto_stop_enabled, auto_start_enabled, custom_domain FROM projects WHERE id = ?",
-    ).bind("worker-settings").fetch_one(&db).await.unwrap();
+    let row: (bool, bool, Option<String>) =
+        sqlx::query_as("SELECT auto_stop_enabled, auto_start_enabled, custom_domain FROM projects WHERE id = ?")
+            .bind("worker-settings")
+            .fetch_one(&db)
+            .await
+            .unwrap();
     assert_eq!(row, (false, false, None));
 }
 
@@ -200,18 +195,28 @@ async fn background_route_uses_master_fallback_and_keeps_custom_domain_dormant()
         r#"INSERT INTO nodes
            (id, name, host, agent_port, status, fail_count, created_at, updated_at)
            VALUES ('remote-node', 'Remote', 'remote.example.test', 8443, 'online', 0, ?, ?)"#,
-    ).bind(now).bind(now).execute(&db).await.unwrap();
+    )
+    .bind(now)
+    .bind(now)
+    .execute(&db)
+    .await
+    .unwrap();
     sqlx::query(
         r#"INSERT INTO projects
            (id, user_id, is_background, status, node_id, custom_domain,
             auto_stop_enabled, auto_start_enabled, created_at, updated_at)
            VALUES ('remote-worker', ?, 1, 'running', 'remote-node', 'worker.example.com',
                    0, 0, ?, ?)"#,
-    ).bind(user_id).bind(now).bind(now).execute(&db).await.unwrap();
+    )
+    .bind(user_id)
+    .bind(now)
+    .bind(now)
+    .execute(&db)
+    .await
+    .unwrap();
 
-    let routes = crate::routing_helpers::resolve_all_routes(
-        &db, "example.test", "litebin-orchestrator:5080",
-    ).await.unwrap();
+    let routes =
+        crate::routing_helpers::resolve_all_routes(&db, "example.test", "litebin-orchestrator:5080").await.unwrap();
     let route = routes.iter().find(|route| route.project_id == "remote-worker").unwrap();
     assert_eq!(route.node_id.as_deref(), Some("local"));
     assert_eq!(route.upstream, "litebin-orchestrator:5080");
@@ -245,10 +250,7 @@ async fn patch_settings_missing_field_leaves_unchanged() {
     insert_project(&db, "proj-partial", &user_id).await;
 
     // Only update auto_stop_timeout_mins; the other two fields should stay at defaults.
-    let resp = server
-        .patch("/projects/proj-partial/settings")
-        .json(&json!({"auto_stop_timeout_mins": 30}))
-        .await;
+    let resp = server.patch("/projects/proj-partial/settings").json(&json!({"auto_stop_timeout_mins": 30})).await;
     resp.assert_status(StatusCode::OK);
     let body: Value = resp.json();
 
@@ -290,11 +292,11 @@ async fn patch_settings_zero_timeout_returns_400() {
 
 #[cfg(test)]
 mod prop_tests {
-    use proptest::prelude::*;
-    use serde_json::{json, Value};
     use axum::http::StatusCode;
+    use proptest::prelude::*;
+    use serde_json::{Value, json};
 
-    use super::{logged_in_server_with_db, insert_project, get_user_id};
+    use super::{get_user_id, insert_project, logged_in_server_with_db};
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(20))]

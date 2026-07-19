@@ -1,9 +1,9 @@
 pub mod auth;
 pub mod caddy;
 pub mod capabilities;
-pub mod docs;
 pub mod deploy;
 pub mod deploy_tokens;
+pub mod docs;
 pub mod global_settings;
 pub mod health;
 pub mod heartbeat;
@@ -16,5 +16,5 @@ pub mod scan;
 pub mod settings;
 pub mod stats;
 pub mod volumes;
-pub mod waker;
 pub mod wake_report;
+pub mod waker;

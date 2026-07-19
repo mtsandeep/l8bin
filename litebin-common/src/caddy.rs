@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::types::{Project, ProjectStatus};
 
@@ -52,10 +52,7 @@ pub struct CaddyClient {
 
 impl CaddyClient {
     pub fn new(admin_url: &str) -> Self {
-        Self {
-            admin_url: admin_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
-        }
+        Self { admin_url: admin_url.trim_end_matches('/').to_string(), client: reqwest::Client::new() }
     }
 
     pub fn admin_url(&self) -> &str {
@@ -63,13 +60,7 @@ impl CaddyClient {
     }
 
     pub async fn post_json(&self, url: &str, body: &serde_json::Value) -> anyhow::Result<reqwest::Response> {
-        let resp = self
-            .client
-            .post(url)
-            .header("Content-Type", "application/json")
-            .json(body)
-            .send()
-            .await?;
+        let resp = self.client.post(url).header("Content-Type", "application/json").json(body).send().await?;
         Ok(resp)
     }
 
@@ -191,20 +182,11 @@ impl CaddyClient {
             }
         });
 
-        tracing::info!(
-            route_count = routes.len() - 1,
-            "syncing caddy config"
-        );
+        tracing::info!(route_count = routes.len() - 1, "syncing caddy config");
         tracing::debug!(config = %serde_json::to_string_pretty(&config).unwrap_or_default(), "caddy config payload");
 
         let url = format!("{}/load", self.admin_url);
-        let resp = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&config)
-            .send()
-            .await?;
+        let resp = self.client.post(&url).header("Content-Type", "application/json").json(&config).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -223,8 +205,7 @@ impl CaddyClient {
         domain: &str,
         orchestrator_upstream: &str,
     ) -> anyhow::Result<()> {
-        self.sync_routes(projects, domain, orchestrator_upstream)
-            .await
+        self.sync_routes(projects, domain, orchestrator_upstream).await
     }
 
     /// Remove a route by resyncing without the removed project.
@@ -234,8 +215,7 @@ impl CaddyClient {
         domain: &str,
         orchestrator_upstream: &str,
     ) -> anyhow::Result<()> {
-        self.sync_routes(projects, domain, orchestrator_upstream)
-            .await
+        self.sync_routes(projects, domain, orchestrator_upstream).await
     }
 
     /// Check if Caddy admin API is reachable

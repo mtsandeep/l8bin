@@ -15,8 +15,7 @@ pub async fn run_activity_tracker(state: AppState, shutdown_rx: tokio::sync::wat
     let dashboard_host = format!("{}.{}", state.config.dashboard_subdomain, domain);
     let poke_host = format!("{}.{}", state.config.poke_subdomain, domain);
 
-    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-caddy".into());
+    let caddy_container = std::env::var("CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-caddy".into());
 
     heartbeat::run_docker_log_tailer(
         state.docker.as_ref().clone(),
@@ -36,12 +35,7 @@ pub async fn run_activity_tracker(state: AppState, shutdown_rx: tokio::sync::wat
 }
 
 /// Update `last_active_at` for running projects that match the given hosts.
-async fn update_active_projects(
-    state: &AppState,
-    hosts: HashSet<String>,
-    dashboard_host: &str,
-    poke_host: &str,
-) {
+async fn update_active_projects(state: &AppState, hosts: HashSet<String>, dashboard_host: &str, poke_host: &str) {
     let now = chrono::Utc::now().timestamp();
     let domain_suffix = format!(".{}", state.config.domain);
     let mut subdomain_ids: Vec<String> = Vec::new();
@@ -68,9 +62,7 @@ async fn update_active_projects(
         return;
     }
 
-    let mut qb: sqlx::QueryBuilder<sqlx::Sqlite> = sqlx::QueryBuilder::new(
-        "UPDATE projects SET last_active_at = "
-    );
+    let mut qb: sqlx::QueryBuilder<sqlx::Sqlite> = sqlx::QueryBuilder::new("UPDATE projects SET last_active_at = ");
     qb.push_bind(now);
     qb.push(", updated_at = ");
     qb.push_bind(now);

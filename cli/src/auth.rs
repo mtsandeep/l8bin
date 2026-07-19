@@ -14,10 +14,7 @@ pub struct Session {
 const SESSION_FILE: &str = "session.json";
 
 pub fn session_path() -> std::path::PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(crate::config::APP_DIR)
-        .join(SESSION_FILE)
+    dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join(crate::config::APP_DIR).join(SESSION_FILE)
 }
 
 pub fn load_session() -> Option<Session> {
@@ -51,9 +48,7 @@ pub async fn login(server: &str) -> Result<()> {
         format!("https://{}", server)
     };
     println!("Server: {}", server);
-    let username = dialoguer::Input::<String>::new()
-        .with_prompt("Username")
-        .interact_text()?;
+    let username = dialoguer::Input::<String>::new().with_prompt("Username").interact_text()?;
 
     let password = rpassword::prompt_password("Password: ")?;
 
@@ -75,22 +70,14 @@ pub async fn login(server: &str) -> Result<()> {
     }
 
     // Extract Set-Cookie header
-    let cookie = resp
-        .headers()
-        .get_all("set-cookie")
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .collect::<Vec<_>>()
-        .join("; ");
+    let cookie =
+        resp.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join("; ");
 
     if cookie.is_empty() {
         anyhow::bail!("login succeeded but no session cookie received");
     }
 
-    let session = Session {
-        server: server.trim_end_matches('/').to_string(),
-        cookie,
-    };
+    let session = Session { server: server.trim_end_matches('/').to_string(), cookie };
     save_session(&session)?;
     crate::config::CliConfig::save(Some(&session.server), None)?;
     println!("Authenticated. Session saved.");
@@ -105,10 +92,7 @@ pub fn authenticated_client(config: &CliConfig) -> Result<reqwest::Client> {
 
     if let Some(token) = &config.token {
         let val = format!("Bearer {}", token);
-        headers.insert(
-            "Authorization",
-            val.parse().map_err(|e| anyhow::anyhow!("invalid token: {}", e))?,
-        );
+        headers.insert("Authorization", val.parse().map_err(|e| anyhow::anyhow!("invalid token: {}", e))?);
     } else if let Some(session) = load_session() {
         headers.insert(
             "Cookie",
@@ -118,10 +102,8 @@ pub fn authenticated_client(config: &CliConfig) -> Result<reqwest::Client> {
         anyhow::bail!("not authenticated. Run: l8b login --server <url>  or  set L8B_TOKEN");
     }
 
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .timeout(std::time::Duration::from_secs(300))
-        .build()?;
+    let client =
+        reqwest::Client::builder().default_headers(headers).timeout(std::time::Duration::from_secs(300)).build()?;
 
     Ok(client)
 }
@@ -143,8 +125,7 @@ pub async fn session_post(
     path: &str,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let session = load_session()
-        .ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
+    let session = load_session().ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
 
     let url = format!("{}{}", server.trim_end_matches('/'), path);
     let resp = client
@@ -158,8 +139,7 @@ pub async fn session_post(
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_str(&body_text)
-        .unwrap_or(serde_json::json!({"raw": body_text}));
+    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
 
     if !status.is_success() {
         let error = json["error"].as_str().unwrap_or(&body_text);
@@ -170,13 +150,8 @@ pub async fn session_post(
 }
 
 /// GET from the API using session (cookie) auth.
-pub async fn session_get(
-    client: &reqwest::Client,
-    server: &str,
-    path: &str,
-) -> Result<serde_json::Value> {
-    let session = load_session()
-        .ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
+pub async fn session_get(client: &reqwest::Client, server: &str, path: &str) -> Result<serde_json::Value> {
+    let session = load_session().ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
 
     let url = format!("{}{}", server.trim_end_matches('/'), path);
     let resp = client
@@ -188,8 +163,7 @@ pub async fn session_get(
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_str(&body_text)
-        .unwrap_or(serde_json::json!({"raw": body_text}));
+    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
 
     if !status.is_success() {
         let error = json["error"].as_str().unwrap_or(&body_text);
@@ -206,8 +180,7 @@ pub async fn session_post_multipart(
     path: &str,
     form: reqwest::multipart::Form,
 ) -> Result<serde_json::Value> {
-    let session = load_session()
-        .ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
+    let session = load_session().ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
 
     let url = format!("{}{}", server.trim_end_matches('/'), path);
     let resp = client
@@ -220,8 +193,7 @@ pub async fn session_post_multipart(
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_str(&body_text)
-        .unwrap_or(serde_json::json!({"raw": body_text}));
+    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
 
     if !status.is_success() {
         let error = json["error"].as_str().unwrap_or(&body_text);
@@ -232,13 +204,8 @@ pub async fn session_post_multipart(
 }
 
 /// DELETE from the API using session (cookie) auth.
-pub async fn session_delete(
-    client: &reqwest::Client,
-    server: &str,
-    path: &str,
-) -> Result<serde_json::Value> {
-    let session = load_session()
-        .ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
+pub async fn session_delete(client: &reqwest::Client, server: &str, path: &str) -> Result<serde_json::Value> {
+    let session = load_session().ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
 
     let url = format!("{}{}", server.trim_end_matches('/'), path);
     let resp = client
@@ -250,8 +217,7 @@ pub async fn session_delete(
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_str(&body_text)
-        .unwrap_or(serde_json::json!({"raw": body_text}));
+    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
 
     if !status.is_success() {
         let error = json["error"].as_str().unwrap_or(&body_text);
@@ -278,19 +244,11 @@ pub async fn fetch_platform_domain(client: &reqwest::Client, server: &str) -> St
 /// Last-resort domain derivation when /settings is unavailable.
 /// `https://dash.11b.in` → `11b.in`
 fn derive_domain_from_server(server: &str) -> String {
-    let host = server
-        .trim()
-        .trim_end_matches('/')
-        .trim_start_matches("https://")
-        .trim_start_matches("http://");
+    let host = server.trim().trim_end_matches('/').trim_start_matches("https://").trim_start_matches("http://");
     let host = host.split('/').next().unwrap_or(host);
     let host = host.split(':').next().unwrap_or(host);
     let parts: Vec<&str> = host.split('.').filter(|p| !p.is_empty()).collect();
-    if parts.len() >= 3 {
-        parts[1..].join(".")
-    } else {
-        host.to_string()
-    }
+    if parts.len() >= 3 { parts[1..].join(".") } else { host.to_string() }
 }
 
 /// Public project URL using the Platform Domain: `https://{project_id}.{domain}`
@@ -330,10 +288,7 @@ pub struct NodeInfo {
 }
 
 /// Fetch online nodes from the server. Returns empty vec on failure.
-pub async fn fetch_online_nodes(
-    client: &reqwest::Client,
-    server: &str,
-) -> Vec<NodeInfo> {
+pub async fn fetch_online_nodes(client: &reqwest::Client, server: &str) -> Vec<NodeInfo> {
     match session_get(client, server, "/nodes").await {
         Ok(resp) => {
             let nodes: Vec<NodeInfo> = serde_json::from_value(resp).unwrap_or_default();

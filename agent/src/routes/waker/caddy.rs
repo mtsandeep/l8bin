@@ -1,7 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-};
+use axum::{extract::State, http::StatusCode};
 use serde_json::json;
 
 use crate::AgentState;
@@ -18,9 +15,7 @@ fn get_domain(state: &AgentState) -> Option<String> {
 pub(super) fn find_public_service_upstream(project_id: &str) -> Option<String> {
     let compose_yaml = DockerManager::read_compose(project_id)?;
     let extra_env = crate::routes::containers::read_project_env(project_id);
-    let plan = litebin_common::compose_run::build_compose_run_plan(
-        &compose_yaml, project_id, &extra_env, None,
-    ).ok()?;
+    let plan = litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None).ok()?;
 
     let public = plan.configs.iter().find(|c| c.is_public)?;
     let port = public.port.unwrap_or(80) as u16;
@@ -47,20 +42,13 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
     {
         let project_meta = state.project_meta.read().unwrap();
         containers.retain(|container| {
-            !project_meta.get(&container.project_id)
-                .map(|entry| entry.is_background)
-                .unwrap_or(false)
+            !project_meta.get(&container.project_id).map(|entry| entry.is_background).unwrap_or(false)
         });
     }
 
     let config = match state.last_caddy_config.read().unwrap().clone() {
         Some(base) => merge_routes_with_persisted(&base, &containers, &domain),
-        None => build_config_from_scratch(
-            &containers,
-            &domain,
-            &state.config.cert_pem,
-            &state.config.key_pem,
-        ),
+        None => build_config_from_scratch(&containers, &domain, &state.config.cert_pem, &state.config.key_pem),
     };
 
     let url = format!("{}/load", caddy.admin_url());
@@ -91,14 +79,10 @@ fn merge_routes_with_persisted(
     containers: &[litebin_common::docker::RunningContainer],
     domain: &str,
 ) -> serde_json::Value {
-    let existing_routes = base["apps"]["http"]["servers"]["srv0"]["routes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let existing_routes = base["apps"]["http"]["servers"]["srv0"]["routes"].as_array().cloned().unwrap_or_default();
 
     // Collect existing non-catch-all routes into a host->route map
-    let mut route_map: std::collections::HashMap<String, serde_json::Value> =
-        std::collections::HashMap::new();
+    let mut route_map: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
     for route in &existing_routes {
         if let Some(hosts) = route["match"][0]["host"].as_array() {
             for host in hosts {
@@ -364,10 +348,8 @@ pub async fn caddy_ask(
     if let Some(domain) = get_domain(&state) {
         let suffix = format!(".{}", domain);
         if let Some(project_id) = requested.strip_suffix(&suffix) {
-            let approved = state.project_meta.read().unwrap()
-                .get(project_id)
-                .map(|entry| !entry.is_background)
-                .unwrap_or(false);
+            let approved =
+                state.project_meta.read().unwrap().get(project_id).map(|entry| !entry.is_background).unwrap_or(false);
             if approved {
                 return StatusCode::OK;
             }

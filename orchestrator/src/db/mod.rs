@@ -12,19 +12,13 @@ pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
         }
     }
 
-    let options = SqliteConnectOptions::from_str(database_url)?
-        .create_if_missing(true)
-        .busy_timeout(Duration::from_secs(5));
+    let options =
+        SqliteConnectOptions::from_str(database_url)?.create_if_missing(true).busy_timeout(Duration::from_secs(5));
 
-    let pool = SqlitePoolOptions::new()
-        .max_connections(10)
-        .connect_with(options)
-        .await?;
+    let pool = SqlitePoolOptions::new().max_connections(10).connect_with(options).await?;
 
     // Enable WAL mode for better concurrent read performance
-    sqlx::query("PRAGMA journal_mode=WAL")
-        .execute(&pool)
-        .await?;
+    sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await?;
 
     sqlx::migrate!("src/db/migrations").run(&pool).await?;
 

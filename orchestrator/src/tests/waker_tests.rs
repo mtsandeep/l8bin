@@ -44,11 +44,7 @@ async fn seed_user(db: &sqlx::SqlitePool) {
 }
 
 /// Insert a running project with mapped_port and container_id set.
-async fn insert_running_project(
-    db: &sqlx::SqlitePool,
-    project_id: &str,
-    auto_start_enabled: bool,
-) {
+async fn insert_running_project(db: &sqlx::SqlitePool, project_id: &str, auto_start_enabled: bool) {
     let now = chrono::Utc::now().timestamp();
     sqlx::query(
         r#"INSERT INTO projects
@@ -77,19 +73,13 @@ async fn waker_returns_503_when_auto_start_disabled_and_stopped() {
     seed_user(&db).await;
     insert_project_with_status(&db, "my-proj", "stopped", false, None).await;
 
-    let resp = server
-        .get("/")
-        .add_header(axum::http::header::HOST, "my-proj.localhost")
-        .await;
+    let resp = server.get("/").add_header(axum::http::header::HOST, "my-proj.localhost").await;
 
     resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 
     // Status must remain "stopped"
-    let row: (String,) = sqlx::query_as("SELECT status FROM projects WHERE id = ?")
-        .bind("my-proj")
-        .fetch_one(&db)
-        .await
-        .unwrap();
+    let row: (String,) =
+        sqlx::query_as("SELECT status FROM projects WHERE id = ?").bind("my-proj").fetch_one(&db).await.unwrap();
     assert_eq!(row.0, "stopped");
 }
 
@@ -153,11 +143,8 @@ async fn waker_refuses_auto_start_when_unconfigured() {
 
     resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 
-    let row: (String,) = sqlx::query_as("SELECT status FROM projects WHERE id = ?")
-        .bind("staged-proj")
-        .fetch_one(&db)
-        .await
-        .unwrap();
+    let row: (String,) =
+        sqlx::query_as("SELECT status FROM projects WHERE id = ?").bind("staged-proj").fetch_one(&db).await.unwrap();
     assert_eq!(row.0, "unconfigured");
 }
 
@@ -176,11 +163,8 @@ async fn waker_refuses_auto_start_when_pending() {
 
     resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 
-    let row: (String,) = sqlx::query_as("SELECT status FROM projects WHERE id = ?")
-        .bind("pending-proj")
-        .fetch_one(&db)
-        .await
-        .unwrap();
+    let row: (String,) =
+        sqlx::query_as("SELECT status FROM projects WHERE id = ?").bind("pending-proj").fetch_one(&db).await.unwrap();
     assert_eq!(row.0, "pending");
 }
 
@@ -197,28 +181,35 @@ async fn background_project_hostname_returns_generic_404_without_state_change() 
            VALUES ('worker-only', 'test-user', 1, 'worker:latest', NULL, 'running',
                    0, 0, ?, ?, ?)"#,
     )
-    .bind(last_active_at).bind(now).bind(now)
-    .execute(&db).await.unwrap();
+    .bind(last_active_at)
+    .bind(now)
+    .bind(now)
+    .execute(&db)
+    .await
+    .unwrap();
 
-    let resp = server.get("/")
+    let resp = server
+        .get("/")
         .add_header(axum::http::header::HOST, "worker-only.localhost")
-        .add_header(axum::http::header::ACCEPT, "text/html").await;
+        .add_header(axum::http::header::ACCEPT, "text/html")
+        .await;
     resp.assert_status(StatusCode::NOT_FOUND);
     assert!(!resp.text().to_lowercase().contains("background project"));
 
-    let row: (String, i64) = sqlx::query_as(
-        "SELECT status, last_active_at FROM projects WHERE id = 'worker-only'",
-    ).fetch_one(&db).await.unwrap();
+    let row: (String, i64) = sqlx::query_as("SELECT status, last_active_at FROM projects WHERE id = 'worker-only'")
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!(row.0, "running");
     assert_eq!(row.1, last_active_at);
 }
 
 #[cfg(test)]
 mod prop_tests {
-    use proptest::prelude::*;
     use axum::http::StatusCode;
+    use proptest::prelude::*;
 
-    use super::{seed_user, insert_project_with_status};
+    use super::{insert_project_with_status, seed_user};
     use crate::tests::helpers::test_server_with_db;
 
     proptest! {

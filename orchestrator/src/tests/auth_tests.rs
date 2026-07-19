@@ -1,5 +1,5 @@
 use axum::http::StatusCode;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::helpers::test_server;
 
@@ -7,10 +7,7 @@ use super::helpers::test_server;
 async fn register_creates_user() {
     let server = test_server().await;
 
-    let resp = server
-        .post("/auth/register")
-        .json(&json!({"username": "alice", "password": "secret123"}))
-        .await;
+    let resp = server.post("/auth/register").json(&json!({"username": "alice", "password": "secret123"})).await;
 
     resp.assert_status(StatusCode::OK);
     let body: Value = resp.json();
@@ -41,15 +38,9 @@ async fn register_duplicate_username_returns_forbidden() {
 async fn login_with_valid_credentials_returns_user() {
     let server = test_server().await;
 
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "carol", "password": "mypass"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "carol", "password": "mypass"})).await;
 
-    let resp = server
-        .post("/auth/login")
-        .json(&json!({"username": "carol", "password": "mypass"}))
-        .await;
+    let resp = server.post("/auth/login").json(&json!({"username": "carol", "password": "mypass"})).await;
 
     resp.assert_status(StatusCode::OK);
     let body: Value = resp.json();
@@ -60,10 +51,7 @@ async fn login_with_valid_credentials_returns_user() {
 async fn login_with_wrong_password_returns_401() {
     let server = test_server().await;
 
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "dave", "password": "correct"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "dave", "password": "correct"})).await;
 
     server
         .post("/auth/login")
@@ -82,15 +70,9 @@ async fn me_without_session_returns_401() {
 async fn me_after_login_returns_user() {
     let server = test_server().await;
 
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "eve", "password": "pass"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "eve", "password": "pass"})).await;
 
-    server
-        .post("/auth/login")
-        .json(&json!({"username": "eve", "password": "pass"}))
-        .await;
+    server.post("/auth/login").json(&json!({"username": "eve", "password": "pass"})).await;
 
     let resp = server.get("/auth/me").await;
     resp.assert_status(StatusCode::OK);
@@ -102,14 +84,8 @@ async fn me_after_login_returns_user() {
 async fn logout_clears_session() {
     let server = test_server().await;
 
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "frank", "password": "pass"}))
-        .await;
-    server
-        .post("/auth/login")
-        .json(&json!({"username": "frank", "password": "pass"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "frank", "password": "pass"})).await;
+    server.post("/auth/login").json(&json!({"username": "frank", "password": "pass"})).await;
 
     server.post("/auth/logout").await.assert_status(StatusCode::OK);
     server.get("/auth/me").await.assert_status(StatusCode::UNAUTHORIZED);
@@ -119,14 +95,8 @@ async fn logout_clears_session() {
 async fn change_password_works() {
     let server = test_server().await;
 
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "grace", "password": "oldpass"}))
-        .await;
-    server
-        .post("/auth/login")
-        .json(&json!({"username": "grace", "password": "oldpass"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "grace", "password": "oldpass"})).await;
+    server.post("/auth/login").json(&json!({"username": "grace", "password": "oldpass"})).await;
 
     server
         .post("/auth/change-password")

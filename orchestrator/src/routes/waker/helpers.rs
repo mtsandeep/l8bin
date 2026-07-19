@@ -7,17 +7,18 @@ use tokio::sync::Semaphore;
 use litebin_common::proxy::is_hop_by_hop;
 use litebin_common::types::{Node, ProjectStatus};
 
+use crate::AppState;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
 use crate::status::{self, ProjectUpdateFields};
-use crate::AppState;
 
 /// Try to acquire the per-project lock. Returns None if another operation is in progress.
-pub(super) fn try_acquire_project_lock(state: &AppState, project_id: &str) -> Option<tokio::sync::OwnedSemaphorePermit> {
-    let semaphore: Arc<Semaphore> = state.project_locks
-        .entry(project_id.to_string())
-        .or_insert_with(|| Arc::new(Semaphore::new(1)))
-        .clone();
+pub(super) fn try_acquire_project_lock(
+    state: &AppState,
+    project_id: &str,
+) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    let semaphore: Arc<Semaphore> =
+        state.project_locks.entry(project_id.to_string()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
     semaphore.clone().try_acquire_owned().ok()
 }
 
@@ -53,21 +54,13 @@ pub(super) async fn proxy_request(
                 }
                 builder = builder.header(name, value);
             }
-            builder
-                .body(axum::body::Body::from_stream(resp.bytes_stream()))
-                .unwrap_or_else(|_| {
-                    Response::builder()
-                        .status(StatusCode::BAD_GATEWAY)
-                        .body(axum::body::Body::from("Bad gateway"))
-                        .unwrap()
-                })
+            builder.body(axum::body::Body::from_stream(resp.bytes_stream())).unwrap_or_else(|_| {
+                Response::builder().status(StatusCode::BAD_GATEWAY).body(axum::body::Body::from("Bad gateway")).unwrap()
+            })
         }
         Err(e) => {
             tracing::error!(error = %e, upstream = %upstream, "proxy error");
-            Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(axum::body::Body::from("Bad gateway"))
-                .unwrap()
+            Response::builder().status(StatusCode::BAD_GATEWAY).body(axum::body::Body::from("Bad gateway")).unwrap()
         }
     }
 }
@@ -79,8 +72,8 @@ pub(super) async fn remote_recreate(
     client: &reqwest::Client,
     base_url: &str,
 ) -> Result<(), Response> {
-    let image = project.image.as_deref()
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "no image").into_response())?;
+    let image =
+        project.image.as_deref().ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "no image").into_response())?;
     let internal_port = project.internal_port;
     let docker_observe = crate::capabilities::has_capability(
         &state.db,
@@ -126,18 +119,28 @@ pub(super) async fn remote_recreate(
         return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to recreate container").into_response());
     }
 
-    let result: serde_json::Value = resp.json().await
+    let result: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("bad response: {e}")).into_response())?;
     let new_container_id = result["container_id"].as_str().unwrap_or("").to_string();
     let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
     let now = chrono::Utc::now().timestamp();
-    if let Err(e) = status::transition(&state.db, &project.id, ProjectStatus::Running, &ProjectUpdateFields {
-        container_id: Some(Some(new_container_id.clone())),
-        mapped_port: Some(mapped_port.map(|p| p as i64)),
-        last_active_at: Some(now),
-        ..Default::default()
-    }, None).await {
+    if let Err(e) = status::transition(
+        &state.db,
+        &project.id,
+        ProjectStatus::Running,
+        &ProjectUpdateFields {
+            container_id: Some(Some(new_container_id.clone())),
+            mapped_port: Some(mapped_port.map(|p| p as i64)),
+            last_active_at: Some(now),
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    {
         tracing::warn!(project_id = %project.id, error = %e, "waker: failed to transition to Running");
     }
 
@@ -148,7 +151,7 @@ pub(super) async fn remote_recreate(
 /// Used by the waker when non-public services are down but the public service is up.
 pub(super) async fn start_stopped_services(state: &AppState, project: &crate::db::models::Project) {
     let stopped: Vec<String> = match sqlx::query_scalar(
-        "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped' AND is_oneshot = 0"
+        "SELECT service_name FROM project_services WHERE project_id = ? AND status = 'stopped' AND is_oneshot = 0",
     )
     .bind(&project.id)
     .fetch_all(&state.db)
@@ -166,20 +169,28 @@ pub(super) async fn start_stopped_services(state: &AppState, project: &crate::db
     }
 
     let filter: std::collections::HashSet<String> = stopped.into_iter().collect();
-    match crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
-        force_recreate: false,
-        pull_images: true,
-        force_pull: false,
-        services: Some(filter),
-        connect_orchestrator: true,
-        rollback_on_failure: false,
-    }).await {
+    match crate::routes::manage::start_services(
+        state,
+        project,
+        crate::routes::manage::StartServicesOpts {
+            force_recreate: false,
+            pull_images: true,
+            force_pull: false,
+            services: Some(filter),
+            connect_orchestrator: true,
+            rollback_on_failure: false,
+        },
+    )
+    .await
+    {
         Ok(_) => {
             status::derive_and_set_project_status(&state.db, &project.id).await;
             let _ = state.route_sync_tx.send(());
             tracing::info!(project = %project.id, "waker: background recovery succeeded");
         }
-        Err((s, e)) => tracing::warn!(project = %project.id, status = %s, error = %e, "waker: background recovery failed"),
+        Err((s, e)) => {
+            tracing::warn!(project = %project.id, status = %s, error = %e, "waker: background recovery failed")
+        }
     }
 }
 
@@ -209,11 +220,17 @@ pub(super) async fn handle_down_services(
 
     if public_down {
         *public_service_up = false;
-        if let Err(e) = status::transition(&state.db, project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None).await {
+        if let Err(e) =
+            status::transition(&state.db, project_id, ProjectStatus::Stopped, &ProjectUpdateFields::default(), None)
+                .await
+        {
             tracing::warn!(project_id = %project_id, error = %e, "waker: failed to transition to Stopped");
         }
     } else {
-        if let Err(e) = status::transition(&state.db, project_id, ProjectStatus::Degraded, &ProjectUpdateFields::default(), None).await {
+        if let Err(e) =
+            status::transition(&state.db, project_id, ProjectStatus::Degraded, &ProjectUpdateFields::default(), None)
+                .await
+        {
             tracing::warn!(project_id = %project_id, error = %e, "waker: failed to transition to Degraded");
         }
         let _ = state.route_sync_tx.send(());
@@ -230,7 +247,10 @@ pub(super) async fn handle_down_services(
     }
 }
 
-pub(super) async fn start_stopped_container(state: &AppState, project: &crate::db::models::Project) -> Result<(), Response> {
+pub(super) async fn start_stopped_container(
+    state: &AppState,
+    project: &crate::db::models::Project,
+) -> Result<(), Response> {
     let subdomain = &project.id;
     let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 
@@ -265,9 +285,7 @@ pub(super) async fn start_stopped_container(state: &AppState, project: &crate::d
             litebin_common::capabilities::ProjectCapability::DockerObserve,
         )
         .await
-        .map_err(|_| {
-            (StatusCode::INTERNAL_SERVER_ERROR, "capability lookup failed").into_response()
-        })?;
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "capability lookup failed").into_response())?;
         if docker_observe {
             return remote_recreate(state, project, &client, &base_url).await;
         }
@@ -307,11 +325,19 @@ pub(super) async fn start_stopped_container(state: &AppState, project: &crate::d
             let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
 
             let now = chrono::Utc::now().timestamp();
-            if let Err(e) = status::transition(&state.db, &subdomain, ProjectStatus::Running, &ProjectUpdateFields {
-                mapped_port: Some(mapped_port.map(|p| p as i64)),
-                last_active_at: Some(now),
-                ..Default::default()
-            }, None).await {
+            if let Err(e) = status::transition(
+                &state.db,
+                &subdomain,
+                ProjectStatus::Running,
+                &ProjectUpdateFields {
+                    mapped_port: Some(mapped_port.map(|p| p as i64)),
+                    last_active_at: Some(now),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            {
                 tracing::warn!(project_id = %subdomain, error = %e, "waker: failed to transition to Running after start");
             }
             return Ok(());
@@ -324,14 +350,20 @@ pub(super) async fn start_stopped_container(state: &AppState, project: &crate::d
     }
 
     // Local: use unified start_services
-    crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
-        force_recreate: false,
-        pull_images: true,
-        force_pull: false,
-        services: None,
-        connect_orchestrator: true,
-        rollback_on_failure: false,
-    }).await.map_err(|(s, e)| (s, e).into_response())
+    crate::routes::manage::start_services(
+        state,
+        project,
+        crate::routes::manage::StartServicesOpts {
+            force_recreate: false,
+            pull_images: true,
+            force_pull: false,
+            services: None,
+            connect_orchestrator: true,
+            rollback_on_failure: false,
+        },
+    )
+    .await
+    .map_err(|(s, e)| (s, e).into_response())
 }
 
 pub(super) async fn restart_crashed_container(
@@ -370,24 +402,33 @@ pub(super) async fn restart_crashed_container(
     }
 
     // Local: use unified start_services (force_recreate since container is dead)
-    crate::routes::manage::start_services(state, project, crate::routes::manage::StartServicesOpts {
-        force_recreate: true,
-        pull_images: false,
-        force_pull: false,
-        services: None,
-        connect_orchestrator: true,
-        rollback_on_failure: false,
-    }).await.map_err(|(s, e)| (s, e).into_response())
+    crate::routes::manage::start_services(
+        state,
+        project,
+        crate::routes::manage::StartServicesOpts {
+            force_recreate: true,
+            pull_images: false,
+            force_pull: false,
+            services: None,
+            connect_orchestrator: true,
+            rollback_on_failure: false,
+        },
+    )
+    .await
+    .map_err(|(s, e)| (s, e).into_response())
 }
 
 /// Look up a project by alias route. Handles both:
 /// - "{alias}.{project_id}" (project-scoped, e.g. "api2.test")
 /// - "{alias}" (domain-level, e.g. "api2")
-pub(super) async fn resolve_alias_project(db: &sqlx::SqlitePool, rest: &str) -> Result<Option<crate::db::models::Project>, ()> {
+pub(super) async fn resolve_alias_project(
+    db: &sqlx::SqlitePool,
+    rest: &str,
+) -> Result<Option<crate::db::models::Project>, ()> {
     // Case A: "{alias}.{project_id}" — project-scoped alias
     if let Some((_alias, pid)) = rest.rsplit_once('.') {
         let route_exists = match sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM project_routes WHERE project_id = ? AND route_type = 'alias' AND subdomain = ?"
+            "SELECT COUNT(*) FROM project_routes WHERE project_id = ? AND route_type = 'alias' AND subdomain = ?",
         )
         .bind(pid)
         .bind(_alias)
@@ -412,7 +453,7 @@ pub(super) async fn resolve_alias_project(db: &sqlx::SqlitePool, rest: &str) -> 
 
     // Case B: "{alias}" — domain-level alias
     let alias_pid: Option<String> = sqlx::query_scalar(
-        "SELECT project_id FROM project_routes WHERE route_type = 'alias' AND subdomain = ? LIMIT 1"
+        "SELECT project_id FROM project_routes WHERE route_type = 'alias' AND subdomain = ? LIMIT 1",
     )
     .bind(rest)
     .fetch_optional(db)

@@ -35,9 +35,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 
     let extra_env = crate::routes::containers::read_project_env(project_id);
 
-    let mut plan = litebin_common::compose_run::build_compose_run_plan(
-        &compose_yaml, project_id, &extra_env, None,
-    )?;
+    let mut plan = litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None)?;
     let requests_host_network = plan.configs.iter().any(|config| config.host_network);
     if requests_host_network {
         let meta = state.project_meta.read().unwrap().get(project_id).cloned();
@@ -47,40 +45,25 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
         let host = state.docker.host_info().await.ok();
         litebin_common::docker::require_host_network_eligible(
             host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref()
-                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.operating_system.as_deref()),
             host.as_ref().and_then(|info| info.rootless),
             Some(3),
         )?;
     }
 
     // Apply allow_raw_ports flag from agent state
-    let allow_raw = state.project_meta.read().unwrap()
-        .get(project_id).map(|e| e.allow_raw_ports).unwrap_or(false);
+    let allow_raw = state.project_meta.read().unwrap().get(project_id).map(|e| e.allow_raw_ports).unwrap_or(false);
     for config in plan.configs.iter_mut() {
         config.allow_raw_ports = allow_raw;
     }
 
     // Inject read-only Docker observation only when explicitly granted.
-    let docker_observe = state.project_meta.read().unwrap()
-        .get(project_id).map(|e| e.docker_observe).unwrap_or(false);
-    let proxy_injected = if docker_observe {
-        plan.inject_docker_observe_proxy(project_id)?
-    } else {
-        false
-    };
+    let docker_observe = state.project_meta.read().unwrap().get(project_id).map(|e| e.docker_observe).unwrap_or(false);
+    let proxy_injected = if docker_observe { plan.inject_docker_observe_proxy(project_id)? } else { false };
     let host_observers = plan.host_docker_observer_names();
-    let current_proxy = if proxy_injected {
-        state
-            .docker
-            .current_docker_observe_proxy(project_id)
-            .await?
-    } else {
-        None
-    };
-    let reusable_proxy = current_proxy
-        .as_ref()
-        .is_some_and(|(_, port)| host_observers.is_empty() || port.is_some());
+    let current_proxy =
+        if proxy_injected { state.docker.current_docker_observe_proxy(project_id).await? } else { None };
+    let reusable_proxy = current_proxy.as_ref().is_some_and(|(_, port)| host_observers.is_empty() || port.is_some());
     let force_recreate_services = if reusable_proxy {
         if let Some((_, Some(port))) = current_proxy {
             plan.inject_host_docker_proxy_endpoint(port);
@@ -97,14 +80,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
             .await
             .map_err(|e| anyhow::anyhow!("failed to prepare Docker observation proxy: {e}"))?;
     } else if !proxy_injected {
-        state
-            .docker
-            .remove_by_service_name(
-                project_id,
-                litebin_common::types::DOCKER_PROXY_SERVICE,
-                None,
-            )
-            .await?;
+        state.docker.remove_by_service_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None).await?;
     }
 
     // Apply global defaults for services without explicit limits
@@ -133,31 +109,21 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     }
 
     // Connect Caddy to the project network
-    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-caddy".into());
+    let caddy_container = std::env::var("CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-caddy".into());
     let project_network = litebin_common::types::project_network_name(project_id, None);
     let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
 
     // Connect agent to the project network so it can proxy to containers
-    let agent_container = std::env::var("AGENT_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-agent".into());
+    let agent_container = std::env::var("AGENT_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent".into());
     let _ = state.docker.connect_container_to_network(&agent_container, &project_network).await;
 
     // Build owned lookup: service_name -> RunServiceConfig
     let mut configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
-    let healthy_wait_set: std::collections::HashSet<String> = plan
-        .service_order
-        .iter()
-        .filter(|s| plan.needs_healthy_wait(s))
-        .cloned()
-        .collect();
-    let completed_wait_set: std::collections::HashSet<String> = plan
-        .service_order
-        .iter()
-        .filter(|s| plan.needs_completed_wait(s))
-        .cloned()
-        .collect();
+    let healthy_wait_set: std::collections::HashSet<String> =
+        plan.service_order.iter().filter(|s| plan.needs_healthy_wait(s)).cloned().collect();
+    let completed_wait_set: std::collections::HashSet<String> =
+        plan.service_order.iter().filter(|s| plan.needs_completed_wait(s)).cloned().collect();
     let has_healthcheck: std::collections::HashSet<String> = plan
         .service_order
         .iter()
@@ -188,8 +154,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
             let is_public = run_config.is_public;
             let is_oneshot = run_config.is_oneshot;
             let is_host_network = run_config.host_network;
-            let needs_healthy =
-                healthy_wait_set.contains(svc_name) && has_healthcheck.contains(svc_name);
+            let needs_healthy = healthy_wait_set.contains(svc_name) && has_healthcheck.contains(svc_name);
             let needs_completed = completed_wait_set.contains(svc_name) || is_oneshot;
             let pid = project_id.to_string();
             let any_created = any_created.clone();
@@ -208,50 +173,47 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                             .await
                             .map_err(|e| format!("failed to replace service '{}': {}", svc, e))?;
                     } else {
-                    if docker.is_container_running(&existing_id).await.unwrap_or(false) {
-                        tracing::info!(
-                            project_id = %pid,
-                            service = %svc,
-                            "wake_multi_service: service already running, skipping"
-                        );
-                        let port = run_config.port.unwrap_or(80) as u16;
-                        return Ok((svc.clone(), existing_id, port, is_public));
-                    }
-
-                    // One-shot already exited successfully — leave it alone
-                    if is_oneshot {
-                        if matches!(
-                            docker.container_exit_code(&existing_id).await.ok().flatten(),
-                            Some(0)
-                        ) {
+                        if docker.is_container_running(&existing_id).await.unwrap_or(false) {
                             tracing::info!(
                                 project_id = %pid,
                                 service = %svc,
-                                "wake_multi_service: one-shot already completed, skipping"
+                                "wake_multi_service: service already running, skipping"
                             );
                             let port = run_config.port.unwrap_or(80) as u16;
                             return Ok((svc.clone(), existing_id, port, is_public));
                         }
-                        // Failed or unknown exit — recreate
-                        let _ = docker.remove_container(&existing_id).await;
-                    } else {
-                        // Long-running container exists but is stopped — start it
-                        docker
-                            .start_existing_container(&existing_id, &svc, is_oneshot)
-                            .await
-                            .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
-                        if let Ok(mut ids) = changed_container_ids.lock() {
-                            ids.push(existing_id.clone());
+
+                        // One-shot already exited successfully — leave it alone
+                        if is_oneshot {
+                            if matches!(docker.container_exit_code(&existing_id).await.ok().flatten(), Some(0)) {
+                                tracing::info!(
+                                    project_id = %pid,
+                                    service = %svc,
+                                    "wake_multi_service: one-shot already completed, skipping"
+                                );
+                                let port = run_config.port.unwrap_or(80) as u16;
+                                return Ok((svc.clone(), existing_id, port, is_public));
+                            }
+                            // Failed or unknown exit — recreate
+                            let _ = docker.remove_container(&existing_id).await;
+                        } else {
+                            // Long-running container exists but is stopped — start it
+                            docker
+                                .start_existing_container(&existing_id, &svc, is_oneshot)
+                                .await
+                                .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
+                            if let Ok(mut ids) = changed_container_ids.lock() {
+                                ids.push(existing_id.clone());
+                            }
+                            tracing::info!(
+                                project_id = %pid,
+                                service = %svc,
+                                container = %existing_id,
+                                "wake_multi_service: started existing stopped container"
+                            );
+                            let port = run_config.port.unwrap_or(80) as u16;
+                            return Ok((svc.clone(), existing_id, port, is_public));
                         }
-                        tracing::info!(
-                            project_id = %pid,
-                            service = %svc,
-                            container = %existing_id,
-                            "wake_multi_service: started existing stopped container"
-                        );
-                        let port = run_config.port.unwrap_or(80) as u16;
-                        return Ok((svc.clone(), existing_id, port, is_public));
-                    }
                     }
                 }
 
@@ -312,15 +274,9 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
             match result {
                 Ok(Ok((service_name, container_id, mapped_port, is_public))) => {
                     if service_name == litebin_common::types::DOCKER_PROXY_SERVICE
-                        && configs_map
-                            .values()
-                            .any(|config| config.host_network && config.docker_observe)
+                        && configs_map.values().any(|config| config.host_network && config.docker_observe)
                     {
-                        let port = match state
-                            .docker
-                            .inspect_mapped_port_for(&container_id, "2375/tcp")
-                            .await
-                        {
+                        let port = match state.docker.inspect_mapped_port_for(&container_id, "2375/tcp").await {
                             Ok(Some(port)) => port,
                             Ok(None) => {
                                 rollback_wake_containers(&state.docker, &changed_container_ids).await;
@@ -382,12 +338,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 /// Best-effort report to orchestrator about a successful wake.
 /// Fire-and-forget — if master is down, this silently fails.
 /// Requests are HMAC-signed so the orchestrator can verify authenticity.
-pub(super) async fn report_wake_to_master(
-    state: &AgentState,
-    project_id: &str,
-    container_id: &str,
-    mapped_port: u16,
-) {
+pub(super) async fn report_wake_to_master(state: &AgentState, project_id: &str, container_id: &str, mapped_port: u16) {
     let reg = match state.registration.read().unwrap().clone() {
         Some(r) => r,
         None => {

@@ -72,24 +72,20 @@ pub async fn transition(
         ProjectStatus::Deploying | ProjectStatus::Importing | ProjectStatus::Running => {
             if let Some(services) = service_filter {
                 for svc_name in services {
-                    sqlx::query(
-                        "UPDATE project_services SET status = ? WHERE project_id = ? AND service_name = ?",
-                    )
-                    .bind(&new_status)
-                    .bind(project_id)
-                    .bind(svc_name)
-                    .execute(&mut *tx)
-                    .await?;
+                    sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ? AND service_name = ?")
+                        .bind(&new_status)
+                        .bind(project_id)
+                        .bind(svc_name)
+                        .execute(&mut *tx)
+                        .await?;
                 }
             } else if new_status == ProjectStatus::Running {
                 // Do not overwrite completed one-shot jobs when marking the project running
-                sqlx::query(
-                    "UPDATE project_services SET status = ? WHERE project_id = ? AND is_oneshot = 0",
-                )
-                .bind(&new_status)
-                .bind(project_id)
-                .execute(&mut *tx)
-                .await?;
+                sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ? AND is_oneshot = 0")
+                    .bind(&new_status)
+                    .bind(project_id)
+                    .execute(&mut *tx)
+                    .await?;
             } else {
                 sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ?")
                     .bind(&new_status)
@@ -174,28 +170,18 @@ pub async fn set_service_completed(
 /// Mark a service as stopped, clearing its mapped_port.
 /// Keeps container_id so the disk cache (keyed by container_id) remains valid.
 /// Used by rollback, recreate cleanup, and partial redeploy.
-pub async fn set_service_stopped(
-    db: &SqlitePool,
-    project_id: &str,
-    service_name: &str,
-) -> anyhow::Result<()> {
-    sqlx::query(
-        "UPDATE project_services SET status = ?, mapped_port = NULL WHERE project_id = ? AND service_name = ?",
-    )
-    .bind(ProjectStatus::Stopped)
-    .bind(project_id)
-    .bind(service_name)
-    .execute(db)
-    .await?;
+pub async fn set_service_stopped(db: &SqlitePool, project_id: &str, service_name: &str) -> anyhow::Result<()> {
+    sqlx::query("UPDATE project_services SET status = ?, mapped_port = NULL WHERE project_id = ? AND service_name = ?")
+        .bind(ProjectStatus::Stopped)
+        .bind(project_id)
+        .bind(service_name)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
 /// Mark a removed service container as stopped and clear runtime identifiers.
-pub async fn set_service_removed(
-    db: &SqlitePool,
-    project_id: &str,
-    service_name: &str,
-) -> anyhow::Result<()> {
+pub async fn set_service_removed(db: &SqlitePool, project_id: &str, service_name: &str) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE project_services SET status = ?, container_id = NULL, mapped_port = NULL WHERE project_id = ? AND service_name = ?",
     )
@@ -229,12 +215,11 @@ pub async fn set_service_replacement_error(
 /// assigned accurate per-service outcomes.
 pub async fn set_project_error_only(db: &SqlitePool, project_id: &str) -> anyhow::Result<()> {
     let mut tx = db.begin().await?;
-    let service_statuses: Vec<(String, ProjectStatus)> = sqlx::query_as(
-        "SELECT service_name, status FROM project_services WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_all(&mut *tx)
-    .await?;
+    let service_statuses: Vec<(String, ProjectStatus)> =
+        sqlx::query_as("SELECT service_name, status FROM project_services WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_all(&mut *tx)
+            .await?;
 
     sqlx::query("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
         .bind(ProjectStatus::Error)
@@ -273,18 +258,13 @@ pub async fn set_project_stopped_only(db: &SqlitePool, project_id: &str) -> anyh
 
 /// Persist a successful identity-safe full stop without changing completed
 /// one-shot rows or clearing cached container IDs.
-pub async fn set_non_oneshot_services_stopped(
-    db: &SqlitePool,
-    project_id: &str,
-) -> anyhow::Result<()> {
+pub async fn set_non_oneshot_services_stopped(db: &SqlitePool, project_id: &str) -> anyhow::Result<()> {
     refresh_oneshot_flags(db, project_id).await;
-    sqlx::query(
-        "UPDATE project_services SET status = ?, mapped_port = NULL WHERE project_id = ? AND is_oneshot = 0",
-    )
-    .bind(ProjectStatus::Stopped)
-    .bind(project_id)
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE project_services SET status = ?, mapped_port = NULL WHERE project_id = ? AND is_oneshot = 0")
+        .bind(ProjectStatus::Stopped)
+        .bind(project_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -305,12 +285,7 @@ async fn set_project_status_only(
 /// Update the single-service "web" row in project_services to match projects table.
 /// Single-service projects have a "web" row that must track container_id/mapped_port.
 /// Called by waker and handlers after creating or starting a single-service container.
-pub async fn sync_single_service_row(
-    db: &SqlitePool,
-    project_id: &str,
-    container_id: &str,
-    mapped_port: i64,
-) {
+pub async fn sync_single_service_row(db: &SqlitePool, project_id: &str, container_id: &str, mapped_port: i64) {
     if let Err(e) = sqlx::query(
         "UPDATE project_services SET status = ?, container_id = ?, mapped_port = ? WHERE project_id = ? AND service_name = 'web'",
     )
@@ -396,16 +371,15 @@ pub async fn derive_and_set_project_status(db: &SqlitePool, project_id: &str) ->
 /// Parse `depends_on` JSON stored on service rows and set `is_oneshot` for
 /// services referenced with `service_completed_successfully`.
 async fn refresh_oneshot_flags(db: &SqlitePool, project_id: &str) {
-    let deps: Vec<(String, Option<String>)> = match sqlx::query_as(
-        "SELECT service_name, depends_on FROM project_services WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_all(db)
-    .await
-    {
-        Ok(r) => r,
-        Err(_) => return,
-    };
+    let deps: Vec<(String, Option<String>)> =
+        match sqlx::query_as("SELECT service_name, depends_on FROM project_services WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_all(db)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        };
 
     let mut oneshots = std::collections::HashSet::new();
     for (_name, depends_on) in &deps {
@@ -416,10 +390,7 @@ async fn refresh_oneshot_flags(db: &SqlitePool, project_id: &str) {
         match value {
             serde_json::Value::Object(map) => {
                 for (dep, spec) in map {
-                    let cond = spec
-                        .get("condition")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("service_started");
+                    let cond = spec.get("condition").and_then(|c| c.as_str()).unwrap_or("service_started");
                     if cond == "service_completed_successfully" {
                         oneshots.insert(dep);
                     }
@@ -434,13 +405,12 @@ async fn refresh_oneshot_flags(db: &SqlitePool, project_id: &str) {
     }
 
     for name in &oneshots {
-        if let Err(e) = sqlx::query(
-            "UPDATE project_services SET is_oneshot = 1 WHERE project_id = ? AND service_name = ?",
-        )
-        .bind(project_id)
-        .bind(name)
-        .execute(db)
-        .await
+        if let Err(e) =
+            sqlx::query("UPDATE project_services SET is_oneshot = 1 WHERE project_id = ? AND service_name = ?")
+                .bind(project_id)
+                .bind(name)
+                .execute(db)
+                .await
         {
             tracing::warn!(project_id = %project_id, service = %name, error = %e, "status: failed to set is_oneshot");
         }
@@ -465,27 +435,17 @@ pub struct SyncResult {
 /// `project_services.status` to match Docker, then derives `projects.status`.
 ///
 /// Skips transient/setup states (pending, unconfigured, deploying, stopping, error).
-pub async fn sync_project_from_docker(
-    db: &SqlitePool,
-    docker: &DockerManager,
-    project_id: &str,
-) -> SyncResult {
+pub async fn sync_project_from_docker(db: &SqlitePool, docker: &DockerManager, project_id: &str) -> SyncResult {
     // Load current project status
-    let current_status: ProjectStatus = sqlx::query_scalar(
-        "SELECT status FROM projects WHERE id = ?",
-    )
-    .bind(project_id)
-    .fetch_one(db)
-    .await
-    .unwrap_or(ProjectStatus::Error);
+    let current_status: ProjectStatus = sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
+        .bind(project_id)
+        .fetch_one(db)
+        .await
+        .unwrap_or(ProjectStatus::Error);
 
     // Skip transient states — these are managed by their owning code paths
     if current_status.is_transient() {
-        return SyncResult {
-            old_status: current_status.clone(),
-            new_status: current_status,
-            caddy_dirty: false,
-        };
+        return SyncResult { old_status: current_status.clone(), new_status: current_status, caddy_dirty: false };
     }
 
     // Load services
@@ -499,20 +459,12 @@ pub async fn sync_project_from_docker(
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(project_id = %project_id, error = %e, "status: failed to fetch services for sync, skipping");
-            return SyncResult {
-                old_status: current_status.clone(),
-                new_status: current_status,
-                caddy_dirty: false,
-            };
+            return SyncResult { old_status: current_status.clone(), new_status: current_status, caddy_dirty: false };
         }
     };
 
     if services.is_empty() {
-        return SyncResult {
-            old_status: current_status.clone(),
-            new_status: current_status,
-            caddy_dirty: false,
-        };
+        return SyncResult { old_status: current_status.clone(), new_status: current_status, caddy_dirty: false };
     }
 
     refresh_oneshot_flags(db, project_id).await;
@@ -528,11 +480,7 @@ pub async fn sync_project_from_docker(
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(project_id = %project_id, error = %e, "status: failed to re-fetch services for sync");
-            return SyncResult {
-                old_status: current_status.clone(),
-                new_status: current_status,
-                caddy_dirty: false,
-            };
+            return SyncResult { old_status: current_status.clone(), new_status: current_status, caddy_dirty: false };
         }
     };
 
@@ -553,11 +501,7 @@ pub async fn sync_project_from_docker(
                 }
                 _ => false,
             };
-            if exit_ok {
-                ProjectStatus::Completed
-            } else {
-                ProjectStatus::Stopped
-            }
+            if exit_ok { ProjectStatus::Completed } else { ProjectStatus::Stopped }
         } else {
             ProjectStatus::Stopped
         };
@@ -585,24 +529,20 @@ pub async fn sync_project_from_docker(
     // and updated projects.container_id but not project_services.container_id.
     // If all services appear stopped but projects.container_id is running, fix the row.
     if running_count == 0 && services.len() == 1 {
-        let projects_cid: Option<String> = sqlx::query_scalar(
-            "SELECT container_id FROM projects WHERE id = ?",
-        )
-        .bind(project_id)
-        .fetch_one(db)
-        .await
-        .ok()
-        .flatten();
+        let projects_cid: Option<String> = sqlx::query_scalar("SELECT container_id FROM projects WHERE id = ?")
+            .bind(project_id)
+            .fetch_one(db)
+            .await
+            .ok()
+            .flatten();
 
         if let Some(ref cid) = projects_cid {
             if !cid.is_empty() && docker.is_container_running(cid).await.unwrap_or(false) {
-                let port: Option<i64> = sqlx::query_scalar(
-                    "SELECT mapped_port FROM projects WHERE id = ?",
-                )
-                .bind(project_id)
-                .fetch_one(db)
-                .await
-                .unwrap_or(None);
+                let port: Option<i64> = sqlx::query_scalar("SELECT mapped_port FROM projects WHERE id = ?")
+                    .bind(project_id)
+                    .fetch_one(db)
+                    .await
+                    .unwrap_or(None);
 
                 sync_single_service_row(db, project_id, cid, port.unwrap_or(0)).await;
             }
@@ -613,19 +553,12 @@ pub async fn sync_project_from_docker(
     let new_status = derive_and_set_project_status(db, project_id).await;
     let caddy_dirty = new_status != current_status;
 
-    SyncResult {
-        old_status: current_status,
-        new_status,
-        caddy_dirty,
-    }
+    SyncResult { old_status: current_status, new_status, caddy_dirty }
 }
 
 /// Batch-sync all local projects from Docker state.
 /// Skips transient states and projects with no container_ids.
-pub async fn sync_all_local_from_docker(
-    db: &SqlitePool,
-    docker: &DockerManager,
-) -> Vec<SyncResult> {
+pub async fn sync_all_local_from_docker(db: &SqlitePool, docker: &DockerManager) -> Vec<SyncResult> {
     let project_ids: Vec<String> = match sqlx::query_scalar(
         "SELECT DISTINCT project_id FROM project_services WHERE container_id IS NOT NULL AND container_id != ''",
     )
@@ -666,33 +599,26 @@ pub async fn update_status_from_container_states(
     project_id: &str,
     container_states: &[(String, bool)], // (container_id, is_running)
 ) -> SyncResult {
-    let current_status: ProjectStatus = sqlx::query_scalar(
-        "SELECT status FROM projects WHERE id = ?",
-    )
-    .bind(project_id)
-    .fetch_one(db)
-    .await
-    .unwrap_or(ProjectStatus::Error);
+    let current_status: ProjectStatus = sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
+        .bind(project_id)
+        .fetch_one(db)
+        .await
+        .unwrap_or(ProjectStatus::Error);
 
     if current_status.is_transient() {
-        return SyncResult {
-            old_status: current_status.clone(),
-            new_status: current_status,
-            caddy_dirty: false,
-        };
+        return SyncResult { old_status: current_status.clone(), new_status: current_status, caddy_dirty: false };
     }
 
     for (container_id, is_running) in container_states {
-        let oneshot: bool = sqlx::query_scalar(
-            "SELECT is_oneshot FROM project_services WHERE project_id = ? AND container_id = ?",
-        )
-        .bind(project_id)
-        .bind(container_id)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(false);
+        let oneshot: bool =
+            sqlx::query_scalar("SELECT is_oneshot FROM project_services WHERE project_id = ? AND container_id = ?")
+                .bind(project_id)
+                .bind(container_id)
+                .fetch_optional(db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(false);
 
         let new_svc_status = if *is_running {
             ProjectStatus::Running
@@ -720,11 +646,7 @@ pub async fn update_status_from_container_states(
     let new_status = derive_and_set_project_status(db, project_id).await;
     let caddy_dirty = new_status != current_status;
 
-    SyncResult {
-        old_status: current_status,
-        new_status,
-        caddy_dirty,
-    }
+    SyncResult { old_status: current_status, new_status, caddy_dirty }
 }
 
 // ---------------------------------------------------------------------------
@@ -801,20 +723,14 @@ mod tests {
         let db = status_db().await;
         for project_id in ["local-background", "remote-background"] {
             insert_project(&db, project_id, &["collector"]).await;
-            set_service_running(&db, project_id, "collector", "container-id", None)
+            set_service_running(&db, project_id, "collector", "container-id", None).await.unwrap();
+
+            assert_eq!(derive_and_set_project_status(&db, project_id).await, ProjectStatus::Running);
+            let stored: ProjectStatus = sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
+                .bind(project_id)
+                .fetch_one(&db)
                 .await
                 .unwrap();
-
-            assert_eq!(
-                derive_and_set_project_status(&db, project_id).await,
-                ProjectStatus::Running
-            );
-            let stored: ProjectStatus =
-                sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
-                    .bind(project_id)
-                    .fetch_one(&db)
-                    .await
-                    .unwrap();
             assert_eq!(stored, ProjectStatus::Running);
         }
     }
@@ -824,23 +740,13 @@ mod tests {
         let db = status_db().await;
         insert_project(&db, "partial-failure", &["collector", "unrelated"]).await;
         for service_name in ["collector", "unrelated"] {
-            set_service_running(
-                &db,
-                "partial-failure",
-                service_name,
-                &format!("{service_name}-container"),
-                None,
-            )
-            .await
-            .unwrap();
+            set_service_running(&db, "partial-failure", service_name, &format!("{service_name}-container"), None)
+                .await
+                .unwrap();
         }
 
-        set_service_replacement_error(&db, "partial-failure", "collector")
-            .await
-            .unwrap();
-        set_project_error_only(&db, "partial-failure")
-            .await
-            .unwrap();
+        set_service_replacement_error(&db, "partial-failure", "collector").await.unwrap();
+        set_project_error_only(&db, "partial-failure").await.unwrap();
 
         let affected: (ProjectStatus, Option<String>) = sqlx::query_as(
             "SELECT status, container_id FROM project_services
@@ -858,13 +764,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(affected, (ProjectStatus::Error, None));
-        assert_eq!(
-            unrelated,
-            (
-                ProjectStatus::Running,
-                Some("unrelated-container".to_string())
-            )
-        );
+        assert_eq!(unrelated, (ProjectStatus::Running, Some("unrelated-container".to_string())));
         let project_status: ProjectStatus =
             sqlx::query_scalar("SELECT status FROM projects WHERE id = 'partial-failure'")
                 .fetch_one(&db)
@@ -878,15 +778,7 @@ mod tests {
         let db = status_db().await;
         insert_project(&db, "full-failure", &["collector", "unrelated"]).await;
 
-        transition(
-            &db,
-            "full-failure",
-            ProjectStatus::Error,
-            &ProjectUpdateFields::default(),
-            None,
-        )
-        .await
-        .unwrap();
+        transition(&db, "full-failure", ProjectStatus::Error, &ProjectUpdateFields::default(), None).await.unwrap();
 
         let statuses: Vec<ProjectStatus> = sqlx::query_scalar(
             "SELECT status FROM project_services WHERE project_id = 'full-failure' ORDER BY service_name",

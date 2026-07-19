@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::State,
     http::{HeaderMap, StatusCode},
-    Json,
 };
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
@@ -70,20 +70,19 @@ pub async fn heartbeat(
     }
 
     // Look up the node's agent_secret from DB
-    let secret: Option<String> = match sqlx::query_scalar::<_, Option<String>>(
-        "SELECT agent_secret FROM nodes WHERE id = ?",
-    )
-    .bind(&node_id)
-    .fetch_optional(&state.db)
-    .await
-    {
-        Ok(Some(Some(s))) => Some(s),
-        Ok(_) => None,
-        Err(e) => {
-            error!(error = %e, "heartbeat: DB error fetching node secret");
-            return StatusCode::INTERNAL_SERVER_ERROR;
-        }
-    };
+    let secret: Option<String> =
+        match sqlx::query_scalar::<_, Option<String>>("SELECT agent_secret FROM nodes WHERE id = ?")
+            .bind(&node_id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(Some(Some(s))) => Some(s),
+            Ok(_) => None,
+            Err(e) => {
+                error!(error = %e, "heartbeat: DB error fetching node secret");
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
+        };
 
     let secret = match secret {
         Some(s) => s,
@@ -139,9 +138,7 @@ pub async fn heartbeat(
         return StatusCode::OK;
     }
 
-    let mut qb: QueryBuilder<sqlx::Sqlite> = QueryBuilder::new(
-        "UPDATE projects SET last_active_at = "
-    );
+    let mut qb: QueryBuilder<sqlx::Sqlite> = QueryBuilder::new("UPDATE projects SET last_active_at = ");
     qb.push_bind(now);
     qb.push(", updated_at = ");
     qb.push_bind(now);

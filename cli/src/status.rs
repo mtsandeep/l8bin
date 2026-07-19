@@ -19,23 +19,18 @@ pub async fn poll_project_status(
     let mut seen_lines: HashSet<String> = HashSet::new();
 
     loop {
-        let resp = client
-            .get(format!("{}/projects/{}/stats", server.trim_end_matches('/'), project_id))
-            .send()
-            .await;
+        let resp = client.get(format!("{}/projects/{}/stats", server.trim_end_matches('/'), project_id)).send().await;
 
         match resp {
             Ok(r) if r.status().is_success() => {
                 let json: serde_json::Value = r.json().await?;
-                let status: ProjectStatus = json["status"].as_str()
+                let status: ProjectStatus = json["status"]
+                    .as_str()
                     .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
                     .unwrap_or(ProjectStatus::Stopped);
                 if matches!(
                     status,
-                    ProjectStatus::Running
-                        | ProjectStatus::Stopped
-                        | ProjectStatus::Error
-                        | ProjectStatus::Completed
+                    ProjectStatus::Running | ProjectStatus::Stopped | ProjectStatus::Error | ProjectStatus::Completed
                 ) {
                     // Print any remaining new logs before returning
                     fetch_and_print_new_logs(client, server, project_id, &mut seen_lines).await;
@@ -64,10 +59,8 @@ async fn fetch_and_print_new_logs(
     project_id: &str,
     seen: &mut HashSet<String>,
 ) {
-    let resp: Result<reqwest::Response, reqwest::Error> = client
-        .get(format!("{}/projects/{}/deploy-logs", server.trim_end_matches('/'), project_id))
-        .send()
-        .await;
+    let resp: Result<reqwest::Response, reqwest::Error> =
+        client.get(format!("{}/projects/{}/deploy-logs", server.trim_end_matches('/'), project_id)).send().await;
 
     if let Ok(r) = resp {
         if r.status().is_success() {
@@ -87,15 +80,9 @@ async fn fetch_and_print_new_logs(
 }
 
 /// Fetch and display deploy logs for a project.
-pub async fn show_deploy_logs(
-    client: &reqwest::Client,
-    server: &str,
-    project_id: &str,
-) -> Result<()> {
-    let resp = client
-        .get(format!("{}/projects/{}/deploy-logs", server.trim_end_matches('/'), project_id))
-        .send()
-        .await?;
+pub async fn show_deploy_logs(client: &reqwest::Client, server: &str, project_id: &str) -> Result<()> {
+    let resp =
+        client.get(format!("{}/projects/{}/deploy-logs", server.trim_end_matches('/'), project_id)).send().await?;
 
     if resp.status().is_success() {
         let json: serde_json::Value = resp.json().await?;
@@ -112,15 +99,8 @@ pub async fn show_deploy_logs(
 }
 
 /// Show detailed project status from the CLI.
-pub async fn show_project_status(
-    client: &reqwest::Client,
-    server: &str,
-    project_id: &str,
-) -> Result<()> {
-    let resp = client
-        .get(format!("{}/projects/{}", server.trim_end_matches('/'), project_id))
-        .send()
-        .await?;
+pub async fn show_project_status(client: &reqwest::Client, server: &str, project_id: &str) -> Result<()> {
+    let resp = client.get(format!("{}/projects/{}", server.trim_end_matches('/'), project_id)).send().await?;
 
     if !resp.status().is_success() {
         anyhow::bail!("Project '{}' not found (HTTP {})", project_id, resp.status());
@@ -128,11 +108,7 @@ pub async fn show_project_status(
 
     let project: serde_json::Value = resp.json().await?;
     let stats = client
-        .get(format!(
-            "{}/projects/{}/stats",
-            server.trim_end_matches('/'),
-            project_id
-        ))
+        .get(format!("{}/projects/{}/stats", server.trim_end_matches('/'), project_id))
         .send()
         .await
         .ok()
@@ -142,15 +118,14 @@ pub async fn show_project_status(
         None => None,
     };
 
-    let status: ProjectStatus = project["status"].as_str()
+    let status: ProjectStatus = project["status"]
+        .as_str()
         .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
         .unwrap_or(ProjectStatus::Stopped);
     let status_str = status.to_string();
     let name = project["name"].as_str().unwrap_or(project_id);
     let is_background = project["is_background"].as_bool().unwrap_or(false);
-    let services = stats_json
-        .as_ref()
-        .and_then(|stats| stats["services"].as_array());
+    let services = stats_json.as_ref().and_then(|stats| stats["services"].as_array());
     let image = project["public_stats"]["image"]
         .as_str()
         .or_else(|| services.and_then(|items| items.first()).and_then(|svc| svc["image"].as_str()));
@@ -197,7 +172,8 @@ pub async fn show_project_status(
             println!();
             for svc in services {
                 let svc_name = svc["service_name"].as_str().unwrap_or("?");
-                let svc_status: ProjectStatus = svc["status"].as_str()
+                let svc_status: ProjectStatus = svc["status"]
+                    .as_str()
                     .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
                     .unwrap_or(ProjectStatus::Stopped);
                 let is_public = svc["is_public"].as_bool().unwrap_or(false);
@@ -210,11 +186,7 @@ pub async fn show_project_status(
                     _ => svc_status.to_string().yellow(),
                 };
 
-                let pub_tag = if is_public && !is_background {
-                    " (public)".dimmed()
-                } else {
-                    "".dimmed()
-                };
+                let pub_tag = if is_public && !is_background { " (public)".dimmed() } else { "".dimmed() };
                 let stats = match (cpu, mem_mb) {
                     (Some(c), Some(m)) => format!("  {} cpu, {}MB mem", format!("{:.1}%", c), m),
                     (Some(c), None) => format!("  {} cpu", format!("{:.1}%", c)),

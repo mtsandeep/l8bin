@@ -5,8 +5,8 @@ use anyhow::Result;
 use axum::{Router, routing::get};
 use dashmap::DashMap;
 use litebin_agent::{
-    AgentState, Config, build_router, load_caddy_config_from_file,
-    load_project_meta_from_file, load_registration_from_file, routes,
+    AgentState, Config, build_router, load_caddy_config_from_file, load_project_meta_from_file,
+    load_registration_from_file, routes,
 };
 use litebin_common::caddy::CaddyClient;
 use litebin_common::docker::DockerManager;
@@ -17,19 +17,14 @@ use tracing::info;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install crypto provider before any TLS operations
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("Failed to install rustls crypto provider");
+    rustls::crypto::ring::default_provider().install_default().expect("Failed to install rustls crypto provider");
 
     // Load .env if present
     let _ = dotenvy::dotenv();
 
     // Init tracing
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
     let mut cfg = Config::from_env()?;
@@ -50,28 +45,17 @@ async fn main() -> Result<()> {
     let cfg = Arc::new(cfg);
 
     // Load persisted registration (if agent was previously registered)
-    let registration = Arc::new(std::sync::RwLock::new(
-        load_registration_from_file().ok().flatten(),
-    ));
+    let registration = Arc::new(std::sync::RwLock::new(load_registration_from_file().ok().flatten()));
 
     // Ensure projects directory exists
     std::fs::create_dir_all("projects")?;
 
     // Init Docker manager (defaults from env vars, set by orchestrator/install.sh)
     let docker_network = std::env::var("DOCKER_NETWORK").unwrap_or_else(|_| "litebin-network".to_string());
-    let memory_limit: i64 = std::env::var("DEFAULT_MEMORY_MB")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(256) * 1024 * 1024;
-    let cpu_limit: f64 = std::env::var("DEFAULT_CPU_LIMIT")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(0.5);
-    let mut docker = DockerManager::new(
-        docker_network,
-        memory_limit,
-        cpu_limit,
-    )?;
+    let memory_limit: i64 =
+        std::env::var("DEFAULT_MEMORY_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(256) * 1024 * 1024;
+    let cpu_limit: f64 = std::env::var("DEFAULT_CPU_LIMIT").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5);
+    let mut docker = DockerManager::new(docker_network, memory_limit, cpu_limit)?;
     docker.detect_host_projects_dir().await;
     let removed_unsafe = docker.cleanup_unsafe_docker_socket_containers().await?;
     if removed_unsafe > 0 {
@@ -80,20 +64,15 @@ async fn main() -> Result<()> {
     let docker = Arc::new(docker);
 
     // Connect agent to all existing project networks so it can proxy to containers
-    let agent_id = std::env::var("AGENT_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-agent".into());
+    let agent_id = std::env::var("AGENT_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent".into());
     docker.connect_to_project_networks(&agent_id).await;
 
     // Load persisted Caddy config (if orchestrator previously pushed one)
     let last_caddy_config: Arc<std::sync::RwLock<Option<serde_json::Value>>> =
-        Arc::new(std::sync::RwLock::new(
-            load_caddy_config_from_file(),
-        ));
+        Arc::new(std::sync::RwLock::new(load_caddy_config_from_file()));
 
     // Load persisted project meta (project_id → auto_start_enabled + allow_raw_ports)
-    let project_meta = Arc::new(std::sync::RwLock::new(
-        load_project_meta_from_file().unwrap_or_default(),
-    ));
+    let project_meta = Arc::new(std::sync::RwLock::new(load_project_meta_from_file().unwrap_or_default()));
 
     let state = AgentState {
         config: cfg.clone(),
@@ -130,10 +109,7 @@ async fn main() -> Result<()> {
         } else {
             // No persisted config — push base config with TLS cert + catch-all 502
             // so agent Caddy has TLS ready for incoming master connections
-            let base_config = routes::waker::build_base_caddy_config(
-                &cfg.cert_pem,
-                &cfg.key_pem,
-            );
+            let base_config = routes::waker::build_base_caddy_config(&cfg.cert_pem, &cfg.key_pem);
             let url = format!("{}/load", caddy.admin_url());
             match caddy.post_json(&url, &base_config).await {
                 Ok(resp) if resp.status().is_success() => {
@@ -198,17 +174,14 @@ async fn main() -> Result<()> {
     if !cert_path.exists() || !key_path.exists() || !ca_path.exists() {
         anyhow::bail!(
             "mTLS certificates not found. Required files:\n  cert: {}\n  key: {}\n  ca: {}\nRun the agent installer: curl -fsSL https://l8b.in | bash -s agent",
-            cfg.cert_path, cfg.key_path, cfg.ca_cert_path
+            cfg.cert_path,
+            cfg.key_path,
+            cfg.ca_cert_path
         );
     }
 
-    let tls_config = tls::build_server_tls_config(
-        &cfg.cert_path,
-        &cfg.key_path,
-        &cfg.ca_cert_path,
-    )?;
-    let rustls_config =
-        axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config));
+    let tls_config = tls::build_server_tls_config(&cfg.cert_path, &cfg.key_path, &cfg.ca_cert_path)?;
+    let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config));
     let handle = axum_server::Handle::new();
 
     // Spawn signal handler for graceful shutdown
@@ -228,10 +201,7 @@ async fn main() -> Result<()> {
         "agent startup complete — accepting connections"
     );
 
-    axum_server::bind_rustls(addr, rustls_config)
-        .handle(handle)
-        .serve(app.into_make_service())
-        .await?;
+    axum_server::bind_rustls(addr, rustls_config).handle(handle).serve(app.into_make_service()).await?;
 
     // Wait briefly for background tasks to finish
     tracing::info!("shutdown complete");
@@ -243,7 +213,7 @@ async fn main() -> Result<()> {
 async fn wait_for_shutdown_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},

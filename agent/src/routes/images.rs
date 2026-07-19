@@ -1,9 +1,9 @@
 use axum::{
+    Json,
     body::Body,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -70,18 +70,15 @@ pub async fn load_image(
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse { error: format!("image loaded but inspect failed: {e}") }),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
             };
             (StatusCode::OK, Json(LoadImageResponse { image_id: resolved_id })).into_response()
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to load image");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e.to_string() }),
-            )
-                .into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response()
         }
     }
 }
@@ -96,11 +93,7 @@ pub async fn remove_unused_image(
         Ok(removed) => (StatusCode::OK, Json(RemoveImageResponse { removed })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "failed to remove unused image");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e.to_string() }),
-            )
-                .into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response()
         }
     }
 }
@@ -115,33 +108,19 @@ pub async fn inspect_image(
         Ok(image_id) => (StatusCode::OK, Json(InspectResponse { image_id })).into_response(),
         Err(e) => {
             tracing::debug!(error = %e, image = %params.image, "image inspect failed");
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse { error: format!("image not found: {e}") }),
-            )
-                .into_response()
+            (StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("image not found: {e}") })).into_response()
         }
     }
 }
 
 /// POST /images/prune
 /// Prunes all dangling (unused) images and returns bytes reclaimed.
-pub async fn prune_images(
-    State(state): State<AgentState>,
-) -> impl IntoResponse {
+pub async fn prune_images(State(state): State<AgentState>) -> impl IntoResponse {
     match state.docker.prune_dangling_images().await {
-        Ok(reclaimed) => (
-            StatusCode::OK,
-            Json(PruneResponse { bytes_reclaimed: reclaimed }),
-        )
-            .into_response(),
+        Ok(reclaimed) => (StatusCode::OK, Json(PruneResponse { bytes_reclaimed: reclaimed })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "failed to prune images");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e.to_string() }),
-            )
-                .into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response()
         }
     }
 }

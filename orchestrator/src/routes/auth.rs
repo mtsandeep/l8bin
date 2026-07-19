@@ -1,15 +1,10 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use axum_login::{AuthSession, AuthnBackend};
 use serde::{Deserialize, Serialize};
 
+use crate::AppState;
 use crate::auth::{backend::Credentials, backend::PasswordBackend};
 use crate::db::models::User;
-use crate::AppState;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
@@ -32,12 +27,7 @@ pub struct UserResponse {
 
 impl From<User> for UserResponse {
     fn from(user: User) -> Self {
-        Self {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            is_admin: user.is_admin,
-        }
+        Self { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin }
     }
 }
 
@@ -57,11 +47,8 @@ pub async fn login(
     Json(creds): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
     tracing::info!("Login attempt for user: {}", creds.username);
-    
-    let credentials = Credentials {
-        username: creds.username,
-        password: creds.password,
-    };
+
+    let credentials = Credentials { username: creds.username, password: creds.password };
 
     let user = match auth_session.authenticate(credentials).await {
         Ok(Some(user)) => {
@@ -84,9 +71,7 @@ pub async fn login(
     }
 
     tracing::info!("Login successful for user: {}", user.username);
-    Ok(Json(LoginResponse {
-        user: user.into(),
-    }))
+    Ok(Json(LoginResponse { user: user.into() }))
 }
 
 #[utoipa::path(
@@ -141,10 +126,7 @@ pub async fn register(
 
     let backend = PasswordBackend::new(state.db.clone());
 
-    let user = match backend
-        .create_user(&req.username, &req.password, req.email.as_deref(), true)
-        .await
-    {
+    let user = match backend.create_user(&req.username, &req.password, req.email.as_deref(), true).await {
         Ok(u) => u,
         Err(e) => {
             tracing::error!("Register create user error: {:?}", e);
@@ -158,9 +140,7 @@ pub async fn register(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    Ok(Json(LoginResponse {
-        user: user.into(),
-    }))
+    Ok(Json(LoginResponse { user: user.into() }))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -177,17 +157,13 @@ pub struct SetupResponse {
     ),
     tag = "auth",
 )]
-pub async fn setup_check(
-    State(state): State<AppState>,
-) -> Result<Json<SetupResponse>, StatusCode> {
+pub async fn setup_check(State(state): State<AppState>) -> Result<Json<SetupResponse>, StatusCode> {
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(SetupResponse {
-        needs_setup: user_count == 0,
-    }))
+    Ok(Json(SetupResponse { needs_setup: user_count == 0 }))
 }
 
 #[utoipa::path(
@@ -258,8 +234,7 @@ pub async fn status(
     let (nodes_result, project_count) = tokio::join!(
         sqlx::query_as::<_, litebin_common::types::Node>("SELECT * FROM nodes ORDER BY created_at ASC")
             .fetch_all(&state.db),
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects")
-            .fetch_one(&state.db),
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects").fetch_one(&state.db),
     );
 
     let nodes: Vec<StatusNode> = match nodes_result {
@@ -270,13 +245,13 @@ pub async fn status(
         }
     }
     .into_iter()
-        .map(|n| StatusNode {
-            name: n.name,
-            status: n.status.to_string(),
-            version: n.version,
-            architecture: n.architecture,
-        })
-        .collect();
+    .map(|n| StatusNode {
+        name: n.name,
+        status: n.status.to_string(),
+        version: n.version,
+        architecture: n.architecture,
+    })
+    .collect();
 
     Ok(Json(StatusResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -309,10 +284,7 @@ pub async fn change_password(
     };
 
     // Verify current password
-    let credentials = Credentials {
-        username: user.username.clone(),
-        password: req.current_password,
-    };
+    let credentials = Credentials { username: user.username.clone(), password: req.current_password };
 
     let backend = PasswordBackend::new(state.db.clone());
     match backend.authenticate(credentials).await {
@@ -320,17 +292,15 @@ pub async fn change_password(
             // Current password is correct, update to new password
             let new_hash = bcrypt::hash(req.new_password.as_bytes(), bcrypt::DEFAULT_COST)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            
+
             let now = chrono::Utc::now().timestamp();
-            sqlx::query(
-                "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?"
-            )
-            .bind(&new_hash)
-            .bind(now)
-            .bind(&user.id)
-            .execute(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+                .bind(&new_hash)
+                .bind(now)
+                .bind(&user.id)
+                .execute(&state.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             Ok(Json(ChangePasswordResponse { success: true }))
         }

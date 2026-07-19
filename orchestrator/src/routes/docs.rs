@@ -1,14 +1,10 @@
 use axum::{
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::IntoResponse,
 };
 
 pub async fn serve_docs() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        HTML,
-    )
+    (StatusCode::OK, [(header::CONTENT_TYPE, "text/html; charset=utf-8")], HTML)
 }
 
 const HTML: &str = r#"<!DOCTYPE html>

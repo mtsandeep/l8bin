@@ -1,10 +1,10 @@
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
-use axum::http::{header, StatusCode};
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use utoipa::OpenApi;
 
-use crate::openapi::ApiDoc;
 use crate::AppState;
+use crate::openapi::ApiDoc;
 
 /// GET /openapi.json — Serve the OpenAPI 3.1 spec.
 pub async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
@@ -15,5 +15,9 @@ pub async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
 pub async fn llms_txt(State(_state): State<AppState>) -> impl IntoResponse {
     // Embedded at compile time — always in sync with this binary version.
     let content = include_str!("../../../docs/llms.txt");
-    (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain; charset=utf-8"), (header::CACHE_CONTROL, "public, max-age=3600")], content.to_string())
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8"), (header::CACHE_CONTROL, "public, max-age=3600")],
+        content.to_string(),
+    )
 }

@@ -35,10 +35,7 @@ pub fn wants_json(headers: &HeaderMap) -> bool {
     {
         return true;
     }
-    if let Some(ua) = headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-    {
+    if let Some(ua) = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()) {
         let ua = ua.to_lowercase();
         if ua.contains("bot") || ua.contains("crawler") || ua.contains("spider") {
             return true;

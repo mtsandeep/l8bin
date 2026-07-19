@@ -12,9 +12,7 @@ use sqlx::SqlitePool;
 use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::AppState;
-use crate::routes::manage::handlers::{
-    RecreateRequest, delete_project, recreate_project, start_project, stop_project,
-};
+use crate::routes::manage::handlers::{RecreateRequest, delete_project, recreate_project, start_project, stop_project};
 use crate::routes::manage::multi_service::{recreate_services, stop_services};
 use crate::routes::manage::{StartServicesOpts, start_services};
 use crate::routes::stats::{LogsQuery, project_logs};
@@ -23,23 +21,15 @@ const SERVICE_NAME: &str = "worker";
 const LOG_MARKER: &str = "orchestrator-path-log";
 
 fn unique_project_id(prefix: &str) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     format!("{prefix}-{}-{nanos}", std::process::id())
 }
 
 fn native_test_image() -> anyhow::Result<String> {
     let image = std::env::var("LITEBIN_NATIVE_TEST_IMAGE").map_err(|_| {
-        anyhow::anyhow!(
-            "LITEBIN_NATIVE_TEST_IMAGE must name a locally available image with /bin/sh and sleep"
-        )
+        anyhow::anyhow!("LITEBIN_NATIVE_TEST_IMAGE must name a locally available image with /bin/sh and sleep")
     })?;
-    anyhow::ensure!(
-        !image.contains(['\r', '\n', '"']),
-        "LITEBIN_NATIVE_TEST_IMAGE contains unsupported characters"
-    );
+    anyhow::ensure!(!image.contains(['\r', '\n', '"']), "LITEBIN_NATIVE_TEST_IMAGE contains unsupported characters");
     Ok(image)
 }
 
@@ -67,17 +57,11 @@ async fn live_orchestrator_state() -> anyhow::Result<AppState> {
     .execute(&db)
     .await?;
 
-    let mut docker = DockerManager::new(
-        "litebin-orchestrator-path-tests".into(),
-        128 * 1024 * 1024,
-        0.25,
-    )?;
+    let mut docker = DockerManager::new("litebin-orchestrator-path-tests".into(), 128 * 1024 * 1024, 0.25)?;
     docker.detect_host_projects_dir().await;
-    let router: Arc<AsyncRwLock<Arc<dyn RoutingProvider>>> =
-        Arc::new(AsyncRwLock::new(Arc::new(MasterProxyRouter::new(
-            litebin_common::caddy::CaddyClient::new("http://127.0.0.1:1"),
-            String::new(),
-        ))));
+    let router: Arc<AsyncRwLock<Arc<dyn RoutingProvider>>> = Arc::new(AsyncRwLock::new(Arc::new(
+        MasterProxyRouter::new(litebin_common::caddy::CaddyClient::new("http://127.0.0.1:1"), String::new()),
+    )));
     let (route_sync_tx, _) = tokio::sync::mpsc::unbounded_channel();
 
     Ok(AppState {
@@ -96,12 +80,7 @@ async fn live_orchestrator_state() -> anyhow::Result<AppState> {
     })
 }
 
-async fn insert_compose_project(
-    db: &SqlitePool,
-    project_id: &str,
-    node_id: &str,
-    image: &str,
-) -> anyhow::Result<()> {
+async fn insert_compose_project(db: &SqlitePool, project_id: &str, node_id: &str, image: &str) -> anyhow::Result<()> {
     let now = chrono::Utc::now().timestamp();
     sqlx::query(
         "INSERT INTO projects
@@ -162,16 +141,10 @@ fn write_compose(project_id: &str, image: &str) -> anyhow::Result<()> {
 }
 
 async fn project(db: &SqlitePool, project_id: &str) -> anyhow::Result<Project> {
-    Ok(sqlx::query_as("SELECT * FROM projects WHERE id = ?")
-        .bind(project_id)
-        .fetch_one(db)
-        .await?)
+    Ok(sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(project_id).fetch_one(db).await?)
 }
 
-async fn service_row(
-    db: &SqlitePool,
-    project_id: &str,
-) -> anyhow::Result<(Option<String>, String, bool)> {
+async fn service_row(db: &SqlitePool, project_id: &str) -> anyhow::Result<(Option<String>, String, bool)> {
     Ok(sqlx::query_as(
         "SELECT container_id, status, is_public
          FROM project_services WHERE project_id = ? AND service_name = ?",
@@ -183,28 +156,21 @@ async fn service_row(
 }
 
 async fn cleanup_live_project(state: &AppState, project_id: &str) {
-    let _ = state
-        .docker
-        .cleanup_project_resources(project_id, &[])
-        .await;
+    let _ = state.docker.cleanup_project_resources(project_id, &[]).await;
     let _ = std::fs::remove_dir_all(PathBuf::from("projects").join(project_id));
 }
 
-async fn assert_background_compose_state(
-    state: &AppState,
-    project_id: &str,
-) -> anyhow::Result<String> {
+async fn assert_background_compose_state(state: &AppState, project_id: &str) -> anyhow::Result<String> {
     let project = project(&state.db, project_id).await?;
     anyhow::ensure!(project.deploy_type == Some(DeployType::Compose));
     anyhow::ensure!(project.is_background);
     anyhow::ensure!(project.status == ProjectStatus::Running);
     anyhow::ensure!(project.container_id.is_none());
     anyhow::ensure!(project.mapped_port.is_none());
-    let response =
-        crate::routes::projects::get_project(State(state.clone()), Path(project_id.to_string()))
-            .await
-            .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?
-            .0;
+    let response = crate::routes::projects::get_project(State(state.clone()), Path(project_id.to_string()))
+        .await
+        .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?
+        .0;
     anyhow::ensure!(response.deploy_type.as_deref() == Some("compose"));
     anyhow::ensure!(response.public_stats.is_none());
     let (container_id, status, is_public) = service_row(&state.db, project_id).await?;
@@ -243,10 +209,7 @@ async fn live_local_compose_background_uses_orchestrator_lifecycle() {
         let logs = project_logs(
             State(state.clone()),
             Path(project_id.clone()),
-            Query(LogsQuery {
-                tail: Some(50),
-                service: Some(SERVICE_NAME.into()),
-            }),
+            Query(LogsQuery { tail: Some(50), service: Some(SERVICE_NAME.into()) }),
         )
         .await
         .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?
@@ -275,13 +238,7 @@ async fn live_local_compose_background_uses_orchestrator_lifecycle() {
             .fetch_one(&state.db)
             .await?;
         anyhow::ensure!(remaining == 0);
-        anyhow::ensure!(
-            state
-                .docker
-                .list_project_workload_containers(&project_id)
-                .await?
-                .is_empty()
-        );
+        anyhow::ensure!(state.docker.list_project_workload_containers(&project_id).await?.is_empty());
         Ok(())
     }
     .await;
@@ -291,11 +248,7 @@ async fn live_local_compose_background_uses_orchestrator_lifecycle() {
 }
 
 async fn live_agent_state() -> anyhow::Result<litebin_agent::AgentState> {
-    let mut docker = DockerManager::new(
-        "litebin-orchestrator-path-tests".into(),
-        128 * 1024 * 1024,
-        0.25,
-    )?;
+    let mut docker = DockerManager::new("litebin-orchestrator-path-tests".into(), 128 * 1024 * 1024, 0.25)?;
     docker.detect_host_projects_dir().await;
     Ok(litebin_agent::AgentState {
         config: Arc::new(litebin_agent::Config {
@@ -330,9 +283,8 @@ async fn live_remote_compose_background_dispatches_through_agent_http() {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let server_task = tokio::spawn(async move {
-        axum::serve(listener, litebin_agent::build_router(agent_state)).await
-    });
+    let server_task =
+        tokio::spawn(async move { axum::serve(listener, litebin_agent::build_router(agent_state)).await });
 
     let result: anyhow::Result<()> = async {
         let now = chrono::Utc::now().timestamp();
@@ -348,9 +300,7 @@ async fn live_remote_compose_background_dispatches_through_agent_http() {
         .await?;
         insert_compose_project(&state.db, &project_id, "test-remote", &image).await?;
         write_compose(&project_id, &image)?;
-        state
-            .node_clients
-            .insert("test-remote".into(), Arc::new(reqwest::Client::new()));
+        state.node_clients.insert("test-remote".into(), Arc::new(reqwest::Client::new()));
 
         let _ = start_project(State(state.clone()), Path(project_id.clone()))
             .await
@@ -370,10 +320,7 @@ async fn live_remote_compose_background_dispatches_through_agent_http() {
         let logs = project_logs(
             State(state.clone()),
             Path(project_id.clone()),
-            Query(LogsQuery {
-                tail: Some(50),
-                service: Some(SERVICE_NAME.into()),
-            }),
+            Query(LogsQuery { tail: Some(50), service: Some(SERVICE_NAME.into()) }),
         )
         .await
         .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?
@@ -386,10 +333,7 @@ async fn live_remote_compose_background_dispatches_through_agent_http() {
             .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?;
         tokio::time::timeout(Duration::from_secs(30), async {
             loop {
-                if project(&state.db, &project_id)
-                    .await
-                    .is_ok_and(|project| project.status == ProjectStatus::Stopped)
-                {
+                if project(&state.db, &project_id).await.is_ok_and(|project| project.status == ProjectStatus::Stopped) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -407,13 +351,7 @@ async fn live_remote_compose_background_dispatches_through_agent_http() {
             .fetch_one(&state.db)
             .await?;
         anyhow::ensure!(remaining == 0);
-        anyhow::ensure!(
-            state
-                .docker
-                .list_project_workload_containers(&project_id)
-                .await?
-                .is_empty()
-        );
+        anyhow::ensure!(state.docker.list_project_workload_containers(&project_id).await?.is_empty());
         Ok(())
     }
     .await;

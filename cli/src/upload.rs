@@ -15,7 +15,8 @@ pub async fn upload_tar(
 ) -> Result<String> {
     let file_len = std::fs::metadata(tar_path)?.len();
 
-    let mut url = format!("{}/images/upload?project_id={}&image_id={}", server.trim_end_matches('/'), project_id, image_id);
+    let mut url =
+        format!("{}/images/upload?project_id={}&image_id={}", server.trim_end_matches('/'), project_id, image_id);
     if let Some(node) = node_id {
         url.push_str(&format!("&node_id={}", node));
     }

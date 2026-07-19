@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::caddy::{CaddyClient, ORCHESTRATOR_API_PATHS};
 
@@ -409,17 +409,11 @@ impl RoutingProvider for MasterProxyRouter {
     ) -> anyhow::Result<()> {
         let config = self.build_config(projects, domain, orchestrator_upstream, dashboard_subdomain, poke_subdomain);
 
-        tracing::info!(
-            route_count = projects.len(),
-            "syncing caddy config (master proxy)"
-        );
+        tracing::info!(route_count = projects.len(), "syncing caddy config (master proxy)");
         tracing::debug!(config = %serde_json::to_string_pretty(&config).unwrap_or_default(), "caddy config payload");
 
         let url = format!("{}/load", self.caddy.admin_url());
-        let resp = self
-            .caddy
-            .post_json(&url, &config)
-            .await?;
+        let resp = self.caddy.post_json(&url, &config).await?;
 
         if !resp.status().is_success() {
             let status = resp.status();

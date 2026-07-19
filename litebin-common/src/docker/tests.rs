@@ -2,10 +2,7 @@ use super::*;
 
 #[test]
 fn classify_not_found() {
-    let e = bollard::errors::Error::DockerResponseServerError {
-        status_code: 404,
-        message: "No such network".into(),
-    };
+    let e = bollard::errors::Error::DockerResponseServerError { status_code: 404, message: "No such network".into() };
     assert_eq!(DockerErrorKind::from_bollard_error(&e), DockerErrorKind::NotFound);
 }
 
@@ -29,18 +26,15 @@ fn classify_forbidden() {
 
 #[test]
 fn classify_server_error_as_other() {
-    let e = bollard::errors::Error::DockerResponseServerError {
-        status_code: 500,
-        message: "internal server error".into(),
-    };
+    let e =
+        bollard::errors::Error::DockerResponseServerError { status_code: 500, message: "internal server error".into() };
     assert_eq!(DockerErrorKind::from_bollard_error(&e), DockerErrorKind::Other);
 }
 
 #[test]
 fn classify_io_error_as_connection() {
-    let e = bollard::errors::Error::IOError {
-        err: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused"),
-    };
+    let e =
+        bollard::errors::Error::IOError { err: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused") };
     assert_eq!(DockerErrorKind::from_bollard_error(&e), DockerErrorKind::Connection);
 }
 
@@ -52,10 +46,8 @@ fn classify_timeout() {
 
 #[test]
 fn classify_anyhow_wrapping_bollard() {
-    let inner = bollard::errors::Error::DockerResponseServerError {
-        status_code: 404,
-        message: "No such container".into(),
-    };
+    let inner =
+        bollard::errors::Error::DockerResponseServerError { status_code: 404, message: "No such container".into() };
     let anyhow_err: anyhow::Error = inner.into();
     assert_eq!(DockerErrorKind::from_anyhow(&anyhow_err), DockerErrorKind::NotFound);
 }
@@ -70,31 +62,17 @@ fn stopping_an_already_stopped_or_absent_container_is_idempotent() {
         assert!(super::container::is_idempotent_container_stop_error(&error));
     }
 
-    let error = bollard::errors::Error::DockerResponseServerError {
-        status_code: 500,
-        message: "daemon failure".into(),
-    };
+    let error =
+        bollard::errors::Error::DockerResponseServerError { status_code: 500, message: "daemon failure".into() };
     assert!(!super::container::is_idempotent_container_stop_error(&error));
 }
 
 #[test]
 fn project_workload_identity_accepts_current_and_legacy_containers() {
     let labels = HashMap::from([("litebin.project_id".into(), "my-app".into())]);
-    assert!(super::container::is_project_workload_container(
-        "my-app",
-        &["/replacement-name".into()],
-        Some(&labels),
-    ));
-    assert!(super::container::is_project_workload_container(
-        "my-app",
-        &["/litebin-my-app".into()],
-        None,
-    ));
-    assert!(super::container::is_project_workload_container(
-        "my-app",
-        &["/litebin-my-app.worker".into()],
-        None,
-    ));
+    assert!(super::container::is_project_workload_container("my-app", &["/replacement-name".into()], Some(&labels),));
+    assert!(super::container::is_project_workload_container("my-app", &["/litebin-my-app".into()], None,));
+    assert!(super::container::is_project_workload_container("my-app", &["/litebin-my-app.worker".into()], None,));
 }
 
 #[test]
@@ -105,11 +83,7 @@ fn project_workload_identity_rejects_other_projects_and_managed_proxy() {
         &["/litebin-my-app.worker".into()],
         Some(&other_labels),
     ));
-    assert!(!super::container::is_project_workload_container(
-        "my-app",
-        &["/litebin-my-app-2".into()],
-        None,
-    ));
+    assert!(!super::container::is_project_workload_container("my-app", &["/litebin-my-app-2".into()], None,));
     assert!(!super::container::is_project_workload_container(
         "my-app",
         &["/litebin-my-app.litebin-docker-proxy".into()],
@@ -119,10 +93,7 @@ fn project_workload_identity_rejects_other_projects_and_managed_proxy() {
 
 #[test]
 fn raw_docker_socket_is_removed_from_workloads_even_when_read_only() {
-    let binds = vec![
-        "/var/run/docker.sock:/var/run/docker.sock:ro".to_string(),
-        "litebin_data:/data".to_string(),
-    ];
+    let binds = vec!["/var/run/docker.sock:/var/run/docker.sock:ro".to_string(), "litebin_data:/data".to_string()];
     let sanitized = super::container::sanitize_docker_socket_binds(&binds, false);
     assert_eq!(sanitized, vec!["litebin_data:/data"]);
 }
@@ -130,10 +101,7 @@ fn raw_docker_socket_is_removed_from_workloads_even_when_read_only() {
 #[test]
 fn raw_docker_socket_is_retained_only_for_managed_proxy() {
     let binds = vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()];
-    assert_eq!(
-        super::container::sanitize_docker_socket_binds(&binds, true),
-        binds
-    );
+    assert_eq!(super::container::sanitize_docker_socket_binds(&binds, true), binds);
 }
 
 #[test]
@@ -150,10 +118,7 @@ fn ancestor_binds_that_expose_docker_socket_are_removed() {
 
 #[test]
 fn unrelated_socket_names_are_not_removed() {
-    let binds = vec![
-        "/tmp/my-docker.sock:/tmp/docker.sock".to_string(),
-        "/safe:/safe".to_string(),
-    ];
+    let binds = vec!["/tmp/my-docker.sock:/tmp/docker.sock".to_string(), "/safe:/safe".to_string()];
     let sanitized = super::container::sanitize_docker_socket_binds(&binds, false);
     assert_eq!(sanitized, binds);
 }
@@ -169,13 +134,7 @@ fn managed_docker_host_replaces_compose_value_once() {
         &["DOCKER_HOST=tcp://litebin-docker-proxy:2375".into()],
         true,
     );
-    assert_eq!(
-        merged,
-        vec![
-            "KEEP=value",
-            "DOCKER_HOST=tcp://litebin-docker-proxy:2375"
-        ]
-    );
+    assert_eq!(merged, vec!["KEEP=value", "DOCKER_HOST=tcp://litebin-docker-proxy:2375"]);
 }
 
 #[test]
@@ -183,15 +142,9 @@ fn full_project_cleanup_selects_workload_proxy_and_private_network() {
     let project_id = "generic-cleanup";
     let prefixes = super::container::project_cleanup_container_prefixes(project_id);
     let workload = crate::types::container_name(project_id, "collector", None);
-    let proxy = crate::types::container_name(
-        project_id,
-        crate::types::DOCKER_PROXY_SERVICE,
-        None,
-    );
+    let proxy = crate::types::container_name(project_id, crate::types::DOCKER_PROXY_SERVICE, None);
 
-    assert!(prefixes
-        .iter()
-        .any(|prefix| workload.starts_with(prefix)));
+    assert!(prefixes.iter().any(|prefix| workload.starts_with(prefix)));
     assert!(prefixes.iter().any(|prefix| proxy.starts_with(prefix)));
     assert_eq!(
         super::container::project_cleanup_observe_network(project_id),
@@ -213,22 +166,10 @@ fn host_network_startup_stabilization_only_applies_to_workload_daemons() {
 fn startup_process_decision_only_fails_confirmed_exits() {
     use super::container::{StartupProcessState, startup_process_state};
 
-    assert_eq!(
-        startup_process_state(Some(false), Some(98)),
-        StartupProcessState::Exited(Some(98))
-    );
-    assert_eq!(
-        startup_process_state(Some(false), None),
-        StartupProcessState::Exited(None)
-    );
-    assert_eq!(
-        startup_process_state(Some(true), Some(1)),
-        StartupProcessState::RunningOrUnknown
-    );
-    assert_eq!(
-        startup_process_state(None, None),
-        StartupProcessState::RunningOrUnknown
-    );
+    assert_eq!(startup_process_state(Some(false), Some(98)), StartupProcessState::Exited(Some(98)));
+    assert_eq!(startup_process_state(Some(false), None), StartupProcessState::Exited(None));
+    assert_eq!(startup_process_state(Some(true), Some(1)), StartupProcessState::RunningOrUnknown);
+    assert_eq!(startup_process_state(None, None), StartupProcessState::RunningOrUnknown);
 }
 
 #[test]
@@ -244,13 +185,9 @@ fn startup_log_tail_removes_terminal_controls_and_normalizes_returns() {
 #[test]
 fn startup_log_tail_is_bounded_and_keeps_the_end() {
     let prefix = "x".repeat(super::container::STARTUP_LOG_MAX_CHARS);
-    let sanitized =
-        super::container::sanitize_startup_log_chunks([prefix.as_str(), "actionable ending"]);
+    let sanitized = super::container::sanitize_startup_log_chunks([prefix.as_str(), "actionable ending"]);
 
-    assert_eq!(
-        sanitized.chars().count(),
-        super::container::STARTUP_LOG_MAX_CHARS
-    );
+    assert_eq!(sanitized.chars().count(), super::container::STARTUP_LOG_MAX_CHARS);
     assert!(sanitized.ends_with("actionable ending"));
 }
 

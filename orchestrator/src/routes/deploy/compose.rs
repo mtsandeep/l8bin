@@ -1,16 +1,21 @@
-use axum::{extract::State, http::{HeaderMap, StatusCode}, response::IntoResponse, Json};
 use axum::extract::Multipart;
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use axum_login::AuthSession;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
-use crate::AppState;
-use litebin_common::types::{ProjectStatus, DeployType};
 use crate::status::{self, ProjectUpdateFields};
+use litebin_common::types::{DeployType, ProjectStatus};
 
 #[derive(Debug)]
 enum TargetPreflightError {
@@ -29,28 +34,21 @@ where
     F: FnOnce(String) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let target_node_id =
-        nodes::selector::select_node_for_sticky(db, sticky_node_id, override_node_id)
-            .await
-            .map_err(TargetPreflightError::Selection)?;
+    let target_node_id = nodes::selector::select_node_for_sticky(db, sticky_node_id, override_node_id)
+        .await
+        .map_err(TargetPreflightError::Selection)?;
     if requires_host_network {
-        check_host_network(target_node_id.clone())
-            .await
-            .map_err(TargetPreflightError::Eligibility)?;
+        check_host_network(target_node_id.clone()).await.map_err(TargetPreflightError::Eligibility)?;
     }
     Ok(target_node_id)
 }
 
-async fn require_live_host_network_target(
-    state: &AppState,
-    target_node_id: &str,
-) -> anyhow::Result<()> {
+async fn require_live_host_network_target(state: &AppState, target_node_id: &str) -> anyhow::Result<()> {
     if target_node_id == "local" {
         let host = state.docker.host_info().await.ok();
         return litebin_common::docker::require_host_network_eligible(
             host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref()
-                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.operating_system.as_deref()),
             host.as_ref().and_then(|info| info.rootless),
             Some(3),
         );
@@ -62,20 +60,12 @@ async fn require_live_host_network_target(
     let client = nodes::client::get_node_client(&state.node_clients, target_node_id)
         .map_err(|error| anyhow::anyhow!("selected agent client is unavailable: {error:?}"))?;
     let health_url = format!("{}/health", agent_base_url(&state.config, &node));
-    let response = client
-        .get(health_url)
-        .send()
-        .await
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "failed to contact selected agent for host-network eligibility: {error}"
-            )
+    let response =
+        client.get(health_url).send().await.map_err(|error| {
+            anyhow::anyhow!("failed to contact selected agent for host-network eligibility: {error}")
         })?;
     if !response.status().is_success() {
-        anyhow::bail!(
-            "selected agent health check returned {}",
-            response.status()
-        );
+        anyhow::bail!("selected agent health check returned {}", response.status());
     }
     let health = response
         .json::<litebin_common::types::HealthReport>()
@@ -184,9 +174,7 @@ pub async fn deploy_compose(
                 target_services_raw = field.text().await.ok();
             }
             "stage_only" => {
-                stage_only_requested = field.text().await.ok()
-                    .and_then(|v| v.parse::<bool>().ok())
-                    .unwrap_or(false);
+                stage_only_requested = field.text().await.ok().and_then(|v| v.parse::<bool>().ok()).unwrap_or(false);
             }
             _ => {
                 tracing::debug!(field = %field_name, "ignoring unknown multipart field");
@@ -196,54 +184,47 @@ pub async fn deploy_compose(
 
     let project_id = match project_id {
         Some(id) if !id.is_empty() => id,
-        _ => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "project_id is required"})),
-        ).into_response(),
+        _ => return (StatusCode::BAD_REQUEST, Json(json!({"error": "project_id is required"}))).into_response(),
     };
 
     let compose_bytes = match compose_content {
         Some(b) if !b.is_empty() => b,
-        _ => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "compose file is required"})),
-        ).into_response(),
+        _ => return (StatusCode::BAD_REQUEST, Json(json!({"error": "compose file is required"}))).into_response(),
     };
 
     let compose_yaml = match String::from_utf8(compose_bytes.to_vec()) {
         Ok(s) => s,
-        Err(e) => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("compose file is not valid UTF-8: {e}")})),
-        ).into_response(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("compose file is not valid UTF-8: {e}")})))
+                .into_response();
+        }
     };
 
     // Authenticate
     let user_id = match auth_session.user {
         Some(u) => u.id.clone(),
-        None => {
-            match crate::auth::extract_deploy_token(&state, &headers, &project_id).await {
-                Some(uid) => uid,
-                None => return (
+        None => match crate::auth::extract_deploy_token(&state, &headers, &project_id).await {
+            Some(uid) => uid,
+            None => {
+                return (
                     StatusCode::UNAUTHORIZED,
                     Json(json!({"error": "Authentication required. Use session login or provide a deploy token."})),
-                ).into_response(),
+                )
+                    .into_response();
             }
-        }
+        },
     };
 
     // Basic validation
     if project_id == state.config.dashboard_subdomain || project_id == state.config.poke_subdomain {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "This ID is reserved"})),
-        ).into_response();
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "This ID is reserved"}))).into_response();
     }
     if !crate::validation::is_valid_project_id(&project_id) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "Project ID must be 1-63 lowercase letters, digits, or hyphens"})),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // Parse compose file with variable interpolation for validation.
@@ -251,31 +232,27 @@ pub async fn deploy_compose(
     // take effect on restart; interpolation happens again at container start time.
     let compose = match compose_bollard::ComposeParser::parse_with_interpolation(&compose_yaml, &[]) {
         Ok(c) => c,
-        Err(e) => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("invalid compose YAML: {e}")})),
-        ).into_response(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("invalid compose YAML: {e}")})))
+                .into_response();
+        }
     };
 
     if compose.services.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "compose file has no services"})),
-        ).into_response();
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "compose file has no services"}))).into_response();
     }
 
     // 4 validation checks
     // 1. Ghost deps
     let ghosts = compose.validate_ghost_deps();
     if !ghosts.is_empty() {
-        let msg = ghosts.iter()
+        let msg = ghosts
+            .iter()
             .map(|(svc, dep)| format!("service '{svc}' depends on unknown service '{dep}'"))
             .collect::<Vec<_>>()
             .join("; ");
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("invalid dependencies: {msg}")})),
-        ).into_response();
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("invalid dependencies: {msg}")})))
+            .into_response();
     }
 
     // 2. Cycles
@@ -283,20 +260,25 @@ pub async fn deploy_compose(
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": format!("dependency cycle detected: {}", cycle.join(" -> "))})),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // 3. Topological sort (also validates DAG)
     let start_order = match compose.topological_sort() {
         Ok(order) => order,
-        Err(e) => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("invalid service graph: {e}")})),
-        ).into_response(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("invalid service graph: {e}")})))
+                .into_response();
+        }
     };
 
     let existing_background: Option<bool> = sqlx::query_scalar("SELECT is_background FROM projects WHERE id = ?")
-        .bind(&project_id).fetch_optional(&state.db).await.ok().flatten();
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
     let is_background = is_background.or(existing_background).unwrap_or(false);
 
     let public_service = if is_background {
@@ -304,7 +286,10 @@ pub async fn deploy_compose(
     } else {
         match compose.detect_public_service() {
             Ok(s) => s,
-            Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("public service conflict: {e}")}))).into_response(),
+            Err(e) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("public service conflict: {e}")})))
+                    .into_response();
+            }
         }
     };
 
@@ -316,19 +301,21 @@ pub async fn deploy_compose(
         is_background,
     ) {
         Ok((_, report)) => report,
-        Err(e) => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("compose compatibility error: {e}")})),
-        ).into_response(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("compose compatibility error: {e}")})))
+                .into_response();
+        }
     };
     if !compat_report.ok {
         let unsupported: Vec<_> = compat_report
             .unsupported()
-            .map(|f| json!({
-                "path": f.path,
-                "service": f.service,
-                "message": f.message,
-            }))
+            .map(|f| {
+                json!({
+                    "path": f.path,
+                    "service": f.service,
+                    "message": f.message,
+                })
+            })
             .collect();
         return (
             StatusCode::BAD_REQUEST,
@@ -337,7 +324,8 @@ pub async fn deploy_compose(
                 "unsupported": unsupported,
                 "report": compat_report,
             })),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // Apply capability grants from the explicit list and the legacy raw-ports flag.
@@ -357,10 +345,8 @@ pub async fn deploy_compose(
                         }
                     }
                     None => {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            Json(json!({"error": format!("unknown capability '{id}'")})),
-                        ).into_response();
+                        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("unknown capability '{id}'")})))
+                            .into_response();
                     }
                 }
             }
@@ -388,10 +374,7 @@ pub async fn deploy_compose(
         if allow_raw_ports == Some(true) {
             effective.insert("raw-ports".into());
         }
-        let missing = crate::capabilities::missing_capabilities(
-            &compat_report.required_capabilities,
-            &effective,
-        );
+        let missing = crate::capabilities::missing_capabilities(&compat_report.required_capabilities, &effective);
         if !missing.is_empty() {
             return (
                 StatusCode::FORBIDDEN,
@@ -400,14 +383,12 @@ pub async fn deploy_compose(
                     "missing_capabilities": missing,
                     "report": compat_report,
                 })),
-            ).into_response();
+            )
+                .into_response();
         }
         effective
     };
-    let requests_host_network = compose
-        .services
-        .values()
-        .any(|service| service.uses_host_network());
+    let requests_host_network = compose.services.values().any(|service| service.uses_host_network());
     debug_assert!(
         !requests_host_network || effective_grants.contains("host-network"),
         "required host-network capability was checked above"
@@ -419,12 +400,10 @@ pub async fn deploy_compose(
     let auto_start = if is_background { false } else { auto_start_enabled.unwrap_or(true) };
 
     // On redeploy, preserve existing sleep settings unless explicitly provided
-    let existing_status: Option<ProjectStatus> = match sqlx::query_scalar(
-        "SELECT status FROM projects WHERE id = ?"
-    )
-    .bind(&project_id)
-    .fetch_optional(&state.db)
-    .await
+    let existing_status: Option<ProjectStatus> = match sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
     {
         Ok(status) => status,
         Err(e) => {
@@ -441,7 +420,7 @@ pub async fn deploy_compose(
         (false, auto_stop_mins, false)
     } else if is_update && auto_stop_enabled.is_none() && auto_start_enabled.is_none() {
         let existing = sqlx::query_as::<_, (bool, i64, bool)>(
-            "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?"
+            "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?",
         )
         .bind(&project_id)
         .fetch_optional(&state.db)
@@ -457,9 +436,8 @@ pub async fn deploy_compose(
     };
 
     // Parse target_services from comma-separated string (sent by CLI on partial redeploy)
-    let target_services: Option<Vec<String>> = target_services_raw.map(|s| {
-        s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
-    });
+    let target_services: Option<Vec<String>> =
+        target_services_raw.map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect());
 
     tracing::info!(
         project_id = %project_id,
@@ -470,22 +448,18 @@ pub async fn deploy_compose(
     );
 
     // Acquire deploy lock
-    let semaphore = state
-        .project_locks
-        .entry(project_id.clone())
-        .or_insert_with(|| Arc::new(Semaphore::new(1)))
-        .clone();
+    let semaphore =
+        state.project_locks.entry(project_id.clone()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
     let _permit = semaphore.acquire().await.unwrap();
 
     // Re-read the sticky node under the deploy lock so a queued redeploy sees
     // the target selected by the deploy that ran immediately before it.
-    let existing_node_id: Option<String> =
-        sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
-            .bind(&project_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
+    let existing_node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
 
     // Resolve the sticky/override/automatic target and validate host-network
     // eligibility before changing project state, grants, artifacts, or stage metadata.
@@ -495,34 +469,22 @@ pub async fn deploy_compose(
         existing_node_id.as_deref(),
         node_id,
         requests_host_network,
-        |target_node_id| async move {
-            require_live_host_network_target(preflight_state, &target_node_id).await
-        },
+        |target_node_id| async move { require_live_host_network_target(preflight_state, &target_node_id).await },
     )
     .await
     {
         Ok(id) => id,
         Err(TargetPreflightError::Selection(error)) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": format!("{error:?}")})),
-            )
-                .into_response();
+            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("{error:?}")}))).into_response();
         }
         Err(TargetPreflightError::Eligibility(error)) => {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({"error": error.to_string()})),
-            )
-                .into_response();
+            return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": error.to_string()}))).into_response();
         }
     };
 
     // Capture old per-service image digests for cleanup after redeploy.
     let old_service_digests = if is_update {
-        crate::routes::manage::capture_service_digests(
-            &state, &project_id, existing_node_id.as_deref(), None,
-        ).await
+        crate::routes::manage::capture_service_digests(&state, &project_id, existing_node_id.as_deref(), None).await
     } else {
         std::collections::HashMap::new()
     };
@@ -535,7 +497,8 @@ pub async fn deploy_compose(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("failed to write compose.yaml: {e}")})),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // Determine the public service's port for the projects row
@@ -559,12 +522,10 @@ pub async fn deploy_compose(
 
     // On redeploy, preserve existing raw-port access unless explicitly provided.
     let db_allow_raw_ports = if is_update && allow_raw_ports.is_none() {
-        let existing = match sqlx::query_scalar::<_, bool>(
-            "SELECT allow_raw_ports FROM projects WHERE id = ?"
-        )
-        .bind(&project_id)
-        .fetch_optional(&state.db)
-        .await
+        let existing = match sqlx::query_scalar::<_, bool>("SELECT allow_raw_ports FROM projects WHERE id = ?")
+            .bind(&project_id)
+            .fetch_optional(&state.db)
+            .await
         {
             Ok(row) => row,
             Err(e) => {
@@ -630,11 +591,7 @@ pub async fn deploy_compose(
 
     if let Err(e) = result {
         let is_conflict = crate::validation::is_unique_constraint(&e);
-        let status = if is_conflict {
-            StatusCode::CONFLICT
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
-        };
+        let status = if is_conflict { StatusCode::CONFLICT } else { StatusCode::INTERNAL_SERVER_ERROR };
         return (
             status,
             Json(json!({"error": if is_conflict { format!("project '{}' already exists", project_id) } else { format!("database error: {e}") } })),
@@ -642,33 +599,24 @@ pub async fn deploy_compose(
     }
 
     // Persist any newly approved capabilities (syncs legacy allow_* columns).
-    if let Err(e) = crate::capabilities::grant_many(
-        &state.db,
-        &project_id,
-        &pending_grants,
-        Some(&user_id),
-    )
-    .await
-    {
+    if let Err(e) = crate::capabilities::grant_many(&state.db, &project_id, &pending_grants, Some(&user_id)).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("failed to grant capabilities: {e}")})),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // Read project back from DB
-    let project = match sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE id = ?"
-    )
-    .bind(&project_id)
-    .fetch_one(&state.db)
-    .await {
+    let project = match sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(&project_id)
+        .fetch_one(&state.db)
+        .await
+    {
         Ok(p) => p,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("database error: {e}")})),
-            ).into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("database error: {e}")})))
+                .into_response();
         }
     };
     let docker_observe = match crate::capabilities::has_capability(
@@ -705,28 +653,28 @@ pub async fn deploy_compose(
     };
 
     // Seed project_services rows for each service in the compose file
-    let target_set: Option<std::collections::HashSet<String>> = target_services.as_ref()
-        .map(|ts| ts.iter().cloned().collect());
+    let target_set: Option<std::collections::HashSet<String>> =
+        target_services.as_ref().map(|ts| ts.iter().cloned().collect());
     let oneshot_names = compose.oneshot_service_names();
     for svc_name in &start_order {
         let svc = &compose.services[svc_name];
         let image = svc.image.clone().unwrap_or_default();
-        let port: Option<i64> = svc.ports.as_ref()
+        let port: Option<i64> = svc
+            .ports
+            .as_ref()
             .and_then(|p| p.first())
             .and_then(|p| p.split(':').last()?.parse().ok())
             .map(|p: u16| p as i64);
         let is_public = !is_background && public_service.as_deref() == Some(svc_name.as_str());
         let is_oneshot = oneshot_names.contains(svc_name);
-        let depends_on = svc.depends_on.as_ref()
-            .and_then(|d| serde_json::to_string(d).ok());
-        let compose_mem: Option<i64> = svc.memory_bytes()
-            .map(|bytes| (bytes / (1024 * 1024)) as i64);
-        let compose_cpu: Option<f64> = svc.cpus.as_ref()
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())));
+        let depends_on = svc.depends_on.as_ref().and_then(|d| serde_json::to_string(d).ok());
+        let compose_mem: Option<i64> = svc.memory_bytes().map(|bytes| (bytes / (1024 * 1024)) as i64);
+        let compose_cpu: Option<f64> =
+            svc.cpus.as_ref().and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())));
 
         // On redeploy, preserve DB overrides when compose file doesn't specify memory/CPU
         let existing_override: Option<(Option<i64>, Option<f64>)> = sqlx::query_as(
-            "SELECT memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ? AND service_name = ?"
+            "SELECT memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ? AND service_name = ?",
         )
         .bind(&project_id)
         .bind(svc_name)
@@ -768,10 +716,8 @@ pub async fn deploy_compose(
     }
 
     // Seed project_volumes rows from compose volume definitions
-    if let Err(e) = sqlx::query("DELETE FROM project_volumes WHERE project_id = ?")
-        .bind(&project_id)
-        .execute(&state.db)
-        .await
+    if let Err(e) =
+        sqlx::query("DELETE FROM project_volumes WHERE project_id = ?").bind(&project_id).execute(&state.db).await
     {
         tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to delete existing volumes");
     }
@@ -784,11 +730,13 @@ pub async fn deploy_compose(
                 if parts.len() >= 2 {
                     let volume_name = if !parts[0].is_empty() {
                         Some(litebin_common::types::scope_volume_source(parts[0], &project_id))
-                    } else { None };
+                    } else {
+                        None
+                    };
                     let container_path = parts[1].to_string();
                     if let Err(e) = sqlx::query(
                         "INSERT OR IGNORE INTO project_volumes (project_id, service_name, volume_name, container_path)
-                         VALUES (?, ?, ?, ?)"
+                         VALUES (?, ?, ?, ?)",
                     )
                     .bind(&project_id)
                     .bind(svc_name)
@@ -805,14 +753,12 @@ pub async fn deploy_compose(
     }
 
     // Persist sticky node selection even for staged first deploys.
-    if let Err(e) = sqlx::query(
-        "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
-    )
-    .bind(&target_node_id)
-    .bind(now)
-    .bind(&project_id)
-    .execute(&state.db)
-    .await
+    if let Err(e) = sqlx::query("UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?")
+        .bind(&target_node_id)
+        .bind(now)
+        .bind(&project_id)
+        .execute(&state.db)
+        .await
     {
         tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to persist node_id");
     }
@@ -823,26 +769,41 @@ pub async fn deploy_compose(
             let node = match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
                 Ok(n) => n,
                 Err(e) => {
-                    if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                    if let Err(e) = status::transition(
+                        &state.db,
+                        &project_id,
+                        ProjectStatus::Error,
+                        &ProjectUpdateFields::default(),
+                        None,
+                    )
+                    .await
+                    {
                         tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
                     }
-                    return (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        Json(json!({"error": format!("{:?}", e)})),
-                    ).into_response();
+                    return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("{:?}", e)})))
+                        .into_response();
                 }
             };
 
             let client = match nodes::client::get_node_client(&state.node_clients, &target_node_id) {
                 Ok(c) => c,
                 Err(e) => {
-                    if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                    if let Err(e) = status::transition(
+                        &state.db,
+                        &project_id,
+                        ProjectStatus::Error,
+                        &ProjectUpdateFields::default(),
+                        None,
+                    )
+                    .await
+                    {
                         tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
                     }
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
                         Json(json!({"error": format!("node client unavailable: {:?}", e)})),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
             };
 
@@ -864,26 +825,44 @@ pub async fn deploy_compose(
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "remote compose stage request failed");
-                    if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                    if let Err(e) = status::transition(
+                        &state.db,
+                        &project_id,
+                        ProjectStatus::Error,
+                        &ProjectUpdateFields::default(),
+                        None,
+                    )
+                    .await
+                    {
                         tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
                     }
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
                         Json(json!({"error": format!("agent unreachable: {e}")})),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
             };
 
             if !stage_resp.status().is_success() {
                 let body = stage_resp.text().await.unwrap_or_default();
                 tracing::error!(body = %body, "remote compose stage failed");
-                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
+                if let Err(e) = status::transition(
+                    &state.db,
+                    &project_id,
+                    ProjectStatus::Error,
+                    &ProjectUpdateFields::default(),
+                    None,
+                )
+                .await
+                {
                     tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
                 }
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("remote stage failed: {body}")})),
-                ).into_response();
+                )
+                    .into_response();
             }
         }
 
@@ -893,12 +872,15 @@ pub async fn deploy_compose(
             ProjectStatus::Unconfigured,
             &ProjectUpdateFields::default(),
             None,
-        ).await {
+        )
+        .await
+        {
             tracing::error!(project_id = %project_id, error = %e, "compose stage: failed to mark project unconfigured");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "failed to persist staged deployment status"})),
-            ).into_response();
+            )
+                .into_response();
         }
 
         tracing::info!(
@@ -925,26 +907,40 @@ pub async fn deploy_compose(
         let node = match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
             Ok(n) => n,
             Err(e) => {
-                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
-                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
-            }
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": format!("{:?}", e)})),
-                ).into_response();
+                if let Err(e) = status::transition(
+                    &state.db,
+                    &project_id,
+                    ProjectStatus::Error,
+                    &ProjectUpdateFields::default(),
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+                }
+                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("{:?}", e)}))).into_response();
             }
         };
 
         let client = match nodes::client::get_node_client(&state.node_clients, &target_node_id) {
             Ok(c) => c,
             Err(e) => {
-                if let Err(e) = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await {
-                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
-            }
+                if let Err(e) = status::transition(
+                    &state.db,
+                    &project_id,
+                    ProjectStatus::Error,
+                    &ProjectUpdateFields::default(),
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+                }
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("node client unavailable: {:?}", e)})),
-                ).into_response();
+                )
+                    .into_response();
             }
         };
 
@@ -974,9 +970,17 @@ pub async fn deploy_compose(
         .collect();
 
         let default_mem: i64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_memory_limit_mb'")
-            .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(256);
+            .fetch_one(&state.db)
+            .await
+            .ok()
+            .and_then(|v: String| v.parse().ok())
+            .unwrap_or(256);
         let default_cpu: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
-            .fetch_one(&state.db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(0.5);
+            .fetch_one(&state.db)
+            .await
+            .ok()
+            .and_then(|v: String| v.parse().ok())
+            .unwrap_or(0.5);
         let batch_resp = match client
             .post(&format!("{}/containers/batch-run", base_url))
             .json(&json!({
@@ -1002,15 +1006,20 @@ pub async fn deploy_compose(
                 let project_error = if target_services.is_some() {
                     status::set_project_error_only(&state.db, &project_id).await
                 } else {
-                    status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await
+                    status::transition(
+                        &state.db,
+                        &project_id,
+                        ProjectStatus::Error,
+                        &ProjectUpdateFields::default(),
+                        None,
+                    )
+                    .await
                 };
                 if let Err(e) = project_error {
-                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
-            }
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": format!("agent unreachable: {e}")})),
-                ).into_response();
+                    tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+                }
+                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("agent unreachable: {e}")})))
+                    .into_response();
             }
         };
 
@@ -1042,16 +1051,12 @@ pub async fn deploy_compose(
                 }
             };
             tracing::error!(status = %status_code, body = %body, "remote batch-run failed");
-            crate::routes::manage::multi_service::apply_remote_batch_failure_metadata(
-                &state,
-                &project_id,
-                &body,
-            )
-            .await;
+            crate::routes::manage::multi_service::apply_remote_batch_failure_metadata(&state, &project_id, &body).await;
             let project_error = if target_services.is_some() {
                 status::set_project_error_only(&state.db, &project_id).await
             } else {
-                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await
+                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+                    .await
             };
             if let Err(e) = project_error {
                 tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
@@ -1059,7 +1064,8 @@ pub async fn deploy_compose(
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": format!("remote batch-run failed: {body}")})),
-            ).into_response();
+            )
+                .into_response();
         }
 
         let batch_result: serde_json::Value = match batch_resp.json().await {
@@ -1083,12 +1089,20 @@ pub async fn deploy_compose(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": format!("failed to parse batch-run response: {e}")})),
-                ).into_response();
+                )
+                    .into_response();
             }
         };
 
-        let service_errors: Vec<String> = batch_result["services"].as_array().into_iter().flatten()
-            .filter_map(|svc| svc["error"].as_str().map(|error| format!("{}: {}", svc["service_name"].as_str().unwrap_or("unknown"), error)))
+        let service_errors: Vec<String> = batch_result["services"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|svc| {
+                svc["error"]
+                    .as_str()
+                    .map(|error| format!("{}: {}", svc["service_name"].as_str().unwrap_or("unknown"), error))
+            })
             .collect();
 
         // Update project_services with container IDs and ports from agent response
@@ -1099,7 +1113,9 @@ pub async fn deploy_compose(
                 let mapped_port = svc["mapped_port"].as_u64().map(|p| p as i64);
 
                 if let Some(cid) = container_id {
-                    if let Err(e) = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await {
+                    if let Err(e) =
+                        status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await
+                    {
                         tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "compose deploy: failed to set service running");
                     }
                 } else {
@@ -1110,7 +1126,9 @@ pub async fn deploy_compose(
             }
 
             // Set project's denormalized container_id to the public service
-            let public_result = public_service.as_deref().and_then(|name| services.iter().find(|s| s["service_name"].as_str() == Some(name)));
+            let public_result = public_service
+                .as_deref()
+                .and_then(|name| services.iter().find(|s| s["service_name"].as_str() == Some(name)));
 
             if let Some(pub_svc) = public_result {
                 let cid = pub_svc["container_id"].as_str().unwrap_or("").to_string();
@@ -1126,14 +1144,22 @@ pub async fn deploy_compose(
                         last_active_at: Some(now),
                     },
                     None,
-                ).await {
+                )
+                .await
+                {
                     tracing::error!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Running");
                 }
             }
         }
         if !service_errors.is_empty() {
-            let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "one or more services failed to start", "service_errors": service_errors}))).into_response();
+            let _ =
+                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+                    .await;
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "one or more services failed to start", "service_errors": service_errors})),
+            )
+                .into_response();
         }
         status::derive_and_set_project_status(&state.db, &project_id).await;
 
@@ -1142,12 +1168,9 @@ pub async fn deploy_compose(
 
         // Clean up old per-service images by digest
         for (svc_name, digest) in &old_service_digests {
-            let should_cleanup = target_services.as_ref()
-                .map_or(true, |targets| targets.contains(svc_name));
+            let should_cleanup = target_services.as_ref().map_or(true, |targets| targets.contains(svc_name));
             if should_cleanup {
-                crate::routes::manage::cleanup_unused_image(
-                    &state, existing_node_id.as_deref(), digest,
-                ).await;
+                crate::routes::manage::cleanup_unused_image(&state, existing_node_id.as_deref(), digest).await;
             }
         }
 
@@ -1352,11 +1375,22 @@ pub async fn deploy_compose(
 
         if let Err(e) = result {
             tracing::error!(project_id = %project_id_clone, error = %e, "background compose deploy failed");
-            crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, &format!("Deploy failed: {}", e));
+            crate::routes::deploy::logs::push_deploy_log(
+                &state_clone,
+                &project_id_clone,
+                &format!("Deploy failed: {}", e),
+            );
             let project_error = if target_services_clone.is_some() {
                 status::set_project_error_only(&state_clone.db, &project_id_clone).await
             } else {
-                status::transition(&state_clone.db, &project_id_clone, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await
+                status::transition(
+                    &state_clone.db,
+                    &project_id_clone,
+                    ProjectStatus::Error,
+                    &ProjectUpdateFields::default(),
+                    None,
+                )
+                .await
             };
             if let Err(e) = project_error {
                 tracing::warn!(project_id = %project_id_clone, error = %e, "compose deploy: failed to transition to Error in background task");
@@ -1386,11 +1420,11 @@ pub async fn deploy_compose(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_target_before_mutation, TargetPreflightError};
+    use super::{TargetPreflightError, resolve_target_before_mutation};
     use sqlx::SqlitePool;
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     };
 
     async fn preflight_db() -> SqlitePool {
@@ -1457,17 +1491,11 @@ mod tests {
         let eligibility_checked = Arc::new(AtomicBool::new(false));
         let checked = eligibility_checked.clone();
 
-        let result = resolve_target_before_mutation(
-            &db,
-            Some("local"),
-            None,
-            true,
-            move |target_node_id| async move {
-                checked.store(true, Ordering::SeqCst);
-                assert_eq!(target_node_id, "local");
-                anyhow::bail!("ineligible live host")
-            },
-        )
+        let result = resolve_target_before_mutation(&db, Some("local"), None, true, move |target_node_id| async move {
+            checked.store(true, Ordering::SeqCst);
+            assert_eq!(target_node_id, "local");
+            anyhow::bail!("ineligible live host")
+        })
         .await;
 
         assert!(matches!(result, Err(TargetPreflightError::Eligibility(_))));
@@ -1479,16 +1507,12 @@ mod tests {
         .fetch_one(&db)
         .await
         .unwrap();
-        assert_eq!(
-            existing,
-            ("running".into(), Some("local".into()), "original".into())
-        );
-        let new_project_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM mutation_guard WHERE project_id = 'new-project'",
-        )
-        .fetch_one(&db)
-        .await
-        .unwrap();
+        assert_eq!(existing, ("running".into(), Some("local".into()), "original".into()));
+        let new_project_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM mutation_guard WHERE project_id = 'new-project'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
         assert_eq!(new_project_count, 0);
     }
 }

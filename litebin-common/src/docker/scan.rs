@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use bollard::query_parameters::{ListContainersOptions, RenameContainerOptions};
 use bollard::models::MountPointTypeEnum;
+use bollard::query_parameters::{ListContainersOptions, RenameContainerOptions};
 
 use crate::types::COMPOSE_FILE_NAMES;
 
@@ -10,9 +10,7 @@ use super::DockerManager;
 impl DockerManager {
     /// Rename a running container to a new name (zero-downtime, container keeps running).
     pub async fn rename_container(&self, container_id: &str, new_name: &str) -> anyhow::Result<()> {
-        self.docker
-            .rename_container(container_id, RenameContainerOptions { name: new_name.to_string() })
-            .await?;
+        self.docker.rename_container(container_id, RenameContainerOptions { name: new_name.to_string() }).await?;
         tracing::info!(container_id = %container_id, new_name = %new_name, "renamed container");
         Ok(())
     }
@@ -23,20 +21,12 @@ impl DockerManager {
     /// Containers are excluded if their name starts with `litebin-`.
     /// Remaining containers are grouped by the `com.docker.compose.project` label;
     /// standalone containers (no label) each form their own single-container group.
-    pub async fn scan_foreign_containers(
-        &self,
-    ) -> anyhow::Result<Vec<crate::scan::ScanGroup>> {
-        use crate::scan::{is_local_image, sanitize_project_id, ScanContainer, ScanGroup, ScannedPort, ScannedVolume};
+    pub async fn scan_foreign_containers(&self) -> anyhow::Result<Vec<crate::scan::ScanGroup>> {
+        use crate::scan::{ScanContainer, ScanGroup, ScannedPort, ScannedVolume, is_local_image, sanitize_project_id};
         use crate::types::DeployType;
 
         // List ALL containers (running + stopped)
-        let all = self
-            .docker
-            .list_containers(Some(ListContainersOptions {
-                all: true,
-                ..Default::default()
-            }))
-            .await?;
+        let all = self.docker.list_containers(Some(ListContainersOptions { all: true, ..Default::default() })).await?;
 
         // Collect container IDs that are not LiteBin-managed
         let foreign_ids: Vec<String> = all
@@ -45,13 +35,9 @@ impl DockerManager {
                 let names = c.names.as_deref().unwrap_or_default();
                 let labels = c.labels.as_ref();
                 // Exclude if any name starts with /litebin-
-                let is_litebin_name = names
-                    .iter()
-                    .any(|n| n.trim_start_matches('/').starts_with("litebin-"));
+                let is_litebin_name = names.iter().any(|n| n.trim_start_matches('/').starts_with("litebin-"));
                 // Exclude if has a litebin label (future-proofing)
-                let is_litebin_label = labels
-                    .and_then(|l| l.get("litebin.project_id"))
-                    .is_some();
+                let is_litebin_label = labels.and_then(|l| l.get("litebin.project_id")).is_some();
                 !is_litebin_name && !is_litebin_label
             })
             .filter_map(|c| c.id)
@@ -72,25 +58,11 @@ impl DockerManager {
                 }
             };
 
-            let raw_name = inspect
-                .name
-                .as_deref()
-                .unwrap_or("unknown")
-                .trim_start_matches('/')
-                .to_string();
+            let raw_name = inspect.name.as_deref().unwrap_or("unknown").trim_start_matches('/').to_string();
 
-            let labels = inspect
-                .config
-                .as_ref()
-                .and_then(|c| c.labels.as_ref())
-                .cloned()
-                .unwrap_or_default();
+            let labels = inspect.config.as_ref().and_then(|c| c.labels.as_ref()).cloned().unwrap_or_default();
 
-            let image = inspect
-                .config
-                .as_ref()
-                .and_then(|c| c.image.clone())
-                .unwrap_or_default();
+            let image = inspect.config.as_ref().and_then(|c| c.image.clone()).unwrap_or_default();
 
             let state_str = inspect
                 .state
@@ -100,14 +72,9 @@ impl DockerManager {
                 .unwrap_or_else(|| "unknown".to_string());
 
             let compose_project = labels.get("com.docker.compose.project").cloned();
-            let service_name = labels
-                .get("com.docker.compose.service")
-                .cloned()
-                .unwrap_or_else(|| "web".to_string());
+            let service_name = labels.get("com.docker.compose.service").cloned().unwrap_or_else(|| "web".to_string());
 
-            let group_key = compose_project
-                .clone()
-                .unwrap_or_else(|| raw_name.clone());
+            let group_key = compose_project.clone().unwrap_or_else(|| raw_name.clone());
 
             // Build ports from network_settings
             let ports: Vec<ScannedPort> = inspect
@@ -185,9 +152,7 @@ impl DockerManager {
 
             // Track group metadata (only needs to be set once per group)
             group_meta.entry(group_key.clone()).or_insert_with(|| {
-                let working_dir = labels
-                    .get("com.docker.compose.project.working_dir")
-                    .cloned();
+                let working_dir = labels.get("com.docker.compose.project.working_dir").cloned();
                 let (compose_found, env_found) = if let Some(ref dir) = working_dir {
                     let p = std::path::Path::new(dir);
                     let c = COMPOSE_FILE_NAMES.iter().any(|name| p.join(name).exists());
@@ -215,12 +180,7 @@ impl DockerManager {
                     .enumerate()
                     .filter(|(_, c)| c.ports.iter().any(|p| p.external.is_some()))
                     .min_by_key(|(_, c)| {
-                        c.ports
-                            .iter()
-                            .filter(|p| p.external.is_some())
-                            .map(|p| p.internal)
-                            .min()
-                            .unwrap_or(u16::MAX)
+                        c.ports.iter().filter(|p| p.external.is_some()).map(|p| p.internal).min().unwrap_or(u16::MAX)
                     })
                     .map(|(idx, _)| idx);
 
@@ -228,11 +188,7 @@ impl DockerManager {
                     c.suggested_public = Some(idx) == best_idx;
                 }
 
-                let deploy_type = if is_compose {
-                    DeployType::Compose
-                } else {
-                    DeployType::Image
-                };
+                let deploy_type = if is_compose { DeployType::Compose } else { DeployType::Image };
 
                 let suggested_project_id = sanitize_project_id(&group_key);
 

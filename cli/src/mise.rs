@@ -13,25 +13,13 @@ const FALLBACK_MISE_VERSION: &str = "2026.3.17";
 /// Railpack source at the given release tag.
 /// Falls back to FALLBACK_MISE_VERSION on any failure.
 pub async fn fetch_mise_version(railpack_tag: &str) -> String {
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-    else {
+    let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() else {
         return FALLBACK_MISE_VERSION.to_string();
     };
 
-    let url = format!(
-        "{}/{}/core/mise/version.txt",
-        crate::config::RAILPACK_SOURCE_BASE,
-        railpack_tag
-    );
+    let url = format!("{}/{}/core/mise/version.txt", crate::config::RAILPACK_SOURCE_BASE, railpack_tag);
 
-    let Ok(resp) = client
-        .get(&url)
-        .header("User-Agent", "l8b-cli")
-        .send()
-        .await
-    else {
+    let Ok(resp) = client.get(&url).header("User-Agent", "l8b-cli").send().await else {
         return FALLBACK_MISE_VERSION.to_string();
     };
 
@@ -58,17 +46,23 @@ pub async fn ensure_mise_for_railpack(railpack_tag: &str, ci_mode: bool) -> Resu
         return Ok(());
     }
 
-    if !ci_mode { println!("  {} Setting up mise for Railpack...", "::".dimmed()); }
+    if !ci_mode {
+        println!("  {} Setting up mise for Railpack...", "::".dimmed());
+    }
 
     for attempt in 1..=MAX_RETRIES {
         match download_and_install(&mise_version, &binary_name, ci_mode).await {
             Ok(()) => {
-                if !ci_mode { println!("  {} mise v{} installed", "✔".green(), mise_version); }
+                if !ci_mode {
+                    println!("  {} mise v{} installed", "✔".green(), mise_version);
+                }
                 return Ok(());
             }
             Err(e) => {
                 if attempt < MAX_RETRIES {
-                    if !ci_mode { println!("  {} Download failed (attempt {}/{}): {}", "!".yellow(), attempt, MAX_RETRIES, e); }
+                    if !ci_mode {
+                        println!("  {} Download failed (attempt {}/{}): {}", "!".yellow(), attempt, MAX_RETRIES, e);
+                    }
                 } else {
                     anyhow::bail!("mise download failed after {} attempts: {}", MAX_RETRIES, e);
                 }
@@ -81,11 +75,7 @@ pub async fn ensure_mise_for_railpack(railpack_tag: &str, ci_mode: bool) -> Resu
 
 fn asset_name(version: &str) -> String {
     let (os, arch) = if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            ("macos", "arm64")
-        } else {
-            ("macos", "x64")
-        }
+        if cfg!(target_arch = "aarch64") { ("macos", "arm64") } else { ("macos", "x64") }
     } else if cfg!(target_arch = "aarch64") {
         ("linux", "arm64")
     } else {
@@ -96,17 +86,14 @@ fn asset_name(version: &str) -> String {
 }
 
 async fn download_and_install(version: &str, binary_name: &str, ci_mode: bool) -> Result<()> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build()?;
 
     let name = asset_name(version);
-    let download_url = format!(
-        "{}/v{version}/{name}",
-        crate::config::MISE_RELEASE_BASE,
-    );
+    let download_url = format!("{}/v{version}/{name}", crate::config::MISE_RELEASE_BASE,);
 
-    if !ci_mode { println!("  {} Downloading mise v{}...", "::".dimmed(), version); }
+    if !ci_mode {
+        println!("  {} Downloading mise v{}...", "::".dimmed(), version);
+    }
     let bytes = client
         .get(&download_url)
         .header("User-Agent", "l8b-cli")
@@ -135,8 +122,7 @@ async fn download_and_install(version: &str, binary_name: &str, ci_mode: bool) -
         anyhow::bail!("failed to extract mise archive");
     }
 
-    let extracted_bin = find_file(&extract_dir, "mise")
-        .context("mise binary not found in archive")?;
+    let extracted_bin = find_file(&extract_dir, "mise").context("mise binary not found in archive")?;
 
     let install_dir = PathBuf::from(MISE_INSTALL_DIR);
     std::fs::create_dir_all(&install_dir)?;

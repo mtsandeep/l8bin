@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use axum::{
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use axum_login::AuthSession;
 use litebin_common::{
@@ -17,9 +17,7 @@ use crate::{
     AppState,
     auth::backend::PasswordBackend,
     nodes,
-    routes::manage::{
-        agent_base_url, ensure_project_dir_and_env, get_node_from_db,
-    },
+    routes::manage::{agent_base_url, ensure_project_dir_and_env, get_node_from_db},
     status,
 };
 
@@ -45,10 +43,7 @@ pub struct ScanQuery {
     tag = "scan",
     security(("session_auth" = []))
 )]
-pub async fn scan_containers(
-    State(state): State<AppState>,
-    Query(q): Query<ScanQuery>,
-) -> impl IntoResponse {
+pub async fn scan_containers(State(state): State<AppState>, Query(q): Query<ScanQuery>) -> impl IntoResponse {
     let node_id = q.node_id.as_deref().unwrap_or("all");
 
     // ── Local scan ──────────────────────────────────────────────────────────
@@ -66,19 +61,16 @@ pub async fn scan_containers(
 
     // ── Remote agent scans ──────────────────────────────────────────────────
     let agent_nodes: Vec<Node> = if node_id == "all" {
-        sqlx::query_as::<_, Node>(
-            "SELECT * FROM nodes WHERE id != 'local' AND status = 'online' ORDER BY name",
-        )
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default()
+        sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id != 'local' AND status = 'online' ORDER BY name")
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
     } else if node_id != "local" {
         // Specific agent node
         match get_node_from_db(&state.db, node_id).await {
             Ok(n) => vec![n],
             Err((_, msg)) => {
-                return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": msg })))
-                    .into_response();
+                return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": msg }))).into_response();
             }
         }
     } else {
@@ -100,15 +92,13 @@ pub async fn scan_containers(
         let fut = async move {
             let url = format!("{}/containers/scan", base_url);
             match client.get(&url).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<Vec<ScanGroup>>().await {
-                        Ok(groups) => (node_id_owned, groups),
-                        Err(e) => {
-                            tracing::warn!(error = %e, "scan: failed to parse agent scan response");
-                            (node_id_owned, Vec::new())
-                        }
+                Ok(resp) if resp.status().is_success() => match resp.json::<Vec<ScanGroup>>().await {
+                    Ok(groups) => (node_id_owned, groups),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "scan: failed to parse agent scan response");
+                        (node_id_owned, Vec::new())
                     }
-                }
+                },
                 Ok(resp) => {
                     tracing::warn!(status = %resp.status(), "scan: agent returned error");
                     (node_id_owned, Vec::new())
@@ -122,8 +112,7 @@ pub async fn scan_containers(
         agent_futures.push(fut);
     }
 
-    let agent_results: Vec<(String, Vec<ScanGroup>)> =
-        futures_util::future::join_all(agent_futures).await;
+    let agent_results: Vec<(String, Vec<ScanGroup>)> = futures_util::future::join_all(agent_futures).await;
 
     let mut nodes_map: HashMap<String, Vec<ScanGroup>> = HashMap::new();
     for (nid, groups) in agent_results {
@@ -201,7 +190,8 @@ pub async fn import_containers(
     let user_id = match auth_session.user {
         Some(u) => u.id.clone(),
         None => {
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "not authenticated" }))).into_response();
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "not authenticated" })))
+                .into_response();
         }
     };
     let mut imported = Vec::new();
@@ -246,9 +236,7 @@ async fn import_single_group(
     let mut warnings: Vec<String> = Vec::new();
     let now = chrono::Utc::now().timestamp();
     if group.containers.iter().any(|container| {
-        container.volumes.iter().any(|volume| {
-            litebin_common::docker::bind_source_exposes_docker_socket(&volume.source)
-        })
+        container.volumes.iter().any(|volume| litebin_common::docker::bind_source_exposes_docker_socket(&volume.source))
     }) {
         return Err(
             "cannot import a running container whose host mounts expose the Docker daemon socket; redeploy it from sanitized Compose instead"
@@ -275,17 +263,10 @@ async fn import_single_group(
         .or_else(|| group.containers.first());
 
     let primary_image = public_container.map(|c| c.image.clone()).unwrap_or_default();
-    let primary_port: Option<i64> = public_container
-        .and_then(|c| c.ports.first())
-        .map(|p| p.internal as i64);
+    let primary_port: Option<i64> = public_container.and_then(|c| c.ports.first()).map(|p| p.internal as i64);
 
     let service_count = group.containers.len() as i64;
-    let service_summary = group
-        .containers
-        .iter()
-        .map(|c| c.service_name.clone())
-        .collect::<Vec<_>>()
-        .join(",");
+    let service_summary = group.containers.iter().map(|c| c.service_name.clone()).collect::<Vec<_>>().join(",");
 
     // ── 1. Resolve compose.yaml content ────────────────────────────────────
     // Fetch the original compose.yaml (from agent for remote nodes, from local
@@ -318,11 +299,7 @@ async fn import_single_group(
         };
 
     // ── 2. Write DB rows ────────────────────────────────────────────────────
-    let node_id_for_db = if group.node_id == "local" {
-        None::<String>
-    } else {
-        Some(group.node_id.clone())
-    };
+    let node_id_for_db = if group.node_id == "local" { None::<String> } else { Some(group.node_id.clone()) };
 
     sqlx::query(
         "INSERT INTO projects (id, user_id, image, internal_port, status, node_id, \
@@ -423,9 +400,7 @@ async fn import_single_group(
         }
     } else {
         // Remote agent
-        let node = get_node_from_db(&state.db, &group.node_id)
-            .await
-            .map_err(|(_, msg)| msg)?;
+        let node = get_node_from_db(&state.db, &group.node_id).await.map_err(|(_, msg)| msg)?;
         let base_url = agent_base_url(&state.config, &node);
         let client = nodes::client::get_node_client(&state.node_clients, &group.node_id)
             .map_err(|e| format!("no client for node {}: {e}", group.node_id))?;
@@ -506,10 +481,7 @@ async fn do_local_import(
         }
 
         // Connect to litebin project network
-        if let Err(e) = state.docker
-            .connect_container_to_network(&c.container_id, &network_name)
-            .await
-        {
+        if let Err(e) = state.docker.connect_container_to_network(&c.container_id, &network_name).await {
             tracing::warn!(
                 error = %e,
                 container = %new_name,
@@ -521,11 +493,9 @@ async fn do_local_import(
     }
 
     // Connect orchestrator itself to the new network
-    let orchestrator_name = std::env::var("ORCHESTRATOR_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-orchestrator".into());
-    let _ = state.docker
-        .connect_container_to_network(&orchestrator_name, &network_name)
-        .await;
+    let orchestrator_name =
+        std::env::var("ORCHESTRATOR_CONTAINER_NAME").unwrap_or_else(|_| "litebin-orchestrator".into());
+    let _ = state.docker.connect_container_to_network(&orchestrator_name, &network_name).await;
 
     // Write files to projects/{id}/
     ensure_project_dir_and_env(project_id);
@@ -547,15 +517,10 @@ async fn do_local_import(
 /// For services that have `build:` but no `image:`, we look up the container's
 /// current image (from Docker inspect) and inject it. The `build:` key is removed.
 /// Services that already have `image:` are left untouched.
-fn resolve_compose_yaml(
-    raw: String,
-    containers: &[litebin_common::scan::ScanContainer],
-) -> String {
+fn resolve_compose_yaml(raw: String, containers: &[litebin_common::scan::ScanContainer]) -> String {
     // Build lookup maps from scan data
-    let image_map: std::collections::HashMap<&str, &str> = containers
-        .iter()
-        .map(|c| (c.service_name.as_str(), c.image.as_str()))
-        .collect();
+    let image_map: std::collections::HashMap<&str, &str> =
+        containers.iter().map(|c| (c.service_name.as_str(), c.image.as_str())).collect();
 
     // Map: (service_name, container_destination) → absolute host source
     // Used to rewrite relative bind mounts to absolute paths.
@@ -608,10 +573,7 @@ fn resolve_compose_yaml(
         if has_build && !has_image {
             if let Some(&image) = image_map.get(svc_name) {
                 svc_map.remove(&serde_yaml::Value::String("build".into()));
-                svc_map.insert(
-                    serde_yaml::Value::String("image".into()),
-                    serde_yaml::Value::String(image.to_string()),
-                );
+                svc_map.insert(serde_yaml::Value::String("image".into()), serde_yaml::Value::String(image.to_string()));
                 tracing::info!(
                     service = svc_name,
                     image = image,
@@ -630,18 +592,25 @@ fn resolve_compose_yaml(
                 for vol_entry in vols.iter_mut() {
                     // Handle both string form ("src:dst") and mapping form
                     let source_key = serde_yaml::Value::String("source".into());
-                    let is_bind = vol_entry.as_mapping()
-                        .map(|m| m.get(&serde_yaml::Value::String("type".into()))
-                            .and_then(|t| t.as_str()) == Some("bind"))
+                    let is_bind = vol_entry
+                        .as_mapping()
+                        .map(|m| {
+                            m.get(&serde_yaml::Value::String("type".into())).and_then(|t| t.as_str()) == Some("bind")
+                        })
                         .unwrap_or(false);
 
                     if is_bind {
                         // Long-form: { type: bind, source: "./data", target: "/var/lib/data" }
                         if let Some(m) = vol_entry.as_mapping_mut() {
                             let src = m.get(&source_key).and_then(|v| v.as_str()).map(|s| s.to_string());
-                            let target = m.get(&serde_yaml::Value::String("target".into())).and_then(|t| t.as_str()).map(|s| s.to_string());
+                            let target = m
+                                .get(&serde_yaml::Value::String("target".into()))
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string());
                             if let Some(ref src_str) = src {
-                                if (src_str.starts_with('.') || src_str.starts_with("..")) && let Some(ref dest_str) = target {
+                                if (src_str.starts_with('.') || src_str.starts_with(".."))
+                                    && let Some(ref dest_str) = target
+                                {
                                     if let Some(&abs_source) = bind_mount_map.get(&(svc_name, dest_str.as_str())) {
                                         let normalized = abs_source.replace('\\', "/");
                                         m.insert(source_key.clone(), serde_yaml::Value::String(normalized));
@@ -744,9 +713,7 @@ async fn fetch_compose_file_from_agent(
         if !dir.is_absolute() || !dir.is_dir() {
             anyhow::bail!("working dir '{}' is not an absolute path or does not exist", working_dir);
         }
-        let compose_yaml = COMPOSE_FILE_NAMES
-            .iter()
-            .find_map(|name| std::fs::read_to_string(dir.join(name)).ok());
+        let compose_yaml = COMPOSE_FILE_NAMES.iter().find_map(|name| std::fs::read_to_string(dir.join(name)).ok());
         let env_content = std::fs::read_to_string(dir.join(".env")).ok();
         return Ok((compose_yaml, env_content));
     }
@@ -776,20 +743,14 @@ async fn fetch_compose_file_from_agent(
 
     let url = format!("{}/containers/compose-file?dir={}", base_url, encoded_dir);
 
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("compose-file request failed: {e}"))?;
+    let resp = client.get(&url).send().await.map_err(|e| anyhow::anyhow!("compose-file request failed: {e}"))?;
 
     if !resp.status().is_success() {
         anyhow::bail!("agent returned {} for compose-file", resp.status());
     }
 
-    let body: serde_json::Value = resp
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| anyhow::anyhow!("compose-file parse failed: {e}"))?;
+    let body: serde_json::Value =
+        resp.json::<serde_json::Value>().await.map_err(|e| anyhow::anyhow!("compose-file parse failed: {e}"))?;
 
     let compose_yaml = body["compose_yaml"].as_str().map(|s: &str| s.to_string());
     let env_content = body["env_content"].as_str().map(|s: &str| s.to_string());

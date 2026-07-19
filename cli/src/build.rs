@@ -12,20 +12,14 @@ pub struct ProjectInfo {
 /// Detect project type by running `railpack info`.
 pub fn detect_project(project_dir: &Path) -> Result<ProjectInfo> {
     if project_dir.join("Dockerfile").exists() {
-        return Ok(ProjectInfo {
-            project_type: "Dockerfile".to_string(),
-            package: String::new(),
-        });
+        return Ok(ProjectInfo { project_type: "Dockerfile".to_string(), package: String::new() });
     }
 
     let project_dir_str = project_dir.to_string_lossy().to_string();
 
     if cfg!(target_os = "windows") {
         let mut cmd = Command::new("docker");
-        cmd.args([
-            "run", "--rm",
-            "-v", &format!("{}:/app", project_dir_str),
-        ]);
+        cmd.args(["run", "--rm", "-v", &format!("{}:/app", project_dir_str)]);
 
         // Mask gitignored directories to speed up the mount
         for dir in gitignored_dirs(project_dir) {
@@ -33,20 +27,19 @@ pub fn detect_project(project_dir: &Path) -> Result<ProjectInfo> {
         }
 
         cmd.args([
-            "--entrypoint", "sh",
+            "--entrypoint",
+            "sh",
             crate::config::RAILPACK_IMAGE,
-            "-c", "railpack info /app --format json 2>/dev/null",
+            "-c",
+            "railpack info /app --format json 2>/dev/null",
         ]);
         cmd.env("MSYS_NO_PATHCONV", "1");
-        
+
         let output = cmd.output();
 
         match output {
             Ok(out) if out.status.success() => parse_info_output(&String::from_utf8_lossy(&out.stdout)),
-            _ => Ok(ProjectInfo {
-                project_type: "Unknown".to_string(),
-                package: String::new(),
-            }),
+            _ => Ok(ProjectInfo { project_type: "Unknown".to_string(), package: String::new() }),
         }
     } else {
         let bin_path = dirs::config_dir()
@@ -56,29 +49,20 @@ pub fn detect_project(project_dir: &Path) -> Result<ProjectInfo> {
             .join("railpack");
 
         if !bin_path.exists() {
-            return Ok(ProjectInfo {
-                project_type: "Unknown".to_string(),
-                package: String::new(),
-            });
+            return Ok(ProjectInfo { project_type: "Unknown".to_string(), package: String::new() });
         }
 
-        let output = Command::new(&bin_path)
-            .args(["info", &project_dir_str, "--format", "json"])
-            .output();
+        let output = Command::new(&bin_path).args(["info", &project_dir_str, "--format", "json"]).output();
 
         match output {
             Ok(out) if out.status.success() => parse_info_output(&String::from_utf8_lossy(&out.stdout)),
-            _ => Ok(ProjectInfo {
-                project_type: "Unknown".to_string(),
-                package: String::new(),
-            }),
+            _ => Ok(ProjectInfo { project_type: "Unknown".to_string(), package: String::new() }),
         }
     }
 }
 
 fn parse_info_output(json: &str) -> Result<ProjectInfo> {
-    let info: serde_json::Value = serde_json::from_str(json)
-        .unwrap_or_else(|_| serde_json::Value::Null);
+    let info: serde_json::Value = serde_json::from_str(json).unwrap_or_else(|_| serde_json::Value::Null);
 
     // detectedProviders: e.g. ["staticfile"], ["node"], ["python"]
     let project_type = info["detectedProviders"]
@@ -135,11 +119,8 @@ async fn build_project_inner(
     ci_mode: bool,
     platform: Option<&str>,
 ) -> Result<SavedImage> {
-    let has_dockerfile = if let Some(df) = dockerfile {
-        project_dir.join(df).exists()
-    } else {
-        project_dir.join("Dockerfile").exists()
-    };
+    let has_dockerfile =
+        if let Some(df) = dockerfile { project_dir.join(df).exists() } else { project_dir.join("Dockerfile").exists() };
 
     // Context guard manages .dockerignore always, and .env injection when secrets are provided
     let _ctx_guard = BuildContextGuard::new(project_dir, dockerfile.unwrap_or("Dockerfile"), secret)?;
@@ -181,17 +162,23 @@ async fn build_with_docker(
     cmd.args(["-t", image_tag, "."]);
     cmd.current_dir(project_dir);
 
-    let spinner = if ci_mode { None } else if quiet { Some(create_build_spinner()) } else { None };
+    let spinner = if ci_mode {
+        None
+    } else if quiet {
+        Some(create_build_spinner())
+    } else {
+        None
+    };
 
     if quiet || ci_mode {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let output = cmd
-            .output()
-            .context("failed to run docker build. Is Docker installed?")?;
+        let output = cmd.output().context("failed to run docker build. Is Docker installed?")?;
 
         if !output.status.success() {
-            if let Some(s) = &spinner { s.finish_and_clear(); }
+            if let Some(s) = &spinner {
+                s.finish_and_clear();
+            }
             if !ci_mode {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -208,16 +195,16 @@ async fn build_with_docker(
             }
         }
     } else {
-        let status = cmd
-            .status()
-            .context("failed to run docker build. Is Docker installed?")?;
+        let status = cmd.status().context("failed to run docker build. Is Docker installed?")?;
         if !status.success() {
             anyhow::bail!("docker build failed with exit code {:?}", status.code());
         }
     }
 
     let result = save_tar(image_tag)?;
-    if let Some(s) = &spinner { s.finish_and_clear(); }
+    if let Some(s) = &spinner {
+        s.finish_and_clear();
+    }
     Ok(result)
 }
 
@@ -233,16 +220,18 @@ fn ensure_railpack_image(railpack_tag: &str, mise_version: &str, quiet: bool, ci
     let expected_label = format!("rp={} mise={}", railpack_tag, mise_version);
 
     if inspect.status.success() && current_label == expected_label {
-        if !quiet && !ci_mode { println!("  {} Railpack image ready", "✔".green()); }
+        if !quiet && !ci_mode {
+            println!("  {} Railpack image ready", "✔".green());
+        }
         return Ok(());
     }
 
     // Remove stale image
-    let _ = Command::new("docker")
-        .args(["rmi", "-f", RAILPACK_IMAGE])
-        .output();
+    let _ = Command::new("docker").args(["rmi", "-f", RAILPACK_IMAGE]).output();
 
-    if !quiet && !ci_mode { println!("  🔨 Building Railpack image..."); }
+    if !quiet && !ci_mode {
+        println!("  🔨 Building Railpack image...");
+    }
 
     let tmp = std::env::temp_dir().join("l8b-railpack-image");
     let _ = std::fs::remove_dir_all(&tmp);
@@ -278,8 +267,7 @@ ENTRYPOINT ["railpack"]
     std::fs::write(tmp.join("Dockerfile"), &dockerfile)?;
 
     let mut cmd = Command::new("docker");
-    cmd.args(["build", "-t", RAILPACK_IMAGE, "."])
-        .current_dir(&tmp);
+    cmd.args(["build", "-t", RAILPACK_IMAGE, "."]).current_dir(&tmp);
 
     let status = if ci_mode {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -299,7 +287,9 @@ ENTRYPOINT ["railpack"]
         anyhow::bail!("failed to build Railpack Docker image");
     }
 
-    if !quiet && !ci_mode { println!("  {} Railpack image built", "✔".green()); }
+    if !quiet && !ci_mode {
+        println!("  {} Railpack image built", "✔".green());
+    }
     Ok(())
 }
 
@@ -311,10 +301,8 @@ async fn build_with_railpack_docker(
     ci_mode: bool,
     platform: Option<&str>,
 ) -> Result<SavedImage> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
-    
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()?;
+
     let railpack_spinner = if !ci_mode {
         let s = indicatif::ProgressBar::new_spinner();
         s.set_style(indicatif::ProgressStyle::default_spinner().template("  ⚙️  {spinner} {msg}").unwrap());
@@ -344,7 +332,13 @@ async fn build_with_railpack_docker(
         s.finish_and_clear();
     }
 
-    let spinner = if ci_mode { None } else if quiet { Some(create_build_spinner()) } else { None };
+    let spinner = if ci_mode {
+        None
+    } else if quiet {
+        Some(create_build_spinner())
+    } else {
+        None
+    };
 
     let project_dir_str = project_dir.to_string_lossy().to_string();
     let max_retries = crate::config::MAX_RETRIES;
@@ -353,10 +347,14 @@ async fn build_with_railpack_docker(
     for attempt in 1..=max_retries {
         let mut cmd = Command::new("docker");
         cmd.args([
-            "run", "--rm",
-            "-v", &format!("{}:/app", project_dir_str),
-            "-v", "/var/run/docker.sock:/var/run/docker.sock",
-            "-e", "BUILDKIT_HOST=docker-container://buildkit",
+            "run",
+            "--rm",
+            "-v",
+            &format!("{}:/app", project_dir_str),
+            "-v",
+            "/var/run/docker.sock:/var/run/docker.sock",
+            "-e",
+            "BUILDKIT_HOST=docker-container://buildkit",
         ]);
 
         // Mask gitignored directories so the bind mount doesn't leak
@@ -385,13 +383,13 @@ async fn build_with_railpack_docker(
 
         if quiet || ci_mode {
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-            let output = cmd
-                .output()
-                .context("failed to run Railpack in Docker. Is Docker Desktop running?")?;
+            let output = cmd.output().context("failed to run Railpack in Docker. Is Docker Desktop running?")?;
 
             if output.status.success() {
                 let result = save_tar(image_tag)?;
-                if let Some(s) = &spinner { s.finish_and_clear(); }
+                if let Some(s) = &spinner {
+                    s.finish_and_clear();
+                }
                 return Ok(result);
             }
 
@@ -400,9 +398,7 @@ async fn build_with_railpack_docker(
                 String::from_utf8_lossy(&output.stdout).to_string(),
             ));
         } else {
-            let status = cmd
-                .status()
-                .context("failed to run Railpack in Docker. Is Docker Desktop running?")?;
+            let status = cmd.status().context("failed to run Railpack in Docker. Is Docker Desktop running?")?;
 
             if status.success() {
                 return save_tar(image_tag);
@@ -414,7 +410,9 @@ async fn build_with_railpack_docker(
         }
     }
 
-    if let Some(s) = &spinner { s.finish_and_clear(); }
+    if let Some(s) = &spinner {
+        s.finish_and_clear();
+    }
     if let Some((stderr, stdout)) = last_output {
         if !ci_mode {
             eprintln!("{}", stdout);
@@ -439,7 +437,13 @@ async fn build_with_railpack_native(
 
     let buildkit_host = ensure_buildkit(quiet, ci_mode)?;
 
-    let spinner = if ci_mode { None } else if quiet { Some(create_build_spinner()) } else { None };
+    let spinner = if ci_mode {
+        None
+    } else if quiet {
+        Some(create_build_spinner())
+    } else {
+        None
+    };
 
     if !quiet && !ci_mode {
         println!("No Dockerfile found. Building with Railpack...");
@@ -464,13 +468,13 @@ async fn build_with_railpack_native(
         if quiet || ci_mode {
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-            let output = cmd
-                .output()
-                .context("failed to run railpack build")?;
+            let output = cmd.output().context("failed to run railpack build")?;
 
             if output.status.success() {
                 let result = save_tar(image_tag)?;
-                if let Some(s) = &spinner { s.finish_and_clear(); }
+                if let Some(s) = &spinner {
+                    s.finish_and_clear();
+                }
                 if !ci_mode {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     if let Some(summary) = parse_railpack_summary(&stdout) {
@@ -485,9 +489,7 @@ async fn build_with_railpack_native(
                 String::from_utf8_lossy(&output.stdout).to_string(),
             ));
         } else {
-            let status = cmd
-                .status()
-                .context("failed to run railpack build")?;
+            let status = cmd.status().context("failed to run railpack build")?;
 
             if status.success() {
                 return save_tar(image_tag);
@@ -495,16 +497,13 @@ async fn build_with_railpack_native(
         }
 
         if attempt < max_retries && !ci_mode {
-            println!(
-                "  {} Build failed (attempt {}/{}), retrying...",
-                "!".yellow(),
-                attempt,
-                max_retries
-            );
+            println!("  {} Build failed (attempt {}/{}), retrying...", "!".yellow(), attempt, max_retries);
         }
     }
 
-    if let Some(s) = &spinner { s.finish_and_clear(); }
+    if let Some(s) = &spinner {
+        s.finish_and_clear();
+    }
     if let Some((stderr, stdout)) = last_output {
         if !ci_mode {
             eprintln!("{}", stdout);
@@ -536,7 +535,9 @@ impl BuildContextGuard {
                 if let Ok(content) = std::fs::read_to_string(&file) {
                     for line in content.lines() {
                         let line = line.trim();
-                        if line.is_empty() || line.starts_with('#') { continue; }
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
                         if let Some((key, val)) = line.split_once('=') {
                             merged_env.insert(key.trim().to_string(), val.trim().to_string());
                         }
@@ -544,15 +545,14 @@ impl BuildContextGuard {
                 }
             }
 
-            let merged_content = merged_env.iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<_>>()
-                .join("\n");
+            let merged_content = merged_env.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("\n");
 
             // Backup existing .env if present
             if env_path.exists() {
-                let backup_path = project_dir.join(format!(".env.l8b_backup_{}",
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()));
+                let backup_path = project_dir.join(format!(
+                    ".env.l8b_backup_{}",
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()
+                ));
                 std::fs::rename(&env_path, &backup_path)?;
                 env_backup = Some(backup_path);
             }
@@ -612,7 +612,6 @@ impl Drop for BuildContextGuard {
     }
 }
 
-
 // Shared helpers
 
 /// Clean up leftover build artifacts from interrupted builds.
@@ -626,11 +625,7 @@ pub fn cleanup_build_artifacts(dir: &Path) -> Result<()> {
     // 1. Find and restore .env backups
     let backups: Vec<_> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with(".env.l8b_backup_")
-        })
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".env.l8b_backup_"))
         .collect();
 
     if !backups.is_empty() {
@@ -642,20 +637,18 @@ pub fn cleanup_build_artifacts(dir: &Path) -> Result<()> {
             let name = backup_path.file_name().unwrap_or_default().to_string_lossy();
 
             let backup_content = std::fs::read_to_string(&backup_path).unwrap_or_default();
-            let backup_has_values = backup_content.lines()
-                .any(|l| {
-                    let l = l.trim();
-                    !l.is_empty() && !l.starts_with('#') && l.contains('=')
-                });
+            let backup_has_values = backup_content.lines().any(|l| {
+                let l = l.trim();
+                !l.is_empty() && !l.starts_with('#') && l.contains('=')
+            });
 
             let env_exists = env_path.exists();
             let env_has_values = if env_exists {
                 let env_content = std::fs::read_to_string(&env_path).unwrap_or_default();
-                env_content.lines()
-                    .any(|l| {
-                        let l = l.trim();
-                        !l.is_empty() && !l.starts_with('#') && l.contains('=')
-                    })
+                env_content.lines().any(|l| {
+                    let l = l.trim();
+                    !l.is_empty() && !l.starts_with('#') && l.contains('=')
+                })
             } else {
                 false
             };
@@ -738,7 +731,7 @@ pub fn cleanup_build_artifacts(dir: &Path) -> Result<()> {
 /// Only returns top-level directory names that actually exist on disk.
 pub(crate) fn gitignored_dirs(project_dir: &Path) -> Vec<String> {
     let mut dirs = std::collections::HashSet::new();
-    
+
     // Always try to mask these common suspects if they exist
     let defaults = vec![".git", "node_modules", ".next", ".vercel", "build", "dist", "target"];
     for d in defaults {
@@ -759,14 +752,14 @@ pub(crate) fn gitignored_dirs(project_dir: &Path) -> Vec<String> {
             if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
                 continue;
             }
-            
+
             // Clean the pattern
             let pattern = line.trim_start_matches('/');
-            
+
             // On Windows, we can only reliably mask top-level directories via --tmpfs.
-            // If the pattern is complex (has * or / in the middle), we skip it 
+            // If the pattern is complex (has * or / in the middle), we skip it
             // and let the internal .dockerignore handle it.
-            
+
             // 1. If it's a simple directory name (e.g. "node_modules" or ".next/")
             let clean_pattern = pattern.trim_end_matches('/');
             if !clean_pattern.contains('/') && !clean_pattern.contains('*') {
@@ -782,11 +775,7 @@ pub(crate) fn gitignored_dirs(project_dir: &Path) -> Vec<String> {
 
 fn create_build_spinner() -> indicatif::ProgressBar {
     let spinner = indicatif::ProgressBar::new_spinner();
-    spinner.set_style(
-        indicatif::ProgressStyle::default_spinner()
-            .template("  🔨 {spinner} {msg}")
-            .unwrap(),
-    );
+    spinner.set_style(indicatif::ProgressStyle::default_spinner().template("  🔨 {spinner} {msg}").unwrap());
     spinner.enable_steady_tick(std::time::Duration::from_millis(100));
     spinner.set_message("Building image...");
     spinner
@@ -851,10 +840,7 @@ fn save_tar(image_tag: &str) -> Result<SavedImage> {
         .context("failed to run docker save")?;
 
     if !output.status.success() {
-        anyhow::bail!(
-            "docker save failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        anyhow::bail!("docker save failed: {}", String::from_utf8_lossy(&output.stderr));
     }
 
     let image_size = std::fs::metadata(&tar_path)?.len();
@@ -871,12 +857,7 @@ fn save_tar(image_tag: &str) -> Result<SavedImage> {
     // Remove uncompressed tar
     let _ = std::fs::remove_file(&tar_path);
 
-    Ok(SavedImage {
-        path: gz_path.to_string_lossy().to_string(),
-        image_id,
-        image_size,
-        compressed_size,
-    })
+    Ok(SavedImage { path: gz_path.to_string_lossy().to_string(), image_id, image_size, compressed_size })
 }
 
 fn ensure_buildkit(quiet: bool, ci_mode: bool) -> Result<String> {
@@ -890,35 +871,25 @@ fn ensure_buildkit(quiet: bool, ci_mode: bool) -> Result<String> {
     }
 
     let output = Command::new("docker")
-        .args([
-            "ps",
-            "--filter",
-            &format!("name={}", BUILDKIT_CONTAINER),
-            "--format",
-            "{{.Names}}",
-        ])
+        .args(["ps", "--filter", &format!("name={}", BUILDKIT_CONTAINER), "--format", "{{.Names}}"])
         .output()
         .context("failed to check running containers. Is Docker running?")?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if stdout.trim().contains(BUILDKIT_CONTAINER) {
-            if !quiet && !ci_mode { println!("  {} BuildKit is running", "✔".green()); }
+            if !quiet && !ci_mode {
+                println!("  {} BuildKit is running", "✔".green());
+            }
             return Ok(BUILDKIT_HOST_DEFAULT.to_string());
         }
     }
 
-    if !quiet && !ci_mode { println!("  🧑 Starting BuildKit..."); }
+    if !quiet && !ci_mode {
+        println!("  🧑 Starting BuildKit...");
+    }
     let output = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "--privileged",
-            "-d",
-            "--name",
-            BUILDKIT_CONTAINER,
-            "moby/buildkit",
-        ])
+        .args(["run", "--rm", "--privileged", "-d", "--name", BUILDKIT_CONTAINER, "moby/buildkit"])
         .output()
         .context("failed to start BuildKit container. Is Docker running?")?;
 

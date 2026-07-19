@@ -9,15 +9,9 @@ impl CiMode {
     /// Resolve CI mode from explicit flag, env var, or environment detection.
     /// Priority: --ci flag > L8B_CI env > GITHUB_ACTIONS auto-detect
     pub fn from_flag(ci_flag: bool) -> Self {
-        let github_actions =
-            std::env::var("GITHUB_ACTIONS").map(|v| v == "true").unwrap_or(false);
-        let enabled = ci_flag
-            || std::env::var("L8B_CI").map(|v| v == "true").unwrap_or(false)
-            || github_actions;
-        Self {
-            enabled,
-            github_actions,
-        }
+        let github_actions = std::env::var("GITHUB_ACTIONS").map(|v| v == "true").unwrap_or(false);
+        let enabled = ci_flag || std::env::var("L8B_CI").map(|v| v == "true").unwrap_or(false) || github_actions;
+        Self { enabled, github_actions }
     }
 
     /// Register a secret value with GitHub Actions log masking.

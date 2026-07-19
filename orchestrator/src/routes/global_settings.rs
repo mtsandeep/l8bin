@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 
 use crate::{AppState, config::Config};
@@ -45,9 +45,7 @@ pub struct UpdateGlobalSettings {
     tag = "global-settings",
     security(("session_auth" = []))
 )]
-pub async fn get_settings(
-    State(state): State<AppState>,
-) -> Result<Json<GlobalSettings>, (StatusCode, String)> {
+pub async fn get_settings(State(state): State<AppState>) -> Result<Json<GlobalSettings>, (StatusCode, String)> {
     let settings = load_settings(&state.db, &state.config).await?;
     Ok(Json(settings))
 }
@@ -82,10 +80,10 @@ pub async fn update_settings(
     }
 
     // Update DockerManager defaults so new containers use the latest values
-    let mem_setting: i64 = get_setting(&state.db, "default_memory_limit_mb").await?
-        .as_deref().unwrap_or("256").parse().unwrap_or(256);
-    let cpu_setting: f64 = get_setting(&state.db, "default_cpu_limit").await?
-        .as_deref().unwrap_or("0.5").parse().unwrap_or(0.5);
+    let mem_setting: i64 =
+        get_setting(&state.db, "default_memory_limit_mb").await?.as_deref().unwrap_or("256").parse().unwrap_or(256);
+    let cpu_setting: f64 =
+        get_setting(&state.db, "default_cpu_limit").await?.as_deref().unwrap_or("0.5").parse().unwrap_or(0.5);
     state.docker.update_defaults(mem_setting * 1024 * 1024, cpu_setting);
     if let Some(domain) = payload.domain {
         let domain = domain.trim().to_string();
@@ -142,20 +140,25 @@ pub async fn update_settings(
 
         // Trigger full sync on new router
         let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-        let routes = crate::routing_helpers::resolve_all_routes(
-            &state.db, &state.config.domain, &orchestrator_upstream,
-        )
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let routes =
+            crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        if let Err(e) = state.router.read().await.sync_routes(
-            &routes,
-            &state.config.domain,
-            &orchestrator_upstream,
-            &state.config.dashboard_subdomain,
-            &state.config.poke_subdomain,
-            true,
-        ).await {
+        if let Err(e) = state
+            .router
+            .read()
+            .await
+            .sync_routes(
+                &routes,
+                &state.config.domain,
+                &orchestrator_upstream,
+                &state.config.dashboard_subdomain,
+                &state.config.poke_subdomain,
+                true,
+            )
+            .await
+        {
             tracing::warn!(error = %e, "post-swap sync_routes failed");
         }
     }
@@ -187,11 +190,16 @@ pub async fn load_settings(db: &sqlx::SqlitePool, config: &Config) -> Result<Glo
     let mem: i64 = get_setting(db, "default_memory_limit_mb").await?.as_deref().unwrap_or("256").parse().unwrap_or(256);
     let cpu: f64 = get_setting(db, "default_cpu_limit").await?.as_deref().unwrap_or("0.5").parse().unwrap_or(0.5);
     let dns_target: String = get_setting(db, "dns_target").await?.unwrap_or_default();
-    let routing_mode: String = get_setting(db, "routing_mode").await?.unwrap_or_else(|| config.routing_mode.to_string());
-    let cloudflare_api_token: String = get_setting(db, "cloudflare_api_token").await?.unwrap_or_else(|| config.cloudflare_api_token.clone());
-    let cloudflare_zone_id: String = get_setting(db, "cloudflare_zone_id").await?.unwrap_or_else(|| config.cloudflare_zone_id.clone());
-    let dashboard_subdomain: String = get_setting(db, "dashboard_subdomain").await?.unwrap_or_else(|| config.dashboard_subdomain.clone());
-    let poke_subdomain: String = get_setting(db, "poke_subdomain").await?.unwrap_or_else(|| config.poke_subdomain.clone());
+    let routing_mode: String =
+        get_setting(db, "routing_mode").await?.unwrap_or_else(|| config.routing_mode.to_string());
+    let cloudflare_api_token: String =
+        get_setting(db, "cloudflare_api_token").await?.unwrap_or_else(|| config.cloudflare_api_token.clone());
+    let cloudflare_zone_id: String =
+        get_setting(db, "cloudflare_zone_id").await?.unwrap_or_else(|| config.cloudflare_zone_id.clone());
+    let dashboard_subdomain: String =
+        get_setting(db, "dashboard_subdomain").await?.unwrap_or_else(|| config.dashboard_subdomain.clone());
+    let poke_subdomain: String =
+        get_setting(db, "poke_subdomain").await?.unwrap_or_else(|| config.poke_subdomain.clone());
     Ok(GlobalSettings {
         default_memory_limit_mb: mem,
         default_cpu_limit: cpu,
@@ -215,12 +223,14 @@ async fn get_setting(db: &sqlx::SqlitePool, key: &str) -> Result<Option<String>,
 }
 
 async fn upsert_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), (StatusCode, String)> {
-    sqlx::query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        .bind(key)
-        .bind(value)
-        .execute(db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(())
 }
 
@@ -240,21 +250,12 @@ pub struct CleanupDnsResponse {
     tag = "global-settings",
     security(("session_auth" = []))
 )]
-pub async fn cleanup_dns(
-    State(state): State<AppState>,
-) -> Result<Json<CleanupDnsResponse>, (StatusCode, String)> {
-    let cf_token = get_setting(&state.db, "cloudflare_api_token")
-        .await?
-        .unwrap_or_default();
-    let cf_zone = get_setting(&state.db, "cloudflare_zone_id")
-        .await?
-        .unwrap_or_default();
+pub async fn cleanup_dns(State(state): State<AppState>) -> Result<Json<CleanupDnsResponse>, (StatusCode, String)> {
+    let cf_token = get_setting(&state.db, "cloudflare_api_token").await?.unwrap_or_default();
+    let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await?.unwrap_or_default();
 
     if cf_token.is_empty() || cf_zone.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Cloudflare API token and Zone ID must be configured".into(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "Cloudflare API token and Zone ID must be configured".into()));
     }
 
     let domain = state.config.domain.clone();
@@ -299,21 +300,12 @@ pub struct SyncDnsResponse {
     tag = "global-settings",
     security(("session_auth" = []))
 )]
-pub async fn sync_dns(
-    State(state): State<AppState>,
-) -> Result<Json<SyncDnsResponse>, (StatusCode, String)> {
-    let cf_token = get_setting(&state.db, "cloudflare_api_token")
-        .await?
-        .unwrap_or_default();
-    let cf_zone = get_setting(&state.db, "cloudflare_zone_id")
-        .await?
-        .unwrap_or_default();
+pub async fn sync_dns(State(state): State<AppState>) -> Result<Json<SyncDnsResponse>, (StatusCode, String)> {
+    let cf_token = get_setting(&state.db, "cloudflare_api_token").await?.unwrap_or_default();
+    let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await?.unwrap_or_default();
 
     if cf_token.is_empty() || cf_zone.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Cloudflare API token and Zone ID must be configured".into(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "Cloudflare API token and Zone ID must be configured".into()));
     }
 
     let domain = state.config.domain.clone();
@@ -321,20 +313,17 @@ pub async fn sync_dns(
     let poke_subdomain = state.config.poke_subdomain.clone();
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
 
-    let routes = crate::routing_helpers::resolve_all_routes(
-        &state.db, &domain, &orchestrator_upstream,
-    )
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let routes = crate::routing_helpers::resolve_all_routes(&state.db, &domain, &orchestrator_upstream)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let result = state.router.read().await.sync_dns_only(
-        &routes,
-        &domain,
-        &dashboard_subdomain,
-        &poke_subdomain,
-    )
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let result = state
+        .router
+        .read()
+        .await
+        .sync_dns_only(&routes, &domain, &dashboard_subdomain, &poke_subdomain)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(SyncDnsResponse {
         created: result.created,

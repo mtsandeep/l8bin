@@ -1,19 +1,19 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use axum_login::AuthSession;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::db::models::Project;
-use crate::AppState;
 
 use super::stats::{ServiceInfo, ServiceVolumeInfo};
-use litebin_common::types::{VolumeMount, DeployType, ProjectStatus, scope_volume_source};
+use litebin_common::types::{DeployType, ProjectStatus, VolumeMount, scope_volume_source};
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateProjectRequest {
@@ -97,10 +97,7 @@ fn public_stats_from_project(project: &Project) -> Option<ServiceInfo> {
 }
 
 /// Build ProjectResponse from a Project row.
-async fn to_project_response(
-    project: &Project,
-    db: &sqlx::SqlitePool,
-) -> ProjectResponse {
+async fn to_project_response(project: &Project, db: &sqlx::SqlitePool) -> ProjectResponse {
     let public_stats = if project.deploy_type == Some(DeployType::Compose) {
         // Multi-service: look up the public service from project_services
         let row: Option<(String, String, Option<i64>, Option<i64>, bool, ProjectStatus, Option<String>, Option<String>, Option<i64>, Option<f64>)> = sqlx::query_as(
@@ -112,10 +109,21 @@ async fn to_project_response(
         .unwrap_or(None);
 
         match row {
-            Some((service_name, image, port, mapped_port, is_public, status, container_id, _cmd, memory_limit_mb, cpu_limit)) => {
+            Some((
+                service_name,
+                image,
+                port,
+                mapped_port,
+                is_public,
+                status,
+                container_id,
+                _cmd,
+                memory_limit_mb,
+                cpu_limit,
+            )) => {
                 // Load volumes for this service from project_volumes
                 let vol_rows: Vec<(Option<String>, String)> = match sqlx::query_as(
-                    "SELECT volume_name, container_path FROM project_volumes WHERE project_id = ? AND service_name = ?"
+                    "SELECT volume_name, container_path FROM project_volumes WHERE project_id = ? AND service_name = ?",
                 )
                 .bind(&project.id)
                 .bind(&service_name)
@@ -204,10 +212,7 @@ pub async fn create_project(
     let user_id = match auth_session.user {
         Some(u) => u.id,
         None => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Authentication required"})),
-            ));
+            return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"}))));
         }
     };
 
@@ -215,29 +220,25 @@ pub async fn create_project(
     if !crate::validation::is_valid_project_id(&payload.id) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "Project ID must be 1-63 lowercase letters, digits, or hyphens (no leading/trailing hyphens)"})),
+            Json(
+                serde_json::json!({"error": "Project ID must be 1-63 lowercase letters, digits, or hyphens (no leading/trailing hyphens)"}),
+            ),
         ));
     }
 
     // Reserve the dashboard subdomain
     if payload.id == state.config.dashboard_subdomain {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "This ID is reserved"})),
-        ));
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "This ID is reserved"}))));
     }
 
     // Reserve the poke subdomain
     if payload.id == state.config.poke_subdomain {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "This ID is reserved"})),
-        ));
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "This ID is reserved"}))));
     }
 
     // Reject project IDs that conflict with existing alias routes
     let alias_conflict: Option<String> = sqlx::query_scalar(
-        "SELECT project_id FROM project_routes WHERE route_type = 'alias' AND subdomain = ? LIMIT 1"
+        "SELECT project_id FROM project_routes WHERE route_type = 'alias' AND subdomain = ? LIMIT 1",
     )
     .bind(&payload.id)
     .fetch_optional(&state.db)
@@ -247,7 +248,9 @@ pub async fn create_project(
     if let Some(pid) = alias_conflict {
         return Err((
             StatusCode::CONFLICT,
-            Json(serde_json::json!({"error": format!("project ID '{}' is already used as an alias for project '{}'", payload.id, pid)})),
+            Json(
+                serde_json::json!({"error": format!("project ID '{}' is already used as an alias for project '{}'", payload.id, pid)}),
+            ),
         ));
     }
 
@@ -310,12 +313,7 @@ pub async fn get_project(
         .bind(&id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("database error: {e}"),
-            )
-        })?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;
 
     match project {
         Some(p) => {
@@ -336,18 +334,11 @@ pub async fn get_project(
     tag = "projects",
     security(("session_auth" = []))
 )]
-pub async fn list_projects(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<ProjectResponse>>, (StatusCode, String)> {
+pub async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<ProjectResponse>>, (StatusCode, String)> {
     let projects = sqlx::query_as::<_, Project>("SELECT * FROM projects ORDER BY updated_at DESC")
         .fetch_all(&state.db)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("database error: {e}"),
-            )
-        })?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;
 
     let mut responses = Vec::with_capacity(projects.len());
     for project in &projects {
@@ -362,7 +353,7 @@ pub async fn list_projects(
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateRouteRequest {
-    pub route_type: String,       // "path" or "alias"
+    pub route_type: String, // "path" or "alias"
     pub path: Option<String>,
     pub subdomain: Option<String>,
     pub upstream: String,
@@ -402,7 +393,8 @@ pub async fn list_routes(
     Path(project_id): Path<String>,
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"}))).into_response();
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"})))
+            .into_response();
     }
 
     let routes: Vec<ProjectRouteResponse> = match sqlx::query_as(
@@ -446,20 +438,20 @@ pub async fn create_route(
     Json(payload): Json<CreateRouteRequest>,
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"}))).into_response();
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"})))
+            .into_response();
     }
 
-    let is_background: Option<bool> = match sqlx::query_scalar(
-        "SELECT is_background FROM projects WHERE id = ?",
-    )
-    .bind(&project_id)
-    .fetch_optional(&state.db)
-    .await
+    let is_background: Option<bool> = match sqlx::query_scalar("SELECT is_background FROM projects WHERE id = ?")
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
     {
         Ok(value) => value,
         Err(e) => {
             tracing::error!(project_id = %project_id, error = %e, "create route: failed to read project");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"}))).into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"})))
+                .into_response();
         }
     };
     match is_background {
@@ -467,21 +459,28 @@ pub async fn create_route(
             return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Project not found"}))).into_response();
         }
         Some(true) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "background projects cannot configure HTTP routes"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "background projects cannot configure HTTP routes"})),
+            )
+                .into_response();
         }
         Some(false) => {}
     }
 
     if payload.route_type != "path" && payload.route_type != "alias" {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "route_type must be 'path' or 'alias'"}))).into_response();
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "route_type must be 'path' or 'alias'"})))
+            .into_response();
     }
 
     if payload.route_type == "path" && payload.path.is_none() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "path is required for path-based routes"}))).into_response();
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "path is required for path-based routes"})))
+            .into_response();
     }
 
     if payload.route_type == "alias" && payload.subdomain.is_none() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "subdomain is required for alias routes"}))).into_response();
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "subdomain is required for alias routes"})))
+            .into_response();
     }
 
     // Reject alias values that conflict with existing project IDs or other aliases
@@ -489,17 +488,16 @@ pub async fn create_route(
         let alias = payload.subdomain.as_deref().unwrap_or("");
         if !alias.is_empty() {
             // Check against project IDs
-            let conflicts = match sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM projects WHERE id = ?"
-            )
-            .bind(alias)
-            .fetch_one(&state.db)
-            .await
+            let conflicts = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
+                .bind(alias)
+                .fetch_one(&state.db)
+                .await
             {
                 Ok(count) => count,
                 Err(e) => {
                     tracing::error!(alias = %alias, error = %e, "create route: failed to check project ID conflict");
-                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"}))).into_response();
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"})))
+                        .into_response();
                 }
             };
 
@@ -547,16 +545,20 @@ pub async fn create_route(
     // Trigger Caddy resync
     let _ = state.route_sync_tx.send(());
 
-    (StatusCode::OK, Json(ProjectRouteResponse {
-        id,
-        project_id,
-        route_type: payload.route_type,
-        path: payload.path,
-        subdomain: payload.subdomain,
-        upstream: payload.upstream,
-        priority,
-        created_at: now,
-    })).into_response()
+    (
+        StatusCode::OK,
+        Json(ProjectRouteResponse {
+            id,
+            project_id,
+            route_type: payload.route_type,
+            path: payload.path,
+            subdomain: payload.subdomain,
+            upstream: payload.upstream,
+            priority,
+            created_at: now,
+        }),
+    )
+        .into_response()
 }
 
 /// DELETE /projects/:id/routes/:route_id — Delete a custom route.
@@ -582,7 +584,8 @@ pub async fn delete_route(
     Path((project_id, route_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"}))).into_response();
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"})))
+            .into_response();
     }
 
     let result = sqlx::query("DELETE FROM project_routes WHERE id = ? AND project_id = ?")
@@ -598,6 +601,9 @@ pub async fn delete_route(
             (StatusCode::OK, Json(serde_json::json!({"deleted": true}))).into_response()
         }
         Ok(_) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Route not found"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("database error: {e}")}))).into_response(),
+        Err(e) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("database error: {e}")})))
+                .into_response()
+        }
     }
 }

@@ -71,20 +71,15 @@ mod prop_tests {
 
         for project in candidates {
             let timeout_secs = project.auto_stop_timeout_mins * 60;
-            let is_idle = project
-                .last_active_at
-                .map(|t| now - t >= timeout_secs)
-                .unwrap_or(true);
+            let is_idle = project.last_active_at.map(|t| now - t >= timeout_secs).unwrap_or(true);
 
             if is_idle {
-                sqlx::query(
-                    "UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?",
-                )
-                .bind(now)
-                .bind(&project.id)
-                .execute(db)
-                .await
-                .unwrap();
+                sqlx::query("UPDATE projects SET status = 'stopped', updated_at = ? WHERE id = ?")
+                    .bind(now)
+                    .bind(&project.id)
+                    .execute(db)
+                    .await
+                    .unwrap();
             }
         }
     }

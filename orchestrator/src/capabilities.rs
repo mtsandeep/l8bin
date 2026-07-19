@@ -1,19 +1,16 @@
 //! Project capability grant helpers.
 
 use axum::http::StatusCode;
-use compose_bollard::{analyze_compose_yaml_for_workload, FindingDisposition};
+use compose_bollard::{FindingDisposition, analyze_compose_yaml_for_workload};
 use litebin_common::capabilities::{
-    capability_catalog, ProjectCapability, ProjectCapabilityGrant, ProjectCapabilityStatus,
+    ProjectCapability, ProjectCapabilityGrant, ProjectCapabilityStatus, capability_catalog,
 };
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// List granted capability ids for a project.
-pub async fn list_grants(
-    db: &SqlitePool,
-    project_id: &str,
-) -> Result<Vec<ProjectCapabilityGrant>, sqlx::Error> {
+pub async fn list_grants(db: &SqlitePool, project_id: &str) -> Result<Vec<ProjectCapabilityGrant>, sqlx::Error> {
     sqlx::query_as::<_, ProjectCapabilityGrant>(
         "SELECT project_id, capability, granted_at, granted_by \
          FROM project_capabilities WHERE project_id = ? ORDER BY capability",
@@ -24,16 +21,11 @@ pub async fn list_grants(
 }
 
 /// Return granted capability ids as a set of strings.
-pub async fn granted_ids(
-    db: &SqlitePool,
-    project_id: &str,
-) -> Result<std::collections::HashSet<String>, sqlx::Error> {
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT capability FROM project_capabilities WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_all(db)
-    .await?;
+pub async fn granted_ids(db: &SqlitePool, project_id: &str) -> Result<std::collections::HashSet<String>, sqlx::Error> {
+    let rows: Vec<String> = sqlx::query_scalar("SELECT capability FROM project_capabilities WHERE project_id = ?")
+        .bind(project_id)
+        .fetch_all(db)
+        .await?;
     Ok(rows.into_iter().collect())
 }
 
@@ -43,13 +35,12 @@ pub async fn has_capability(
     project_id: &str,
     capability: ProjectCapability,
 ) -> Result<bool, sqlx::Error> {
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM project_capabilities WHERE project_id = ? AND capability = ?",
-    )
-    .bind(project_id)
-    .bind(capability.id())
-    .fetch_one(db)
-    .await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM project_capabilities WHERE project_id = ? AND capability = ?")
+            .bind(project_id)
+            .bind(capability.id())
+            .fetch_one(db)
+            .await?;
     Ok(count > 0)
 }
 
@@ -92,11 +83,7 @@ pub async fn grant_many(
 }
 
 /// Revoke one capability.
-pub async fn revoke(
-    db: &SqlitePool,
-    project_id: &str,
-    capability: ProjectCapability,
-) -> Result<(), sqlx::Error> {
+pub async fn revoke(db: &SqlitePool, project_id: &str, capability: ProjectCapability) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM project_capabilities WHERE project_id = ? AND capability = ?")
         .bind(project_id)
         .bind(capability.id())
@@ -109,28 +96,19 @@ pub async fn revoke(
 /// Sync legacy `allow_*` boolean columns from capability grants.
 async fn sync_legacy_flags(db: &SqlitePool, project_id: &str) -> Result<(), sqlx::Error> {
     let raw = has_capability(db, project_id, ProjectCapability::RawPorts).await?;
-    sqlx::query(
-        "UPDATE projects SET allow_docker_access = ?, allow_raw_ports = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(false)
-    .bind(raw)
-    .bind(chrono::Utc::now().timestamp())
-    .bind(project_id)
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE projects SET allow_docker_access = ?, allow_raw_ports = ?, updated_at = ? WHERE id = ?")
+        .bind(false)
+        .bind(raw)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(project_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
 /// Capabilities required by a report that are not yet granted.
-pub fn missing_capabilities(
-    required: &[String],
-    granted: &std::collections::HashSet<String>,
-) -> Vec<String> {
-    required
-        .iter()
-        .filter(|c| !granted.contains(c.as_str()))
-        .cloned()
-        .collect()
+pub fn missing_capabilities(required: &[String], granted: &std::collections::HashSet<String>) -> Vec<String> {
+    required.iter().filter(|c| !granted.contains(c.as_str())).cloned().collect()
 }
 
 /// Build status list for the Capabilities settings tab.
@@ -140,10 +118,7 @@ pub async fn status_list(
     requested_reasons: &HashMap<String, String>,
 ) -> Result<Vec<ProjectCapabilityStatus>, sqlx::Error> {
     let grants = list_grants(db, project_id).await?;
-    let granted_map: HashMap<String, i64> = grants
-        .into_iter()
-        .map(|g| (g.capability, g.granted_at))
-        .collect();
+    let granted_map: HashMap<String, i64> = grants.into_iter().map(|g| (g.capability, g.granted_at)).collect();
 
     Ok(capability_catalog()
         .into_iter()
@@ -165,9 +140,7 @@ pub fn requested_reasons_from_compose(project_id: &str) -> HashMap<String, Strin
     let Ok(yaml) = std::fs::read_to_string(&path) else {
         return HashMap::new();
     };
-    let Ok((_, report)) =
-        analyze_compose_yaml_for_workload(&yaml, None, Some(project_id), true)
-    else {
+    let Ok((_, report)) = analyze_compose_yaml_for_workload(&yaml, None, Some(project_id), true) else {
         return HashMap::new();
     };
 
@@ -203,8 +176,5 @@ pub async fn status_list_for_project(
 
 /// Map a capability helper error into an HTTP response pair.
 pub fn db_err(e: sqlx::Error) -> (StatusCode, String) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("capability store error: {e}"),
-    )
+    (StatusCode::INTERNAL_SERVER_ERROR, format!("capability store error: {e}"))
 }

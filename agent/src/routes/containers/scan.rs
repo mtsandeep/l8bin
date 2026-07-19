@@ -1,9 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use litebin_common::types::COMPOSE_FILE_NAMES;
 use serde::{Deserialize, Serialize};
 
@@ -46,9 +41,7 @@ pub struct ImportResponse {
 
 /// GET /containers/scan
 /// Returns foreign (non-LiteBin-managed) container groups detected on this node.
-pub async fn scan_containers(
-    State(state): State<AgentState>,
-) -> impl IntoResponse {
+pub async fn scan_containers(State(state): State<AgentState>) -> impl IntoResponse {
     match state.docker.scan_foreign_containers().await {
         Ok(groups) => (StatusCode::OK, Json(groups)).into_response(),
         Err(e) => {
@@ -62,10 +55,7 @@ pub async fn scan_containers(
 /// Performs the Docker-side structural import for a single project group:
 /// renames containers, creates litebin network, connects all containers,
 /// and writes compose.yaml + .env to disk.
-pub async fn import_containers(
-    State(state): State<AgentState>,
-    Json(req): Json<ImportRequest>,
-) -> impl IntoResponse {
+pub async fn import_containers(State(state): State<AgentState>, Json(req): Json<ImportRequest>) -> impl IntoResponse {
     let mut results = Vec::new();
     let mut errors = Vec::new();
 
@@ -84,9 +74,7 @@ pub async fn import_containers(
         };
         let exposes_socket = inspect.mounts.as_ref().is_some_and(|mounts| {
             mounts.iter().any(|mount| {
-                mount.source.as_deref().is_some_and(
-                    litebin_common::docker::bind_source_exposes_docker_socket,
-                )
+                mount.source.as_deref().is_some_and(litebin_common::docker::bind_source_exposes_docker_socket)
             })
         });
         if exposes_socket {
@@ -132,10 +120,7 @@ pub async fn import_containers(
 
     // 3. Connect each container to the new litebin network
     for spec in &req.containers {
-        if let Err(e) = state.docker
-            .connect_container_to_network(&spec.container_id, &req.network_name)
-            .await
-        {
+        if let Err(e) = state.docker.connect_container_to_network(&spec.container_id, &req.network_name).await {
             tracing::warn!(error = %e, container = %spec.new_name, network = %req.network_name, "import: connect to network failed");
             errors.push(format!("connect {} to {}: {}", spec.new_name, req.network_name, e));
         }
@@ -182,10 +167,8 @@ pub async fn get_compose_file(
     let dir = match params.get("dir") {
         Some(d) => std::path::PathBuf::from(d),
         None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "missing `dir` query param" })),
-            ).into_response();
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "missing `dir` query param" })))
+                .into_response();
         }
     };
 
@@ -194,23 +177,21 @@ pub async fn get_compose_file(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "dir must be an absolute path to an existing directory" })),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // Canonicalize to resolve symlinks and .. components
     let dir = match dir.canonicalize() {
         Ok(d) => d,
         Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "directory does not exist" })),
-            ).into_response();
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "directory does not exist" })))
+                .into_response();
         }
     };
 
-    let compose_yaml: Option<String> = COMPOSE_FILE_NAMES
-        .iter()
-        .find_map(|name| std::fs::read_to_string(dir.join(name)).ok());
+    let compose_yaml: Option<String> =
+        COMPOSE_FILE_NAMES.iter().find_map(|name| std::fs::read_to_string(dir.join(name)).ok());
 
     let env_content: Option<String> = std::fs::read_to_string(dir.join(".env")).ok();
 
@@ -220,5 +201,6 @@ pub async fn get_compose_file(
             "compose_yaml": compose_yaml,
             "env_content": env_content,
         })),
-    ).into_response()
+    )
+        .into_response()
 }

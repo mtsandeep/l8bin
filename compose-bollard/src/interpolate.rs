@@ -1,17 +1,14 @@
 use std::collections::HashMap;
 
-use crate::error::ComposeError;
 use crate::Result;
+use crate::error::ComposeError;
 
 /// Interpolate `${VAR}`, `${VAR:-default}`, `${VAR:+alternate}`, and `$VAR` patterns
 /// in all string values within a serde_yaml::Value tree.
 ///
 /// Variable lookup order: (1) provided `env` map, (2) system environment variables.
 /// `$$` produces a literal `$`.
-pub fn interpolate(
-    value: &mut serde_yaml::Value,
-    env: &HashMap<String, String>,
-) -> Result<()> {
+pub fn interpolate(value: &mut serde_yaml::Value, env: &HashMap<String, String>) -> Result<()> {
     match value {
         serde_yaml::Value::Mapping(map) => {
             // Collect keys to avoid borrow issues
@@ -57,9 +54,9 @@ fn interpolate_string(s: &str, env: &HashMap<String, String>) -> Result<String> 
                             Some('}') => break,
                             Some(c) => expr.push(c),
                             None => {
-                                return Err(ComposeError::InterpolationError(
-                                    format!("unterminated ${{}}: missing closing brace in '${{{expr}'"),
-                                ));
+                                return Err(ComposeError::InterpolationError(format!(
+                                    "unterminated ${{}}: missing closing brace in '${{{expr}'"
+                                )));
                             }
                         }
                     }
@@ -97,20 +94,12 @@ fn resolve_expression(expr: &str, env: &HashMap<String, String>) -> String {
         let var = &expr[..idx];
         let default = &expr[idx + 2..];
         let val = resolve_var(var, env);
-        if val.is_empty() {
-            default.to_string()
-        } else {
-            val
-        }
+        if val.is_empty() { default.to_string() } else { val }
     } else if let Some(idx) = expr.find(":+") {
         let var = &expr[..idx];
         let alternate = &expr[idx + 2..];
         let val = resolve_var(var, env);
-        if val.is_empty() {
-            String::new()
-        } else {
-            alternate.to_string()
-        }
+        if val.is_empty() { String::new() } else { alternate.to_string() }
     } else {
         resolve_var(expr, env)
     }
@@ -142,9 +131,7 @@ pub fn build_env_map(extra_env: &[String]) -> HashMap<String, String> {
 /// Pre-extract environment variable definitions from the compose file's
 /// `environment` sections so they are available for interpolation of other values.
 /// Values that themselves contain `${}` are NOT interpolated (they are the definitions).
-pub fn extract_compose_env(
-    compose_value: &serde_yaml::Value,
-) -> HashMap<String, String> {
+pub fn extract_compose_env(compose_value: &serde_yaml::Value) -> HashMap<String, String> {
     let mut env = HashMap::new();
     let services = match compose_value.get("services").and_then(|s| s.as_mapping()) {
         Some(m) => m,

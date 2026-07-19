@@ -15,18 +15,24 @@ pub async fn ensure_railpack(ci_mode: bool) -> Result<(PathBuf, String)> {
         return Ok((bin_path, version));
     }
 
-    if !ci_mode { println!("  {} Railpack not found, downloading...", "::".dimmed()); }
+    if !ci_mode {
+        println!("  {} Railpack not found, downloading...", "::".dimmed());
+    }
 
     for attempt in 1..=MAX_RETRIES {
         match download_railpack(&bin_path, ci_mode).await {
             Ok(version) => {
-                if !ci_mode { println!("  {} Railpack {} installed", "✔".green(), version); }
+                if !ci_mode {
+                    println!("  {} Railpack {} installed", "✔".green(), version);
+                }
                 return Ok((bin_path, version));
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&bin_path);
                 if attempt < MAX_RETRIES {
-                    if !ci_mode { println!("  {} Download failed (attempt {}/{}): {}", "!".yellow(), attempt, MAX_RETRIES, e); }
+                    if !ci_mode {
+                        println!("  {} Download failed (attempt {}/{}): {}", "!".yellow(), attempt, MAX_RETRIES, e);
+                    }
                 } else {
                     anyhow::bail!("Railpack download failed after {} attempts: {}", MAX_RETRIES, e);
                 }
@@ -38,25 +44,14 @@ pub async fn ensure_railpack(ci_mode: bool) -> Result<(PathBuf, String)> {
 }
 
 async fn fetch_latest_tag() -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
-    let resp: serde_json::Value = client
-        .get(crate::config::RAILPACK_RELEASE_URL)
-        .header("User-Agent", "l8b-cli")
-        .send()
-        .await?
-        .json()
-        .await?;
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()?;
+    let resp: serde_json::Value =
+        client.get(crate::config::RAILPACK_RELEASE_URL).header("User-Agent", "l8b-cli").send().await?.json().await?;
     Ok(resp["tag_name"].as_str().unwrap_or("v0.23.0").to_string())
 }
 
 fn railpack_bin_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(crate::config::APP_DIR)
-        .join("bin")
-        .join("railpack")
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join(crate::config::APP_DIR).join("bin").join("railpack")
 }
 
 fn asset_name(version: &str) -> String {
@@ -67,9 +62,7 @@ fn asset_name(version: &str) -> String {
 }
 
 async fn download_railpack(bin_path: &Path, ci_mode: bool) -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?;
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build()?;
 
     let resp: serde_json::Value = client
         .get(crate::config::RAILPACK_RELEASE_URL)
@@ -95,7 +88,9 @@ async fn download_railpack(bin_path: &Path, ci_mode: bool) -> Result<String> {
     let temp_dir = std::env::temp_dir();
     let archive_path = temp_dir.join(&name);
 
-    if !ci_mode { println!("  {} Downloading Railpack {}...", "::".dimmed(), version); }
+    if !ci_mode {
+        println!("  {} Downloading Railpack {}...", "::".dimmed(), version);
+    }
     let bytes = client
         .get(download_url)
         .header("User-Agent", "l8b-cli")
@@ -121,8 +116,7 @@ async fn download_railpack(bin_path: &Path, ci_mode: bool) -> Result<String> {
         anyhow::bail!("failed to extract Railpack archive");
     }
 
-    let extracted_bin = find_file(&extract_dir, "railpack")
-        .context("railpack binary not found in archive")?;
+    let extracted_bin = find_file(&extract_dir, "railpack").context("railpack binary not found in archive")?;
 
     if let Some(parent) = bin_path.parent() {
         std::fs::create_dir_all(parent)?;

@@ -8,8 +8,8 @@ use utoipa::OpenApi;
 mod db;
 mod nodes;
 mod openapi;
-mod routing_helpers;
 mod routes;
+mod routing_helpers;
 mod sleep;
 mod status;
 mod validation;
@@ -20,8 +20,8 @@ mod tests;
 use std::sync::Arc;
 
 use axum::{
-    routing::{delete, get, patch, post, put},
     Router,
+    routing::{delete, get, patch, post, put},
 };
 use axum_login::login_required;
 use dashmap::DashMap;
@@ -30,12 +30,12 @@ use tokio::sync::{RwLock, Semaphore};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use cloudflare_router::CloudflareDnsRouter;
 use config::Config;
 use litebin_common::caddy::CaddyClient;
 use litebin_common::cloudflare::CloudflareClient;
 use litebin_common::docker::DockerManager;
 use litebin_common::routing::{MasterProxyRouter, RoutingProvider};
-use cloudflare_router::CloudflareDnsRouter;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -61,9 +61,7 @@ pub struct AppState {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Install rustls crypto provider (required before any TLS operations)
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("Failed to install rustls crypto provider");
+    rustls::crypto::ring::default_provider().install_default().expect("Failed to install rustls crypto provider");
 
     // Load .env if present
     dotenvy::dotenv().ok();
@@ -165,28 +163,21 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(public_ip = %config.public_ip, "local node registered");
 
     // Init Docker manager with global defaults
-    let mut docker = DockerManager::new(
-        config.docker_network.clone(),
-        default_mem_mb * 1024 * 1024,
-        default_cpu_limit,
-    )?;
+    let mut docker =
+        DockerManager::new(config.docker_network.clone(), default_mem_mb * 1024 * 1024, default_cpu_limit)?;
     docker.detect_host_projects_dir().await;
 
     // Initialize node client pool and load existing online nodes
     let node_clients: Arc<DashMap<String, Arc<reqwest::Client>>> = Arc::new(DashMap::new());
 
-    let online_nodes = sqlx::query_as::<_, db::models::Node>(
-        "SELECT * FROM nodes WHERE status = 'online' AND id != 'local'",
-    )
-    .fetch_all(&db)
-    .await?;
+    let online_nodes =
+        sqlx::query_as::<_, db::models::Node>("SELECT * FROM nodes WHERE status = 'online' AND id != 'local'")
+            .fetch_all(&db)
+            .await?;
 
     for node in online_nodes {
-        match nodes::client::build_node_client(
-            &config.ca_cert_path,
-            &config.client_cert_path,
-            &config.client_key_path,
-        ) {
+        match nodes::client::build_node_client(&config.ca_cert_path, &config.client_cert_path, &config.client_key_path)
+        {
             Ok(client) => {
                 node_clients.insert(node.id.clone(), Arc::new(client));
                 tracing::info!(node_id = %node.id, "loaded node into client pool");
@@ -208,8 +199,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Connect orchestrator to all existing project networks so it can proxy to containers
-    let orchestrator_id = std::env::var("ORCHESTRATOR_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-orchestrator".into());
+    let orchestrator_id =
+        std::env::var("ORCHESTRATOR_CONTAINER_NAME").unwrap_or_else(|_| "litebin-orchestrator".into());
     docker.connect_to_project_networks(&orchestrator_id).await;
 
     // Seed local node with real system memory, cpu, and disk
@@ -237,7 +228,13 @@ async fn main() -> anyhow::Result<()> {
     .bind(now_mem)
     .execute(&db)
     .await?;
-    tracing::info!(memory_bytes = local_memory, available_bytes = local_available, disk_free_bytes = local_disk_free, disk_total_bytes = local_disk_total, "local node stats seeded");
+    tracing::info!(
+        memory_bytes = local_memory,
+        available_bytes = local_available,
+        disk_free_bytes = local_disk_free,
+        disk_total_bytes = local_disk_total,
+        "local node stats seeded"
+    );
 
     // Ensure the app network exists
     docker.ensure_network().await?;
@@ -283,7 +280,14 @@ async fn main() -> anyhow::Result<()> {
         };
         let r = router.read().await.clone();
         match r
-            .sync_routes(&routes, &config.domain, &orchestrator_upstream, &config.dashboard_subdomain, &config.poke_subdomain, true)
+            .sync_routes(
+                &routes,
+                &config.domain,
+                &orchestrator_upstream,
+                &config.dashboard_subdomain,
+                &config.poke_subdomain,
+                true,
+            )
             .await
         {
             Ok(_) => break,
@@ -420,10 +424,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/internal/wake-report", post(routes::wake_report::wake_report))
         .route("/internal/heartbeat", post(routes::heartbeat::heartbeat))
         .fallback(routes::waker::wake)
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            routes::waker::waker_intercept,
-        ))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), routes::waker::waker_intercept))
         .layer(auth::auth_layer(state.clone()))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -463,7 +464,7 @@ async fn main() -> anyhow::Result<()> {
 async fn wait_for_shutdown_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
@@ -492,13 +493,7 @@ pub(crate) fn build_routing_provider(
         litebin_common::types::RoutingMode::CloudflareDns => {
             tracing::info!(zone_id = %cf_zone, "using cloudflare_dns routing mode");
             let cloudflare = CloudflareClient::new(cf_token, cf_zone);
-            Arc::new(CloudflareDnsRouter::new(
-                cloudflare,
-                caddy_client,
-                node_clients,
-                db,
-                config,
-            ))
+            Arc::new(CloudflareDnsRouter::new(cloudflare, caddy_client, node_clients, db, config))
         }
         _ => Arc::new(MasterProxyRouter::new(caddy_client, config.ca_cert_path.clone())),
     }

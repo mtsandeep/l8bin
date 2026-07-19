@@ -4,9 +4,9 @@ use serde::Serialize;
 use serde_json::json;
 use std::hash::Hasher;
 
-use litebin_common::types::Node;
-use crate::nodes;
 use crate::AppState;
+use crate::nodes;
+use litebin_common::types::Node;
 
 #[derive(Serialize, Default, utoipa::ToSchema)]
 pub struct MessageResponse {
@@ -25,10 +25,7 @@ pub fn agent_base_url(config: &crate::config::Config, node: &Node) -> String {
 }
 
 /// Fetch a Node record from the DB by node_id.
-pub async fn get_node_from_db(
-    db: &sqlx::SqlitePool,
-    node_id: &str,
-) -> Result<Node, (StatusCode, String)> {
+pub async fn get_node_from_db(db: &sqlx::SqlitePool, node_id: &str) -> Result<Node, (StatusCode, String)> {
     sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
         .bind(node_id)
         .fetch_optional(db)
@@ -63,15 +60,8 @@ pub fn ensure_project_dir_and_env(project_id: &str) {
 
 /// Whether a project has enough staged deployment data to start containers.
 pub fn project_is_staged(project: &crate::db::models::Project) -> bool {
-    let has_compose = std::path::PathBuf::from("projects")
-        .join(&project.id)
-        .join("compose.yaml")
-        .exists();
-    let has_image = project
-        .image
-        .as_ref()
-        .map(|img| !img.is_empty())
-        .unwrap_or(false);
+    let has_compose = std::path::PathBuf::from("projects").join(&project.id).join("compose.yaml").exists();
+    let has_image = project.image.as_ref().map(|img| !img.is_empty()).unwrap_or(false);
     has_compose || has_image
 }
 
@@ -133,10 +123,7 @@ pub fn read_local_project_env(project_id: &str) -> Vec<String> {
         return Vec::new();
     }
     match dotenvy::from_path_iter(&env_path) {
-        Ok(iter) => iter
-            .filter_map(|item| item.ok())
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect(),
+        Ok(iter) => iter.filter_map(|item| item.ok()).map(|(k, v)| format!("{}={}", k, v)).collect(),
         Err(e) => {
             tracing::warn!(project = project_id, error = %e, "failed to parse .env");
             Vec::new()
@@ -156,7 +143,12 @@ pub fn local_env_has_changed(project_id: &str) -> bool {
 
     let changed = env_hash != snapshot_hash;
     if changed {
-        tracing::info!(project = project_id, env_hash = env_hash, snapshot_hash = snapshot_hash, "env has changed since last container creation");
+        tracing::info!(
+            project = project_id,
+            env_hash = env_hash,
+            snapshot_hash = snapshot_hash,
+            "env has changed since last container creation"
+        );
     }
     changed
 }
@@ -233,12 +225,7 @@ pub async fn cleanup_unused_image(state: &AppState, node_id: Option<&str>, image
             }
         };
         let base_url = agent_base_url(&state.config, &node);
-        match client
-            .post(format!("{}/images/remove-unused", base_url))
-            .json(&json!({ "image": image }))
-            .send()
-            .await
-        {
+        match client.post(format!("{}/images/remove-unused", base_url)).json(&json!({ "image": image })).send().await {
             Ok(resp) if resp.status().is_success() => {
                 tracing::info!(image = %image, node_id = %node_id, "cleaned up unused remote image");
             }
@@ -254,11 +241,7 @@ pub async fn cleanup_unused_image(state: &AppState, node_id: Option<&str>, image
 
 /// Resolve an image reference (tag, digest, or ID) to its sha256 digest on the given node.
 /// Returns None on any failure (image not found, node unreachable) — best-effort, never blocks.
-pub async fn get_image_digest(
-    state: &AppState,
-    node_id: Option<&str>,
-    image: &str,
-) -> Option<String> {
+pub async fn get_image_digest(state: &AppState, node_id: Option<&str>, image: &str) -> Option<String> {
     let node_id = node_id.unwrap_or("local");
     if node_id == "local" {
         match state.docker.inspect_image_id(image).await {
@@ -288,20 +271,14 @@ pub async fn get_image_digest(
         struct InspectResponse {
             image_id: String,
         }
-        match client
-            .get(format!("{}/images/inspect?image={}", base_url, image))
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.json::<InspectResponse>().await {
-                    Ok(body) => Some(body.image_id),
-                    Err(e) => {
-                        tracing::debug!(image = %image, error = %e, "inspect: failed to parse agent response");
-                        None
-                    }
+        match client.get(format!("{}/images/inspect?image={}", base_url, image)).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.json::<InspectResponse>().await {
+                Ok(body) => Some(body.image_id),
+                Err(e) => {
+                    tracing::debug!(image = %image, error = %e, "inspect: failed to parse agent response");
+                    None
                 }
-            }
+            },
             Ok(resp) => {
                 tracing::debug!(image = %image, status = %resp.status(), "inspect: agent returned non-success");
                 None
@@ -322,13 +299,12 @@ pub async fn capture_service_digests(
     node_id: Option<&str>,
     target_services: Option<&std::collections::HashSet<String>>,
 ) -> std::collections::HashMap<String, String> {
-    let services: Vec<(String, String)> = sqlx::query_as(
-        "SELECT service_name, image FROM project_services WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let services: Vec<(String, String)> =
+        sqlx::query_as("SELECT service_name, image FROM project_services WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
 
     let mut digests = std::collections::HashMap::new();
     for (svc_name, image) in &services {
@@ -348,8 +324,12 @@ pub async fn capture_service_digests(
 
 pub async fn sync_caddy(state: &AppState) {
     let routes = match crate::routing_helpers::resolve_all_routes(
-        &state.db, &state.config.domain, &format!("litebin-orchestrator:{}", state.config.port),
-    ).await {
+        &state.db,
+        &state.config.domain,
+        &format!("litebin-orchestrator:{}", state.config.port),
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "failed to resolve routes");
@@ -362,7 +342,14 @@ pub async fn sync_caddy(state: &AppState) {
         .router
         .read()
         .await
-        .sync_routes(&routes, &state.config.domain, &upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, true)
+        .sync_routes(
+            &routes,
+            &state.config.domain,
+            &upstream,
+            &state.config.dashboard_subdomain,
+            &state.config.poke_subdomain,
+            true,
+        )
         .await
     {
         tracing::error!(error = %e, "failed to sync routes");

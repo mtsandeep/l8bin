@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 
 use crate::{AgentState, ProjectMetaEntry};
 
@@ -19,23 +19,27 @@ pub struct ProjectMetaRequest {
 
 /// POST /internal/project-meta — called by orchestrator to push lifecycle and capability flags.
 /// Replaces the full project meta map, persists to disk + memory.
-pub async fn update_project_meta(
-    State(state): State<AgentState>,
-    Json(req): Json<ProjectMetaRequest>,
-) -> StatusCode {
+pub async fn update_project_meta(State(state): State<AgentState>, Json(req): Json<ProjectMetaRequest>) -> StatusCode {
     tracing::info!(count = req.projects.len(), "received project meta from orchestrator");
 
     // Start from auto_start_enabled, then overlay workload and capability flags.
-    let mut meta: HashMap<String, ProjectMetaEntry> = req.projects.into_iter()
-        .map(|(id, auto)| (id, ProjectMetaEntry {
-            auto_start_enabled: auto,
-            is_background: false,
-            allow_raw_ports: false,
-            docker_observe: false,
-            host_network: false,
-            default_memory_limit_mb: req.default_memory_limit_mb,
-            default_cpu_limit: req.default_cpu_limit,
-        }))
+    let mut meta: HashMap<String, ProjectMetaEntry> = req
+        .projects
+        .into_iter()
+        .map(|(id, auto)| {
+            (
+                id,
+                ProjectMetaEntry {
+                    auto_start_enabled: auto,
+                    is_background: false,
+                    allow_raw_ports: false,
+                    docker_observe: false,
+                    host_network: false,
+                    default_memory_limit_mb: req.default_memory_limit_mb,
+                    default_cpu_limit: req.default_cpu_limit,
+                },
+            )
+        })
         .collect();
 
     if let Some(background_projects) = req.background_projects {

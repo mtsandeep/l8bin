@@ -40,12 +40,10 @@ pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
     // Also check running projects on remote nodes (container may have crashed)
     let running_projects = match node_id.as_deref() {
         Some(nid) if nid != "local" => {
-            match sqlx::query_as::<_, Project>(
-                "SELECT * FROM projects WHERE status = 'running' AND node_id = ?",
-            )
-            .bind(nid)
-            .fetch_all(&state.db)
-            .await
+            match sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE status = 'running' AND node_id = ?")
+                .bind(nid)
+                .fetch_all(&state.db)
+                .await
             {
                 Ok(projects) => projects,
                 Err(e) => {
@@ -122,11 +120,7 @@ pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
         }
     }
 
-    info!(
-        corrections,
-        elapsed_ms = start.elapsed().as_millis(),
-        "reconciliation: pass complete"
-    );
+    info!(corrections, elapsed_ms = start.elapsed().as_millis(), "reconciliation: pass complete");
 }
 
 async fn reconcile_project(state: &AppState, project: &Project, corrections: &mut usize) {
@@ -189,15 +183,9 @@ async fn reconcile_project(state: &AppState, project: &Project, corrections: &mu
     };
 
     let status_url = if state.config.ca_cert_path.is_empty() {
-        format!(
-            "http://{}:{}/containers/{}/status",
-            node.host, node.agent_port, container_id
-        )
+        format!("http://{}:{}/containers/{}/status", node.host, node.agent_port, container_id)
     } else {
-        format!(
-            "https://{}:{}/containers/{}/status",
-            node.host, node.agent_port, container_id
-        )
+        format!("https://{}:{}/containers/{}/status", node.host, node.agent_port, container_id)
     };
 
     match client.get(&status_url).send().await {
@@ -225,14 +213,8 @@ async fn reconcile_project(state: &AppState, project: &Project, corrections: &mu
 }
 
 async fn set_project_error(state: &AppState, project_id: &str) {
-    if let Err(e) = status::transition(
-        &state.db,
-        project_id,
-        ProjectStatus::Error,
-        &ProjectUpdateFields::default(),
-        None,
-    )
-    .await
+    if let Err(e) =
+        status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await
     {
         tracing::warn!(project_id, error = %e, "reconciliation: failed to set project to Error");
     }
@@ -240,32 +222,35 @@ async fn set_project_error(state: &AppState, project_id: &str) {
 }
 
 async fn set_project_running(state: &AppState, project: &Project) {
-    if let Err(e) = status::transition(
-        &state.db,
-        &project.id,
-        ProjectStatus::Running,
-        &ProjectUpdateFields::default(),
-        None,
-    )
-    .await
+    if let Err(e) =
+        status::transition(&state.db, &project.id, ProjectStatus::Running, &ProjectUpdateFields::default(), None).await
     {
         tracing::warn!(project_id = %project.id, error = %e, "reconciliation: failed to set project to Running");
     }
 
     // Sync routes
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-    let routes = match crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "reconciliation: failed to resolve routes");
-            Vec::new()
-        }
-    };
+    let routes =
+        match crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "reconciliation: failed to resolve routes");
+                Vec::new()
+            }
+        };
     let _ = state
         .router
         .read()
         .await
-        .sync_routes(&routes, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, true)
+        .sync_routes(
+            &routes,
+            &state.config.domain,
+            &orchestrator_upstream,
+            &state.config.dashboard_subdomain,
+            &state.config.poke_subdomain,
+            true,
+        )
         .await;
 
     info!(project_id = %project.id, "reconciliation: project restored to running");
@@ -276,9 +261,7 @@ mod tests {
     use proptest::prelude::*;
 
     async fn test_db() -> sqlx::SqlitePool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-            .await
-            .unwrap();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE nodes (
                 id TEXT PRIMARY KEY,

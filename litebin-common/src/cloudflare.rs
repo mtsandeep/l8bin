@@ -35,32 +35,16 @@ struct CfError {
 
 impl CloudflareClient {
     pub fn new(api_token: &str, zone_id: &str) -> Self {
-        Self {
-            api_token: api_token.to_string(),
-            zone_id: zone_id.to_string(),
-            client: reqwest::Client::new(),
-        }
+        Self { api_token: api_token.to_string(), zone_id: zone_id.to_string(), client: reqwest::Client::new() }
     }
 
     fn base_url(&self) -> String {
-        format!(
-            "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
-            self.zone_id
-        )
+        format!("https://api.cloudflare.com/client/v4/zones/{}/dns_records", self.zone_id)
     }
 
     /// List DNS records, optionally filtered by name and type.
-    pub async fn list_records(
-        &self,
-        name: &str,
-        record_type: &str,
-    ) -> anyhow::Result<Vec<DnsRecord>> {
-        let url = format!(
-            "{}?name={}&type={}",
-            self.base_url(),
-            urlencoding::encode(name),
-            record_type
-        );
+    pub async fn list_records(&self, name: &str, record_type: &str) -> anyhow::Result<Vec<DnsRecord>> {
+        let url = format!("{}?name={}&type={}", self.base_url(), urlencoding::encode(name), record_type);
 
         let resp = self
             .client
@@ -71,27 +55,14 @@ impl CloudflareClient {
             .context("cloudflare list_records request failed")?;
 
         let status = resp.status();
-        let raw = resp
-            .text()
-            .await
-            .context("cloudflare list_records: failed to read response body")?;
+        let raw = resp.text().await.context("cloudflare list_records: failed to read response body")?;
 
-        let body: CfResponse<Vec<DnsRecord>> =
-            serde_json::from_str(&raw).with_context(|| {
-                format!(
-                    "cloudflare list_records response parse failed (status {}): {}",
-                    status, raw
-                )
-            })?;
+        let body: CfResponse<Vec<DnsRecord>> = serde_json::from_str(&raw)
+            .with_context(|| format!("cloudflare list_records response parse failed (status {}): {}", status, raw))?;
 
         if !body.success {
-            let errors = body
-                .errors
-                .unwrap_or_default()
-                .iter()
-                .map(|e| e.message.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let errors =
+                body.errors.unwrap_or_default().iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
             anyhow::bail!("cloudflare list_records failed: {}", errors);
         }
 
@@ -100,18 +71,10 @@ impl CloudflareClient {
 
     /// List all DNS records in the zone matching a name suffix (e.g. ".l8b.in").
     /// Used for cleanup — find stale records to delete.
-    pub async fn list_records_by_suffix(
-        &self,
-        suffix: &str,
-        record_type: &str,
-    ) -> anyhow::Result<Vec<DnsRecord>> {
+    pub async fn list_records_by_suffix(&self, suffix: &str, record_type: &str) -> anyhow::Result<Vec<DnsRecord>> {
         // Cloudflare API doesn't support suffix filtering natively.
         // We list all records of the given type and filter client-side.
-        let url = format!(
-            "{}?type={}&per_page=5000",
-            self.base_url(),
-            record_type
-        );
+        let url = format!("{}?type={}&per_page=5000", self.base_url(), record_type);
 
         let resp = self
             .client
@@ -122,36 +85,19 @@ impl CloudflareClient {
             .context("cloudflare list_records_by_suffix request failed")?;
 
         let status = resp.status();
-        let raw = resp
-            .text()
-            .await
-            .context("cloudflare list_records_by_suffix: failed to read response body")?;
+        let raw = resp.text().await.context("cloudflare list_records_by_suffix: failed to read response body")?;
 
-        let body: CfResponse<Vec<DnsRecord>> =
-            serde_json::from_str(&raw).with_context(|| {
-                format!(
-                    "cloudflare list_records_by_suffix response parse failed (status {}): {}",
-                    status, raw
-                )
-            })?;
+        let body: CfResponse<Vec<DnsRecord>> = serde_json::from_str(&raw).with_context(|| {
+            format!("cloudflare list_records_by_suffix response parse failed (status {}): {}", status, raw)
+        })?;
 
         if !body.success {
-            let errors = body
-                .errors
-                .unwrap_or_default()
-                .iter()
-                .map(|e| e.message.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let errors =
+                body.errors.unwrap_or_default().iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
             anyhow::bail!("cloudflare list_records_by_suffix failed: {}", errors);
         }
 
-        let records = body
-            .result
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|r| r.name.ends_with(suffix))
-            .collect();
+        let records = body.result.unwrap_or_default().into_iter().filter(|r| r.name.ends_with(suffix)).collect();
 
         Ok(records)
     }
@@ -191,27 +137,14 @@ impl CloudflareClient {
                 .context("cloudflare upsert PUT failed")?;
 
             let status = resp.status();
-            let raw = resp
-                .text()
-                .await
-                .context("cloudflare upsert PUT: failed to read response body")?;
+            let raw = resp.text().await.context("cloudflare upsert PUT: failed to read response body")?;
 
-            let cf_resp: CfResponse<DnsRecord> =
-                serde_json::from_str(&raw).with_context(|| {
-                    format!(
-                        "cloudflare upsert PUT response parse failed (status {}): {}",
-                        status, raw
-                    )
-                })?;
+            let cf_resp: CfResponse<DnsRecord> = serde_json::from_str(&raw)
+                .with_context(|| format!("cloudflare upsert PUT response parse failed (status {}): {}", status, raw))?;
 
             if !cf_resp.success {
-                let errors = cf_resp
-                    .errors
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|e| e.message.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let errors =
+                    cf_resp.errors.unwrap_or_default().iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
                 anyhow::bail!("cloudflare upsert PUT failed: {}", errors);
             }
 
@@ -238,34 +171,21 @@ impl CloudflareClient {
                 .context("cloudflare upsert POST failed")?;
 
             let status = resp.status();
-            let raw = resp
-                .text()
-                .await
-                .context("cloudflare upsert POST: failed to read response body")?;
+            let raw = resp.text().await.context("cloudflare upsert POST: failed to read response body")?;
 
-            let cf_resp: CfResponse<DnsRecord> =
-                serde_json::from_str(&raw).with_context(|| {
-                    format!(
-                        "cloudflare upsert POST response parse failed (status {}): {}",
-                        status, raw
-                    )
-                })?;
+            let cf_resp: CfResponse<DnsRecord> = serde_json::from_str(&raw).with_context(|| {
+                format!("cloudflare upsert POST response parse failed (status {}): {}", status, raw)
+            })?;
 
             if !cf_resp.success {
-                let is_duplicate = cf_resp.errors.as_ref().map_or(false, |errs| {
-                    errs.iter().any(|e| e.code == Some(81057))
-                });
+                let is_duplicate =
+                    cf_resp.errors.as_ref().map_or(false, |errs| errs.iter().any(|e| e.code == Some(81057)));
                 if is_duplicate {
                     tracing::info!(name, record_type, content, "DNS record already exists");
                     return Ok(false);
                 }
-                let errors = cf_resp
-                    .errors
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|e| e.message.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let errors =
+                    cf_resp.errors.unwrap_or_default().iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
                 anyhow::bail!("cloudflare upsert POST failed: {}", errors);
             }
 

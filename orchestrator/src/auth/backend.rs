@@ -1,7 +1,7 @@
 use std::fmt;
 
 use axum_login::{AuthUser, AuthnBackend, UserId};
-use bcrypt::{hash, verify, DEFAULT_COST};
+use bcrypt::{DEFAULT_COST, hash, verify};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -85,10 +85,8 @@ impl PasswordBackend {
     }
 
     pub async fn get_user_by_id(&self, id: &str) -> Result<Option<User>, AuthError> {
-        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.db)
-            .await?;
+        let user =
+            sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = ?").bind(id).fetch_optional(&self.db).await?;
 
         Ok(user)
     }
@@ -99,15 +97,11 @@ impl AuthnBackend for PasswordBackend {
     type Credentials = Credentials;
     type Error = AuthError;
 
-    async fn authenticate(
-        &self,
-        creds: Self::Credentials,
-    ) -> Result<Option<Self::User>, Self::Error> {
-        let user: Option<User> =
-            sqlx::query_as("SELECT * FROM users WHERE username = ?")
-                .bind(&creds.username)
-                .fetch_optional(&self.db)
-                .await?;
+    async fn authenticate(&self, creds: Self::Credentials) -> Result<Option<Self::User>, Self::Error> {
+        let user: Option<User> = sqlx::query_as("SELECT * FROM users WHERE username = ?")
+            .bind(&creds.username)
+            .fetch_optional(&self.db)
+            .await?;
 
         if let Some(user) = user {
             if verify(creds.password.as_bytes(), &user.password_hash)? {

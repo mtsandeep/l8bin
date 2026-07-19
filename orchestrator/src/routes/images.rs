@@ -1,17 +1,17 @@
 use axum::{
+    Json,
     body::Body,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use axum_login::AuthSession;
 use serde::{Deserialize, Serialize};
 
+use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
-use crate::AppState;
 
 #[derive(Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
 pub struct UploadQueryParams {
@@ -47,18 +47,13 @@ pub async fn upload_image(
     // Auth: session first, then deploy token fallback
     let _user_id = match auth_session.user {
         Some(u) => u.id,
-        None => {
-            match crate::auth::extract_deploy_token(&state, &headers, &params.project_id).await {
-                Some(uid) => uid,
-                None => {
-                    return (
-                        StatusCode::UNAUTHORIZED,
-                        Json(serde_json::json!({"error": "Authentication required"})),
-                    )
-                        .into_response();
-                }
+        None => match crate::auth::extract_deploy_token(&state, &headers, &params.project_id).await {
+            Some(uid) => uid,
+            None => {
+                return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"})))
+                    .into_response();
             }
-        }
+        },
     };
 
     let node_id = params.node_id.as_deref().unwrap_or("local");
@@ -72,7 +67,8 @@ pub async fn upload_image(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("failed to load image: {e}")})),
-            ).into_response();
+            )
+                .into_response();
         }
         // Resolve the tag to the actual image ID Docker assigned.
         // OCI format tars may have a different manifest digest than the local config digest,
@@ -84,7 +80,8 @@ pub async fn upload_image(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({"error": format!("image loaded but inspect failed: {e}")})),
-                ).into_response();
+                )
+                    .into_response();
             }
         };
         return (StatusCode::OK, Json(UploadResponse { image_id: resolved_id })).into_response();
@@ -150,11 +147,11 @@ async fn stream_to_agent(
     }
 
     // Agent returns the resolved image ID (tag → actual Docker-assigned sha256)
-    let agent_resp: serde_json::Value = resp.json().await
+    let agent_resp: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse agent response: {e}")))?;
-    let resolved_id = agent_resp["image_id"].as_str()
-        .unwrap_or(image_id)
-        .to_string();
+    let resolved_id = agent_resp["image_id"].as_str().unwrap_or(image_id).to_string();
 
     Ok(resolved_id)
 }

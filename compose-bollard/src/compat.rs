@@ -2,9 +2,9 @@ use std::collections::{BTreeSet, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::ComposeParser;
 use crate::error::{ComposeError, Result};
 use crate::parse::{ComposeFile, ComposeService};
-use crate::ComposeParser;
 
 /// How LiteBin handles a Compose field or feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,29 +47,17 @@ pub struct CompatibilityReport {
 
 impl CompatibilityReport {
     pub fn unsupported(&self) -> impl Iterator<Item = &CompatibilityFinding> {
-        self.findings
-            .iter()
-            .filter(|f| f.disposition == FindingDisposition::Unsupported)
+        self.findings.iter().filter(|f| f.disposition == FindingDisposition::Unsupported)
     }
 
     pub fn permission_required(&self) -> impl Iterator<Item = &CompatibilityFinding> {
-        self.findings
-            .iter()
-            .filter(|f| f.disposition == FindingDisposition::PermissionRequired)
+        self.findings.iter().filter(|f| f.disposition == FindingDisposition::PermissionRequired)
     }
 }
 
 /// Known top-level Compose keys LiteBin may encounter.
-const KNOWN_TOP_LEVEL: &[&str] = &[
-    "version",
-    "name",
-    "services",
-    "volumes",
-    "networks",
-    "configs",
-    "secrets",
-    "x-litebin",
-];
+const KNOWN_TOP_LEVEL: &[&str] =
+    &["version", "name", "services", "volumes", "networks", "configs", "secrets", "x-litebin"];
 
 /// Service fields LiteBin maps into Bollard / runtime config.
 const SUPPORTED_SERVICE_FIELDS: &[&str] = &[
@@ -100,46 +88,16 @@ const SUPPORTED_SERVICE_FIELDS: &[&str] = &[
 
 /// Service fields that are recognized but not yet implemented.
 const UNSUPPORTED_SERVICE_FIELDS: &[(&str, &str)] = &[
-    (
-        "network_mode",
-        "network_mode is not applied yet; LiteBin always uses a managed project bridge network",
-    ),
-    (
-        "networks",
-        "custom Compose networks are ignored; LiteBin creates a per-project bridge network",
-    ),
-    (
-        "privileged",
-        "privileged mode is not supported",
-    ),
-    (
-        "pid",
-        "pid namespace sharing is not supported",
-    ),
-    (
-        "devices",
-        "device mounts are not supported",
-    ),
-    (
-        "ipc",
-        "IPC namespace sharing is not supported",
-    ),
-    (
-        "uts",
-        "UTS namespace options are not supported",
-    ),
-    (
-        "runtime",
-        "custom container runtimes are not supported",
-    ),
-    (
-        "cgroup_parent",
-        "cgroup_parent is not supported",
-    ),
-    (
-        "sysctls",
-        "sysctls are not supported",
-    ),
+    ("network_mode", "network_mode is not applied yet; LiteBin always uses a managed project bridge network"),
+    ("networks", "custom Compose networks are ignored; LiteBin creates a per-project bridge network"),
+    ("privileged", "privileged mode is not supported"),
+    ("pid", "pid namespace sharing is not supported"),
+    ("devices", "device mounts are not supported"),
+    ("ipc", "IPC namespace sharing is not supported"),
+    ("uts", "UTS namespace options are not supported"),
+    ("runtime", "custom container runtimes are not supported"),
+    ("cgroup_parent", "cgroup_parent is not supported"),
+    ("sysctls", "sysctls are not supported"),
 ];
 
 /// Soft-ignored service fields (informational unsupported / overridden).
@@ -154,71 +112,35 @@ const IGNORED_SERVICE_FIELDS: &[(&str, FindingDisposition, &str)] = &[
         FindingDisposition::Overridden,
         "env_file is not loaded from Compose; provide runtime env via LiteBin secrets / .env.l8bin instead",
     ),
-    (
-        "logging",
-        FindingDisposition::Overridden,
-        "logging is overridden by LiteBin (json-file, 10m × 3)",
-    ),
+    ("logging", FindingDisposition::Overridden, "logging is overridden by LiteBin (json-file, 10m × 3)"),
     (
         "deploy",
         FindingDisposition::Overridden,
         "deploy.* (Swarm) is ignored; use top-level memory/cpus for resource limits",
     ),
-    (
-        "profiles",
-        FindingDisposition::Overridden,
-        "Compose profiles are ignored; all services in the file are deployed",
-    ),
-    (
-        "security_opt",
-        FindingDisposition::Overridden,
-        "security_opt is overridden by LiteBin (no-new-privileges)",
-    ),
-    (
-        "dns",
-        FindingDisposition::Overridden,
-        "custom DNS is ignored",
-    ),
-    (
-        "hostname",
-        FindingDisposition::Overridden,
-        "hostname is ignored",
-    ),
-    (
-        "domainname",
-        FindingDisposition::Overridden,
-        "domainname is ignored",
-    ),
+    ("profiles", FindingDisposition::Overridden, "Compose profiles are ignored; all services in the file are deployed"),
+    ("security_opt", FindingDisposition::Overridden, "security_opt is overridden by LiteBin (no-new-privileges)"),
+    ("dns", FindingDisposition::Overridden, "custom DNS is ignored"),
+    ("hostname", FindingDisposition::Overridden, "hostname is ignored"),
+    ("domainname", FindingDisposition::Overridden, "domainname is ignored"),
     (
         "platform",
         FindingDisposition::Overridden,
         "platform is ignored from Compose; build/pull uses the target node architecture",
     ),
-    (
-        "ulimits",
-        FindingDisposition::Overridden,
-        "ulimits are ignored",
-    ),
+    ("ulimits", FindingDisposition::Overridden, "ulimits are ignored"),
     (
         "expose",
         FindingDisposition::Translated,
         "expose is ignored for routing; use ports (or LiteBin public service selection) for HTTP ingress",
     ),
-    (
-        "init",
-        FindingDisposition::Overridden,
-        "init: true is ignored",
-    ),
+    ("init", FindingDisposition::Overridden, "init: true is ignored"),
     (
         "stop_grace_period",
         FindingDisposition::Overridden,
         "stop_grace_period is ignored; LiteBin manages stop timeouts",
     ),
-    (
-        "stop_signal",
-        FindingDisposition::Overridden,
-        "stop_signal is ignored",
-    ),
+    ("stop_signal", FindingDisposition::Overridden, "stop_signal is ignored"),
 ];
 
 fn finding(
@@ -238,10 +160,7 @@ fn finding(
 }
 
 fn is_docker_sock_source(source: &str) -> bool {
-    matches!(
-        normalize_unix_path(source).as_deref(),
-        Some("/var/run/docker.sock" | "/run/docker.sock")
-    )
+    matches!(normalize_unix_path(source).as_deref(), Some("/var/run/docker.sock" | "/run/docker.sock"))
 }
 
 fn docker_socket_is_below(source: &str) -> bool {
@@ -277,11 +196,7 @@ fn volume_source(volume: &str) -> &str {
 
 /// Docker container name LiteBin will assign (matches `litebin_common::container_name`).
 fn managed_container_name(project_id: &str, service: &str) -> String {
-    if service == "web" {
-        format!("litebin-{project_id}")
-    } else {
-        format!("litebin-{project_id}.{service}")
-    }
+    if service == "web" { format!("litebin-{project_id}") } else { format!("litebin-{project_id}.{service}") }
 }
 
 fn managed_network_name(project_id: &str) -> String {
@@ -311,8 +226,7 @@ pub fn analyze_compose_yaml_for_workload(
 ) -> Result<(ComposeFile, CompatibilityReport)> {
     let root: serde_yaml::Value = serde_yaml::from_str(yaml)?;
     let compose = ComposeParser::parse(yaml)?;
-    let report =
-        analyze_compose_for_workload(&root, &compose, public_service, project_id, is_background)?;
+    let report = analyze_compose_for_workload(&root, &compose, public_service, project_id, is_background)?;
     Ok((compose, report))
 }
 
@@ -349,14 +263,12 @@ pub fn analyze_compose_for_workload(
         None
     } else {
         match public_service {
-        Some(name) => {
-            if !compose.services.contains_key(name) {
-                return Err(ComposeError::ServiceNotFound {
-                    name: name.to_string(),
-                });
+            Some(name) => {
+                if !compose.services.contains_key(name) {
+                    return Err(ComposeError::ServiceNotFound { name: name.to_string() });
+                }
+                Some(name.to_string())
             }
-            Some(name.to_string())
-        }
             None => compose.detect_public_service()?,
         }
     };
@@ -366,9 +278,7 @@ pub fn analyze_compose_for_workload(
             format!("services.{pub_svc}"),
             Some(pub_svc.clone()),
             FindingDisposition::Translated,
-            format!(
-                "'{pub_svc}' is the public HTTP service; LiteBin will route {pub_svc}.{{domain}} to it"
-            ),
+            format!("'{pub_svc}' is the public HTTP service; LiteBin will route {pub_svc}.{{domain}} to it"),
             None,
         ));
     } else {
@@ -386,14 +296,7 @@ pub fn analyze_compose_for_workload(
 
     for svc_name in &service_names {
         let svc = &compose.services[svc_name];
-        analyze_service(
-            svc_name,
-            svc,
-            detected_public.as_deref(),
-            project_id,
-            is_background,
-            &mut findings,
-        );
+        analyze_service(svc_name, svc, detected_public.as_deref(), project_id, is_background, &mut findings);
     }
 
     // Always note LiteBin security overrides once (project-level).
@@ -408,23 +311,17 @@ pub fn analyze_compose_for_workload(
         "host-network services use the host namespace; other services use LiteBin's managed project bridge".to_string()
     } else {
         match project_id {
-        Some(pid) => format!(
-            "services join managed network {} (Compose networks / network_mode are not applied)",
-            managed_network_name(pid)
-        ),
-        None => {
-            "services join managed network litebin-<project_id> (Compose networks / network_mode are not applied)"
-                .to_string()
-        }
+            Some(pid) => format!(
+                "services join managed network {} (Compose networks / network_mode are not applied)",
+                managed_network_name(pid)
+            ),
+            None => {
+                "services join managed network litebin-<project_id> (Compose networks / network_mode are not applied)"
+                    .to_string()
+            }
         }
     };
-    findings.push(finding(
-        "litebin.network",
-        None,
-        FindingDisposition::Translated,
-        network_msg,
-        None,
-    ));
+    findings.push(finding("litebin.network", None, FindingDisposition::Translated, network_msg, None));
 
     finalize_report(findings)
 }
@@ -538,11 +435,7 @@ fn analyze_service(
         findings.push(finding(
             format!("{prefix}.network_mode"),
             Some(svc_name.into()),
-            if is_background {
-                FindingDisposition::PermissionRequired
-            } else {
-                FindingDisposition::Unsupported
-            },
+            if is_background { FindingDisposition::PermissionRequired } else { FindingDisposition::Unsupported },
             if is_background {
                 "host networking runs the service in the host network namespace and exposes listeners directly"
             } else {
@@ -655,13 +548,7 @@ fn analyze_service(
             } else {
                 (*message).to_string()
             };
-            findings.push(finding(
-                format!("{prefix}.{field}"),
-                Some(svc_name.into()),
-                *disposition,
-                msg,
-                None,
-            ));
+            findings.push(finding(format!("{prefix}.{field}"), Some(svc_name.into()), *disposition, msg, None));
             handled_extra.insert((*field).to_string());
         }
     }
@@ -688,13 +575,11 @@ fn analyze_service(
                     "network_mode is not applied yet; LiteBin always uses managed network {}",
                     managed_network_name(pid)
                 ),
-                ("networks", Some(pid)) => format!(
-                    "custom Compose networks are ignored; LiteBin creates {}",
-                    managed_network_name(pid)
-                ),
+                ("networks", Some(pid)) => {
+                    format!("custom Compose networks are ignored; LiteBin creates {}", managed_network_name(pid))
+                }
                 ("networks", None) => {
-                    "custom Compose networks are ignored; LiteBin creates a per-project bridge network"
-                        .to_string()
+                    "custom Compose networks are ignored; LiteBin creates a per-project bridge network".to_string()
                 }
                 _ => (*message).to_string(),
             };
@@ -738,12 +623,7 @@ fn analyze_service(
     }
 }
 
-fn analyze_ports(
-    svc_name: &str,
-    svc: &ComposeService,
-    is_public: bool,
-    findings: &mut Vec<CompatibilityFinding>,
-) {
+fn analyze_ports(svc_name: &str, svc: &ComposeService, is_public: bool, findings: &mut Vec<CompatibilityFinding>) {
     let prefix = format!("services.{svc_name}.ports");
     let Some(ports) = &svc.ports else {
         return;
@@ -798,11 +678,7 @@ fn analyze_ports(
     }
 }
 
-fn analyze_volumes(
-    svc_name: &str,
-    svc: &ComposeService,
-    findings: &mut Vec<CompatibilityFinding>,
-) {
+fn analyze_volumes(svc_name: &str, svc: &ComposeService, findings: &mut Vec<CompatibilityFinding>) {
     let prefix = format!("services.{svc_name}.volumes");
     let Some(volumes) = &svc.volumes else {
         return;
@@ -846,9 +722,7 @@ fn analyze_volumes(
 }
 
 fn finalize_report(findings: Vec<CompatibilityFinding>) -> Result<CompatibilityReport> {
-    let ok = findings
-        .iter()
-        .all(|f| f.disposition != FindingDisposition::Unsupported);
+    let ok = findings.iter().all(|f| f.disposition != FindingDisposition::Unsupported);
 
     let mut caps: BTreeSet<String> = BTreeSet::new();
     for f in &findings {
@@ -859,11 +733,7 @@ fn finalize_report(findings: Vec<CompatibilityFinding>) -> Result<CompatibilityR
         }
     }
 
-    Ok(CompatibilityReport {
-        findings,
-        ok,
-        required_capabilities: caps.into_iter().collect(),
-    })
+    Ok(CompatibilityReport { findings, ok, required_capabilities: caps.into_iter().collect() })
 }
 
 #[cfg(test)]
@@ -879,9 +749,7 @@ mod tests {
     }
 
     fn background_report(yaml: &str) -> CompatibilityReport {
-        analyze_compose_yaml_for_workload(yaml, None, None, true)
-            .unwrap()
-            .1
+        analyze_compose_yaml_for_workload(yaml, None, None, true).unwrap().1
     }
 
     #[test]
@@ -897,11 +765,7 @@ services:
         );
         assert!(r.ok, "findings: {:#?}", r.findings);
         assert!(r.required_capabilities.is_empty());
-        assert!(r
-            .findings
-            .iter()
-            .any(|f| f.disposition == FindingDisposition::Translated
-                && f.path.contains("ports")));
+        assert!(r.findings.iter().any(|f| f.disposition == FindingDisposition::Translated && f.path.contains("ports")));
     }
 
     #[test]
@@ -931,9 +795,7 @@ services:
 "#,
         );
         assert!(!r.ok);
-        assert!(r
-            .unsupported()
-            .any(|finding| finding.message.contains("contains the Docker daemon socket")));
+        assert!(r.unsupported().any(|finding| finding.message.contains("contains the Docker daemon socket")));
     }
 
     #[test]
@@ -946,9 +808,7 @@ services:
 "#,
         );
         assert!(!r.ok);
-        assert!(r
-            .unsupported()
-            .any(|finding| finding.message.contains("reserved")));
+        assert!(r.unsupported().any(|finding| finding.message.contains("reserved")));
     }
 
     #[test]
@@ -982,10 +842,7 @@ services:
 "#,
         );
         assert!(r.ok, "findings: {:#?}", r.findings);
-        assert_eq!(
-            r.required_capabilities,
-            vec!["docker-observe".to_string(), "host-network".to_string()]
-        );
+        assert_eq!(r.required_capabilities, vec!["docker-observe".to_string(), "host-network".to_string()]);
     }
 
     #[test]
@@ -1054,9 +911,7 @@ services:
 "#,
         );
         assert!(r.ok);
-        assert!(r.findings.iter().any(|f| {
-            f.path == "networks" && f.disposition == FindingDisposition::Overridden
-        }));
+        assert!(r.findings.iter().any(|f| { f.path == "networks" && f.disposition == FindingDisposition::Overridden }));
     }
 
     #[test]
@@ -1070,9 +925,11 @@ services:
 "#,
         );
         assert!(r.ok);
-        assert!(r.findings.iter().any(|f| {
-            f.path.ends_with("container_name") && f.disposition == FindingDisposition::Overridden
-        }));
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| { f.path.ends_with("container_name") && f.disposition == FindingDisposition::Overridden })
+        );
     }
 
     #[test]
@@ -1087,26 +944,15 @@ services:
 "#,
             "monitor",
         );
-        let container = r
-            .findings
-            .iter()
-            .find(|f| f.path.ends_with("container_name"))
-            .expect("container_name finding");
+        let container = r.findings.iter().find(|f| f.path.ends_with("container_name")).expect("container_name finding");
         assert!(container.message.contains("litebin-monitor.host-agent"));
         assert!(!container.message.contains('{'));
 
-        let network = r
-            .findings
-            .iter()
-            .find(|f| f.path == "litebin.network")
-            .expect("network finding");
+        let network = r.findings.iter().find(|f| f.path == "litebin.network").expect("network finding");
         assert!(network.message.contains("host namespace"));
         assert!(!network.message.contains('{'));
 
-        let mode = r
-            .unsupported()
-            .find(|f| f.path.ends_with("network_mode"))
-            .expect("network_mode finding");
+        let mode = r.unsupported().find(|f| f.path.ends_with("network_mode")).expect("network_mode finding");
         assert!(mode.message.contains("background"));
     }
 }

@@ -13,6 +13,9 @@ All notable changes to this project will be documented in this file.
 - **Docker observation across workload types** — Extended the managed HAProxy observation sidecar to image and Compose projects, isolated it to approved requesters, and added a live Docker policy test for allowed reads and denied mutations.
 - **Permission-gated host agents** — Added `host-network` for background Compose services on Linux rootful Docker nodes, including loopback-only Docker observation and compatibility validation for host-network workloads.
 
+### Changed
+- **Workspace Rust formatting** — Added a shared 120-column rustfmt configuration and formatted every Rust crate consistently.
+
 ### Fixed
 - **Dashboard log viewer strips ANSI** — Container logs with terminal color codes render as plain text instead of raw escape sequences like `\u001b[95m`.
 - **`/compose/validate` proxied to orchestrator** — Added `/compose/*` to Caddy API path matchers so validation requests no longer hit the dashboard (405).

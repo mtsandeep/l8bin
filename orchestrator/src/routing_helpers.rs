@@ -6,20 +6,13 @@ use tokio::sync::RwLock;
 
 use crate::config::Config;
 use litebin_common::routing::{ProjectCustomRoute, ProjectRoute, RoutingProvider};
-use litebin_common::types::{container_name, Project, ProjectService, ProjectStatus};
+use litebin_common::types::{Project, ProjectService, ProjectStatus, container_name};
 
 /// Look up a node's host address and public_ip by node_id.
 /// Returns None if the node doesn't exist in the database.
-async fn lookup_node_host(
-    db: &SqlitePool,
-    node_id: &str,
-) -> anyhow::Result<Option<(String, Option<String>)>> {
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT host, public_ip FROM nodes WHERE id = ?",
-    )
-    .bind(node_id)
-    .fetch_optional(db)
-    .await?;
+async fn lookup_node_host(db: &SqlitePool, node_id: &str) -> anyhow::Result<Option<(String, Option<String>)>> {
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT host, public_ip FROM nodes WHERE id = ?").bind(node_id).fetch_optional(db).await?;
     Ok(row)
 }
 
@@ -38,7 +31,8 @@ async fn resolve_custom_routes(
         placeholders
     );
 
-    let mut builder = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String, i64, i64)>(&query);
+    let mut builder =
+        sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String, i64, i64)>(&query);
     for pid in project_ids {
         builder = builder.bind(pid);
     }
@@ -63,11 +57,7 @@ async fn resolve_custom_routes(
 
 /// Resolve the upstream address for each project by looking up its assigned node.
 /// Local projects use `host.docker.internal:{port}`, remote projects use `{node_host}:{port}`.
-pub async fn resolve_routes(
-    projects: &[Project],
-    db: &SqlitePool,
-    domain: &str,
-) -> anyhow::Result<Vec<ProjectRoute>> {
+pub async fn resolve_routes(projects: &[Project], db: &SqlitePool, domain: &str) -> anyhow::Result<Vec<ProjectRoute>> {
     // Bulk-load custom routes for all projects
     let project_ids: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
     let custom_routes_map = resolve_custom_routes(db, &project_ids).await?;
@@ -111,26 +101,22 @@ pub async fn resolve_routes(
         };
 
         let (upstream, node_public_ip) = match project.node_id.as_deref() {
-            Some(node_id) if node_id != "local" => {
-                match lookup_node_host(db, node_id).await? {
-                    Some((host, public_ip)) => (format!("{}:443", host), public_ip),
-                    None => {
-                        tracing::warn!(
-                            project_id = %project.id,
-                            node_id = %node_id,
-                            "node not found in DB, skipping route"
-                        );
-                        continue;
-                    }
+            Some(node_id) if node_id != "local" => match lookup_node_host(db, node_id).await? {
+                Some((host, public_ip)) => (format!("{}:443", host), public_ip),
+                None => {
+                    tracing::warn!(
+                        project_id = %project.id,
+                        node_id = %node_id,
+                        "node not found in DB, skipping route"
+                    );
+                    continue;
                 }
-            }
+            },
             _ => {
-                let local_ip: Option<String> = sqlx::query_scalar(
-                    "SELECT public_ip FROM nodes WHERE id = 'local'",
-                )
-                .fetch_optional(db)
-                .await?
-                .flatten();
+                let local_ip: Option<String> = sqlx::query_scalar("SELECT public_ip FROM nodes WHERE id = 'local'")
+                    .fetch_optional(db)
+                    .await?
+                    .flatten();
                 (format!("{}:{}", upstream_name, internal_port), local_ip)
             }
         };
@@ -145,8 +131,7 @@ pub async fn resolve_routes(
             node_id: project.node_id.clone(),
             node_public_ip,
             host_rewrite: None,
-            upstream_tls: project.node_id.as_deref() != Some("local")
-                && project.node_id.is_some(),
+            upstream_tls: project.node_id.as_deref() != Some("local") && project.node_id.is_some(),
             container_upstream,
             custom_routes,
         });
@@ -173,12 +158,8 @@ async fn resolve_sleeping_custom_domain_routes(
     for project in &sleeping {
         let node_public_ip = match project.node_id.as_deref() {
             Some(node_id) if node_id != "local" => {
-                let row: Option<(Option<String>,)> = sqlx::query_as(
-                    "SELECT public_ip FROM nodes WHERE id = ?",
-                )
-                .bind(node_id)
-                .fetch_optional(db)
-                .await?;
+                let row: Option<(Option<String>,)> =
+                    sqlx::query_as("SELECT public_ip FROM nodes WHERE id = ?").bind(node_id).fetch_optional(db).await?;
                 row.and_then(|(ip,)| ip)
             }
             _ => None,
@@ -192,9 +173,9 @@ async fn resolve_sleeping_custom_domain_routes(
             node_id: project.node_id.clone(),
             node_public_ip,
             host_rewrite: Some(format!("{}.{}", project.id, domain)),
-            upstream_tls: false, // sleeping routes proxy to local orchestrator
+            upstream_tls: false,      // sleeping routes proxy to local orchestrator
             container_upstream: None, // sleeping projects have no running container
-            custom_routes: vec![], // sleeping projects don't need custom routes
+            custom_routes: vec![],    // sleeping projects don't need custom routes
         });
     }
 
@@ -211,16 +192,13 @@ pub async fn resolve_all_routes(
     // All running projects (single and multi-service) get direct container routes.
     // Caddy's handle_response catches 502/503/504 and falls back to the orchestrator
     // for auto-wake when the container is down.
-    let all_running = sqlx::query_as::<_, Project>(
-        "SELECT * FROM projects WHERE status = 'running'",
-    )
-    .fetch_all(db)
-    .await?;
+    let all_running =
+        sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE status = 'running'").fetch_all(db).await?;
 
     let mut routes = resolve_routes(&all_running, db, domain).await?;
 
-    let background_projects = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE is_background = 1")
-        .fetch_all(db).await?;
+    let background_projects =
+        sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE is_background = 1").fetch_all(db).await?;
     for project in background_projects {
         routes.push(ProjectRoute {
             project_id: project.id.clone(),
@@ -237,11 +215,8 @@ pub async fn resolve_all_routes(
     }
 
     // Degraded projects (some services stopped) — route to orchestrator so waker can recover
-    let degraded = sqlx::query_as::<_, Project>(
-        "SELECT * FROM projects WHERE status = 'degraded'",
-    )
-    .fetch_all(db)
-    .await?;
+    let degraded =
+        sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE status = 'degraded'").fetch_all(db).await?;
 
     for project in &degraded {
         if project.is_background {
@@ -249,12 +224,10 @@ pub async fn resolve_all_routes(
         }
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         let (upstream, node_public_ip) = if is_local {
-            let local_ip: Option<String> = sqlx::query_scalar(
-                "SELECT public_ip FROM nodes WHERE id = 'local'",
-            )
-            .fetch_optional(db)
-            .await?
-            .flatten();
+            let local_ip: Option<String> = sqlx::query_scalar("SELECT public_ip FROM nodes WHERE id = 'local'")
+                .fetch_optional(db)
+                .await?
+                .flatten();
             (orchestrator_upstream.to_string(), local_ip)
         } else {
             let node_id = project.node_id.as_deref().unwrap_or("local");

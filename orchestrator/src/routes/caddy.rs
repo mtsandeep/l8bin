@@ -24,16 +24,11 @@ pub struct AskQuery {
 /// Caddy On-Demand TLS validation endpoint.
 /// Returns 200 if the domain belongs to a known project, 404 otherwise.
 /// Checks: 1) subdomain match (project_id), 2) custom_domain match, 3) www variant of custom_domain.
-pub async fn ask(
-    State(state): State<AppState>,
-    Query(query): Query<AskQuery>,
-) -> StatusCode {
+pub async fn ask(State(state): State<AppState>, Query(query): Query<AskQuery>) -> StatusCode {
     let domain = &query.domain;
 
     // 1. Subdomain match: strip ".{domain}" suffix to get project_id
-    let subdomain = domain
-        .strip_suffix(&format!(".{}", state.config.domain))
-        .unwrap_or(domain);
+    let subdomain = domain.strip_suffix(&format!(".{}", state.config.domain)).unwrap_or(domain);
 
     let subdomain_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
         .bind(subdomain)
@@ -53,10 +48,12 @@ pub async fn ask(
     }
 
     // 2. Exact custom_domain match
-    let custom_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?")
-        .bind(domain)
-        .fetch_one(&state.db)
-        .await
+    let custom_exists = match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?",
+    )
+    .bind(domain)
+    .fetch_one(&state.db)
+    .await
     {
         Ok(count) => count,
         Err(e) => {
@@ -72,10 +69,12 @@ pub async fn ask(
 
     // 3. www variant: if queried domain starts with "www.", check bare domain too
     if let Some(bare) = domain.strip_prefix("www.") {
-        let www_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?")
-            .bind(bare)
-            .fetch_one(&state.db)
-            .await
+        let www_exists = match sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?",
+        )
+        .bind(bare)
+        .fetch_one(&state.db)
+        .await
         {
             Ok(count) => count,
             Err(e) => {

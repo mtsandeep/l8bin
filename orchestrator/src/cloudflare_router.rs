@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use litebin_common::routing::{wake_fallback_handle, RoutingProvider};
-use serde_json::{json, Value};
+use litebin_common::routing::{RoutingProvider, wake_fallback_handle};
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 use litebin_common::caddy::{CaddyClient, ORCHESTRATOR_API_PATHS, http_to_https_redirect};
@@ -32,13 +32,7 @@ impl CloudflareDnsRouter {
         db: SqlitePool,
         config: Arc<Config>,
     ) -> Self {
-        Self {
-            cloudflare,
-            master_caddy,
-            node_clients,
-            db,
-            config,
-        }
+        Self { cloudflare, master_caddy, node_clients, db, config }
     }
 
     /// Build Caddy config for the master node (local projects + dashboard/API).
@@ -275,11 +269,7 @@ impl CloudflareDnsRouter {
     }
 
     /// Build Caddy config for an agent node (only its projects + wake catch-all).
-    fn build_agent_caddy_config(
-        agent_projects: &[&ProjectRoute],
-        domain: &str,
-        orchestrator_url: &str,
-    ) -> Value {
+    fn build_agent_caddy_config(agent_projects: &[&ProjectRoute], domain: &str, orchestrator_url: &str) -> Value {
         let mut routes: Vec<Value> = Vec::new();
 
         if let Some(redirect) = http_to_https_redirect(domain) {
@@ -471,20 +461,14 @@ impl CloudflareDnsRouter {
     }
 
     /// Push Caddy config to a remote agent via POST /caddy/sync.
-    async fn push_agent_caddy(
-        &self,
-        node_id: &str,
-        config: &Value,
-    ) -> anyhow::Result<()> {
+    async fn push_agent_caddy(&self, node_id: &str, config: &Value) -> anyhow::Result<()> {
         let client = get_node_client(&self.node_clients, node_id)?;
 
         // Look up agent connection info
-        let node: Option<(String, i64)> = sqlx::query_as(
-            "SELECT host, agent_port FROM nodes WHERE id = ?",
-        )
-        .bind(node_id)
-        .fetch_optional(&self.db)
-        .await?;
+        let node: Option<(String, i64)> = sqlx::query_as("SELECT host, agent_port FROM nodes WHERE id = ?")
+            .bind(node_id)
+            .fetch_optional(&self.db)
+            .await?;
 
         let (host, agent_port) = match node {
             Some(h) => h,
@@ -501,12 +485,7 @@ impl CloudflareDnsRouter {
         };
 
         let url = format!("{}/caddy/sync", base_url);
-        let resp = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(config)
-            .send()
-            .await?;
+        let resp = client.post(&url).header("Content-Type", "application/json").json(config).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -547,18 +526,17 @@ impl CloudflareDnsRouter {
         // DNS records are only removed when a project is deleted (or Cloudflare is cleared),
         // never when a project is stopped — so that stopped projects still resolve and
         // reach the waker via the catch-all route.
-        let all_projects: Vec<(String, Option<String>, Option<String>, bool)> = match sqlx::query_as(
-            "SELECT id, node_id, custom_domain, is_background FROM projects",
-        )
-        .fetch_all(&self.db)
-        .await
-        {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(error = %e, "sync_dns: failed to fetch projects, aborting DNS sync");
-                return Err(e.into());
-            }
-        };
+        let all_projects: Vec<(String, Option<String>, Option<String>, bool)> =
+            match sqlx::query_as("SELECT id, node_id, custom_domain, is_background FROM projects")
+                .fetch_all(&self.db)
+                .await
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(error = %e, "sync_dns: failed to fetch projects, aborting DNS sync");
+                    return Err(e.into());
+                }
+            };
 
         for (project_id, node_id, custom_domain, is_background) in &all_projects {
             let ip = match (*is_background, node_id.as_deref()) {
@@ -610,13 +588,9 @@ impl CloudflareDnsRouter {
                 if let Some(cd) = custom_domain {
                     desired.insert(cd.clone(), ip.clone());
 
-                // Also add the www variant as a redirect handled by Caddy,
-                // but we still need a DNS record pointing to the same IP
-                    let www = if cd.starts_with("www.") {
-                        cd[4..].to_string()
-                    } else {
-                        format!("www.{}", cd)
-                    };
+                    // Also add the www variant as a redirect handled by Caddy,
+                    // but we still need a DNS record pointing to the same IP
+                    let www = if cd.starts_with("www.") { cd[4..].to_string() } else { format!("www.{}", cd) };
                     desired.insert(www, ip);
                 }
             }
@@ -625,10 +599,7 @@ impl CloudflareDnsRouter {
         let domain_suffix = format!(".{}", domain);
 
         // List existing A records for our domain
-        let existing = self
-            .cloudflare
-            .list_records_by_suffix(&domain_suffix, "A")
-            .await?;
+        let existing = self.cloudflare.list_records_by_suffix(&domain_suffix, "A").await?;
 
         let mut result = litebin_common::routing::DnsSyncResult::default();
 
@@ -699,10 +670,7 @@ impl RoutingProvider for CloudflareDnsRouter {
         poke_subdomain: &str,
         sync_dns: bool,
     ) -> anyhow::Result<()> {
-        tracing::info!(
-            route_count = projects.len(),
-            "syncing routes (cloudflare_dns mode)"
-        );
+        tracing::info!(route_count = projects.len(), "syncing routes (cloudflare_dns mode)");
 
         // Group projects by node
         let mut by_node: HashMap<String, Vec<&ProjectRoute>> = HashMap::new();
@@ -713,14 +681,16 @@ impl RoutingProvider for CloudflareDnsRouter {
 
         // 1. Master Caddy — local projects + dashboard/API
         let local_projects = by_node.get("local").cloned().unwrap_or_default();
-        let master_config =
-            Self::build_master_caddy_config(&local_projects, domain, orchestrator_upstream, dashboard_subdomain, poke_subdomain);
+        let master_config = Self::build_master_caddy_config(
+            &local_projects,
+            domain,
+            orchestrator_upstream,
+            dashboard_subdomain,
+            poke_subdomain,
+        );
 
         let url = format!("{}/load", self.master_caddy.admin_url());
-        let resp = self
-            .master_caddy
-            .post_json(&url, &master_config)
-            .await?;
+        let resp = self.master_caddy.post_json(&url, &master_config).await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -731,11 +701,10 @@ impl RoutingProvider for CloudflareDnsRouter {
 
         // 2. Agent Caddys — include nodes with no active routes so stale
         // project/custom-domain routes are removed when a project becomes background.
-        let remote_node_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM nodes WHERE id != 'local' AND status != 'decommissioned'",
-        )
-        .fetch_all(&self.db)
-        .await?;
+        let remote_node_ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM nodes WHERE id != 'local' AND status != 'decommissioned'")
+                .fetch_all(&self.db)
+                .await?;
         for node_id in remote_node_ids {
             let agent_projects = by_node.get(&node_id).cloned().unwrap_or_default();
 
@@ -750,13 +719,7 @@ impl RoutingProvider for CloudflareDnsRouter {
             }
 
             // Push project metadata (auto_start_enabled flags) to agent
-            push_project_meta_to_agent(
-                &node_id,
-                &self.db,
-                &self.node_clients,
-                &self.config,
-            )
-            .await;
+            push_project_meta_to_agent(&node_id, &self.db, &self.node_clients, &self.config).await;
         }
 
         // 3. Cloudflare DNS sync (skip for periodic checks where nothing changed)
@@ -795,14 +758,10 @@ pub async fn push_project_meta_to_agent(
     };
 
     let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _, _)| (id.clone(), *auto)).collect();
-    let background_projects: HashMap<String, bool> = rows.iter()
-        .filter(|(_, _, _, background)| *background)
-        .map(|(id, _, _, _)| (id.clone(), true))
-        .collect();
-    let allow_raw_ports: HashMap<String, bool> = rows.iter()
-        .filter(|(_, _, raw, _)| *raw)
-        .map(|(id, _, _, _)| (id.clone(), true))
-        .collect();
+    let background_projects: HashMap<String, bool> =
+        rows.iter().filter(|(_, _, _, background)| *background).map(|(id, _, _, _)| (id.clone(), true)).collect();
+    let allow_raw_ports: HashMap<String, bool> =
+        rows.iter().filter(|(_, _, raw, _)| *raw).map(|(id, _, _, _)| (id.clone(), true)).collect();
     let docker_observe: HashMap<String, bool> = sqlx::query_scalar::<_, String>(
         "SELECT pc.project_id FROM project_capabilities pc \
          JOIN projects p ON p.id = pc.project_id \
@@ -836,12 +795,10 @@ pub async fn push_project_meta_to_agent(
         }
     };
 
-    let node: Option<(String, i64)> = match sqlx::query_as(
-        "SELECT host, agent_port FROM nodes WHERE id = ?",
-    )
-    .bind(node_id)
-    .fetch_optional(db)
-    .await
+    let node: Option<(String, i64)> = match sqlx::query_as("SELECT host, agent_port FROM nodes WHERE id = ?")
+        .bind(node_id)
+        .fetch_optional(db)
+        .await
     {
         Ok(n) => n,
         Err(e) => {
@@ -865,9 +822,17 @@ pub async fn push_project_meta_to_agent(
 
     // Read global defaults to push to agent
     let default_mem: i64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_memory_limit_mb'")
-        .fetch_one(db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(256);
+        .fetch_one(db)
+        .await
+        .ok()
+        .and_then(|v: String| v.parse().ok())
+        .unwrap_or(256);
     let default_cpu: f64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_cpu_limit'")
-        .fetch_one(db).await.ok().and_then(|v: String| v.parse().ok()).unwrap_or(0.5);
+        .fetch_one(db)
+        .await
+        .ok()
+        .and_then(|v: String| v.parse().ok())
+        .unwrap_or(0.5);
 
     let body = json!({
         "projects": projects,
@@ -879,13 +844,7 @@ pub async fn push_project_meta_to_agent(
         "default_cpu_limit": default_cpu,
     });
 
-    match client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-    {
+    match client.post(&url).header("Content-Type", "application/json").json(&body).send().await {
         Ok(resp) if resp.status().is_success() => {
             tracing::info!(node_id, count = projects.len(), "pushed project meta to agent");
         }

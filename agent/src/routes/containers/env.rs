@@ -44,10 +44,7 @@ pub fn read_project_env(project_id: &str) -> Vec<String> {
 
     match dotenvy::from_path_iter(&env_path) {
         Ok(iter) => {
-            let vars: Vec<String> = iter
-                .filter_map(|item| item.ok())
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect();
+            let vars: Vec<String> = iter.filter_map(|item| item.ok()).map(|(k, v)| format!("{}={}", k, v)).collect();
             tracing::info!(project = project_id, count = vars.len(), "env var(s) loaded from .env");
             vars
         }
@@ -95,7 +92,13 @@ pub fn env_has_changed(project_id: &str) -> bool {
     let snapshot_hash = snapshot_content_hash(&snapshot_path);
 
     let changed = env_hash != snapshot_hash;
-    tracing::info!(project = project_id, env_hash = env_hash, snapshot_hash = snapshot_hash, changed = changed, "env change check");
+    tracing::info!(
+        project = project_id,
+        env_hash = env_hash,
+        snapshot_hash = snapshot_hash,
+        changed = changed,
+        "env change check"
+    );
     changed
 }
 

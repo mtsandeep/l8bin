@@ -28,10 +28,9 @@ pub struct AgentRegistration {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let cert_path = std::env::var("AGENT_CERT_PATH")
-            .unwrap_or_else(|_| "/etc/litebin/certs/agent.pem".to_string());
-        let key_path = std::env::var("AGENT_KEY_PATH")
-            .unwrap_or_else(|_| "/etc/litebin/certs/agent-key.pem".to_string());
+        let cert_path = std::env::var("AGENT_CERT_PATH").unwrap_or_else(|_| "/etc/litebin/certs/agent.pem".to_string());
+        let key_path =
+            std::env::var("AGENT_KEY_PATH").unwrap_or_else(|_| "/etc/litebin/certs/agent-key.pem".to_string());
 
         let cert_pem = std::fs::read_to_string(&cert_path)
             .map_err(|e| anyhow::anyhow!("failed to read cert {}: {}", cert_path, e))?;
@@ -39,9 +38,7 @@ impl Config {
             .map_err(|e| anyhow::anyhow!("failed to read key {}: {}", key_path, e))?;
 
         Ok(Config {
-            agent_port: std::env::var("AGENT_PORT")
-                .unwrap_or_else(|_| DEFAULT_AGENT_PORT.to_string())
-                .parse()?,
+            agent_port: std::env::var("AGENT_PORT").unwrap_or_else(|_| DEFAULT_AGENT_PORT.to_string()).parse()?,
             cert_path,
             key_path,
             ca_cert_path: std::env::var("AGENT_CA_CERT_PATH")

@@ -21,11 +21,8 @@ pub enum ProjectCapability {
 }
 
 impl ProjectCapability {
-    pub const ALL: &'static [ProjectCapability] = &[
-        ProjectCapability::DockerObserve,
-        ProjectCapability::HostNetwork,
-        ProjectCapability::RawPorts,
-    ];
+    pub const ALL: &'static [ProjectCapability] =
+        &[ProjectCapability::DockerObserve, ProjectCapability::HostNetwork, ProjectCapability::RawPorts];
 
     pub fn id(self) -> &'static str {
         match self {

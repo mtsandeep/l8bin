@@ -28,8 +28,7 @@ pub fn build_node_client(
     // Load client identity (cert + key)
     let cert_pem = std::fs::read(client_cert_path)?;
     let key_pem = std::fs::read(client_key_path)?;
-    let client_certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..])
-        .collect::<Result<Vec<_>, _>>()?;
+    let client_certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..]).collect::<Result<Vec<_>, _>>()?;
     let client_key = rustls_pemfile::ec_private_keys(&mut &key_pem[..])
         .next()
         .ok_or_else(|| anyhow::anyhow!("no EC private key found"))??;
@@ -112,9 +111,7 @@ impl rustls::client::danger::ServerCertVerifier for NoHostnameVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
+        rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes()
     }
 }
 

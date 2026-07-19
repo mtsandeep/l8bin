@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -70,27 +70,16 @@ fn recommended_node_id(nodes: &[Node]) -> Option<String> {
     security(("session_auth" = [])),
 )]
 pub async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
-    match sqlx::query_as::<_, Node>("SELECT * FROM nodes ORDER BY created_at ASC")
-        .fetch_all(&state.db)
-        .await
-    {
+    match sqlx::query_as::<_, Node>("SELECT * FROM nodes ORDER BY created_at ASC").fetch_all(&state.db).await {
         Ok(nodes) => {
             let rec_id = recommended_node_id(&nodes);
             let response: Vec<NodeResponse> = nodes
                 .into_iter()
-                .map(|node| NodeResponse {
-                    recommended: rec_id.as_deref() == Some(&node.id),
-                    node,
-                })
+                .map(|node| NodeResponse { recommended: rec_id.as_deref() == Some(&node.id), node })
                 .collect();
             (StatusCode::OK, Json(response)).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("database error: {e}"),
-            }),
-        )
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: format!("database error: {e}") }))
             .into_response(),
     }
 }
@@ -106,10 +95,7 @@ pub async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
     tag = "nodes",
     security(("session_auth" = [])),
 )]
-pub async fn create_node(
-    State(state): State<AppState>,
-    Json(req): Json<CreateNodeRequest>,
-) -> impl IntoResponse {
+pub async fn create_node(State(state): State<AppState>, Json(req): Json<CreateNodeRequest>) -> impl IntoResponse {
     let agent_port = req.agent_port.unwrap_or(5083);
 
     // Generate a new node ID and shared secret
@@ -138,43 +124,29 @@ pub async fn create_node(
     .await;
 
     if let Err(e) = result {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("database error: {e}"),
-            }),
-        )
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: format!("database error: {e}") }))
             .into_response();
     }
 
     // Build mTLS client and add to pool for future connect calls
-    if let Ok(client) = build_node_client(
-        &state.config.ca_cert_path,
-        &state.config.client_cert_path,
-        &state.config.client_key_path,
-    ) {
-        state
-            .node_clients
-            .insert(node_id.clone(), Arc::new(client));
+    if let Ok(client) =
+        build_node_client(&state.config.ca_cert_path, &state.config.client_cert_path, &state.config.client_key_path)
+    {
+        state.node_clients.insert(node_id.clone(), Arc::new(client));
     }
 
     // Fetch the created node
-    let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-        .bind(&node_id)
-        .fetch_one(&state.db)
-        .await
-    {
-        Ok(node) => node,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("failed to fetch created node: {e}"),
-                }),
-            )
-                .into_response();
-        }
-    };
+    let node =
+        match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?").bind(&node_id).fetch_one(&state.db).await {
+            Ok(node) => node,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error: format!("failed to fetch created node: {e}") }),
+                )
+                    .into_response();
+            }
+        };
 
     // Return the secret in the response (shown only once at creation)
     let mut response = serde_json::to_value(&node).unwrap_or_default();
@@ -201,10 +173,7 @@ pub async fn create_node(
 )]
 /// POST /nodes/{id}/connect — health check + push config to agent via mTLS.
 /// Transitions node from pending_setup → online.
-pub async fn connect_node(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     // 1. Look up node from DB
     let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
         .bind(&id)
@@ -213,21 +182,11 @@ pub async fn connect_node(
     {
         Ok(Some(n)) => n,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "node not found".to_string(),
-                }),
-            )
+            return (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "node not found".to_string() }))
                 .into_response();
         }
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("database error: {e}"),
-                }),
-            )
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: format!("database error: {e}") }))
                 .into_response();
         }
     };
@@ -237,10 +196,7 @@ pub async fn connect_node(
         return (
             StatusCode::CONFLICT,
             Json(ErrorResponse {
-                error: format!(
-                    "node status is '{}', expected 'pending_setup' or 'offline'",
-                    node.status
-                ),
+                error: format!("node status is '{}', expected 'pending_setup' or 'offline'", node.status),
             }),
         )
             .into_response();
@@ -262,9 +218,7 @@ pub async fn connect_node(
                 Err(e) => {
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
-                        Json(ErrorResponse {
-                            error: format!("cannot build mTLS client: {e}"),
-                        }),
+                        Json(ErrorResponse { error: format!("cannot build mTLS client: {e}") }),
                     )
                         .into_response();
                 }
@@ -274,19 +228,13 @@ pub async fn connect_node(
 
     // 3. Health check via mTLS
     let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
-    let health: HealthReport = match client
-        .get(&format!("{}/health", base_url))
-        .send()
-        .await
-    {
+    let health: HealthReport = match client.get(&format!("{}/health", base_url)).send().await {
         Ok(resp) if resp.status().is_success() => match resp.json::<HealthReport>().await {
             Ok(h) => h,
             Err(e) => {
                 return (
                     StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(ErrorResponse {
-                        error: format!("failed to parse health response: {e}"),
-                    }),
+                    Json(ErrorResponse { error: format!("failed to parse health response: {e}") }),
                 )
                     .into_response();
             }
@@ -294,18 +242,14 @@ pub async fn connect_node(
         Ok(resp) => {
             return (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse {
-                    error: format!("agent returned non-success: {}", resp.status()),
-                }),
+                Json(ErrorResponse { error: format!("agent returned non-success: {}", resp.status()) }),
             )
                 .into_response();
         }
         Err(e) => {
             return (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse {
-                    error: format!("failed to connect to agent: {e}"),
-                }),
+                Json(ErrorResponse { error: format!("failed to connect to agent: {e}") }),
             )
                 .into_response();
         }
@@ -321,12 +265,7 @@ pub async fn connect_node(
         "heartbeat_url": format_heartbeat_url(&state),
     });
 
-    match client
-        .post(&format!("{}/internal/register", base_url))
-        .json(&register_body)
-        .send()
-        .await
-    {
+    match client.post(&format!("{}/internal/register", base_url)).json(&register_body).send().await {
         Ok(resp) if resp.status().is_success() => {
             tracing::info!(node_id = %id, "config pushed to agent");
         }
@@ -334,18 +273,14 @@ pub async fn connect_node(
             let body = resp.text().await.unwrap_or_default();
             return (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse {
-                    error: format!("agent rejected registration: {body}"),
-                }),
+                Json(ErrorResponse { error: format!("agent rejected registration: {body}") }),
             )
                 .into_response();
         }
         Err(e) => {
             return (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse {
-                    error: format!("failed to push config to agent: {e}"),
-                }),
+                Json(ErrorResponse { error: format!("failed to push config to agent: {e}") }),
             )
                 .into_response();
         }
@@ -370,18 +305,14 @@ pub async fn connect_node(
         tracing::warn!(node_id = %id, error = %e, "nodes: failed to update node status on manual connect");
     }
 
-    let updated_node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-        .bind(&id)
-        .fetch_one(&state.db)
-        .await;
+    let updated_node =
+        sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?").bind(&id).fetch_one(&state.db).await;
 
     match updated_node {
         Ok(n) => (StatusCode::OK, Json(n)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("failed to fetch updated node: {e}"),
-            }),
+            Json(ErrorResponse { error: format!("failed to fetch updated node: {e}") }),
         )
             .into_response(),
     }
@@ -391,34 +322,20 @@ pub async fn connect_node(
 pub fn format_wake_report_url(state: &AppState) -> String {
     if state.config.ca_cert_path.is_empty() {
         // Dev mode: direct to orchestrator over HTTP
-        format!(
-            "http://localhost:{}/internal/wake-report",
-            state.config.port
-        )
+        format!("http://localhost:{}/internal/wake-report", state.config.port)
     } else {
         // Production: route through Caddy (port 443) for proper TLS
-        format!(
-            "https://{}.{}/internal/wake-report",
-            state.config.poke_subdomain,
-            state.config.domain
-        )
+        format!("https://{}.{}/internal/wake-report", state.config.poke_subdomain, state.config.domain)
     }
 }
 
 /// Build the heartbeat_url for agents to POST activity data to.
 pub fn format_heartbeat_url(state: &AppState) -> String {
     if state.config.ca_cert_path.is_empty() {
-        format!(
-            "http://localhost:{}/internal/heartbeat",
-            state.config.port
-        )
+        format!("http://localhost:{}/internal/heartbeat", state.config.port)
     } else {
         // Production: route through Caddy (port 443) for proper TLS
-        format!(
-            "https://{}.{}/internal/heartbeat",
-            state.config.poke_subdomain,
-            state.config.domain
-        )
+        format!("https://{}.{}/internal/heartbeat", state.config.poke_subdomain, state.config.domain)
     }
 }
 
@@ -438,65 +355,42 @@ pub fn format_heartbeat_url(state: &AppState) -> String {
     tag = "nodes",
     security(("session_auth" = [])),
 )]
-pub async fn delete_node(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+pub async fn delete_node(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     // Reject decommissioning the local node
     if id == "local" {
         return (
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "cannot decommission the local node".to_string(),
-            }),
+            Json(ErrorResponse { error: "cannot decommission the local node".to_string() }),
         )
             .into_response();
     }
 
     // Check for running projects on this node
-    let running_projects = sqlx::query_as::<_, (String,)>(
-        "SELECT id FROM projects WHERE status = 'running' AND node_id = ?",
-    )
-    .bind(&id)
-    .fetch_all(&state.db)
-    .await;
+    let running_projects =
+        sqlx::query_as::<_, (String,)>("SELECT id FROM projects WHERE status = 'running' AND node_id = ?")
+            .bind(&id)
+            .fetch_all(&state.db)
+            .await;
 
     match running_projects {
         Ok(projects) if !projects.is_empty() => {
             let project_ids: Vec<String> = projects.into_iter().map(|(pid,)| pid).collect();
             return (
                 StatusCode::CONFLICT,
-                Json(ConflictResponse {
-                    error: "node has running projects".to_string(),
-                    project_ids,
-                }),
+                Json(ConflictResponse { error: "node has running projects".to_string(), project_ids }),
             )
                 .into_response();
         }
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("database error: {e}"),
-                }),
-            )
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: format!("database error: {e}") }))
                 .into_response();
         }
         _ => {}
     }
 
     // Delete node from DB
-    if let Err(e) = sqlx::query("DELETE FROM nodes WHERE id = ?")
-        .bind(&id)
-        .execute(&state.db)
-        .await
-    {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("database error: {e}"),
-            }),
-        )
+    if let Err(e) = sqlx::query("DELETE FROM nodes WHERE id = ?").bind(&id).execute(&state.db).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: format!("database error: {e}") }))
             .into_response();
     }
 
@@ -531,27 +425,19 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
 
     // Local node
     let stats = state.docker.image_stats().await;
-    let name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM nodes WHERE id = 'local'",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_else(|| "local".to_string());
+    let name = sqlx::query_scalar::<_, String>("SELECT name FROM nodes WHERE id = 'local'")
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "local".to_string());
 
-    results.push(NodeImageStatsResponse {
-        node_id: "local".to_string(),
-        node_name: name,
-        image_stats: stats,
-    });
+    results.push(NodeImageStatsResponse { node_id: "local".to_string(), node_name: name, image_stats: stats });
 
     // Remote nodes: get stats from agent health endpoint
-    let nodes = match sqlx::query_as::<_, Node>(
-        "SELECT * FROM nodes WHERE id != 'local' ORDER BY name",
-    )
-    .fetch_all(&state.db)
-    .await
+    let nodes = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id != 'local' ORDER BY name")
+        .fetch_all(&state.db)
+        .await
     {
         Ok(nodes) => nodes,
         Err(e) => {
@@ -607,22 +493,15 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
     security(("session_auth" = [])),
 )]
 /// POST /nodes/{id}/images/prune — prune dangling images on a specific node.
-pub async fn prune_node_images(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+pub async fn prune_node_images(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     if id == "local" {
         match state.docker.prune_dangling_images().await {
-            Ok(reclaimed) => (
-                StatusCode::OK,
-                Json(serde_json::json!({ "bytes_reclaimed": reclaimed })),
-            )
-                .into_response(),
+            Ok(reclaimed) => {
+                (StatusCode::OK, Json(serde_json::json!({ "bytes_reclaimed": reclaimed }))).into_response()
+            }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("failed to prune images: {e}"),
-                }),
+                Json(ErrorResponse { error: format!("failed to prune images: {e}") }),
             )
                 .into_response(),
         }
@@ -634,20 +513,13 @@ pub async fn prune_node_images(
         {
             Ok(Some(node)) => node,
             Ok(None) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(ErrorResponse {
-                        error: format!("node '{}' not found", id),
-                    }),
-                )
+                return (StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("node '{}' not found", id) }))
                     .into_response();
             }
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: format!("database error: {e}"),
-                    }),
+                    Json(ErrorResponse { error: format!("database error: {e}") }),
                 )
                     .into_response();
             }
@@ -658,9 +530,7 @@ pub async fn prune_node_images(
             Err(e) => {
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ErrorResponse {
-                        error: format!("node client not available: {e}"),
-                    }),
+                    Json(ErrorResponse { error: format!("node client not available: {e}") }),
                 )
                     .into_response();
             }
@@ -674,9 +544,7 @@ pub async fn prune_node_images(
             }
             Err(e) => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse {
-                    error: format!("failed to prune images on agent: {e}"),
-                }),
+                Json(ErrorResponse { error: format!("failed to prune images on agent: {e}") }),
             )
                 .into_response(),
         }

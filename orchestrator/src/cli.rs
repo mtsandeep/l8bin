@@ -7,7 +7,7 @@
 
 use std::io::{self, Write};
 
-use bcrypt::{hash, DEFAULT_COST};
+use bcrypt::{DEFAULT_COST, hash};
 
 use crate::config::Config;
 use crate::db;

@@ -14,16 +14,12 @@ type HmacSha256 = Hmac<Sha256>;
 /// collects unique hosts from access logs,
 /// and periodically reports them to the orchestrator.
 pub async fn run_activity_reporter(state: AgentState, shutdown_rx: tokio::sync::watch::Receiver<bool>) {
-    let caddy_container = std::env::var("AGENT_CADDY_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-agent-caddy".into());
+    let caddy_container = std::env::var("AGENT_CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent-caddy".into());
 
     heartbeat::run_docker_log_tailer(
         state.docker.as_ref().clone(),
         caddy_container,
-        std::env::var("FLUSH_INTERVAL_SECS")
-            .unwrap_or_else(|_| "60".into())
-            .parse()
-            .unwrap_or(60),
+        std::env::var("FLUSH_INTERVAL_SECS").unwrap_or_else(|_| "60".into()).parse().unwrap_or(60),
         shutdown_rx,
         move |hosts| {
             let state = state.clone();
@@ -60,10 +56,7 @@ async fn report_hosts_to_master(state: &AgentState, hosts: HashSet<String>) {
         "hosts": hosts.into_iter().collect::<Vec<_>>()
     });
 
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-    {
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build() {
         Ok(c) => c,
         Err(e) => {
             warn!(error = %e, "activity reporter: failed to build HTTP client");

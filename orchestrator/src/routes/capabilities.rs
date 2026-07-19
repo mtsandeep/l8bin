@@ -1,22 +1,21 @@
 //! Compose validation and project capability HTTP handlers.
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use axum_login::AuthSession;
-use compose_bollard::{analyze_compose_yaml_for_workload, CompatibilityReport};
+use compose_bollard::{CompatibilityReport, analyze_compose_yaml_for_workload};
 use litebin_common::capabilities::{
-    capability_catalog, parse_capability_ids, CapabilityInfo, ProjectCapability,
-    ProjectCapabilityStatus,
+    CapabilityInfo, ProjectCapability, ProjectCapabilityStatus, capability_catalog, parse_capability_ids,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::auth::backend::PasswordBackend;
-use crate::{capabilities, AppState};
+use crate::{AppState, capabilities};
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ValidateComposeRequest {
@@ -59,38 +58,22 @@ pub async fn validate_compose(
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
         let pid = payload.project_id.as_deref().unwrap_or("");
-        if crate::auth::extract_deploy_token(&state, &headers, pid)
-            .await
-            .is_none()
-        {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Authentication required"})),
-            )
-                .into_response();
+        if crate::auth::extract_deploy_token(&state, &headers, pid).await.is_none() {
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Authentication required"}))).into_response();
         }
     }
 
-    let (_compose, report) =
-        match analyze_compose_yaml_for_workload(
-            &payload.compose,
-            if payload.is_background {
-                None
-            } else {
-                payload.public_service.as_deref()
-            },
-            payload.project_id.as_deref(),
-            payload.is_background,
-        ) {
-            Ok(v) => v,
-            Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({"error": e.to_string()})),
-                )
-                    .into_response();
-            }
-        };
+    let (_compose, report) = match analyze_compose_yaml_for_workload(
+        &payload.compose,
+        if payload.is_background { None } else { payload.public_service.as_deref() },
+        payload.project_id.as_deref(),
+        payload.is_background,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))).into_response();
+        }
+    };
 
     let missing = if let Some(ref project_id) = payload.project_id {
         match capabilities::granted_ids(&state.db, project_id).await {
@@ -109,11 +92,7 @@ pub async fn validate_compose(
 
     (
         StatusCode::OK,
-        Json(ValidateComposeResponse {
-            report,
-            missing_capabilities: missing,
-            catalog: capability_catalog(),
-        }),
+        Json(ValidateComposeResponse { report, missing_capabilities: missing, catalog: capability_catalog() }),
     )
         .into_response()
 }
@@ -136,9 +115,7 @@ pub async fn list_project_capabilities(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<ProjectCapabilityStatus>>, (StatusCode, String)> {
     ensure_project(&state, &id).await?;
-    let list = capabilities::status_list_for_project(&state.db, &id)
-        .await
-        .map_err(capabilities::db_err)?;
+    let list = capabilities::status_list_for_project(&state.db, &id).await.map_err(capabilities::db_err)?;
     Ok(Json(list))
 }
 
@@ -170,9 +147,7 @@ pub async fn grant_project_capabilities(
         }
     }
     let granted_by = auth_session.user.map(|u| u.id);
-    capabilities::grant_many(&state.db, &id, &caps, granted_by.as_deref())
-        .await
-        .map_err(capabilities::db_err)?;
+    capabilities::grant_many(&state.db, &id, &caps, granted_by.as_deref()).await.map_err(capabilities::db_err)?;
     if caps.iter().any(|cap| matches!(cap, ProjectCapability::DockerObserve | ProjectCapability::HostNetwork)) {
         let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
             .bind(&id)
@@ -191,9 +166,7 @@ pub async fn grant_project_capabilities(
             }
         }
     }
-    let list = capabilities::status_list_for_project(&state.db, &id)
-        .await
-        .map_err(capabilities::db_err)?;
+    let list = capabilities::status_list_for_project(&state.db, &id).await.map_err(capabilities::db_err)?;
     Ok(Json(list))
 }
 
@@ -213,12 +186,8 @@ pub async fn revoke_project_capability(
     Path((id, capability)): Path<(String, String)>,
 ) -> Result<Json<Vec<ProjectCapabilityStatus>>, (StatusCode, String)> {
     ensure_project(&state, &id).await?;
-    let cap = ProjectCapability::parse(&capability).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("unknown capability '{capability}'"),
-        )
-    })?;
+    let cap = ProjectCapability::parse(&capability)
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("unknown capability '{capability}'")))?;
     let mut docker_observe_node_id: Option<String> = None;
     let mut host_network_node_id: Option<String> = None;
     if cap == ProjectCapability::HostNetwork {
@@ -261,9 +230,14 @@ pub async fn revoke_project_capability(
                     .json(&json!({"container_id": container_id}))
                     .send()
                     .await
-                    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("failed to stop host-network workload: {e}")))?;
+                    .map_err(|e| {
+                        (StatusCode::SERVICE_UNAVAILABLE, format!("failed to stop host-network workload: {e}"))
+                    })?;
                 if !response.status().is_success() {
-                    return Err((StatusCode::BAD_GATEWAY, "failed to stop host-network workload before revocation".into()));
+                    return Err((
+                        StatusCode::BAD_GATEWAY,
+                        "failed to stop host-network workload before revocation".into(),
+                    ));
                 }
             }
         }
@@ -287,17 +261,11 @@ pub async fn revoke_project_capability(
             .await
             .map_err(capabilities::db_err)?;
         docker_observe_node_id = node_id.clone();
-        let proxy_name = litebin_common::types::container_name(
-            &id,
-            litebin_common::types::DOCKER_PROXY_SERVICE,
-            None,
-        );
+        let proxy_name = litebin_common::types::container_name(&id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
         if node_id.as_deref().unwrap_or("local") == "local" {
-            state
-                .docker
-                .remove_by_service_name(&id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove Docker observation proxy: {e}")))?;
+            state.docker.remove_by_service_name(&id, litebin_common::types::DOCKER_PROXY_SERVICE, None).await.map_err(
+                |e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove Docker observation proxy: {e}")),
+            )?;
         } else {
             let node_id = node_id.as_deref().unwrap();
             let node = crate::routes::manage::get_node_from_db(&state.db, node_id)
@@ -314,16 +282,11 @@ pub async fn revoke_project_capability(
                 .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("failed to contact agent: {e}")))?;
             if !response.status().is_success() {
                 let body = response.text().await.unwrap_or_default();
-                return Err((
-                    StatusCode::BAD_GATEWAY,
-                    format!("failed to remove Docker observation proxy: {body}"),
-                ));
+                return Err((StatusCode::BAD_GATEWAY, format!("failed to remove Docker observation proxy: {body}")));
             }
         }
     }
-    capabilities::revoke(&state.db, &id, cap)
-        .await
-        .map_err(capabilities::db_err)?;
+    capabilities::revoke(&state.db, &id, cap).await.map_err(capabilities::db_err)?;
     if let Some(node_id) = docker_observe_node_id {
         if node_id != "local" {
             crate::cloudflare_router::push_project_meta_to_agent(
@@ -346,9 +309,7 @@ pub async fn revoke_project_capability(
             .await;
         }
     }
-    let list = capabilities::status_list_for_project(&state.db, &id)
-        .await
-        .map_err(capabilities::db_err)?;
+    let list = capabilities::status_list_for_project(&state.db, &id).await.map_err(capabilities::db_err)?;
     Ok(Json(list))
 }
 
@@ -390,18 +351,13 @@ mod tests {
         .execute(&db)
         .await?;
 
-        let mut docker = litebin_common::docker::DockerManager::new(
-            "litebin-live-tests".into(),
-            128 * 1024 * 1024,
-            0.25,
-        )?;
+        let mut docker =
+            litebin_common::docker::DockerManager::new("litebin-live-tests".into(), 128 * 1024 * 1024, 0.25)?;
         docker.detect_host_projects_dir().await;
-        let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(Arc::new(
-            MasterProxyRouter::new(
-                litebin_common::caddy::CaddyClient::new("http://127.0.0.1:1"),
-                String::new(),
-            ),
-        )));
+        let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(Arc::new(MasterProxyRouter::new(
+            litebin_common::caddy::CaddyClient::new("http://127.0.0.1:1"),
+            String::new(),
+        ))));
         let (route_sync_tx, _) = tokio::sync::mpsc::unbounded_channel();
         Ok(AppState {
             config: Arc::new(crate::tests::helpers::test_config()),
@@ -420,13 +376,8 @@ mod tests {
     }
 
     async fn cleanup(state: &AppState, project_id: &str) {
-        let _ = state
-            .docker
-            .cleanup_project_resources(project_id, &[])
-            .await;
-        let _ = std::fs::remove_dir_all(
-            std::path::PathBuf::from("projects").join(project_id),
-        );
+        let _ = state.docker.cleanup_project_resources(project_id, &[]).await;
+        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
     }
 
     #[tokio::test]
@@ -463,26 +414,11 @@ mod tests {
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 "#;
-            let mut plan = litebin_common::compose_run::build_compose_run_plan(
-                compose,
-                &project_id,
-                &[],
-                None,
-            )?;
+            let mut plan = litebin_common::compose_run::build_compose_run_plan(compose, &project_id, &[], None)?;
             anyhow::ensure!(plan.inject_docker_observe_proxy(&project_id)?);
-            state
-                .docker
-                .pull_image_with_opts(
-                    litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE,
-                    false,
-                )
-                .await?;
-            state
-                .docker
-                .ensure_project_network(&project_id, None)
-                .await?;
-            let observe_network =
-                litebin_common::types::docker_observe_network_name(&project_id, None);
+            state.docker.pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false).await?;
+            state.docker.ensure_project_network(&project_id, None).await?;
+            let observe_network = litebin_common::types::docker_observe_network_name(&project_id, None);
             state.docker.ensure_named_network(&observe_network).await?;
             let proxy = plan
                 .configs
@@ -493,27 +429,15 @@ mod tests {
             state.docker.wait_for_healthy(&proxy_id, true).await?;
 
             let client = reqwest::Client::new();
-            let before = client
-                .get(format!("http://127.0.0.1:{proxy_port}/version"))
-                .send()
-                .await?;
-            anyhow::ensure!(
-                before.status().is_success(),
-                "proxy access was unavailable before revoke"
-            );
+            let before = client.get(format!("http://127.0.0.1:{proxy_port}/version")).send().await?;
+            anyhow::ensure!(before.status().is_success(), "proxy access was unavailable before revoke");
 
-            let response = revoke_project_capability(
-                State(state.clone()),
-                Path((project_id.clone(), "docker-observe".into())),
-            )
-            .await
-            .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?;
+            let response =
+                revoke_project_capability(State(state.clone()), Path((project_id.clone(), "docker-observe".into())))
+                    .await
+                    .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?;
             anyhow::ensure!(
-                response
-                    .0
-                    .iter()
-                    .find(|entry| entry.info.id == "docker-observe")
-                    .is_some_and(|entry| !entry.granted),
+                response.0.iter().find(|entry| entry.info.id == "docker-observe").is_some_and(|entry| !entry.granted),
                 "handler response retained the grant"
             );
             anyhow::ensure!(
@@ -537,10 +461,7 @@ mod tests {
                     .is_none(),
                 "proxy container survived revoke"
             );
-            let after = client
-                .get(format!("http://127.0.0.1:{proxy_port}/version"))
-                .send()
-                .await;
+            let after = client.get(format!("http://127.0.0.1:{proxy_port}/version")).send().await;
             anyhow::ensure!(after.is_err(), "revoked proxy endpoint remained reachable");
             Ok(())
         }

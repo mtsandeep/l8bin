@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Parsed representation of a docker-compose.yaml file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,14 +116,12 @@ impl ComposeService {
     pub fn dependency_names(&self) -> Vec<String> {
         match &self.depends_on {
             None => Vec::new(),
-            Some(serde_yaml::Value::Sequence(list)) => list
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect(),
-            Some(serde_yaml::Value::Mapping(map)) => map
-                .keys()
-                .filter_map(|k| k.as_str().map(|s| s.to_string()))
-                .collect(),
+            Some(serde_yaml::Value::Sequence(list)) => {
+                list.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+            }
+            Some(serde_yaml::Value::Mapping(map)) => {
+                map.keys().filter_map(|k| k.as_str().map(|s| s.to_string())).collect()
+            }
             _ => Vec::new(),
         }
     }
@@ -134,17 +132,14 @@ impl ComposeService {
     pub fn dependency_conditions(&self) -> Vec<(String, String)> {
         match &self.depends_on {
             None => Vec::new(),
-            Some(serde_yaml::Value::Sequence(list)) => list
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| (s.to_string(), "service_started".to_string())))
-                .collect(),
+            Some(serde_yaml::Value::Sequence(list)) => {
+                list.iter().filter_map(|v| v.as_str().map(|s| (s.to_string(), "service_started".to_string()))).collect()
+            }
             Some(serde_yaml::Value::Mapping(map)) => map
                 .iter()
                 .filter_map(|(k, v)| {
                     let name = k.as_str()?.to_string();
-                    let condition = v.get("condition")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("service_started");
+                    let condition = v.get("condition").and_then(|c| c.as_str()).unwrap_or("service_started");
                     Some((name, condition.to_string()))
                 })
                 .collect(),
@@ -157,10 +152,9 @@ impl ComposeService {
     pub fn env_list(&self) -> Vec<String> {
         match &self.environment {
             None => Vec::new(),
-            Some(serde_yaml::Value::Sequence(list)) => list
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect(),
+            Some(serde_yaml::Value::Sequence(list)) => {
+                list.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+            }
             Some(serde_yaml::Value::Mapping(map)) => map
                 .iter()
                 .filter_map(|(k, v)| {
@@ -181,11 +175,9 @@ impl ComposeService {
         match &self.command {
             None => None,
             Some(serde_yaml::Value::String(s)) => Some(shlex::split(s).unwrap_or_else(|| vec![s.clone()])),
-            Some(serde_yaml::Value::Sequence(list)) => Some(
-                list.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect(),
-            ),
+            Some(serde_yaml::Value::Sequence(list)) => {
+                Some(list.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            }
             _ => None,
         }
     }
@@ -195,11 +187,9 @@ impl ComposeService {
         match &self.entrypoint {
             None => None,
             Some(serde_yaml::Value::String(s)) => Some(shlex::split(s).unwrap_or_else(|| vec![s.clone()])),
-            Some(serde_yaml::Value::Sequence(list)) => Some(
-                list.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect(),
-            ),
+            Some(serde_yaml::Value::Sequence(list)) => {
+                Some(list.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            }
             _ => None,
         }
     }
@@ -282,9 +272,7 @@ impl ComposeService {
     /// Parse `cpus` into nano_cpus value for Docker API.
     pub fn nano_cpus(&self) -> Option<i64> {
         self.cpus.as_ref().and_then(|v| {
-            let cpus = v.as_f64().or_else(|| {
-                v.as_str().and_then(|s| s.parse::<f64>().ok())
-            })?;
+            let cpus = v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))?;
             Some((cpus * 1_000_000_000.0) as i64)
         })
     }
@@ -293,17 +281,12 @@ impl ComposeService {
     pub fn is_public_by_label(&self) -> bool {
         match &self.labels {
             None => false,
-            Some(serde_yaml::Value::Mapping(map)) => map
-                .iter()
-                .any(|(k, v)| {
-                    k.as_str() == Some("litebin.public")
-                        && v.as_str() == Some("true")
-                }),
-            Some(serde_yaml::Value::Sequence(list)) => list.iter().any(|v| {
-                v.as_str()
-                    .map(|s| s == "litebin.public=true")
-                    .unwrap_or(false)
-            }),
+            Some(serde_yaml::Value::Mapping(map)) => {
+                map.iter().any(|(k, v)| k.as_str() == Some("litebin.public") && v.as_str() == Some("true"))
+            }
+            Some(serde_yaml::Value::Sequence(list)) => {
+                list.iter().any(|v| v.as_str().map(|s| s == "litebin.public=true").unwrap_or(false))
+            }
             _ => false,
         }
     }

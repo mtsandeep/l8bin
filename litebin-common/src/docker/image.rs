@@ -1,25 +1,20 @@
 use bollard::auth::DockerCredentials;
 use bollard::models::{EndpointSettings, NetworkConnectRequest, NetworkCreateRequest};
 use bollard::query_parameters::{
-    CreateImageOptions, ImportImageOptions, ListImagesOptions, PruneImagesOptions,
-    RemoveImageOptions, RemoveVolumeOptions, StatsOptions,
+    CreateImageOptions, ImportImageOptions, ListImagesOptions, PruneImagesOptions, RemoveImageOptions,
+    RemoveVolumeOptions, StatsOptions,
 };
 use futures_util::StreamExt;
 use serde::Deserialize;
 
-use crate::types::{classify_volume, project_network_name, VolumeKind};
+use crate::types::{VolumeKind, classify_volume, project_network_name};
 
-use super::{CpuSample, ContainerStats, DiskUsage, DockerErrorKind, DockerManager};
+use super::{ContainerStats, CpuSample, DiskUsage, DockerErrorKind, DockerManager};
 
 impl DockerManager {
     pub async fn ensure_network(&self) -> anyhow::Result<()> {
         let networks = self.docker.list_networks(None).await?;
-        let exists = networks.iter().any(|n| {
-            n.name
-                .as_deref()
-                .map(|name| name == self.network)
-                .unwrap_or(false)
-        });
+        let exists = networks.iter().any(|n| n.name.as_deref().map(|name| name == self.network).unwrap_or(false));
 
         if !exists {
             self.docker
@@ -62,8 +57,8 @@ impl DockerManager {
         // 1. Check env vars (base64 user:password)
         if let Ok(auth_b64) = std::env::var("LITEBIN_REGISTRY_AUTH") {
             if !auth_b64.is_empty() {
-                let serveraddress = std::env::var("LITEBIN_REGISTRY_URL")
-                    .unwrap_or_else(|_| "https://index.docker.io/v1/".to_string());
+                let serveraddress =
+                    std::env::var("LITEBIN_REGISTRY_URL").unwrap_or_else(|_| "https://index.docker.io/v1/".to_string());
                 return Some(DockerCredentials {
                     auth: Some(auth_b64),
                     serveraddress: Some(serveraddress),
@@ -101,7 +96,9 @@ impl DockerManager {
     }
 
     fn format_bytes(bytes: i64) -> String {
-        if bytes < 0 { return "0B".to_string(); }
+        if bytes < 0 {
+            return "0B".to_string();
+        }
         let b = bytes as u64;
         if b >= 1024 * 1024 * 1024 {
             format!("{:.1}GB", b as f64 / (1024.0 * 1024.0 * 1024.0))
@@ -146,10 +143,7 @@ impl DockerManager {
 
         tracing::info!(image = %image_ref, "pulling image");
 
-        let options = CreateImageOptions {
-            from_image: Some(image_ref.clone()),
-            ..Default::default()
-        };
+        let options = CreateImageOptions { from_image: Some(image_ref.clone()), ..Default::default() };
 
         let credentials = Self::read_docker_credentials();
         let mut stream = self.docker.create_image(Some(options), None, credentials);
@@ -172,7 +166,13 @@ impl DockerManager {
                                     let should_emit = pct / 10 > prev / 10;
                                     last_pct.insert(id.clone(), pct);
                                     if should_emit {
-                                        Some(format!("{}: {} {}/{}", id, status, Self::format_bytes(current), Self::format_bytes(total)))
+                                        Some(format!(
+                                            "{}: {} {}/{}",
+                                            id,
+                                            status,
+                                            Self::format_bytes(current),
+                                            Self::format_bytes(total)
+                                        ))
                                     } else {
                                         None
                                     }
@@ -219,23 +219,14 @@ impl DockerManager {
 
     /// Ensure a per-project Docker bridge network exists (idempotent).
     /// Uses the centralized naming convention from `project_network_name()`.
-    pub async fn ensure_project_network(
-        &self,
-        project_id: &str,
-        instance_id: Option<&str>,
-    ) -> anyhow::Result<()> {
+    pub async fn ensure_project_network(&self, project_id: &str, instance_id: Option<&str>) -> anyhow::Result<()> {
         let network_name = project_network_name(project_id, instance_id);
         self.ensure_named_network(&network_name).await
     }
 
     pub async fn ensure_named_network(&self, network_name: &str) -> anyhow::Result<()> {
         let networks = self.docker.list_networks(None).await?;
-        let exists = networks.iter().any(|n| {
-            n.name
-                .as_deref()
-                .map(|name| name == network_name)
-                .unwrap_or(false)
-        });
+        let exists = networks.iter().any(|n| n.name.as_deref().map(|name| name == network_name).unwrap_or(false));
 
         if !exists {
             self.docker
@@ -252,11 +243,7 @@ impl DockerManager {
     }
 
     /// Remove a per-project Docker network (idempotent).
-    pub async fn remove_project_network(
-        &self,
-        project_id: &str,
-        instance_id: Option<&str>,
-    ) -> anyhow::Result<()> {
+    pub async fn remove_project_network(&self, project_id: &str, instance_id: Option<&str>) -> anyhow::Result<()> {
         let network_name = project_network_name(project_id, instance_id);
         self.remove_named_network(&network_name).await
     }
@@ -267,15 +254,13 @@ impl DockerManager {
                 tracing::info!(network = %network_name, "removed per-project docker network");
                 Ok(())
             }
-            Err(e) => {
-                match DockerErrorKind::from_bollard_error(&e) {
-                    DockerErrorKind::NotFound => {
-                        tracing::debug!(network = %network_name, "network already gone");
-                        Ok(())
-                    }
-                    _ => Err(e.into()),
+            Err(e) => match DockerErrorKind::from_bollard_error(&e) {
+                DockerErrorKind::NotFound => {
+                    tracing::debug!(network = %network_name, "network already gone");
+                    Ok(())
                 }
-            }
+                _ => Err(e.into()),
+            },
         }
     }
 
@@ -286,15 +271,13 @@ impl DockerManager {
                 tracing::info!(volume = %name, "removed docker volume");
                 Ok(())
             }
-            Err(e) => {
-                match DockerErrorKind::from_bollard_error(&e) {
-                    DockerErrorKind::NotFound => {
-                        tracing::debug!(volume = %name, "volume already gone");
-                        Ok(())
-                    }
-                    _ => Err(e.into()),
+            Err(e) => match DockerErrorKind::from_bollard_error(&e) {
+                DockerErrorKind::NotFound => {
+                    tracing::debug!(volume = %name, "volume already gone");
+                    Ok(())
                 }
-            }
+                _ => Err(e.into()),
+            },
         }
     }
 
@@ -302,9 +285,7 @@ impl DockerManager {
     /// and absolute bind mounts appropriately.
     pub async fn remove_volume_by_name(&self, scoped_name: &str) -> anyhow::Result<()> {
         match classify_volume(scoped_name) {
-            VolumeKind::DockerVolume => {
-                self.remove_volume(scoped_name).await
-            }
+            VolumeKind::DockerVolume => self.remove_volume(scoped_name).await,
             VolumeKind::RelativeBindMount => {
                 let path = std::path::Path::new(scoped_name);
                 if path.exists() {
@@ -321,11 +302,7 @@ impl DockerManager {
     }
 
     /// Connect a running container to a Docker network (idempotent).
-    pub async fn connect_container_to_network(
-        &self,
-        container_name: &str,
-        network_name: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn connect_container_to_network(&self, container_name: &str, network_name: &str) -> anyhow::Result<()> {
         let config = NetworkConnectRequest {
             container: container_name.to_string(),
             endpoint_config: Some(EndpointSettings::default()),
@@ -340,19 +317,17 @@ impl DockerManager {
                 );
                 Ok(())
             }
-            Err(e) => {
-                match DockerErrorKind::from_bollard_error(&e) {
-                    DockerErrorKind::Forbidden => {
-                        tracing::debug!(
-                            container = %container_name,
-                            network = %network_name,
-                            "container already on network"
-                        );
-                        Ok(())
-                    }
-                    _ => Err(e.into()),
+            Err(e) => match DockerErrorKind::from_bollard_error(&e) {
+                DockerErrorKind::Forbidden => {
+                    tracing::debug!(
+                        container = %container_name,
+                        network = %network_name,
+                        "container already on network"
+                    );
+                    Ok(())
                 }
-            }
+                _ => Err(e.into()),
+            },
         }
     }
 
@@ -377,13 +352,7 @@ impl DockerManager {
     pub async fn container_stats(&self, container_id: &str) -> anyhow::Result<ContainerStats> {
         let stats = self
             .docker
-            .stats(
-                container_id,
-                Some(StatsOptions {
-                    stream: false,
-                    one_shot: true,
-                }),
-            )
+            .stats(container_id, Some(StatsOptions { stream: false, one_shot: true }))
             .next()
             .await
             .ok_or_else(|| anyhow::anyhow!("no stats returned"))??;
@@ -399,19 +368,15 @@ impl DockerManager {
         let cpu_percent = {
             let mut samples = self.cpu_samples.lock().unwrap();
             let prev = samples.get(container_id).map(|s| s.clone());
-            samples.insert(container_id.to_string(), CpuSample {
-                total_usage: current_total,
-                system_cpu_usage: current_system,
-            });
+            samples.insert(
+                container_id.to_string(),
+                CpuSample { total_usage: current_total, system_cpu_usage: current_system },
+            );
 
             if let Some(prev) = prev {
                 let cpu_delta = current_total as f64 - prev.total_usage as f64;
                 let system_delta = current_system as f64 - prev.system_cpu_usage as f64;
-                if system_delta > 0.0 {
-                    (cpu_delta / system_delta) * num_cpus * 100.0
-                } else {
-                    0.0
-                }
+                if system_delta > 0.0 { (cpu_delta / system_delta) * num_cpus * 100.0 } else { 0.0 }
             } else {
                 0.0 // First reading — no previous sample to diff against
             }
@@ -419,19 +384,11 @@ impl DockerManager {
 
         // Memory (subtract cache to match `docker stats`)
         let memory_stats = stats.memory_stats.unwrap_or_default();
-        let cache = memory_stats.stats
-            .as_ref()
-            .and_then(|s| s.get("inactive_file").copied())
-            .unwrap_or(0);
-        let memory_usage = memory_stats.usage.unwrap_or(0)
-            .saturating_sub(cache);
+        let cache = memory_stats.stats.as_ref().and_then(|s| s.get("inactive_file").copied()).unwrap_or(0);
+        let memory_usage = memory_stats.usage.unwrap_or(0).saturating_sub(cache);
         let memory_limit = memory_stats.limit.unwrap_or(0);
 
-        Ok(ContainerStats {
-            cpu_percent: (cpu_percent * 100.0).round() / 100.0,
-            memory_usage,
-            memory_limit,
-        })
+        Ok(ContainerStats { cpu_percent: (cpu_percent * 100.0).round() / 100.0, memory_usage, memory_limit })
     }
 
     /// Get container disk usage (writable layer + rootfs)
@@ -440,10 +397,8 @@ impl DockerManager {
         let info = self.docker.inspect_container(container_id, Some(opts)).await?;
         let size_rw = info.size_rw.unwrap_or(0) as u64;
         let size_root_fs = info.size_root_fs.unwrap_or(0) as u64;
-        let cpu_limit = info.host_config
-            .and_then(|h| h.nano_cpus)
-            .filter(|&n| n > 0)
-            .map(|n| n as f64 / 1_000_000_000.0);
+        let cpu_limit =
+            info.host_config.and_then(|h| h.nano_cpus).filter(|&n| n > 0).map(|n| n as f64 / 1_000_000_000.0);
         Ok(DiskUsage { size_rw, size_root_fs, cpu_limit })
     }
 
@@ -453,11 +408,7 @@ impl DockerManager {
         S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, E>> + Send + Unpin + 'static,
         E: Into<Box<dyn std::error::Error + Send + Sync>> + std::fmt::Display + 'static,
     {
-        let mut import_stream = self.docker.import_image_stream(
-            ImportImageOptions::default(),
-            tar_stream,
-            None,
-        );
+        let mut import_stream = self.docker.import_image_stream(ImportImageOptions::default(), tar_stream, None);
 
         while let Some(result) = import_stream.next().await {
             if let Err(e) = result {
@@ -473,12 +424,9 @@ impl DockerManager {
     /// Use a tag (e.g. "l8b/app:latest") to resolve to the correct ID,
     /// which may differ from the local config digest for OCI format images.
     pub async fn inspect_image_id(&self, image_ref: &str) -> anyhow::Result<String> {
-        let info = self.docker
-            .inspect_image(image_ref)
-            .await
-            .map_err(|e| anyhow::anyhow!("image inspect failed: {e}"))?;
-        info.id
-            .ok_or_else(|| anyhow::anyhow!("image inspect returned no id"))
+        let info =
+            self.docker.inspect_image(image_ref).await.map_err(|e| anyhow::anyhow!("image inspect failed: {e}"))?;
+        info.id.ok_or_else(|| anyhow::anyhow!("image inspect returned no id"))
     }
 
     /// Inspect an image and return its configured user (from Dockerfile USER directive).
@@ -561,15 +509,13 @@ impl DockerManager {
                 tracing::info!(image = %image_ref, "unused image removed");
                 Ok(true)
             }
-            Err(e) => {
-                match DockerErrorKind::from_bollard_error(&e) {
-                    DockerErrorKind::NotFound => {
-                        tracing::debug!(image = %image_ref, "image already gone");
-                        Ok(false)
-                    }
-                    _ => Err(e.into()),
+            Err(e) => match DockerErrorKind::from_bollard_error(&e) {
+                DockerErrorKind::NotFound => {
+                    tracing::debug!(image = %image_ref, "image already gone");
+                    Ok(false)
                 }
-            }
+                _ => Err(e.into()),
+            },
         }
     }
 

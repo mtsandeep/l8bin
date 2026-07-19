@@ -169,14 +169,15 @@ struct SecurityAddon;
 
 impl utoipa::Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
-        use utoipa::openapi::security::{ApiKeyValue, HttpBuilder, HttpAuthScheme, SecurityScheme};
+        use utoipa::openapi::security::{ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 
         if let Some(components) = openapi.components.as_mut() {
             components.add_security_scheme(
                 "session_auth",
-                SecurityScheme::ApiKey(utoipa::openapi::security::ApiKey::Cookie(
-                    ApiKeyValue::with_description("id", "Session cookie (set on login)"),
-                )),
+                SecurityScheme::ApiKey(utoipa::openapi::security::ApiKey::Cookie(ApiKeyValue::with_description(
+                    "id",
+                    "Session cookie (set on login)",
+                ))),
             );
             components.add_security_scheme(
                 "bearer_token",

@@ -12,20 +12,16 @@ pub const APP_DIR: &str = "litebin";
 const CONFIG_FILE: &str = "config.toml";
 
 /// Railpack GitHub release URL (used to auto-download the binary)
-pub const RAILPACK_RELEASE_URL: &str =
-    "https://api.github.com/repos/railwayapp/railpack/releases/latest";
+pub const RAILPACK_RELEASE_URL: &str = "https://api.github.com/repos/railwayapp/railpack/releases/latest";
 
 /// Base URL for Railpack source files (version.txt, install.go)
-pub const RAILPACK_SOURCE_BASE: &str =
-    "https://raw.githubusercontent.com/railwayapp/railpack";
+pub const RAILPACK_SOURCE_BASE: &str = "https://raw.githubusercontent.com/railwayapp/railpack";
 
 /// Base URL for Railpack GitHub releases (binary downloads)
-pub const RAILPACK_RELEASE_BASE: &str =
-    "https://github.com/railwayapp/railpack/releases/download";
+pub const RAILPACK_RELEASE_BASE: &str = "https://github.com/railwayapp/railpack/releases/download";
 
 /// Base URL for mise GitHub releases (binary downloads)
-pub const MISE_RELEASE_BASE: &str =
-    "https://github.com/jdx/mise/releases/download";
+pub const MISE_RELEASE_BASE: &str = "https://github.com/jdx/mise/releases/download";
 
 /// Docker image tag for the Railpack frontend container (Windows)
 pub const RAILPACK_IMAGE: &str = "l8b-railpack:latest";
@@ -38,10 +34,7 @@ pub const MAX_RETRIES: u32 = 3;
 
 impl CliConfig {
     /// Load config from: CLI args > env vars > config file
-    pub fn load(
-        cli_server: Option<&str>,
-        cli_token: Option<&str>,
-    ) -> Result<Self> {
+    pub fn load(cli_server: Option<&str>, cli_token: Option<&str>) -> Result<Self> {
         let file_config = Self::read_config_file().unwrap_or_default();
 
         let server = cli_server
@@ -49,19 +42,14 @@ impl CliConfig {
             .or_else(|| std::env::var("L8B_SERVER").ok())
             .or(file_config.server.clone());
 
-        let token = cli_token
-            .map(|s| s.to_string())
-            .or_else(|| std::env::var("L8B_TOKEN").ok())
-            .or(file_config.token.clone());
+        let token =
+            cli_token.map(|s| s.to_string()).or_else(|| std::env::var("L8B_TOKEN").ok()).or(file_config.token.clone());
 
         Ok(Self { server, token })
     }
 
     pub fn config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(APP_DIR)
-            .join(CONFIG_FILE)
+        dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join(APP_DIR).join(CONFIG_FILE)
     }
 
     pub fn read_config_file() -> Option<CliConfig> {
@@ -100,10 +88,7 @@ impl CliConfig {
         }
         if ci_enabled {
             let cfg = Self::read_config_file().unwrap_or_default();
-            println!(
-                "server: {}",
-                cfg.server.as_deref().unwrap_or("(not set)")
-            );
+            println!("server: {}", cfg.server.as_deref().unwrap_or("(not set)"));
             println!("token: {}", if cfg.token.is_some() { "(set)" } else { "(not set)" });
         } else {
             let content = std::fs::read_to_string(&path)?;

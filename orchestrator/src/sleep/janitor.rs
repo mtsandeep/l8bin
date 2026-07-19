@@ -1,19 +1,16 @@
 use std::time::Duration;
 
-use litebin_common::types::{DeployType, Node, ProjectStatus};
 use litebin_common::docker::DockerErrorKind;
+use litebin_common::types::{DeployType, Node, ProjectStatus};
 
-use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
+use crate::status::{self, ProjectUpdateFields};
 
 /// Background task that periodically stops idle containers.
 pub async fn run_janitor(state: AppState, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
     let interval = Duration::from_secs(state.config.janitor_interval_secs);
 
-    tracing::info!(
-        interval_secs = state.config.janitor_interval_secs,
-        "janitor started"
-    );
+    tracing::info!(interval_secs = state.config.janitor_interval_secs, "janitor started");
 
     loop {
         tokio::select! {
@@ -31,10 +28,7 @@ pub async fn run_janitor(state: AppState, mut shutdown_rx: tokio::sync::watch::R
     }
 }
 
-async fn sweep(
-    state: &AppState,
-    router: &dyn litebin_common::routing::RoutingProvider,
-) -> anyhow::Result<()> {
+async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingProvider) -> anyhow::Result<()> {
     let now = chrono::Utc::now().timestamp();
 
     let candidates = sqlx::query_as::<_, crate::db::models::Project>(
@@ -60,7 +54,8 @@ async fn sweep(
 
     // Pre-load service containers BEFORE marking as stopped (transition cascades
     // service status, so we need the container_ids while services still show 'running').
-    let mut service_containers: std::collections::HashMap<String, Vec<(String, Option<String>)>> = std::collections::HashMap::new();
+    let mut service_containers: std::collections::HashMap<String, Vec<(String, Option<String>)>> =
+        std::collections::HashMap::new();
     for project in &idle_projects {
         let rows: Vec<(String, Option<String>)> = if project.deploy_type == Some(DeployType::Compose) {
             match sqlx::query_as(
@@ -91,10 +86,7 @@ async fn sweep(
             &state.db,
             &project.id,
             ProjectStatus::Stopped,
-            &ProjectUpdateFields {
-                mapped_port: Some(None),
-                ..Default::default()
-            },
+            &ProjectUpdateFields { mapped_port: Some(None), ..Default::default() },
             None,
         )
         .await?;
@@ -103,10 +95,18 @@ async fn sweep(
     // 2. Resync routes — stopped projects are now excluded, so requests hit the
     //    waker instead of a dead upstream (eliminates the 502/timeout window)
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
-    let routes = crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await?;
+    let routes =
+        crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await?;
 
     router
-        .sync_routes(&routes, &state.config.domain, &orchestrator_upstream, &state.config.dashboard_subdomain, &state.config.poke_subdomain, false)
+        .sync_routes(
+            &routes,
+            &state.config.domain,
+            &orchestrator_upstream,
+            &state.config.dashboard_subdomain,
+            &state.config.poke_subdomain,
+            false,
+        )
         .await?;
 
     // 3. Now safe to stop containers — routes already removed
@@ -147,11 +147,8 @@ async fn sweep(
             }
         }
 
-        let proxy_name = litebin_common::types::container_name(
-            &project.id,
-            litebin_common::types::DOCKER_PROXY_SERVICE,
-            None,
-        );
+        let proxy_name =
+            litebin_common::types::container_name(&project.id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
         if is_local {
             stop_local_container_by_name(state, &project.id, &proxy_name).await;
         } else if let Some(node_id) = project.node_id.as_deref() {

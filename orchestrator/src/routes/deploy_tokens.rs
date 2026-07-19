@@ -1,16 +1,16 @@
 use axum::{
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use axum_login::AuthSession;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::db::models::{DeployToken, DeployTokenResponse};
-use crate::AppState;
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateTokenRequest {
@@ -51,31 +51,22 @@ pub async fn create_token(
     let user_id = match auth_session.user {
         Some(u) => u.id,
         None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Authentication required"})),
-            )
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"})))
                 .into_response();
         }
     };
 
     // If project-scoped, verify project belongs to user
     if let Some(ref pid) = payload.project_id {
-        let project: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM projects WHERE id = ? AND user_id = ?",
-        )
-        .bind(pid)
-        .bind(&user_id)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
+        let project: Option<(String,)> = sqlx::query_as("SELECT id FROM projects WHERE id = ? AND user_id = ?")
+            .bind(pid)
+            .bind(&user_id)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
 
         if project.is_none() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "Project not found"})),
-            )
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Project not found"}))).into_response();
         }
     }
 
@@ -143,10 +134,7 @@ pub async fn list_tokens(
     let user_id = match auth_session.user {
         Some(u) => u.id,
         None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Authentication required"})),
-            )
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"})))
                 .into_response();
         }
     };
@@ -163,13 +151,11 @@ pub async fn list_tokens(
         .unwrap_or_default()
     } else {
         // No filter — show all tokens for this user
-        sqlx::query_as(
-            "SELECT * FROM deploy_tokens WHERE user_id = ? ORDER BY created_at DESC",
-        )
-        .bind(&user_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default()
+        sqlx::query_as("SELECT * FROM deploy_tokens WHERE user_id = ? ORDER BY created_at DESC")
+            .bind(&user_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
     };
 
     let response: Vec<DeployTokenResponse> = tokens.into_iter().map(Into::into).collect();
@@ -199,10 +185,7 @@ pub async fn revoke_token(
     let user_id = match auth_session.user {
         Some(u) => u.id,
         None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Authentication required"})),
-            )
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"})))
                 .into_response();
         }
     };
@@ -216,16 +199,13 @@ pub async fn revoke_token(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(token_id = %token_id, error = %e, "failed to revoke deploy token");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"}))).into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"})))
+                .into_response();
         }
     };
 
     if result.rows_affected() == 0 {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Token not found"})),
-        )
-            .into_response();
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Token not found"}))).into_response();
     }
 
     (StatusCode::NO_CONTENT, "").into_response()

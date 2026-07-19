@@ -19,12 +19,10 @@ pub fn disk_space() -> (u64, u64) {
     {
         match disks.iter().find(|d| d.mount_point() == std::path::Path::new("/")) {
             Some(d) => (d.available_space(), d.total_space()),
-            None => {
-                match disks.iter().max_by_key(|d| d.total_space()) {
-                    Some(d) => (d.available_space(), d.total_space()),
-                    None => (0, 0),
-                }
-            }
+            None => match disks.iter().max_by_key(|d| d.total_space()) {
+                Some(d) => (d.available_space(), d.total_space()),
+                None => (0, 0),
+            },
         }
     }
 }

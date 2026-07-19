@@ -1,17 +1,22 @@
-use axum::{extract::State, http::{HeaderMap, StatusCode}, response::IntoResponse, Json};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use axum_login::AuthSession;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+use crate::AppState;
 use crate::auth::backend::PasswordBackend;
-use litebin_common::types::{Node, VolumeMount};
 use crate::nodes;
 use crate::routes::manage::agent_base_url;
-use litebin_common::types::ProjectStatus;
 use crate::status::{self, ProjectUpdateFields};
-use crate::AppState;
+use litebin_common::types::ProjectStatus;
+use litebin_common::types::{Node, VolumeMount};
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct DeployResponse {
@@ -92,10 +97,7 @@ pub async fn deploy_create(
         }
     };
     if exists > 0 {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({"error": "Project already exists"})),
-        ).into_response();
+        return (StatusCode::CONFLICT, Json(json!({"error": "Project already exists"}))).into_response();
     }
 
     execute_deploy(state, user_id, payload, false).await
@@ -143,23 +145,19 @@ async fn authenticate(
 ) -> Result<String, axum::response::Response> {
     match &auth_session.user {
         Some(u) => Ok(u.id.clone()),
-        None => {
-            match crate::auth::extract_deploy_token(state, headers, project_id).await {
-                Some(uid) => Ok(uid),
-                None => Err((
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": "Authentication required. Use session login or provide a deploy token."})),
-                ).into_response()),
-            }
-        }
+        None => match crate::auth::extract_deploy_token(state, headers, project_id).await {
+            Some(uid) => Ok(uid),
+            None => Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Authentication required. Use session login or provide a deploy token."})),
+            )
+                .into_response()),
+        },
     }
 }
 
 /// Validate project ID: reserved subdomains, DNS-safe label, alias conflicts.
-async fn validate_project_id(
-    state: &AppState,
-    payload: &DeployRequest,
-) -> Option<axum::response::Response> {
+async fn validate_project_id(state: &AppState, payload: &DeployRequest) -> Option<axum::response::Response> {
     if payload.project_id == state.config.dashboard_subdomain {
         return Some((StatusCode::BAD_REQUEST, Json(json!({"error": "This ID is reserved"}))).into_response());
     }
@@ -175,7 +173,7 @@ async fn validate_project_id(
 
     // Reject project IDs that conflict with existing alias routes
     let alias_conflict: Option<String> = sqlx::query_scalar(
-        "SELECT project_id FROM project_routes WHERE route_type = 'alias' AND subdomain = ? LIMIT 1"
+        "SELECT project_id FROM project_routes WHERE route_type = 'alias' AND subdomain = ? LIMIT 1",
     )
     .bind(&payload.project_id)
     .fetch_optional(&state.db)
@@ -231,7 +229,8 @@ async fn execute_deploy(
     let is_background = resolve_background(payload.is_background, existing_background);
 
     if is_background && payload.port.is_some() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "background projects must not provide an HTTP port"}))).into_response();
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "background projects must not provide an HTTP port"})))
+            .into_response();
     }
     if !is_background && payload.port.is_none() {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "web projects require an HTTP port"}))).into_response();
@@ -247,7 +246,7 @@ async fn execute_deploy(
         (false, auto_stop_timeout_mins, false)
     } else if preserve_sleep {
         let existing = sqlx::query_as::<_, (bool, i64, bool)>(
-            "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?"
+            "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?",
         )
         .bind(&payload.project_id)
         .fetch_optional(&state.db)
@@ -262,14 +261,12 @@ async fn execute_deploy(
         (auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled)
     };
 
-    let existing_status: Option<ProjectStatus> = sqlx::query_scalar(
-        "SELECT status FROM projects WHERE id = ?"
-    )
-    .bind(&payload.project_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    let existing_status: Option<ProjectStatus> = sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
+        .bind(&payload.project_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
     let stage_only = payload.stage_only
         && matches!(existing_status, None | Some(ProjectStatus::Pending | ProjectStatus::Unconfigured));
 
@@ -284,48 +281,39 @@ async fn execute_deploy(
     );
 
     // 1. Acquire deploy lock for this project_id (serializes concurrent deploys)
-    let semaphore = state
-        .project_locks
-        .entry(payload.project_id.clone())
-        .or_insert_with(|| Arc::new(Semaphore::new(1)))
-        .clone();
+    let semaphore =
+        state.project_locks.entry(payload.project_id.clone()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
     let _permit = semaphore.acquire().await.unwrap();
 
     // 2. Capture old image and node before upsert (for cleanup after deploy)
-    let (old_image, old_node_id) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
-        "SELECT image, node_id FROM projects WHERE id = ?"
-    )
-    .bind(&payload.project_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or((None, None));
+    let (old_image, old_node_id) =
+        sqlx::query_as::<_, (Option<String>, Option<String>)>("SELECT image, node_id FROM projects WHERE id = ?")
+            .bind(&payload.project_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or((None, None));
 
-    let initial_status = if stage_only {
-        ProjectStatus::Pending
-    } else {
-        ProjectStatus::Deploying
-    };
+    let initial_status = if stage_only { ProjectStatus::Pending } else { ProjectStatus::Deploying };
 
     // 3. Insert or upsert project in DB with status='deploying'
     // Capture old volumes for orphan detection
-    let old_volumes: Option<Vec<VolumeMount>> = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT volumes FROM projects WHERE id = ?"
-    )
-    .bind(&payload.project_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .flatten()
-    .and_then(|v| match serde_json::from_str(&v) {
-        Ok(mounts) => Some(mounts),
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to parse old volumes JSON, skipping volume diff");
-            None
-        }
-    });
+    let old_volumes: Option<Vec<VolumeMount>> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT volumes FROM projects WHERE id = ?")
+            .bind(&payload.project_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
+            .and_then(|v| match serde_json::from_str(&v) {
+                Ok(mounts) => Some(mounts),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to parse old volumes JSON, skipping volume diff");
+                    None
+                }
+            });
 
     let volumes_json = payload.volumes.as_ref().and_then(|v| litebin_common::types::serialize_volumes(v));
 
@@ -406,24 +394,15 @@ async fn execute_deploy(
 
     if let Err(e) = result {
         let is_conflict = crate::validation::is_unique_constraint(&e);
-        let status = if is_conflict {
-            StatusCode::CONFLICT
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
-        };
+        let status = if is_conflict { StatusCode::CONFLICT } else { StatusCode::INTERNAL_SERVER_ERROR };
         return (
             status,
             Json(json!({"error": if is_conflict { format!("project '{}' already exists", payload.project_id) } else { format!("database error: {e}") } })),
         ).into_response();
     }
 
-    if let Err(error) = crate::capabilities::grant_many(
-        &state.db,
-        &payload.project_id,
-        &granted_capabilities,
-        Some(&user_id),
-    )
-    .await
+    if let Err(error) =
+        crate::capabilities::grant_many(&state.db, &payload.project_id, &granted_capabilities, Some(&user_id)).await
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -433,18 +412,15 @@ async fn execute_deploy(
     }
 
     // 3. Read project back from DB (so cmd reflects stored value, not just payload)
-    let project = match sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE id = ?"
-    )
-    .bind(&payload.project_id)
-    .fetch_one(&state.db)
-    .await {
+    let project = match sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(&payload.project_id)
+        .fetch_one(&state.db)
+        .await
+    {
         Ok(p) => p,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("database error: {e}")})),
-            ).into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("database error: {e}")})))
+                .into_response();
         }
     };
 
@@ -453,26 +429,28 @@ async fn execute_deploy(
         Ok(id) => id,
         Err(e) => {
             let failure_status = if stage_only { ProjectStatus::Pending } else { ProjectStatus::Stopped };
-            if let Err(e) = status::transition(&state.db, &payload.project_id, failure_status, &ProjectUpdateFields::default(), None).await {
+            if let Err(e) = status::transition(
+                &state.db,
+                &payload.project_id,
+                failure_status,
+                &ProjectUpdateFields::default(),
+                None,
+            )
+            .await
+            {
                 tracing::warn!(project_id = %payload.project_id, error = %e, "deploy: failed to transition after node selection error");
             }
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": e.to_string()}))).into_response();
         }
     };
 
     // Persist sticky node selection for staged and live deploys.
-    if let Err(e) = sqlx::query(
-        "UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?"
-    )
-    .bind(&node_id)
-    .bind(now)
-    .bind(&payload.project_id)
-    .execute(&state.db)
-    .await
+    if let Err(e) = sqlx::query("UPDATE projects SET node_id = ?, updated_at = ? WHERE id = ?")
+        .bind(&node_id)
+        .bind(now)
+        .bind(&payload.project_id)
+        .execute(&state.db)
+        .await
     {
         tracing::warn!(project_id = %payload.project_id, error = %e, "deploy: failed to persist node_id");
     }
@@ -492,13 +470,12 @@ async fn execute_deploy(
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
                         Json(json!({"error": format!("node '{}' not found", node_id)})),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
                 Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({"error": format!("database error: {e}")})),
-                    ).into_response();
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("database error: {e}")})))
+                        .into_response();
                 }
             };
 
@@ -508,7 +485,8 @@ async fn execute_deploy(
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
                         Json(json!({"error": format!("node client unavailable: {e}")})),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
             };
             let base_url = agent_base_url(&state.config, &node);
@@ -535,7 +513,8 @@ async fn execute_deploy(
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
                         Json(json!({"error": format!("agent unreachable: {e}")})),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
             };
 
@@ -544,7 +523,8 @@ async fn execute_deploy(
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error": format!("remote stage failed: {body}")})),
-                ).into_response();
+                )
+                    .into_response();
             }
         }
 
@@ -554,12 +534,15 @@ async fn execute_deploy(
             ProjectStatus::Unconfigured,
             &ProjectUpdateFields::default(),
             None,
-        ).await {
+        )
+        .await
+        {
             tracing::error!(project_id = %payload.project_id, error = %e, "deploy: failed to mark staged project unconfigured");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "failed to persist staged deployment status"})),
-            ).into_response();
+            )
+                .into_response();
         }
 
         tracing::info!(
@@ -828,8 +811,19 @@ async fn execute_deploy(
 
         if let Err(e) = result {
             tracing::error!(project_id = %payload_clone.project_id, error = %e, "background deploy failed");
-            crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, &format!("Deploy failed: {}", e));
-            let _ = status::transition(&state_clone.db, &payload_clone.project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+            crate::routes::deploy::logs::push_deploy_log(
+                &state_clone,
+                &payload_clone.project_id,
+                &format!("Deploy failed: {}", e),
+            );
+            let _ = status::transition(
+                &state_clone.db,
+                &payload_clone.project_id,
+                ProjectStatus::Error,
+                &ProjectUpdateFields::default(),
+                None,
+            )
+            .await;
         }
     });
 
@@ -851,10 +845,10 @@ fn resolve_background(requested: Option<bool>, existing: Option<bool>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::resolve_background;
+    use dashmap::DashMap;
     use std::sync::Arc;
     use tokio::sync::Semaphore;
-    use dashmap::DashMap;
-    use super::resolve_background;
 
     #[test]
     fn workload_type_defaults_to_web_and_is_preserved_on_redeploy() {
@@ -870,10 +864,8 @@ mod tests {
         let project_id = "test-project";
 
         // Create semaphore for project
-        let semaphore = project_locks
-            .entry(project_id.to_string())
-            .or_insert_with(|| Arc::new(Semaphore::new(1)))
-            .clone();
+        let semaphore =
+            project_locks.entry(project_id.to_string()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
 
         // Acquire permit
         let sem = semaphore.clone();

@@ -1,5 +1,5 @@
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
@@ -119,11 +119,7 @@ async fn poll_node(state: &AppState, node: &litebin_common::types::Node) {
     }
 }
 
-async fn handle_success(
-    state: &AppState,
-    node: &litebin_common::types::Node,
-    health: &HealthReport,
-) {
+async fn handle_success(state: &AppState, node: &litebin_common::types::Node, health: &HealthReport) {
     let now = chrono::Utc::now().timestamp();
     // Only update public_ip from agent if not already set (e.g. manually via dashboard)
     let public_ip = match (&node.public_ip, &health.public_ip) {
@@ -160,40 +156,34 @@ async fn handle_failure(state: &AppState, node: &litebin_common::types::Node) {
     let now = chrono::Utc::now().timestamp();
 
     // Increment fail_count
-    if let Err(e) = sqlx::query(
-        "UPDATE nodes SET fail_count = fail_count + 1, updated_at = ? WHERE id = ?",
-    )
-    .bind(now)
-    .bind(&node.id)
-    .execute(&state.db)
-    .await
+    if let Err(e) = sqlx::query("UPDATE nodes SET fail_count = fail_count + 1, updated_at = ? WHERE id = ?")
+        .bind(now)
+        .bind(&node.id)
+        .execute(&state.db)
+        .await
     {
         tracing::warn!(node_id = %node.id, error = %e, "heartbeat: failed to increment fail_count");
     }
 
     // Re-read fail_count
-    let new_count: i64 = match sqlx::query_scalar("SELECT fail_count FROM nodes WHERE id = ?")
-        .bind(&node.id)
-        .fetch_one(&state.db)
-        .await
-    {
-        Ok(count) => count,
-        Err(e) => {
-            tracing::error!(node_id = %node.id, error = %e, "heartbeat: failed to read fail_count, treating as 0");
-            0
-        }
-    };
+    let new_count: i64 =
+        match sqlx::query_scalar("SELECT fail_count FROM nodes WHERE id = ?").bind(&node.id).fetch_one(&state.db).await
+        {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(node_id = %node.id, error = %e, "heartbeat: failed to read fail_count, treating as 0");
+                0
+            }
+        };
 
     warn!(node_id = %node.id, fail_count = new_count, "heartbeat: node poll failed");
 
     if new_count >= 3 {
-        if let Err(e) = sqlx::query(
-            "UPDATE nodes SET status = 'offline', updated_at = ? WHERE id = ?",
-        )
-        .bind(now)
-        .bind(&node.id)
-        .execute(&state.db)
-        .await
+        if let Err(e) = sqlx::query("UPDATE nodes SET status = 'offline', updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(&node.id)
+            .execute(&state.db)
+            .await
         {
             tracing::error!(node_id = %node.id, error = %e, "heartbeat: failed to mark node offline");
         }
@@ -201,8 +191,7 @@ async fn handle_failure(state: &AppState, node: &litebin_common::types::Node) {
         warn!(node_id = %node.id, "heartbeat: node marked offline, triggering reconciliation");
 
         // Trigger reconciliation for this node's projects
-        crate::nodes::reconciliation::run_reconciliation(state.clone(), Some(node.id.clone()))
-            .await;
+        crate::nodes::reconciliation::run_reconciliation(state.clone(), Some(node.id.clone())).await;
     }
 }
 
@@ -260,12 +249,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
         "wake_report_url": crate::routes::nodes::format_wake_report_url(state),
     });
 
-    match client
-        .post(&format!("{}/internal/register", base_url))
-        .json(&register_body)
-        .send()
-        .await
-    {
+    match client.post(&format!("{}/internal/register", base_url)).json(&register_body).send().await {
         Ok(resp) if resp.status().is_success() => {
             info!(node_id = %node.id, "heartbeat: config pushed to agent");
         }
@@ -317,9 +301,7 @@ mod tests {
 
     // Helper to create an in-memory test DB with the nodes table
     async fn test_db() -> sqlx::SqlitePool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-            .await
-            .unwrap();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE nodes (
                 id TEXT PRIMARY KEY,

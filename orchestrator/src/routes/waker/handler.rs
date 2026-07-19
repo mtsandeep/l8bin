@@ -8,9 +8,7 @@ use litebin_common::types::ProjectStatus;
 
 use crate::AppState;
 
-use super::helpers::{
-    handle_down_services, proxy_request, resolve_alias_project, try_acquire_project_lock,
-};
+use super::helpers::{handle_down_services, proxy_request, resolve_alias_project, try_acquire_project_lock};
 
 fn starting_json_response() -> Response {
     (
@@ -51,7 +49,6 @@ pub async fn wake_for_host(
     headers: &HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-
     let domain_suffix = format!(".{}", state.config.domain);
 
     let project = if host.ends_with(&domain_suffix) {
@@ -60,12 +57,10 @@ pub async fn wake_for_host(
         if subdomain.is_empty() {
             return (StatusCode::NOT_FOUND, not_found_page_html()).into_response();
         }
-        match sqlx::query_as::<_, crate::db::models::Project>(
-            "SELECT * FROM projects WHERE id = ?",
-        )
-        .bind(subdomain)
-        .fetch_optional(&state.db)
-        .await
+        match sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+            .bind(subdomain)
+            .fetch_optional(&state.db)
+            .await
         {
             Ok(Some(p)) => Some(p),
             Ok(None) => {
@@ -149,11 +144,7 @@ pub async fn wake_for_host(
 
     // Deploy/stop in progress — show loading, do not spawn another wake.
     if matches!(project.status, ProjectStatus::Deploying | ProjectStatus::Stopping) {
-        return if wants_json {
-            starting_json_response()
-        } else {
-            loading_page_html(&project_id).into_response()
-        };
+        return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
     }
 
     // Unified running/degraded path for ALL projects
@@ -165,9 +156,7 @@ pub async fn wake_for_host(
         }
 
         // If an operation (deploy, recreate, wake) is in progress, show loading page
-        let lock_held = state.project_locks.get(&project_id)
-            .map(|s| s.available_permits() == 0)
-            .unwrap_or(false);
+        let lock_held = state.project_locks.get(&project_id).map(|s| s.available_permits() == 0).unwrap_or(false);
         if lock_held {
             return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
         }
@@ -251,23 +240,32 @@ pub async fn wake_for_host(
                             let db_port = project.mapped_port.unwrap_or(0) as u16;
                             if actual_port != db_port {
                                 let now = chrono::Utc::now().timestamp();
-                                if let Err(e) = sqlx::query(
-                                    "UPDATE projects SET mapped_port = ?, updated_at = ? WHERE id = ?",
-                                )
-                                .bind(actual_port as i64)
-                                .bind(now)
-                                .bind(&project_id)
-                                .execute(&state.db)
-                                .await
+                                if let Err(e) =
+                                    sqlx::query("UPDATE projects SET mapped_port = ?, updated_at = ? WHERE id = ?")
+                                        .bind(actual_port as i64)
+                                        .bind(now)
+                                        .bind(&project_id)
+                                        .execute(&state.db)
+                                        .await
                                 {
                                     tracing::warn!(project_id = %project_id, error = %e, "waker: failed to update mapped_port");
                                 }
-                                crate::status::sync_single_service_row(&state.db, &project_id, container_id, actual_port as i64).await;
+                                crate::status::sync_single_service_row(
+                                    &state.db,
+                                    &project_id,
+                                    container_id,
+                                    actual_port as i64,
+                                )
+                                .await;
                                 tracing::info!(project = %project_id, old = %db_port, new = %actual_port, "waker: port drifted, updated DB");
                             }
                         }
                         let _ = state.route_sync_tx.send(());
-                        return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+                        return if wants_json {
+                            starting_json_response()
+                        } else {
+                            loading_page_html(&project_id).into_response()
+                        };
                     }
                 }
             }
@@ -284,16 +282,36 @@ pub async fn wake_for_host(
             if let Some((svc_name, port)) = public_svc {
                 let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
                 let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
-                let mut last_resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;
+                let mut last_resp = proxy_request(
+                    &state.proxy_client,
+                    method.clone(),
+                    &upstream,
+                    uri.path_and_query().map(|pq| pq.as_str()),
+                    headers,
+                    body.clone(),
+                )
+                .await;
                 for _ in 0..2 {
                     if last_resp.status() != StatusCode::BAD_GATEWAY {
                         break;
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    last_resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;
+                    last_resp = proxy_request(
+                        &state.proxy_client,
+                        method.clone(),
+                        &upstream,
+                        uri.path_and_query().map(|pq| pq.as_str()),
+                        headers,
+                        body.clone(),
+                    )
+                    .await;
                 }
                 if last_resp.status() == StatusCode::BAD_GATEWAY {
-                    return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+                    return if wants_json {
+                        starting_json_response()
+                    } else {
+                        loading_page_html(&project_id).into_response()
+                    };
                 }
                 return last_resp;
             }
@@ -311,12 +329,28 @@ pub async fn wake_for_host(
                 if let Some(ref cid) = container_id {
                     if state.docker.is_container_running(cid).await.unwrap_or(false) {
                         tracing::info!(project = %project_id, service = %svc_name, "waker: public service running but DB stale, syncing status");
-                        if let Err(e) = crate::status::transition(&state.db, &project_id, ProjectStatus::Running, &crate::status::ProjectUpdateFields::default(), Some(&[svc_name.clone()])).await {
+                        if let Err(e) = crate::status::transition(
+                            &state.db,
+                            &project_id,
+                            ProjectStatus::Running,
+                            &crate::status::ProjectUpdateFields::default(),
+                            Some(&[svc_name.clone()]),
+                        )
+                        .await
+                        {
                             tracing::warn!(project_id = %project_id, error = %e, "waker: failed to sync stale Running status");
                         }
                         let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
                         let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
-                        let resp = proxy_request(&state.proxy_client, method.clone(), &upstream, uri.path_and_query().map(|pq| pq.as_str()), headers, body.clone()).await;
+                        let resp = proxy_request(
+                            &state.proxy_client,
+                            method.clone(),
+                            &upstream,
+                            uri.path_and_query().map(|pq| pq.as_str()),
+                            headers,
+                            body.clone(),
+                        )
+                        .await;
                         return resp;
                     }
                 }
@@ -377,15 +411,22 @@ pub async fn wake_for_host(
         } else {
             let state_for_start = state_clone.clone();
             async move {
-                crate::routes::manage::start_services(&state_for_start, &project_clone, crate::routes::manage::StartServicesOpts {
-                    force_recreate: false,
-                    pull_images: true,
-                    force_pull: false,
-                    services: None,
-                    connect_orchestrator: true,
-                    rollback_on_failure: false,
-                }).await.map_err(|(s, e)| (s, e).into_response())
-            }.boxed()
+                crate::routes::manage::start_services(
+                    &state_for_start,
+                    &project_clone,
+                    crate::routes::manage::StartServicesOpts {
+                        force_recreate: false,
+                        pull_images: true,
+                        force_pull: false,
+                        services: None,
+                        connect_orchestrator: true,
+                        rollback_on_failure: false,
+                    },
+                )
+                .await
+                .map_err(|(s, e)| (s, e).into_response())
+            }
+            .boxed()
         };
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(60), wake_fut).await;
@@ -418,15 +459,9 @@ pub async fn wake_for_host(
 }
 
 /// Catch-all fallback handler. Caddy proxies here when no project-specific route matches.
-pub async fn wake(
-    State(state): State<AppState>,
-    req: axum::http::Request<axum::body::Body>,
-) -> Response {
+pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::body::Body>) -> Response {
     let (parts, body) = req.into_parts();
-    let host = parts.headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let host = parts.headers.get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
     let json = wants_json(&parts.headers);
     let method = parts.method.clone();
     let uri = parts.uri.clone();
@@ -444,19 +479,14 @@ pub async fn waker_intercept(
     req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Response {
-    let host = req
-        .headers()
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+    let host = req.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
 
     let config = &state.config;
     let dashboard_host = format!("{}.{}", config.dashboard_subdomain, config.domain);
     let poke_host = format!("{}.{}", config.poke_subdomain, config.domain);
     let host_without_port = host.split(':').next().unwrap_or(&host);
-    let orchestrator_name = std::env::var("ORCHESTRATOR_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-orchestrator".into());
+    let orchestrator_name =
+        std::env::var("ORCHESTRATOR_CONTAINER_NAME").unwrap_or_else(|_| "litebin-orchestrator".into());
 
     // Let dashboard, poke, bare domain, and internal container requests pass through
     if host_without_port == config.domain

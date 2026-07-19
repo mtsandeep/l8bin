@@ -11,9 +11,9 @@ use tokio::sync::RwLock;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
+use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::config::Config;
-use crate::AppState;
 use litebin_common::docker::DockerManager;
 use litebin_common::routing::{MasterProxyRouter, RoutingProvider};
 
@@ -36,9 +36,10 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
 
     let config = Arc::new(test_config());
     let docker = Arc::new(DockerManager::new_for_tests());
-    let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(
-        Arc::new(MasterProxyRouter::new(litebin_common::caddy::CaddyClient::new("http://localhost:2019"), String::new()))
-    ));
+    let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(Arc::new(MasterProxyRouter::new(
+        litebin_common::caddy::CaddyClient::new("http://localhost:2019"),
+        String::new(),
+    ))));
 
     let state = AppState {
         config: config.clone(),
@@ -57,10 +58,7 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
 
     let app = build_router(state);
 
-    let config = TestServerConfig {
-        save_cookies: true,
-        ..TestServerConfig::new()
-    };
+    let config = TestServerConfig { save_cookies: true, ..TestServerConfig::new() };
     let server = TestServer::new_with_config(app, config).unwrap();
     (server, db)
 }
@@ -86,9 +84,10 @@ pub async fn test_server() -> TestServer {
 
     // Use the test constructor that doesn't connect to the Docker socket
     let docker = Arc::new(DockerManager::new_for_tests());
-    let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(
-        Arc::new(MasterProxyRouter::new(litebin_common::caddy::CaddyClient::new("http://localhost:2019"), String::new()))
-    ));
+    let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(Arc::new(MasterProxyRouter::new(
+        litebin_common::caddy::CaddyClient::new("http://localhost:2019"),
+        String::new(),
+    ))));
 
     let state = AppState {
         config: config.clone(),
@@ -107,10 +106,7 @@ pub async fn test_server() -> TestServer {
 
     let app = build_router(state);
 
-    let config = TestServerConfig {
-        save_cookies: true,
-        ..TestServerConfig::new()
-    };
+    let config = TestServerConfig { save_cookies: true, ..TestServerConfig::new() };
     TestServer::new_with_config(app, config).unwrap()
 }
 
@@ -138,10 +134,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/logout", post(routes::auth::logout))
         .route("/auth/me", get(routes::auth::me))
         .route("/auth/change-password", post(routes::auth::change_password))
-        .route_layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            require_auth_or_401,
-        ));
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), require_auth_or_401));
 
     let api_routes = Router::new()
         .route("/projects", get(routes::projects::list_projects))
@@ -159,10 +152,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/nodes/{id}", delete(routes::nodes::delete_node))
         .route("/nodes/{id}/connect", post(routes::nodes::connect_node))
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
-        .route_layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            require_auth_or_401,
-        ));
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), require_auth_or_401));
 
     // Deploy + image upload (session OR deploy token auth — no login_required layer)
     let deploy_routes = Router::new()
@@ -176,10 +166,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/deploy-tokens", post(routes::deploy_tokens::create_token))
         .route("/deploy-tokens", get(routes::deploy_tokens::list_tokens))
         .route("/deploy-tokens/{id}", delete(routes::deploy_tokens::revoke_token))
-        .route_layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            require_auth_or_401,
-        ));
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), require_auth_or_401));
 
     Router::new()
         .merge(auth_public)

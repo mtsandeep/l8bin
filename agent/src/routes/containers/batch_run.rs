@@ -1,9 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 
@@ -13,8 +8,7 @@ use super::env::{ensure_project_dir_and_env, projects_dir, read_project_env};
 use super::types::ErrorResponse;
 
 #[cfg(test)]
-static FAIL_NEXT_PROXY_READINESS_CHECK: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static FAIL_NEXT_PROXY_READINESS_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 async fn wait_for_proxy_ready(
     docker: &litebin_common::docker::DockerManager,
@@ -105,14 +99,7 @@ fn batch_run_error(
     let mut affected_services = affected_services.to_vec();
     affected_services.sort();
     affected_services.dedup();
-    (
-        status,
-        Json(BatchRunErrorResponse {
-            error: error.into(),
-            affected_services,
-        }),
-    )
-        .into_response()
+    (status, Json(BatchRunErrorResponse { error: error.into(), affected_services })).into_response()
 }
 
 async fn rollback_started_containers(
@@ -126,18 +113,13 @@ async fn rollback_started_containers(
         let _ = docker.remove_container(container_id).await;
     }
     for service_name in service_names {
-        let _ = docker
-            .remove_by_service_name(project_id, service_name, None)
-            .await;
+        let _ = docker.remove_by_service_name(project_id, service_name, None).await;
     }
 }
 
 /// POST /containers/batch-run
 /// Deploy a multi-service project on the agent: store compose, pull images, start in order.
-pub async fn batch_run(
-    State(state): State<AgentState>,
-    Json(req): Json<BatchRunRequest>,
-) -> impl IntoResponse {
+pub async fn batch_run(State(state): State<AgentState>, Json(req): Json<BatchRunRequest>) -> impl IntoResponse {
     tracing::info!(
         project = %req.project_id,
         services = ?req.service_order,
@@ -155,13 +137,8 @@ pub async fn batch_run(
     ) {
         Ok((_, report)) => report,
         Err(error) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: format!("invalid compose: {error}"),
-                }),
-            )
-                .into_response()
+            return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: format!("invalid compose: {error}") }))
+                .into_response();
         }
     };
     if !compatibility.ok {
@@ -172,48 +149,45 @@ pub async fn batch_run(
             .join("; ");
         return (
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: format!("unsupported compose configuration: {reasons}"),
-            }),
+            Json(ErrorResponse { error: format!("unsupported compose configuration: {reasons}") }),
         )
             .into_response();
     }
     let extra_env = read_project_env(&req.project_id);
-    let mut plan = match litebin_common::compose_run::build_compose_run_plan(
-        &req.compose_yaml, &req.project_id, &extra_env, None,
-    ) {
-        Ok(plan) => plan,
-        Err(e) => return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: format!("invalid compose: {e}") }),
-        ).into_response(),
-    };
+    let mut plan =
+        match litebin_common::compose_run::build_compose_run_plan(&req.compose_yaml, &req.project_id, &extra_env, None)
+        {
+            Ok(plan) => plan,
+            Err(e) => {
+                return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: format!("invalid compose: {e}") }))
+                    .into_response();
+            }
+        };
     let requests_host_network = plan.configs.iter().any(|config| config.host_network);
     if requests_host_network {
         if !req.host_network.unwrap_or(false) {
             return (
                 StatusCode::FORBIDDEN,
                 Json(ErrorResponse { error: "host-network capability was not authorized".into() }),
-            ).into_response();
+            )
+                .into_response();
         }
         if !host_network_authorized(req.host_network.unwrap_or(false), req.is_background) {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse { error: "host networking is restricted to background projects".into() }),
-            ).into_response();
+            )
+                .into_response();
         }
         let host = state.docker.host_info().await.ok();
         if let Err(error) = litebin_common::docker::require_host_network_eligible(
             host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref()
-                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.operating_system.as_deref()),
             host.as_ref().and_then(|info| info.rootless),
             Some(3),
         ) {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse { error: error.to_string() }),
-            ).into_response();
+            return (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse { error: error.to_string() }))
+                .into_response();
         }
     }
 
@@ -237,19 +211,14 @@ pub async fn batch_run(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: format!("failed to store compose.yaml: {e}") }),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // First-deploy staging: prepare runtime files without starting anything.
     if req.stage_only {
         tracing::info!(project = %req.project_id, "batch-run staged (no containers started)");
-        return (
-            StatusCode::OK,
-            Json(BatchRunResponse {
-                services: Vec::new(),
-                warnings: Vec::new(),
-            }),
-        ).into_response();
+        return (StatusCode::OK, Json(BatchRunResponse { services: Vec::new(), warnings: Vec::new() })).into_response();
     }
 
     if req.is_background {
@@ -275,29 +244,25 @@ pub async fn batch_run(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ErrorResponse { error: format!("failed to configure Docker observation proxy: {e}") }),
-                ).into_response();
+                )
+                    .into_response();
             }
         }
     } else {
         false
     };
-    let mut target_set: Option<std::collections::HashSet<String>> = req
-        .target_services
-        .as_ref()
-        .map(|services| services.iter().cloned().collect());
+    let mut target_set: Option<std::collections::HashSet<String>> =
+        req.target_services.as_ref().map(|services| services.iter().cloned().collect());
     let host_observers = plan.host_docker_observer_names();
     let current_proxy = if proxy_injected {
-        match state
-            .docker
-            .current_docker_observe_proxy(&req.project_id)
-            .await
-        {
+        match state.docker.current_docker_observe_proxy(&req.project_id).await {
             Ok(proxy) => proxy,
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ErrorResponse { error: format!("failed to inspect Docker observation proxy: {e}") }),
-                ).into_response();
+                )
+                    .into_response();
             }
         }
     } else {
@@ -306,9 +271,7 @@ pub async fn batch_run(
     // Reuse is deliberately limited to partial operations. A full start/deploy
     // recreates host observers so no stopped container can retain stale env.
     let reusable_proxy = target_set.is_some()
-        && current_proxy
-            .as_ref()
-            .is_some_and(|(_, port)| host_observers.is_empty() || port.is_some());
+        && current_proxy.as_ref().is_some_and(|(_, port)| host_observers.is_empty() || port.is_some());
     if reusable_proxy {
         if let Some((_, Some(port))) = current_proxy {
             plan.inject_host_docker_proxy_endpoint(port);
@@ -324,26 +287,26 @@ pub async fn batch_run(
     } else if target_set.is_none() {
         if let Err(e) = state
             .docker
-            .remove_by_service_name(
-                &req.project_id,
-                litebin_common::types::DOCKER_PROXY_SERVICE,
-                None,
-            )
+            .remove_by_service_name(&req.project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
             .await
         {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: format!("failed to clean up previous Docker observation proxy: {e}") }),
-            ).into_response();
+            )
+                .into_response();
         }
     }
     let proxy_created = proxy_injected && !reusable_proxy;
     if proxy_created {
-        if let Err(e) = state.docker.pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false).await {
+        if let Err(e) =
+            state.docker.pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false).await
+        {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: format!("failed to prepare Docker observation proxy: {e}") }),
-            ).into_response();
+            )
+                .into_response();
         }
     } else if !proxy_injected && target_set.is_none() {
         let network = litebin_common::types::docker_observe_network_name(&req.project_id, None);
@@ -351,7 +314,8 @@ pub async fn batch_run(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: format!("failed to remove Docker observation network: {e}") }),
-            ).into_response();
+            )
+                .into_response();
         }
     }
 
@@ -390,7 +354,8 @@ pub async fn batch_run(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: format!("failed to list existing project containers: {e}") }),
-            ).into_response();
+            )
+                .into_response();
         }
     };
     let mut removed_services = Vec::new();
@@ -448,32 +413,28 @@ pub async fn batch_run(
     }
 
     // Connect Caddy to the project network
-    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-caddy".into());
+    let caddy_container = std::env::var("CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-caddy".into());
     let project_network = litebin_common::types::project_network_name(&req.project_id, None);
     let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
 
     // Pull images in parallel (only for target services on partial redeploy)
     // Skip sha256: images — they were pre-loaded via /images/upload, not from a registry.
     let images_to_pull: Vec<String> = if let Some(ref targets) = target_set {
-        plan.configs.iter()
-            .filter(|c| targets.contains(&c.service_name))
-            .map(|c| c.image.clone())
-            .collect()
+        plan.configs.iter().filter(|c| targets.contains(&c.service_name)).map(|c| c.image.clone()).collect()
     } else {
         plan.configs.iter().map(|c| c.image.clone()).collect()
     };
-    let images_to_pull: Vec<String> = images_to_pull
-        .into_iter()
-        .filter(|img| !img.starts_with("sha256:"))
-        .collect();
+    let images_to_pull: Vec<String> = images_to_pull.into_iter().filter(|img| !img.starts_with("sha256:")).collect();
     let force_pull = req.force_pull;
-    let pull_handles: Vec<_> = images_to_pull.into_iter().map(|image| {
-        let docker = state.docker.clone();
-        tokio::spawn(async move {
-            (image.clone(), docker.pull_image_with_opts(&image, force_pull).await.map_err(|e| e.to_string()))
+    let pull_handles: Vec<_> = images_to_pull
+        .into_iter()
+        .map(|image| {
+            let docker = state.docker.clone();
+            tokio::spawn(async move {
+                (image.clone(), docker.pull_image_with_opts(&image, force_pull).await.map_err(|e| e.to_string()))
+            })
         })
-    }).collect();
+        .collect();
 
     for handle in pull_handles {
         if let Ok((image, result)) = handle.await {
@@ -575,7 +536,13 @@ pub async fn batch_run(
                         let Some(ref cid) = r.container_id else {
                             tasks.abort_all();
                             while tasks.join_next().await.is_some() {}
-                            rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+                            rollback_started_containers(
+                                &state.docker,
+                                &req.project_id,
+                                &operation_services,
+                                &started_container_ids,
+                            )
+                            .await;
                             return batch_run_error(
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 "Docker observation proxy failed to start",
@@ -587,25 +554,30 @@ pub async fn batch_run(
                             while tasks.join_next().await.is_some() {}
                             let _ = state.docker.stop_container(cid).await;
                             let _ = state.docker.remove_container(cid).await;
-                            rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+                            rollback_started_containers(
+                                &state.docker,
+                                &req.project_id,
+                                &operation_services,
+                                &started_container_ids,
+                            )
+                            .await;
                             return batch_run_error(
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 format!("Docker observation proxy failed health check: {e}"),
                                 &removed_services,
                             );
                         }
-                        if configs_map
-                            .values()
-                            .any(|config| config.host_network && config.docker_observe)
-                        {
-                            let port = match state
-                                .docker
-                                .inspect_mapped_port_for(cid, "2375/tcp")
-                                .await
-                            {
+                        if configs_map.values().any(|config| config.host_network && config.docker_observe) {
+                            let port = match state.docker.inspect_mapped_port_for(cid, "2375/tcp").await {
                                 Ok(Some(port)) => port,
                                 Ok(None) => {
-                                    rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+                                    rollback_started_containers(
+                                        &state.docker,
+                                        &req.project_id,
+                                        &operation_services,
+                                        &started_container_ids,
+                                    )
+                                    .await;
                                     return batch_run_error(
                                         StatusCode::INTERNAL_SERVER_ERROR,
                                         "Docker observation proxy did not receive its required loopback mapping",
@@ -613,7 +585,13 @@ pub async fn batch_run(
                                     );
                                 }
                                 Err(error) => {
-                                    rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+                                    rollback_started_containers(
+                                        &state.docker,
+                                        &req.project_id,
+                                        &operation_services,
+                                        &started_container_ids,
+                                    )
+                                    .await;
                                     return batch_run_error(
                                         StatusCode::INTERNAL_SERVER_ERROR,
                                         format!("failed to inspect Docker observation proxy mapping: {error}"),
@@ -638,7 +616,13 @@ pub async fn batch_run(
                     tracing::error!(error = %e, "batch-run: service task panicked");
                     tasks.abort_all();
                     while tasks.join_next().await.is_some() {}
-                    rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+                    rollback_started_containers(
+                        &state.docker,
+                        &req.project_id,
+                        &operation_services,
+                        &started_container_ids,
+                    )
+                    .await;
                     return batch_run_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("service task failed: {e}"),
@@ -649,15 +633,11 @@ pub async fn batch_run(
         }
         let level_errors: Vec<String> = results
             .iter()
-            .filter_map(|result| {
-                result
-                    .error
-                    .as_ref()
-                    .map(|error| format!("{}: {}", result.service_name, error))
-            })
+            .filter_map(|result| result.error.as_ref().map(|error| format!("{}: {}", result.service_name, error)))
             .collect();
         if !level_errors.is_empty() {
-            rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids).await;
+            rollback_started_containers(&state.docker, &req.project_id, &operation_services, &started_container_ids)
+                .await;
             return batch_run_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("one or more services failed: {}", level_errors.join("; ")),
@@ -679,16 +659,14 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
 
+    use axum::Json;
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
     use axum::response::{IntoResponse, Response};
-    use axum::Json;
     use dashmap::DashMap;
     use serde_json::Value;
 
-    use super::{
-        BatchRunRequest, FAIL_NEXT_PROXY_READINESS_CHECK, batch_run, host_network_authorized,
-    };
+    use super::{BatchRunRequest, FAIL_NEXT_PROXY_READINESS_CHECK, batch_run, host_network_authorized};
     use crate::config::Config;
     use crate::{AgentState, ProjectMetaEntry, WakeGuard};
 
@@ -722,11 +700,8 @@ mod tests {
     }
 
     async fn live_state() -> anyhow::Result<AgentState> {
-        let mut docker = litebin_common::docker::DockerManager::new(
-            "litebin-live-tests".into(),
-            128 * 1024 * 1024,
-            0.25,
-        )?;
+        let mut docker =
+            litebin_common::docker::DockerManager::new("litebin-live-tests".into(), 128 * 1024 * 1024, 0.25)?;
         docker.detect_host_projects_dir().await;
         Ok(AgentState {
             config: Arc::new(Config {
@@ -771,34 +746,21 @@ mod tests {
     async fn response_json(response: Response) -> anyhow::Result<(axum::http::StatusCode, Value)> {
         let status = response.status();
         let body = to_bytes(response.into_body(), 1024 * 1024).await?;
-        let value = if body.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&body)?
-        };
+        let value = if body.is_empty() { Value::Null } else { serde_json::from_slice(&body)? };
         Ok((status, value))
     }
 
     fn service_container_id<'a>(body: &'a Value, service: &str) -> anyhow::Result<&'a str> {
         body["services"]
             .as_array()
-            .and_then(|services| {
-                services
-                    .iter()
-                    .find(|entry| entry["service_name"] == service)
-            })
+            .and_then(|services| services.iter().find(|entry| entry["service_name"] == service))
             .and_then(|entry| entry["container_id"].as_str())
             .ok_or_else(|| anyhow::anyhow!("missing container id for service {service}: {body}"))
     }
 
     async fn cleanup_live_project(state: &AgentState, project_id: &str) {
-        let _ = state
-            .docker
-            .cleanup_project_resources(project_id, &[])
-            .await;
-        let _ = std::fs::remove_dir_all(
-            std::path::PathBuf::from("projects").join(project_id),
-        );
+        let _ = state.docker.cleanup_project_resources(project_id, &[]).await;
+        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
     }
 
     #[test]
@@ -1007,18 +969,8 @@ mod tests {
 
         cleanup_live_project(&state, &project_id).await;
         result.unwrap();
-        assert!(state
-            .docker
-            .list_project_workload_containers(&project_id)
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(state
-            .docker
-            .current_docker_observe_proxy(&project_id)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(state.docker.list_project_workload_containers(&project_id).await.unwrap().is_empty());
+        assert!(state.docker.current_docker_observe_proxy(&project_id).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -1037,9 +989,7 @@ mod tests {
 "#
             .to_string();
             let (status, started) = response_json(
-                batch_run(State(state.clone()), Json(request(&project_id, compose.clone())))
-                    .await
-                    .into_response(),
+                batch_run(State(state.clone()), Json(request(&project_id, compose.clone()))).await.into_response(),
             )
             .await?;
             anyhow::ensure!(status.is_success(), "initial batch-run failed: {started}");
@@ -1094,52 +1044,37 @@ mod tests {
             anyhow::ensure!(!state.docker.is_container_running(&first_id).await?);
 
             let (recreate_status, recreated) = response_json(
-                batch_run(State(state.clone()), Json(request(&project_id, compose)))
-                    .await
-                    .into_response(),
+                batch_run(State(state.clone()), Json(request(&project_id, compose))).await.into_response(),
             )
             .await?;
-            anyhow::ensure!(
-                recreate_status.is_success(),
-                "recreate failed: {recreated}"
-            );
+            anyhow::ensure!(recreate_status.is_success(), "recreate failed: {recreated}");
             let second_id = service_container_id(&recreated, "collector")?.to_string();
             anyhow::ensure!(second_id != first_id, "recreate retained old container id");
 
             let (project_stop_status, project_stop) = response_json(
                 crate::routes::containers::stop_project(
                     State(state.clone()),
-                    Json(super::super::types::StopProjectRequest {
-                        project_id: project_id.clone(),
-                    }),
+                    Json(super::super::types::StopProjectRequest { project_id: project_id.clone() }),
                 )
                 .await
                 .into_response(),
             )
             .await?;
             anyhow::ensure!(
-                project_stop_status.is_success()
-                    && project_stop["stopped_containers"] == 1,
+                project_stop_status.is_success() && project_stop["stopped_containers"] == 1,
                 "stop-project metadata was incorrect: {project_stop}"
             );
             anyhow::ensure!(!state.docker.is_container_running(&second_id).await?);
 
             let cleanup = crate::routes::containers::cleanup_project(
                 State(state.clone()),
-                Json(super::super::types::CleanupRequest {
-                    project_id: project_id.clone(),
-                    volumes: Vec::new(),
-                }),
+                Json(super::super::types::CleanupRequest { project_id: project_id.clone(), volumes: Vec::new() }),
             )
             .await
             .into_response();
             anyhow::ensure!(cleanup.status().is_success(), "cleanup handler failed");
             anyhow::ensure!(
-                state
-                    .docker
-                    .list_project_workload_containers(&project_id)
-                    .await?
-                    .is_empty(),
+                state.docker.list_project_workload_containers(&project_id).await?.is_empty(),
                 "delete cleanup left project workloads"
             );
             Ok(())
@@ -1169,37 +1104,24 @@ mod tests {
             .to_string();
             let mut req = request(&project_id, compose);
             req.docker_observe = Some(true);
-            FAIL_NEXT_PROXY_READINESS_CHECK
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+            FAIL_NEXT_PROXY_READINESS_CHECK.store(true, std::sync::atomic::Ordering::SeqCst);
             let (status, body) =
-                response_json(batch_run(State(state.clone()), Json(req)).await.into_response())
-                    .await?;
-            FAIL_NEXT_PROXY_READINESS_CHECK
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+                response_json(batch_run(State(state.clone()), Json(req)).await.into_response()).await?;
+            FAIL_NEXT_PROXY_READINESS_CHECK.store(false, std::sync::atomic::Ordering::SeqCst);
             anyhow::ensure!(
                 status == axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "faulted proxy start unexpectedly succeeded: {body}"
             );
             anyhow::ensure!(
-                body["error"]
-                    .as_str()
-                    .is_some_and(|error| error.contains("proxy failed health check")),
+                body["error"].as_str().is_some_and(|error| error.contains("proxy failed health check")),
                 "failure metadata did not identify proxy readiness: {body}"
             );
             anyhow::ensure!(
-                state
-                    .docker
-                    .current_docker_observe_proxy(&project_id)
-                    .await?
-                    .is_none(),
+                state.docker.current_docker_observe_proxy(&project_id).await?.is_none(),
                 "failed proxy was not rolled back"
             );
             anyhow::ensure!(
-                state
-                    .docker
-                    .list_project_workload_containers(&project_id)
-                    .await?
-                    .is_empty(),
+                state.docker.list_project_workload_containers(&project_id).await?.is_empty(),
                 "workload started despite failed proxy"
             );
             Ok(())

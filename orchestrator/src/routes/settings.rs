@@ -1,15 +1,15 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use axum_login::AuthSession;
 use serde::Deserialize;
 
+use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::db::models::Project;
-use crate::AppState;
 use litebin_common::types::DeployType;
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -51,10 +51,7 @@ pub async fn update_project_settings(
     // Validate auto_stop_timeout_mins >= 1
     if let Some(mins) = payload.auto_stop_timeout_mins {
         if mins < 1 {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "auto_stop_timeout_mins must be at least 1".to_string(),
-            ));
+            return Err((StatusCode::BAD_REQUEST, "auto_stop_timeout_mins must be at least 1".to_string()));
         }
     }
 
@@ -69,27 +66,20 @@ pub async fn update_project_settings(
             // Strip www. prefix — canonical form stored without www
             let trimmed = trimmed.strip_prefix("www.").unwrap_or(&trimmed).to_string();
             if !trimmed.contains('.') || trimmed.starts_with('.') || trimmed.ends_with('.') {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    "invalid domain format".to_string(),
-                ));
+                return Err((StatusCode::BAD_REQUEST, "invalid domain format".to_string()));
             }
             // Uniqueness check
-            let conflict: Option<String> = sqlx::query_scalar(
-                "SELECT id FROM projects WHERE custom_domain = ? AND id != ?",
-            )
-            .bind(&trimmed)
-            .bind(&id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?
-            .flatten();
+            let conflict: Option<String> =
+                sqlx::query_scalar("SELECT id FROM projects WHERE custom_domain = ? AND id != ?")
+                    .bind(&trimmed)
+                    .bind(&id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?
+                    .flatten();
 
             if let Some(conflict_id) = conflict {
-                return Err((
-                    StatusCode::CONFLICT,
-                    format!("domain already in use by project '{}'", conflict_id),
-                ));
+                return Err((StatusCode::CONFLICT, format!("domain already in use by project '{}'", conflict_id)));
             }
             Some(Some(trimmed))
         }
@@ -102,12 +92,7 @@ pub async fn update_project_settings(
         .bind(&id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("database error: {e}"),
-            )
-        })?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;
 
     if existing.is_none() {
         return Err((StatusCode::NOT_FOUND, format!("project '{}' not found", id)));
@@ -115,15 +100,13 @@ pub async fn update_project_settings(
     if existing.as_ref().unwrap().is_background
         && (payload.auto_stop_enabled == Some(true) || payload.auto_start_enabled == Some(true))
     {
-        return Err((StatusCode::BAD_REQUEST, "background projects cannot enable auto-stop or request-driven auto-start".to_string()));
-    }
-    if existing.as_ref().unwrap().is_background
-        && matches!(resolved_domain, Some(Some(_)))
-    {
         return Err((
             StatusCode::BAD_REQUEST,
-            "background projects cannot configure a custom domain".to_string(),
+            "background projects cannot enable auto-stop or request-driven auto-start".to_string(),
         ));
+    }
+    if existing.as_ref().unwrap().is_background && matches!(resolved_domain, Some(Some(_))) {
+        return Err((StatusCode::BAD_REQUEST, "background projects cannot configure a custom domain".to_string()));
     }
     let old_domain = existing.as_ref().unwrap().custom_domain.clone();
     let now = chrono::Utc::now().timestamp();
@@ -182,7 +165,17 @@ pub async fn update_project_settings(
         has_cpu_limit = true;
     }
 
-    if !has_name && !has_description && !has_custom_domain && !has_auto_stop_enabled && !has_auto_stop_timeout_mins && !has_auto_start_enabled && !has_allow_raw_ports && !has_cmd && !has_memory_limit_mb && !has_cpu_limit {
+    if !has_name
+        && !has_description
+        && !has_custom_domain
+        && !has_auto_stop_enabled
+        && !has_auto_stop_timeout_mins
+        && !has_auto_start_enabled
+        && !has_allow_raw_ports
+        && !has_cmd
+        && !has_memory_limit_mb
+        && !has_cpu_limit
+    {
         return Ok(Json(existing.unwrap()));
     }
 
@@ -205,50 +198,62 @@ pub async fn update_project_settings(
         // resolved_domain is Some(Some(domain)) or Some(None) for clearing
         query = query.bind(resolved_domain.unwrap());
     }
-    if has_auto_stop_enabled { query = query.bind(payload.auto_stop_enabled.unwrap()); }
-    if has_auto_stop_timeout_mins { query = query.bind(payload.auto_stop_timeout_mins.unwrap()); }
-    if has_auto_start_enabled { query = query.bind(payload.auto_start_enabled.unwrap()); }
+    if has_auto_stop_enabled {
+        query = query.bind(payload.auto_stop_enabled.unwrap());
+    }
+    if has_auto_stop_timeout_mins {
+        query = query.bind(payload.auto_stop_timeout_mins.unwrap());
+    }
+    if has_auto_start_enabled {
+        query = query.bind(payload.auto_start_enabled.unwrap());
+    }
     let sync_raw = payload.allow_raw_ports;
-    if has_allow_raw_ports { query = query.bind(payload.allow_raw_ports.unwrap()); }
-    if has_cmd { query = query.bind(payload.cmd.as_deref().filter(|s| !s.is_empty())); }
-    if has_memory_limit_mb { query = query.bind(payload.memory_limit_mb.unwrap()); }
-    if has_cpu_limit { query = query.bind(payload.cpu_limit.unwrap()); }
+    if has_allow_raw_ports {
+        query = query.bind(payload.allow_raw_ports.unwrap());
+    }
+    if has_cmd {
+        query = query.bind(payload.cmd.as_deref().filter(|s| !s.is_empty()));
+    }
+    if has_memory_limit_mb {
+        query = query.bind(payload.memory_limit_mb.unwrap());
+    }
+    if has_cpu_limit {
+        query = query.bind(payload.cpu_limit.unwrap());
+    }
 
-    query.bind(&id).execute(&state.db).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("database error: {e}"),
-        )
-    })?;
+    query
+        .bind(&id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;
 
     // Keep capability grants in sync with legacy boolean settings.
     if let Some(true) = sync_raw {
-        crate::capabilities::grant(
-            &state.db,
-            &id,
-            litebin_common::capabilities::ProjectCapability::RawPorts,
-            None,
-        )
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        crate::capabilities::grant(&state.db, &id, litebin_common::capabilities::ProjectCapability::RawPorts, None)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     } else if let Some(false) = sync_raw {
-        crate::capabilities::revoke(
-            &state.db,
-            &id,
-            litebin_common::capabilities::ProjectCapability::RawPorts,
-        )
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        crate::capabilities::revoke(&state.db, &id, litebin_common::capabilities::ProjectCapability::RawPorts)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
     // For multi-service projects, also update the public service in project_services
     if (has_memory_limit_mb || has_cpu_limit) && existing.as_ref().unwrap().deploy_type == Some(DeployType::Compose) {
         let mut set_svc: Vec<&str> = Vec::new();
-        if has_memory_limit_mb { set_svc.push("memory_limit_mb = ?"); }
-        if has_cpu_limit { set_svc.push("cpu_limit = ?"); }
+        if has_memory_limit_mb {
+            set_svc.push("memory_limit_mb = ?");
+        }
+        if has_cpu_limit {
+            set_svc.push("cpu_limit = ?");
+        }
         let sql = format!("UPDATE project_services SET {} WHERE project_id = ? AND is_public = 1", set_svc.join(", "));
         let mut svc_query = sqlx::query(&sql);
-        if has_memory_limit_mb { svc_query = svc_query.bind(payload.memory_limit_mb.unwrap()); }
-        if has_cpu_limit { svc_query = svc_query.bind(payload.cpu_limit.unwrap()); }
+        if has_memory_limit_mb {
+            svc_query = svc_query.bind(payload.memory_limit_mb.unwrap());
+        }
+        if has_cpu_limit {
+            svc_query = svc_query.bind(payload.cpu_limit.unwrap());
+        }
         svc_query = svc_query.bind(&id);
         let _ = svc_query.execute(&state.db).await;
     }
@@ -263,12 +268,7 @@ pub async fn update_project_settings(
         .bind(&id)
         .fetch_one(&state.db)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("database error: {e}"),
-            )
-        })?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;
 
     // Push project meta to agent if lifecycle or raw-port settings changed.
     if has_auto_start_enabled || has_allow_raw_ports {
@@ -321,7 +321,8 @@ pub async fn update_service_settings(
     Json(payload): Json<UpdateServiceSettingsRequest>,
 ) -> impl IntoResponse {
     if auth_session.user.is_none() {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"}))).into_response();
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Authentication required"})))
+            .into_response();
     }
 
     // Verify project exists
@@ -333,19 +334,22 @@ pub async fn update_service_settings(
         .unwrap_or(None);
 
     if project.is_none() {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("project '{}' not found", project_id)}))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("project '{}' not found", project_id)})),
+        )
+            .into_response();
     }
 
     // Verify service exists in project_services
-    let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT 1 FROM project_services WHERE project_id = ? AND service_name = ? LIMIT 1"
-    )
-    .bind(&project_id)
-    .bind(&service_name)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": format!("{e}")})))
-    .unwrap_or(None);
+    let existing: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM project_services WHERE project_id = ? AND service_name = ? LIMIT 1")
+            .bind(&project_id)
+            .bind(&service_name)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": format!("{e}")})))
+            .unwrap_or(None);
 
     if existing.is_none() {
         return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("service '{}' not found in project '{}'", service_name, project_id)}))).into_response();
@@ -368,10 +372,8 @@ pub async fn update_service_settings(
         return (StatusCode::OK, Json(serde_json::json!({"updated": true}))).into_response();
     }
 
-    let sql = format!(
-        "UPDATE project_services SET {} WHERE project_id = ? AND service_name = ?",
-        set_clauses.join(", ")
-    );
+    let sql =
+        format!("UPDATE project_services SET {} WHERE project_id = ? AND service_name = ?", set_clauses.join(", "));
     let mut query = sqlx::query(&sql);
 
     if has_memory {
@@ -383,7 +385,8 @@ pub async fn update_service_settings(
     query = query.bind(&project_id).bind(&service_name);
 
     if let Err(e) = query.execute(&state.db).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("database error: {e}")}))).into_response();
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("database error: {e}")})))
+            .into_response();
     }
 
     let now = chrono::Utc::now().timestamp();

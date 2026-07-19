@@ -1,32 +1,20 @@
 use axum::http::StatusCode;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 use super::helpers::{test_server, test_server_with_db};
 
 async fn logged_in_server() -> axum_test::TestServer {
     let server = test_server().await;
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "stageuser", "password": "pass"}))
-        .await;
-    server
-        .post("/auth/login")
-        .json(&json!({"username": "stageuser", "password": "pass"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "stageuser", "password": "pass"})).await;
+    server.post("/auth/login").json(&json!({"username": "stageuser", "password": "pass"})).await;
     server
 }
 
 async fn logged_in_server_with_db() -> (axum_test::TestServer, sqlx::SqlitePool) {
     let (server, db) = test_server_with_db().await;
-    server
-        .post("/auth/register")
-        .json(&json!({"username": "stageuser", "password": "pass"}))
-        .await;
-    server
-        .post("/auth/login")
-        .json(&json!({"username": "stageuser", "password": "pass"}))
-        .await;
+    server.post("/auth/register").json(&json!({"username": "stageuser", "password": "pass"})).await;
+    server.post("/auth/login").json(&json!({"username": "stageuser", "password": "pass"})).await;
     (server, db)
 }
 
@@ -41,11 +29,7 @@ async fn compose_stage_only_creates_env_and_stays_unconfigured() {
     let project_id = "stage-compose-1";
     cleanup_project_dir(project_id);
 
-    server
-        .post("/projects")
-        .json(&json!({"id": project_id}))
-        .await
-        .assert_status(StatusCode::CREATED);
+    server.post("/projects").json(&json!({"id": project_id})).await.assert_status(StatusCode::CREATED);
 
     let compose = r#"
 services:
@@ -65,9 +49,7 @@ services:
                 .add_text("stage_only", "true")
                 .add_part(
                     "compose",
-                    axum_test::multipart::Part::text(compose)
-                        .file_name("compose.yaml")
-                        .mime_type("text/yaml"),
+                    axum_test::multipart::Part::text(compose).file_name("compose.yaml").mime_type("text/yaml"),
                 ),
         )
         .await;
@@ -98,11 +80,7 @@ async fn background_single_stage_has_no_url_and_remains_resumable() {
     let project_id = "stage-background-1";
     cleanup_project_dir(project_id);
 
-    server
-        .post("/projects")
-        .json(&json!({"id": project_id}))
-        .await
-        .assert_status(StatusCode::CREATED);
+    server.post("/projects").json(&json!({"id": project_id})).await.assert_status(StatusCode::CREATED);
 
     let resp = server
         .put("/deploy")
@@ -132,11 +110,7 @@ async fn start_pending_without_staged_data_fails() {
     let server = logged_in_server().await;
     let project_id = "stage-empty-1";
 
-    server
-        .post("/projects")
-        .json(&json!({"id": project_id}))
-        .await
-        .assert_status(StatusCode::CREATED);
+    server.post("/projects").json(&json!({"id": project_id})).await.assert_status(StatusCode::CREATED);
 
     let project: Value = server.get(&format!("/projects/{project_id}")).await.json();
     assert_eq!(project["status"], "pending");
@@ -151,11 +125,7 @@ async fn single_stage_only_keeps_project_unconfigured() {
     let project_id = "stage-single-1";
     cleanup_project_dir(project_id);
 
-    server
-        .post("/projects")
-        .json(&json!({"id": project_id}))
-        .await
-        .assert_status(StatusCode::CREATED);
+    server.post("/projects").json(&json!({"id": project_id})).await.assert_status(StatusCode::CREATED);
 
     let resp = server
         .put("/deploy")
@@ -188,11 +158,8 @@ async fn stage_only_ignored_for_already_configured_project() {
     let project_id = "stage-redeploy-1";
     cleanup_project_dir(project_id);
 
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("stageuser")
-        .fetch_one(&db)
-        .await
-        .unwrap();
+    let user_id: String =
+        sqlx::query_scalar("SELECT id FROM users WHERE username = ?").bind("stageuser").fetch_one(&db).await.unwrap();
 
     let now = chrono::Utc::now().timestamp();
     sqlx::query(

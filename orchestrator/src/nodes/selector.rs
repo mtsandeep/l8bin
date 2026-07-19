@@ -1,6 +1,6 @@
 use anyhow::anyhow;
-use sqlx::SqlitePool;
 use litebin_common::types::{Node, Project};
+use sqlx::SqlitePool;
 
 pub async fn select_node(
     db: &SqlitePool,
@@ -17,12 +17,10 @@ pub async fn select_node_for_sticky(
 ) -> anyhow::Result<String> {
     // 1. Override path — validate node exists and is online
     if let Some(override_id) = override_node_id {
-        let node = sqlx::query_as::<_, Node>(
-            "SELECT * FROM nodes WHERE id = ? AND status = 'online'"
-        )
-        .bind(&override_id)
-        .fetch_optional(db)
-        .await?;
+        let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ? AND status = 'online'")
+            .bind(&override_id)
+            .fetch_optional(db)
+            .await?;
 
         match node {
             Some(_) => return Ok(override_id),
@@ -32,12 +30,10 @@ pub async fn select_node_for_sticky(
 
     // 2. Sticky path: if project has a node_id referencing an online node
     if let Some(node_id) = sticky_node_id {
-        let node = sqlx::query_as::<_, Node>(
-            "SELECT * FROM nodes WHERE id = ? AND status = 'online'"
-        )
-        .bind(node_id)
-        .fetch_optional(db)
-        .await?;
+        let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ? AND status = 'online'")
+            .bind(node_id)
+            .fetch_optional(db)
+            .await?;
 
         if node.is_some() {
             return Ok(node_id.to_string());
@@ -45,11 +41,7 @@ pub async fn select_node_for_sticky(
     }
 
     // 3. Least-loaded path: score nodes by memory usage + container count
-    let nodes = sqlx::query_as::<_, Node>(
-        "SELECT * FROM nodes WHERE status = 'online'"
-    )
-    .fetch_all(db)
-    .await?;
+    let nodes = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE status = 'online'").fetch_all(db).await?;
 
     if nodes.is_empty() {
         return Err(anyhow!("no available nodes"));
@@ -57,17 +49,15 @@ pub async fn select_node_for_sticky(
 
     const MIN_DISK_FREE: i64 = 2 * 1024 * 1024 * 1024; // 2 GB
 
-    let best = nodes
-        .iter()
-        .min_by_key(|n| {
-            let total = n.total_memory.unwrap_or(0).max(1);
-            let available = n.available_memory.unwrap_or(0);
-            let mem_used_pct = ((total.saturating_sub(available)) * 100) / total;
-            let load_score = mem_used_pct + (n.container_count * 10);
-            // Penalize nodes below disk threshold so they're picked last, not excluded
-            let disk_penalty = if n.disk_free.unwrap_or(0) < MIN_DISK_FREE { 1000 } else { 0 };
-            load_score + disk_penalty
-        });
+    let best = nodes.iter().min_by_key(|n| {
+        let total = n.total_memory.unwrap_or(0).max(1);
+        let available = n.available_memory.unwrap_or(0);
+        let mem_used_pct = ((total.saturating_sub(available)) * 100) / total;
+        let load_score = mem_used_pct + (n.container_count * 10);
+        // Penalize nodes below disk threshold so they're picked last, not excluded
+        let disk_penalty = if n.disk_free.unwrap_or(0) < MIN_DISK_FREE { 1000 } else { 0 };
+        load_score + disk_penalty
+    });
 
     match best {
         Some(node) => Ok(node.id.clone()),
@@ -105,7 +95,7 @@ mod tests {
                 agent_secret TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
-            )"
+            )",
         )
         .execute(&pool)
         .await

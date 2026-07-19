@@ -53,10 +53,7 @@ impl ComposeService {
         // tmpfs
         let mut tmpfs = self.tmpfs_map();
         // Auto-add /tmp for read_only containers
-        if self.read_only == Some(true)
-            && options.auto_tmpfs_for_readonly
-            && !tmpfs.contains_key("/tmp")
-        {
+        if self.read_only == Some(true) && options.auto_tmpfs_for_readonly && !tmpfs.contains_key("/tmp") {
             tmpfs.insert("/tmp".to_string(), String::new());
         }
         if !tmpfs.is_empty() {
@@ -85,14 +82,10 @@ impl ComposeService {
         // Restart policy
         if let Some(ref policy) = self.restart {
             host_config.restart_policy = match policy.as_str() {
-                "no" => Some(RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::NO),
-                    ..Default::default()
-                }),
-                "always" | "unless-stopped" => Some(RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::ALWAYS),
-                    ..Default::default()
-                }),
+                "no" => Some(RestartPolicy { name: Some(RestartPolicyNameEnum::NO), ..Default::default() }),
+                "always" | "unless-stopped" => {
+                    Some(RestartPolicy { name: Some(RestartPolicyNameEnum::ALWAYS), ..Default::default() })
+                }
                 _ => None,
             };
         }
@@ -101,22 +94,15 @@ impl ComposeService {
         let mut env = self.env_list();
         // Add overrides that aren't already in the env list
         for (key, val) in &options.env_overrides {
-            let has_key = env.iter().any(|e| {
-                e.split_once('=')
-                    .map(|(k, _)| k == key.as_str())
-                    .unwrap_or(false)
-            });
+            let has_key = env.iter().any(|e| e.split_once('=').map(|(k, _)| k == key.as_str()).unwrap_or(false));
             if !has_key {
                 env.push(format!("{}={}", key, val));
             }
         }
 
         // Exposed ports
-        let exposed_ports: Vec<String> = self
-            .exposed_ports()
-            .iter()
-            .map(|(port, proto)| format!("{}/{}", port, proto))
-            .collect();
+        let exposed_ports: Vec<String> =
+            self.exposed_ports().iter().map(|(port, proto)| format!("{}/{}", port, proto)).collect();
 
         // Only set cmd/entrypoint if explicitly defined in compose.
         // Setting them to None would override the Dockerfile's CMD/ENTRYPOINT.
@@ -134,11 +120,7 @@ impl ComposeService {
             working_dir: self.working_dir.clone(),
             user: self.user.clone(),
             env: if env.is_empty() { None } else { Some(env) },
-            exposed_ports: if exposed_ports.is_empty() {
-                None
-            } else {
-                Some(exposed_ports)
-            },
+            exposed_ports: if exposed_ports.is_empty() { None } else { Some(exposed_ports) },
             open_stdin: self.stdin_open,
             tty: self.tty,
             host_config: Some(host_config.clone()),
@@ -146,10 +128,7 @@ impl ComposeService {
             ..Default::default()
         };
 
-        ComposeBollardConfig {
-            create_body,
-            host_config,
-        }
+        ComposeBollardConfig { create_body, host_config }
     }
 }
 
@@ -158,10 +137,7 @@ impl ComposeService {
 fn parse_healthcheck(hc: &serde_yaml::Value) -> Option<HealthConfig> {
     let test = hc.get("test")?;
     let test_vec: Vec<String> = match test {
-        serde_yaml::Value::Sequence(list) => list
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect(),
+        serde_yaml::Value::Sequence(list) => list.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
         serde_yaml::Value::String(s) => {
             // String form: "CMD pg_isready" or "CMD-SHELL pg_isready -U foo"
             if let Some(rest) = s.strip_prefix("CMD-SHELL ") {
@@ -177,10 +153,7 @@ fn parse_healthcheck(hc: &serde_yaml::Value) -> Option<HealthConfig> {
 
     // "NONE" disables the healthcheck
     if test_vec.len() == 1 && test_vec[0].eq_ignore_ascii_case("NONE") {
-        return Some(HealthConfig {
-            test: Some(test_vec),
-            ..Default::default()
-        });
+        return Some(HealthConfig { test: Some(test_vec), ..Default::default() });
     }
 
     let interval = hc.get("interval").and_then(|v| parse_duration(v));
@@ -188,14 +161,7 @@ fn parse_healthcheck(hc: &serde_yaml::Value) -> Option<HealthConfig> {
     let start_period = hc.get("start_period").and_then(|v| parse_duration(v));
     let retries = hc.get("retries").and_then(|v| v.as_u64()).map(|r| r as i64);
 
-    Some(HealthConfig {
-        test: Some(test_vec),
-        interval,
-        timeout,
-        start_period,
-        start_interval: None,
-        retries,
-    })
+    Some(HealthConfig { test: Some(test_vec), interval, timeout, start_period, start_interval: None, retries })
 }
 
 /// Parse a compose duration string ("2s", "1m", "100ms") into nanoseconds.
@@ -256,10 +222,7 @@ mod tests {
             command: Some(serde_yaml::Value::String("nginx -g 'daemon off'".to_string())),
             environment: Some(serde_yaml::Value::Mapping(
                 vec![
-                    (
-                        serde_yaml::Value::String("FOO".to_string()),
-                        serde_yaml::Value::String("bar".to_string()),
-                    ),
+                    (serde_yaml::Value::String("FOO".to_string()), serde_yaml::Value::String("bar".to_string())),
                     (
                         serde_yaml::Value::String("BAZ".to_string()),
                         serde_yaml::Value::Number(serde_yaml::Number::from(42)),
@@ -298,16 +261,10 @@ mod tests {
 
     #[test]
     fn readonly_auto_tmpfs() {
-        let svc = ComposeService {
-            image: Some("app".to_string()),
-            read_only: Some(true),
-            ..Default::default()
-        };
+        let svc = ComposeService { image: Some("app".to_string()), read_only: Some(true), ..Default::default() };
 
-        let config = svc.to_bollard_config(&BollardMappingOptions {
-            auto_tmpfs_for_readonly: true,
-            ..Default::default()
-        });
+        let config =
+            svc.to_bollard_config(&BollardMappingOptions { auto_tmpfs_for_readonly: true, ..Default::default() });
         assert_eq!(config.host_config.readonly_rootfs, Some(true));
         let tmpfs = config.host_config.tmpfs.unwrap();
         assert!(tmpfs.contains_key("/tmp"));
@@ -332,10 +289,8 @@ mod tests {
         overrides.insert("DB".to_string(), "postgres://remote".to_string());
         overrides.insert("NEW".to_string(), "value".to_string());
 
-        let config = svc.to_bollard_config(&BollardMappingOptions {
-            env_overrides: overrides,
-            auto_tmpfs_for_readonly: false,
-        });
+        let config =
+            svc.to_bollard_config(&BollardMappingOptions { env_overrides: overrides, auto_tmpfs_for_readonly: false });
 
         let env = config.create_body.env.unwrap();
         // Compose value takes precedence
@@ -348,11 +303,7 @@ mod tests {
     fn ports_parsing() {
         let svc = ComposeService {
             image: Some("app".to_string()),
-            ports: Some(vec![
-                "8080".to_string(),
-                "3000:3000".to_string(),
-                "9090/udp".to_string(),
-            ]),
+            ports: Some(vec!["8080".to_string(), "3000:3000".to_string(), "9090/udp".to_string()]),
             ..Default::default()
         };
 

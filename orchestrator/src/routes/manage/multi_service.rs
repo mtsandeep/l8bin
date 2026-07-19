@@ -1,14 +1,16 @@
-use axum::{http::StatusCode, Json};
+use axum::{Json, http::StatusCode};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use litebin_common::types::ProjectStatus;
 use crate::AppState;
 use crate::status::{self, ProjectUpdateFields};
+use litebin_common::types::ProjectStatus;
 
-use super::helpers::{MessageResponse, local_env_has_changed, read_local_project_env, sync_caddy, write_local_env_snapshot};
+use super::helpers::{
+    MessageResponse, local_env_has_changed, read_local_project_env, sync_caddy, write_local_env_snapshot,
+};
 
 // ── Options ──────────────────────────────────────────────────────────────────
 
@@ -64,10 +66,7 @@ pub(super) fn proxy_needed_after_stop(
     let Some(stopping_services) = stopping_services else {
         return false;
     };
-    requesters.iter().any(|service| {
-        running_services.contains(service)
-            && !stopping_services.contains(service)
-    })
+    requesters.iter().any(|service| running_services.contains(service) && !stopping_services.contains(service))
 }
 
 pub(super) async fn approved_docker_observe_requesters(
@@ -89,13 +88,8 @@ pub(super) async fn approved_docker_observe_requesters(
     let plan = if let Some(yaml) = litebin_common::docker::DockerManager::read_compose(&project.id) {
         let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid stored compose.yaml: {e}")))?;
-        litebin_common::compose_run::ComposeRunPlan::from_compose(
-            &compose,
-            &project.id,
-            &extra_env,
-            None,
-        )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stored compose plan error: {e}")))?
+        litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, &project.id, &extra_env, None)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stored compose plan error: {e}")))?
     } else {
         litebin_common::compose_run::ComposeRunPlan::single_service(
             litebin_common::types::RunServiceConfig::from_project(project, extra_env),
@@ -104,18 +98,12 @@ pub(super) async fn approved_docker_observe_requesters(
     Ok(plan.docker_socket_requester_names())
 }
 
-async fn mark_replacement_failure(
-    state: &AppState,
-    project_id: &str,
-    services: &HashSet<String>,
-) {
+async fn mark_replacement_failure(state: &AppState, project_id: &str, services: &HashSet<String>) {
     for service in services {
         if service == litebin_common::types::DOCKER_PROXY_SERVICE {
             continue;
         }
-        if let Err(error) =
-            status::set_service_replacement_error(&state.db, project_id, service).await
-        {
+        if let Err(error) = status::set_service_replacement_error(&state.db, project_id, service).await {
             tracing::warn!(
                 project_id = %project_id,
                 service = %service,
@@ -126,15 +114,11 @@ async fn mark_replacement_failure(
     }
 }
 
-fn select_reported_affected_services(
-    reported: &[String],
-    known_services: &HashSet<String>,
-) -> HashSet<String> {
+fn select_reported_affected_services(reported: &[String], known_services: &HashSet<String>) -> HashSet<String> {
     reported
         .iter()
         .filter(|service| {
-            service.as_str() != litebin_common::types::DOCKER_PROXY_SERVICE
-                && known_services.contains(service.as_str())
+            service.as_str() != litebin_common::types::DOCKER_PROXY_SERVICE && known_services.contains(service.as_str())
         })
         .cloned()
         .collect()
@@ -144,22 +128,11 @@ fn should_abort_siblings(rollback_on_failure: bool, proxy_created: bool) -> bool
     rollback_on_failure || proxy_created
 }
 
-fn cancellation_cleanup_services(
-    create_attempted: &HashSet<String>,
-    started: &[(String, String)],
-) -> HashSet<String> {
-    create_attempted
-        .iter()
-        .cloned()
-        .chain(started.iter().map(|(service, _)| service.clone()))
-        .collect()
+fn cancellation_cleanup_services(create_attempted: &HashSet<String>, started: &[(String, String)]) -> HashSet<String> {
+    create_attempted.iter().cloned().chain(started.iter().map(|(service, _)| service.clone())).collect()
 }
 
-pub(crate) async fn apply_remote_batch_failure_metadata(
-    state: &AppState,
-    project_id: &str,
-    response_body: &str,
-) {
+pub(crate) async fn apply_remote_batch_failure_metadata(state: &AppState, project_id: &str, response_body: &str) {
     let reported = serde_json::from_str::<serde_json::Value>(response_body)
         .ok()
         .and_then(|body| body["affected_services"].as_array().cloned())
@@ -170,15 +143,14 @@ pub(crate) async fn apply_remote_batch_failure_metadata(
     if reported.is_empty() {
         return;
     }
-    let known_services = sqlx::query_scalar::<_, String>(
-        "SELECT service_name FROM project_services WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .collect();
+    let known_services =
+        sqlx::query_scalar::<_, String>("SELECT service_name FROM project_services WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
     let affected = select_reported_affected_services(&reported, &known_services);
     mark_replacement_failure(state, project_id, &affected).await;
 }
@@ -237,8 +209,7 @@ pub async fn start_services(
         let host = state.docker.host_info().await.ok();
         litebin_common::docker::require_host_network_eligible(
             host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref()
-                .and_then(|info| info.operating_system.as_deref()),
+            host.as_ref().and_then(|info| info.operating_system.as_deref()),
             host.as_ref().and_then(|info| info.rootless),
             Some(3),
         )
@@ -286,25 +257,21 @@ pub async fn start_services(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability lookup failed: {e}")))?;
     let proxy_injected = if docker_observe {
-        plan
-            .inject_docker_observe_proxy(project_id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to configure Docker observation proxy: {e}")))?
+        plan.inject_docker_observe_proxy(project_id).map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to configure Docker observation proxy: {e}"))
+        })?
     } else {
         false
     };
     let host_observers = plan.host_docker_observer_names();
     let current_proxy = if proxy_injected {
-        state
-            .docker
-            .current_docker_observe_proxy(project_id)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to inspect Docker observation proxy: {e}")))?
+        state.docker.current_docker_observe_proxy(project_id).await.map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to inspect Docker observation proxy: {e}"))
+        })?
     } else {
         None
     };
-    let reusable_proxy = current_proxy
-        .as_ref()
-        .is_some_and(|(_, port)| host_observers.is_empty() || port.is_some());
+    let reusable_proxy = current_proxy.as_ref().is_some_and(|(_, port)| host_observers.is_empty() || port.is_some());
     let mut force_recreate_services = HashSet::new();
     if reusable_proxy {
         if let Some((_, Some(port))) = current_proxy {
@@ -324,42 +291,52 @@ pub async fn start_services(
             .docker
             .remove_by_service_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to clean up previous Docker observation proxy: {e}")))?;
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to clean up previous Docker observation proxy: {e}"),
+                )
+            })?;
     }
     let proxy_created = proxy_injected && !reusable_proxy;
     if proxy_injected {
         // Pre-pull the proxy image (skip if already local; it's not in project_services so the normal pull logic skips it)
         if proxy_created {
-            state.docker
-                .pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to prepare Docker observation proxy: {e}")))?;
+            state.docker.pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false).await.map_err(
+                |e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to prepare Docker observation proxy: {e}")),
+            )?;
         }
     }
 
     // 2. Ensure per-project network + connect Caddy + optionally orchestrator
-    state.docker.ensure_project_network(project_id, None).await
+    state
+        .docker
+        .ensure_project_network(project_id, None)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("network error: {e}")))?;
     if proxy_injected {
         let network = litebin_common::types::docker_observe_network_name(project_id, None);
-        state.docker.ensure_named_network(&network).await
+        state
+            .docker
+            .ensure_named_network(&network)
+            .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Docker observation network error: {e}")))?;
     } else if opts.services.is_none() {
         let network = litebin_common::types::docker_observe_network_name(project_id, None);
-        state.docker.remove_named_network(&network).await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove Docker observation network: {e}")))?;
+        state.docker.remove_named_network(&network).await.map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove Docker observation network: {e}"))
+        })?;
     }
 
-    let caddy_container = std::env::var("CADDY_CONTAINER_NAME")
-        .unwrap_or_else(|_| "litebin-caddy".into());
+    let caddy_container = std::env::var("CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-caddy".into());
     let project_network = litebin_common::types::project_network_name(project_id, None);
     if let Err(e) = state.docker.connect_container_to_network(&caddy_container, &project_network).await {
         tracing::warn!(error = %e, container = %caddy_container, network = %project_network, "failed to connect caddy to project network");
     }
 
     if opts.connect_orchestrator {
-        let orchestrator_container = std::env::var("ORCHESTRATOR_CONTAINER_NAME")
-            .unwrap_or_else(|_| "litebin-orchestrator".into());
+        let orchestrator_container =
+            std::env::var("ORCHESTRATOR_CONTAINER_NAME").unwrap_or_else(|_| "litebin-orchestrator".into());
         if let Err(e) = state.docker.connect_container_to_network(&orchestrator_container, &project_network).await {
             tracing::warn!(error = %e, container = %orchestrator_container, network = %project_network, "failed to connect orchestrator to project network");
         }
@@ -368,17 +345,16 @@ pub async fn start_services(
     // 3. Build lookup maps from plan
     let mut configs_map: std::collections::HashMap<String, litebin_common::types::RunServiceConfig> =
         plan.configs.iter().map(|c| (c.service_name.clone(), c.clone())).collect();
-    let healthy_wait_set: HashSet<String> = plan.service_order.iter()
-        .filter(|s| plan.needs_healthy_wait(s))
-        .cloned()
-        .collect();
-    let completed_wait_set: HashSet<String> = plan.service_order.iter()
-        .filter(|s| plan.needs_completed_wait(s))
-        .cloned()
-        .collect();
-    let has_healthcheck: HashSet<String> = plan.service_order.iter()
+    let healthy_wait_set: HashSet<String> =
+        plan.service_order.iter().filter(|s| plan.needs_healthy_wait(s)).cloned().collect();
+    let completed_wait_set: HashSet<String> =
+        plan.service_order.iter().filter(|s| plan.needs_completed_wait(s)).cloned().collect();
+    let has_healthcheck: HashSet<String> = plan
+        .service_order
+        .iter()
         .filter(|s| {
-            plan.configs.iter()
+            plan.configs
+                .iter()
                 .find(|c| c.service_name == **s)
                 .and_then(|c| c.bollard_create_body.as_ref())
                 .map(|body| body.healthcheck.is_some())
@@ -435,8 +411,7 @@ pub async fn start_services(
     let started_containers: Arc<std::sync::Mutex<Vec<(String, String)>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
     // Track rows whose old container was actually removed. These rows must not
     // retain stale runtime metadata if replacement fails later.
-    let removed_services: Arc<std::sync::Mutex<HashSet<String>>> =
-        Arc::new(std::sync::Mutex::new(HashSet::new()));
+    let removed_services: Arc<std::sync::Mutex<HashSet<String>>> = Arc::new(std::sync::Mutex::new(HashSet::new()));
     // A cancelled Docker create request may still have reached the daemon even
     // though no container ID was returned. Track only services that actually
     // entered a create/recreate call so cancellation cleanup can use names
@@ -464,8 +439,7 @@ pub async fn start_services(
             let is_public = run_config.is_public;
             let is_oneshot = run_config.is_oneshot;
             let existing = existing_containers.get(svc_name).cloned();
-            let force_recreate =
-                opts.force_recreate || force_recreate_services.contains(svc_name);
+            let force_recreate = opts.force_recreate || force_recreate_services.contains(svc_name);
             let any_started = any_started.clone();
             let started_containers = started_containers.clone();
             let removed_services = removed_services.clone();
@@ -651,23 +625,15 @@ pub async fn start_services(
             match result {
                 Ok(Ok(started)) => {
                     if started.service_name == litebin_common::types::DOCKER_PROXY_SERVICE
-                        && configs_map
-                            .values()
-                            .any(|config| config.host_network && config.docker_observe)
+                        && configs_map.values().any(|config| config.host_network && config.docker_observe)
                     {
-                        let port = match state
-                            .docker
-                            .inspect_mapped_port_for(&started.container_id, "2375/tcp")
-                            .await
-                        {
+                        let port = match state.docker.inspect_mapped_port_for(&started.container_id, "2375/tcp").await {
                             Ok(Some(port)) => port,
                             Ok(None) => {
                                 tasks.abort_all();
                                 while tasks.join_next().await.is_some() {}
-                                let started = started_containers
-                                    .lock()
-                                    .map(|started| started.clone())
-                                    .unwrap_or_default();
+                                let started =
+                                    started_containers.lock().map(|started| started.clone()).unwrap_or_default();
                                 for (_, cid) in started.iter().rev() {
                                     let _ = state.docker.remove_container(cid).await;
                                 }
@@ -676,15 +642,10 @@ pub async fn start_services(
                                     .map(|attempted| attempted.clone())
                                     .unwrap_or_default();
                                 for service in cancellation_cleanup_services(&attempted, &started) {
-                                    let _ = state
-                                        .docker
-                                        .remove_by_service_name(project_id, &service, None)
-                                        .await;
+                                    let _ = state.docker.remove_by_service_name(project_id, &service, None).await;
                                 }
-                                let mut affected = removed_services
-                                    .lock()
-                                    .map(|removed| removed.clone())
-                                    .unwrap_or_default();
+                                let mut affected =
+                                    removed_services.lock().map(|removed| removed.clone()).unwrap_or_default();
                                 affected.extend(attempted);
                                 affected.extend(started.into_iter().map(|(service, _)| service));
                                 mark_replacement_failure(state, project_id, &affected).await;
@@ -696,10 +657,8 @@ pub async fn start_services(
                             Err(error) => {
                                 tasks.abort_all();
                                 while tasks.join_next().await.is_some() {}
-                                let started = started_containers
-                                    .lock()
-                                    .map(|started| started.clone())
-                                    .unwrap_or_default();
+                                let started =
+                                    started_containers.lock().map(|started| started.clone()).unwrap_or_default();
                                 for (_, cid) in started.iter().rev() {
                                     let _ = state.docker.remove_container(cid).await;
                                 }
@@ -708,15 +667,10 @@ pub async fn start_services(
                                     .map(|attempted| attempted.clone())
                                     .unwrap_or_default();
                                 for service in cancellation_cleanup_services(&attempted, &started) {
-                                    let _ = state
-                                        .docker
-                                        .remove_by_service_name(project_id, &service, None)
-                                        .await;
+                                    let _ = state.docker.remove_by_service_name(project_id, &service, None).await;
                                 }
-                                let mut affected = removed_services
-                                    .lock()
-                                    .map(|removed| removed.clone())
-                                    .unwrap_or_default();
+                                let mut affected =
+                                    removed_services.lock().map(|removed| removed.clone()).unwrap_or_default();
                                 affected.extend(attempted);
                                 affected.extend(started.into_iter().map(|(service, _)| service));
                                 mark_replacement_failure(state, project_id, &affected).await;
@@ -740,38 +694,26 @@ pub async fn start_services(
                 }
                 Ok(Err(e)) => {
                     tracing::error!(error = %e, "service failed to start");
-                    let cleanup_cancelled =
-                        should_abort_siblings(opts.rollback_on_failure, proxy_created);
+                    let cleanup_cancelled = should_abort_siblings(opts.rollback_on_failure, proxy_created);
                     if cleanup_cancelled {
                         tasks.abort_all();
                     }
                     while tasks.join_next().await.is_some() {}
                     if cleanup_cancelled {
                         // Collect container IDs, drop guard, then stop/remove (MutexGuard is not Send)
-                        let started = started_containers.lock()
-                            .map(|s| s.clone())
-                            .unwrap_or_default();
+                        let started = started_containers.lock().map(|s| s.clone()).unwrap_or_default();
                         for (_, cid) in &started {
                             let _ = state.docker.stop_container(cid).await;
                             let _ = state.docker.remove_container(cid).await;
                             tracing::warn!(cid = %cid, "rollback: stopped after failure");
                         }
-                        let attempted = create_attempted_services
-                            .lock()
-                            .map(|attempted| attempted.clone())
-                            .unwrap_or_default();
-                        let cleanup_services =
-                            cancellation_cleanup_services(&attempted, &started);
+                        let attempted =
+                            create_attempted_services.lock().map(|attempted| attempted.clone()).unwrap_or_default();
+                        let cleanup_services = cancellation_cleanup_services(&attempted, &started);
                         for service in &cleanup_services {
-                            let _ = state
-                                .docker
-                                .remove_by_service_name(project_id, service, None)
-                                .await;
+                            let _ = state.docker.remove_by_service_name(project_id, service, None).await;
                         }
-                        let mut affected = removed_services
-                            .lock()
-                            .map(|removed| removed.clone())
-                            .unwrap_or_default();
+                        let mut affected = removed_services.lock().map(|removed| removed.clone()).unwrap_or_default();
                         affected.extend(cleanup_services);
                         mark_replacement_failure(state, project_id, &affected).await;
                         let project_error = if opts.services.is_some() {
@@ -791,52 +733,34 @@ pub async fn start_services(
                         }
                         return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
                     }
-                    let affected = removed_services
-                        .lock()
-                        .map(|removed| removed.clone())
-                        .unwrap_or_default();
+                    let affected = removed_services.lock().map(|removed| removed.clone()).unwrap_or_default();
                     mark_replacement_failure(state, project_id, &affected).await;
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "service task panicked");
-                    let cleanup_cancelled =
-                        should_abort_siblings(opts.rollback_on_failure, proxy_created);
+                    let cleanup_cancelled = should_abort_siblings(opts.rollback_on_failure, proxy_created);
                     if cleanup_cancelled {
                         tasks.abort_all();
                     }
                     while tasks.join_next().await.is_some() {}
                     if cleanup_cancelled {
-                        let started = started_containers.lock()
-                            .map(|s| s.clone())
-                            .unwrap_or_default();
+                        let started = started_containers.lock().map(|s| s.clone()).unwrap_or_default();
                         for (_, cid) in &started {
                             let _ = state.docker.stop_container(cid).await;
                             let _ = state.docker.remove_container(cid).await;
                         }
-                        let attempted = create_attempted_services
-                            .lock()
-                            .map(|attempted| attempted.clone())
-                            .unwrap_or_default();
-                        let cleanup_services =
-                            cancellation_cleanup_services(&attempted, &started);
+                        let attempted =
+                            create_attempted_services.lock().map(|attempted| attempted.clone()).unwrap_or_default();
+                        let cleanup_services = cancellation_cleanup_services(&attempted, &started);
                         for service in &cleanup_services {
-                            let _ = state
-                                .docker
-                                .remove_by_service_name(project_id, service, None)
-                                .await;
+                            let _ = state.docker.remove_by_service_name(project_id, service, None).await;
                         }
-                        let mut affected = removed_services
-                            .lock()
-                            .map(|removed| removed.clone())
-                            .unwrap_or_default();
+                        let mut affected = removed_services.lock().map(|removed| removed.clone()).unwrap_or_default();
                         affected.extend(cleanup_services);
                         mark_replacement_failure(state, project_id, &affected).await;
                     } else {
-                        let affected = removed_services
-                            .lock()
-                            .map(|removed| removed.clone())
-                            .unwrap_or_default();
+                        let affected = removed_services.lock().map(|removed| removed.clone()).unwrap_or_default();
                         mark_replacement_failure(state, project_id, &affected).await;
                     }
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, "service task panicked".to_string()));
@@ -847,9 +771,9 @@ pub async fn start_services(
         // If the Docker observation proxy was started in this level, wait for it
         // to be network-ready before starting the next level. Services that
         // mount docker.sock need the proxy to be accepting connections.
-        let proxy_cid = started_containers.lock()
-            .ok()
-            .and_then(|s| s.iter().find(|(name, _)| name == litebin_common::types::DOCKER_PROXY_SERVICE).map(|(_, cid)| cid.clone()));
+        let proxy_cid = started_containers.lock().ok().and_then(|s| {
+            s.iter().find(|(name, _)| name == litebin_common::types::DOCKER_PROXY_SERVICE).map(|(_, cid)| cid.clone())
+        });
         if let Some(proxy_cid) = proxy_cid {
             if let Err(e) = state.docker.wait_for_network_ready(&proxy_cid).await {
                 tracing::warn!(error = %e, "Docker observation proxy network readiness timeout, continuing");
@@ -868,19 +792,13 @@ pub async fn start_services(
         // derive the project status from the actual per-service outcomes.
         let single_container_id = if is_single_image {
             started_containers.lock().ok().and_then(|started| {
-                started
-                    .iter()
-                    .find(|(name, _)| name == "web")
-                    .map(|(_, container_id)| container_id.clone())
+                started.iter().find(|(name, _)| name == "web").map(|(_, container_id)| container_id.clone())
             })
         } else {
             None
         };
-        let persisted_container_id = if public_container_id.is_empty() {
-            single_container_id
-        } else {
-            Some(public_container_id)
-        };
+        let persisted_container_id =
+            if public_container_id.is_empty() { single_container_id } else { Some(public_container_id) };
         if let Err(e) = sqlx::query(
             "UPDATE projects SET container_id = ?, mapped_port = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
         )
@@ -936,13 +854,11 @@ pub async fn stop_services(
     project_id: &str,
     services: Option<&HashSet<String>>,
 ) -> Result<(), (StatusCode, String)> {
-    let project = sqlx::query_as::<_, crate::db::models::Project>(
-        "SELECT * FROM projects WHERE id = ?",
-    )
-    .bind(project_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to fetch project: {e}")))?;
+    let project = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(project_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to fetch project: {e}")))?;
     let requesters = approved_docker_observe_requesters(state, &project).await?;
     let rows: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT service_name, container_id FROM project_services WHERE project_id = ? AND status IN ('running', 'stopping')",
@@ -951,8 +867,7 @@ pub async fn stop_services(
     .fetch_all(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to fetch services: {e}")))?;
-    let running_services: HashSet<String> =
-        rows.iter().map(|(service, _)| service.clone()).collect();
+    let running_services: HashSet<String> = rows.iter().map(|(service, _)| service.clone()).collect();
 
     for (svc_name, cid) in rows.iter().rev() {
         // Apply service filter
@@ -962,16 +877,14 @@ pub async fn stop_services(
             }
         }
         if let Some(container_id) = cid {
-            state
-                .docker
-                .stop_container(container_id)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to stop service '{svc_name}': {e}")))?;
+            state.docker.stop_container(container_id).await.map_err(|e| {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to stop service '{svc_name}': {e}"))
+            })?;
             tracing::info!(project = %project_id, service = %svc_name, "service stopped");
         }
-        status::set_service_stopped(&state.db, project_id, svc_name)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to persist stopped service '{svc_name}': {e}")))?;
+        status::set_service_stopped(&state.db, project_id, svc_name).await.map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to persist stopped service '{svc_name}': {e}"))
+        })?;
     }
 
     // Persist the aggregate workload outcome before best-effort infrastructure
@@ -981,13 +894,11 @@ pub async fn stop_services(
     if !proxy_needed_after_stop(&requesters, &running_services, services) {
         state
             .docker
-            .remove_by_service_name(
-                project_id,
-                litebin_common::types::DOCKER_PROXY_SERVICE,
-                None,
-            )
+            .remove_by_service_name(project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove Docker observation proxy: {e}")))?;
+            .map_err(|e| {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove Docker observation proxy: {e}"))
+            })?;
         tracing::info!(project = %project_id, "Docker observation proxy removed");
     }
     Ok(())
@@ -1031,11 +942,8 @@ pub async fn recreate_services(
     let project_id = &project.id;
 
     // Acquire project lock
-    let semaphore = state
-        .project_locks
-        .entry(project_id.clone())
-        .or_insert_with(|| Arc::new(Semaphore::new(1)))
-        .clone();
+    let semaphore =
+        state.project_locks.entry(project_id.clone()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
     let _permit = semaphore.acquire().await.unwrap();
 
     let target_set: Option<HashSet<String>> = target_services.map(|v| v.into_iter().collect());
@@ -1044,21 +952,18 @@ pub async fn recreate_services(
     // Capture old image digests before stopping containers (for cleanup after recreate with pull)
     let old_digests: std::collections::HashMap<String, String> = if pull_images {
         let node_id = project.node_id.as_deref().unwrap_or("local");
-        crate::routes::manage::capture_service_digests(
-            &state, project_id, Some(node_id), target_set.as_ref(),
-        ).await
+        crate::routes::manage::capture_service_digests(&state, project_id, Some(node_id), target_set.as_ref()).await
     } else {
         std::collections::HashMap::new()
     };
 
     // Stop and remove targeted service containers
-    let services: Vec<litebin_common::types::ProjectService> = sqlx::query_as(
-        "SELECT * FROM project_services WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+    let services: Vec<litebin_common::types::ProjectService> =
+        sqlx::query_as("SELECT * FROM project_services WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
     for svc in &services {
         if let Some(ref filter) = target_set {
@@ -1082,22 +987,25 @@ pub async fn recreate_services(
     }
 
     // Re-deploy targeted services
-    start_services(state, project, StartServicesOpts {
-        force_recreate: true,
-        pull_images,
-        force_pull: pull_images,
-        services: target_set,
-        connect_orchestrator: true,
-        rollback_on_failure: false,
-    }).await?;
+    start_services(
+        state,
+        project,
+        StartServicesOpts {
+            force_recreate: true,
+            pull_images,
+            force_pull: pull_images,
+            services: target_set,
+            connect_orchestrator: true,
+            rollback_on_failure: false,
+        },
+    )
+    .await?;
 
     // Clean up old images by digest after successful recreate with pull
     if !old_digests.is_empty() {
         let node_id = project.node_id.as_deref().unwrap_or("local");
         for (_svc_name, digest) in &old_digests {
-            crate::routes::manage::cleanup_unused_image(
-                state, Some(node_id), digest,
-            ).await;
+            crate::routes::manage::cleanup_unused_image(state, Some(node_id), digest).await;
         }
     }
 
@@ -1132,32 +1040,21 @@ pub async fn recreate_services(
 #[cfg(test)]
 mod tests {
     use super::{
-        cancellation_cleanup_services, proxy_needed_after_stop,
-        select_reported_affected_services, should_abort_siblings,
+        cancellation_cleanup_services, proxy_needed_after_stop, select_reported_affected_services,
+        should_abort_siblings,
     };
     use std::collections::HashSet;
 
     #[test]
     fn proxy_remains_until_last_declared_requester_stops() {
         let requesters = HashSet::from(["bridge-observer".into(), "host-observer".into()]);
-        let running = HashSet::from([
-            "bridge-observer".into(),
-            "host-observer".into(),
-            "api".into(),
-        ]);
+        let running = HashSet::from(["bridge-observer".into(), "host-observer".into(), "api".into()]);
 
-        assert!(proxy_needed_after_stop(
-            &requesters,
-            &running,
-            Some(&HashSet::from(["bridge-observer".into()])),
-        ));
+        assert!(proxy_needed_after_stop(&requesters, &running, Some(&HashSet::from(["bridge-observer".into()])),));
         assert!(!proxy_needed_after_stop(
             &requesters,
             &running,
-            Some(&HashSet::from([
-                "bridge-observer".into(),
-                "host-observer".into(),
-            ])),
+            Some(&HashSet::from(["bridge-observer".into(), "host-observer".into(),])),
         ));
         assert!(!proxy_needed_after_stop(&requesters, &running, None));
     }
@@ -1172,20 +1069,12 @@ mod tests {
             &running,
             Some(&HashSet::from(["unrelated".into()])),
         ));
-        assert!(!proxy_needed_after_stop(
-            &no_approved_requesters,
-            &running,
-            None,
-        ));
+        assert!(!proxy_needed_after_stop(&no_approved_requesters, &running, None,));
     }
 
     #[test]
     fn rollback_metadata_selection_excludes_proxy_and_untouched_rows() {
-        let known = HashSet::from([
-            "requested".into(),
-            "implicit-host-observer".into(),
-            "untouched".into(),
-        ]);
+        let known = HashSet::from(["requested".into(), "implicit-host-observer".into(), "untouched".into()]);
         let reported = vec![
             "requested".into(),
             "implicit-host-observer".into(),
@@ -1209,10 +1098,7 @@ mod tests {
     #[test]
     fn cancellation_cleanup_excludes_unattempted_preexisting_services() {
         let attempted = HashSet::from(["fresh".into(), "recreated".into()]);
-        let started = vec![
-            ("fresh".into(), "new-id".into()),
-            ("restarted".into(), "old-id".into()),
-        ];
+        let started = vec![("fresh".into(), "new-id".into()), ("restarted".into(), "old-id".into())];
         assert_eq!(
             cancellation_cleanup_services(&attempted, &started),
             HashSet::from(["fresh".into(), "recreated".into(), "restarted".into()])

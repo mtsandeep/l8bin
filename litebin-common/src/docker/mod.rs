@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bollard::Docker;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 mod container;
 mod image;
@@ -49,8 +49,9 @@ impl DockerErrorKind {
                 408 | 504 => Self::Timeout,
                 _ => Self::Other,
             },
-            bollard::errors::Error::IOError { .. }
-            | bollard::errors::Error::HyperResponseError { .. } => Self::Connection,
+            bollard::errors::Error::IOError { .. } | bollard::errors::Error::HyperResponseError { .. } => {
+                Self::Connection
+            }
             bollard::errors::Error::RequestTimeoutError => Self::Timeout,
             _ => Self::Other,
         }
@@ -59,9 +60,7 @@ impl DockerErrorKind {
     /// Classify an anyhow::Error by downcasting to bollard::Error.
     /// Falls back to `Other` if the error chain doesn't contain a bollard::Error.
     pub fn from_anyhow(err: &anyhow::Error) -> Self {
-        err.downcast_ref::<bollard::errors::Error>()
-            .map(Self::from_bollard_error)
-            .unwrap_or(Self::Other)
+        err.downcast_ref::<bollard::errors::Error>().map(Self::from_bollard_error).unwrap_or(Self::Other)
     }
 }
 
@@ -157,12 +156,8 @@ impl DockerManager {
 
     /// Create a DockerManager without connecting to the Docker socket — for use in tests only.
     pub fn new_for_tests() -> Self {
-        let docker = Docker::connect_with_http(
-            "http://127.0.0.1:1",
-            4,
-            bollard::API_DEFAULT_VERSION,
-        )
-        .expect("http docker client");
+        let docker = Docker::connect_with_http("http://127.0.0.1:1", 4, bollard::API_DEFAULT_VERSION)
+            .expect("http docker client");
         Self {
             docker,
             network: "test".to_string(),
@@ -273,15 +268,12 @@ pub struct ContainerStats {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DiskUsage {
-    pub size_rw: u64,              // Writable layer size (bytes written by container)
-    pub size_root_fs: u64,         // Total image + writable layer
-    pub cpu_limit: Option<f64>,    // CPU limit from HostConfig.NanoCpus (e.g. 1.5 = 1.5 cores)
+    pub size_rw: u64,           // Writable layer size (bytes written by container)
+    pub size_root_fs: u64,      // Total image + writable layer
+    pub cpu_limit: Option<f64>, // CPU limit from HostConfig.NanoCpus (e.g. 1.5 = 1.5 cores)
 }
 
 pub fn is_port_ready(port: u16) -> bool {
-    std::net::TcpStream::connect_timeout(
-        &format!("127.0.0.1:{}", port).parse().unwrap(),
-        Duration::from_millis(200),
-    )
-    .is_ok()
+    std::net::TcpStream::connect_timeout(&format!("127.0.0.1:{}", port).parse().unwrap(), Duration::from_millis(200))
+        .is_ok()
 }

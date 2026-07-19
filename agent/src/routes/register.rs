@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 
 use crate::config::AgentRegistration;
 
@@ -12,10 +12,7 @@ pub struct RegisterRequest {
 }
 
 /// POST /internal/register — called by orchestrator over mTLS to push config.
-pub async fn register(
-    State(state): State<crate::AgentState>,
-    Json(req): Json<RegisterRequest>,
-) -> StatusCode {
+pub async fn register(State(state): State<crate::AgentState>, Json(req): Json<RegisterRequest>) -> StatusCode {
     let reg = AgentRegistration {
         node_id: req.node_id,
         secret: req.secret,

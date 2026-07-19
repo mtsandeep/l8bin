@@ -5,12 +5,7 @@ use std::path::PathBuf;
 use bollard::models::{ContainerCreateBody, HostConfig};
 
 /// Well-known compose file names checked in priority order.
-pub const COMPOSE_FILE_NAMES: &[&str] = &[
-    "compose.yaml",
-    "docker-compose.yml",
-    "compose.yml",
-    "docker-compose.yaml",
-];
+pub const COMPOSE_FILE_NAMES: &[&str] = &["compose.yaml", "docker-compose.yml", "compose.yml", "docker-compose.yaml"];
 
 /// Reserved service name for LiteBin's managed Docker observation proxy.
 pub const DOCKER_PROXY_SERVICE: &str = "litebin-docker-proxy";
@@ -63,7 +58,15 @@ impl ProjectStatus {
     /// Transient statuses are managed by their owning code paths and should
     /// not be overwritten by periodic Docker reconciliation.
     pub fn is_transient(&self) -> bool {
-        matches!(self, ProjectStatus::Pending | ProjectStatus::Deploying | ProjectStatus::Importing | ProjectStatus::Stopping | ProjectStatus::Error | ProjectStatus::Unconfigured)
+        matches!(
+            self,
+            ProjectStatus::Pending
+                | ProjectStatus::Deploying
+                | ProjectStatus::Importing
+                | ProjectStatus::Stopping
+                | ProjectStatus::Error
+                | ProjectStatus::Unconfigured
+        )
     }
 
     /// Whether this service status counts as healthy for project aggregation.
@@ -288,14 +291,7 @@ pub struct ImageStats {
 
 impl Default for ImageStats {
     fn default() -> Self {
-        Self {
-            dangling_count: 0,
-            dangling_size: 0,
-            in_use_count: 0,
-            in_use_size: 0,
-            total_count: 0,
-            total_size: 0,
-        }
+        Self { dangling_count: 0, dangling_size: 0, in_use_count: 0, in_use_size: 0, total_count: 0, total_size: 0 }
     }
 }
 
@@ -495,31 +491,19 @@ pub fn primary_service_container_name(project_id: &str, service_name: &str) -> O
         && project_id.len() <= 63
         && !project_id.starts_with('-')
         && !project_id.ends_with('-')
-        && project_id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-    let valid_service_name = !service_name.is_empty()
-        && service_name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        && project_id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    let valid_service_name =
+        !service_name.is_empty() && service_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if !valid_project_id || !valid_service_name {
         return None;
     }
 
     let name = container_name(project_id, service_name, None);
-    if is_primary_service_container_name(&name, project_id, service_name) {
-        Some(name)
-    } else {
-        None
-    }
+    if is_primary_service_container_name(&name, project_id, service_name) { Some(name) } else { None }
 }
 
 /// Check whether a Docker name is the primary container for this exact service identity.
-pub fn is_primary_service_container_name(
-    name: &str,
-    project_id: &str,
-    service_name: &str,
-) -> bool {
+pub fn is_primary_service_container_name(name: &str, project_id: &str, service_name: &str) -> bool {
     parse_container_name(name).is_some_and(|(parsed_project, parsed_service, instance_id)| {
         parsed_project == project_id && parsed_service == service_name && instance_id.is_none()
     })
@@ -609,14 +593,8 @@ mod container_identity_tests {
 
     #[test]
     fn primary_service_identity_uses_canonical_names() {
-        assert_eq!(
-            primary_service_container_name("my-project", "web").as_deref(),
-            Some("litebin-my-project")
-        );
-        assert_eq!(
-            primary_service_container_name("my-project", "api").as_deref(),
-            Some("litebin-my-project.api")
-        );
+        assert_eq!(primary_service_container_name("my-project", "web").as_deref(), Some("litebin-my-project"));
+        assert_eq!(primary_service_container_name("my-project", "api").as_deref(), Some("litebin-my-project.api"));
     }
 
     #[test]
@@ -631,25 +609,9 @@ mod container_identity_tests {
 
     #[test]
     fn primary_service_selection_is_exact_and_excludes_instances() {
-        assert!(is_primary_service_container_name(
-            "/litebin-my-project.api",
-            "my-project",
-            "api"
-        ));
-        assert!(!is_primary_service_container_name(
-            "/litebin-my-project.api.staging",
-            "my-project",
-            "api"
-        ));
-        assert!(!is_primary_service_container_name(
-            "/litebin-my-project.api-v2",
-            "my-project",
-            "api"
-        ));
-        assert!(!is_primary_service_container_name(
-            "/litebin-other.api",
-            "my-project",
-            "api"
-        ));
+        assert!(is_primary_service_container_name("/litebin-my-project.api", "my-project", "api"));
+        assert!(!is_primary_service_container_name("/litebin-my-project.api.staging", "my-project", "api"));
+        assert!(!is_primary_service_container_name("/litebin-my-project.api-v2", "my-project", "api"));
+        assert!(!is_primary_service_container_name("/litebin-other.api", "my-project", "api"));
     }
 }

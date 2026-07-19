@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use litebin_common::docker::DockerErrorKind;
 use litebin_common::types::ContainerStatus;
@@ -34,22 +34,13 @@ pub struct ContainerStatsResponse {
 // ── Container Inspection / Stats Handlers ────────────────────────────────────
 
 /// GET /containers/:id/status
-pub async fn container_status(
-    State(state): State<AgentState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+pub async fn container_status(State(state): State<AgentState>, Path(id): Path<String>) -> impl IntoResponse {
     let inspect = match state.docker.inspect_container(&id).await {
         Ok(info) => info,
         Err(e) => {
             let (status, message) = match DockerErrorKind::from_anyhow(&e) {
-                DockerErrorKind::NotFound => (
-                    StatusCode::NOT_FOUND,
-                    "container not found".to_string(),
-                ),
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to inspect container: {e}"),
-                ),
+                DockerErrorKind::NotFound => (StatusCode::NOT_FOUND, "container not found".to_string()),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to inspect container: {e}")),
             };
             return (status, Json(ErrorResponse { error: message })).into_response();
         }
@@ -63,28 +54,18 @@ pub async fn container_status(
         .unwrap_or_else(|| "unknown".to_string());
 
     // Extract mapped port from inspect
-    let mapped_port = inspect
-        .network_settings
-        .as_ref()
-        .and_then(|ns| ns.ports.as_ref())
-        .and_then(|ports| {
-            ports.values().find_map(|bindings| {
-                bindings.as_ref()?.first().and_then(|b| {
-                    b.host_port
-                        .as_ref()
-                        .and_then(|p| p.parse::<u16>().ok())
-                })
-            })
-        });
+    let mapped_port = inspect.network_settings.as_ref().and_then(|ns| ns.ports.as_ref()).and_then(|ports| {
+        ports.values().find_map(|bindings| {
+            bindings.as_ref()?.first().and_then(|b| b.host_port.as_ref().and_then(|p| p.parse::<u16>().ok()))
+        })
+    });
 
     // Get CPU/memory stats
-    let stats = state.docker.container_stats(&id).await.unwrap_or(
-        litebin_common::docker::ContainerStats {
-            cpu_percent: 0.0,
-            memory_usage: 0,
-            memory_limit: 0,
-        },
-    );
+    let stats = state.docker.container_stats(&id).await.unwrap_or(litebin_common::docker::ContainerStats {
+        cpu_percent: 0.0,
+        memory_usage: 0,
+        memory_limit: 0,
+    });
 
     let status = ContainerStatus {
         state: container_state,
@@ -108,37 +89,17 @@ pub async fn container_logs(
     match state.docker.container_logs(&id, tail).await {
         Ok(lines) => {
             let body = lines.join("");
-            (
-                StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, "text/plain")],
-                body,
-            )
-                .into_response()
+            (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/plain")], body).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response(),
     }
 }
 
 /// GET /containers/:id/disk-usage
-pub async fn container_disk_usage(
-    State(state): State<AgentState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+pub async fn container_disk_usage(State(state): State<AgentState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.docker.disk_usage(&id).await {
         Ok(usage) => (StatusCode::OK, Json(usage)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response(),
     }
 }
 
@@ -158,7 +119,9 @@ pub async fn batch_container_stats(
                 let is_running = docker.is_container_running(&id).await.unwrap_or(false);
                 if !is_running {
                     let disk = docker.disk_usage(&id).await.unwrap_or_else(|_| litebin_common::docker::DiskUsage {
-                        size_rw: 0, size_root_fs: 0, cpu_limit: None,
+                        size_rw: 0,
+                        size_root_fs: 0,
+                        cpu_limit: None,
                     });
                     return ContainerStatsResponse {
                         container_id: id,
@@ -183,7 +146,9 @@ pub async fn batch_container_stats(
                 });
 
                 let disk = disk_res.unwrap_or_else(|_| litebin_common::docker::DiskUsage {
-                    size_rw: 0, size_root_fs: 0, cpu_limit: None,
+                    size_rw: 0,
+                    size_root_fs: 0,
+                    cpu_limit: None,
                 });
 
                 ContainerStatsResponse {

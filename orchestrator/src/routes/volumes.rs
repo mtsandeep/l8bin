@@ -1,14 +1,14 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use axum_login::AuthSession;
 use serde_json::json;
 
-use crate::auth::backend::PasswordBackend;
 use crate::AppState;
+use crate::auth::backend::PasswordBackend;
 
 #[utoipa::path(
     delete,
@@ -38,10 +38,8 @@ pub async fn delete_volume(
     let scoped = litebin_common::types::scope_volume_source(&name, &project_id);
 
     if let Err(e) = state.docker.remove_volume_by_name(&scoped).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to remove volume: {e}")})),
-        ).into_response();
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("Failed to remove volume: {e}")})))
+            .into_response();
     }
 
     tracing::info!(project = %project_id, volume = %scoped, "volume deleted");

@@ -43,21 +43,13 @@ async fn proxy_request(
                 }
                 builder = builder.header(name, value);
             }
-            builder
-                .body(Body::from_stream(resp.bytes_stream()))
-                .unwrap_or_else(|_| {
-                    Response::builder()
-                        .status(StatusCode::BAD_GATEWAY)
-                        .body(Body::from("Bad gateway"))
-                        .unwrap()
-                })
+            builder.body(Body::from_stream(resp.bytes_stream())).unwrap_or_else(|_| {
+                Response::builder().status(StatusCode::BAD_GATEWAY).body(Body::from("Bad gateway")).unwrap()
+            })
         }
         Err(e) => {
             tracing::error!(error = %e, upstream = %upstream, "proxy error");
-            Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(Body::from("Bad gateway"))
-                .unwrap()
+            Response::builder().status(StatusCode::BAD_GATEWAY).body(Body::from("Bad gateway")).unwrap()
         }
     }
 }
@@ -93,10 +85,7 @@ fn get_domain(state: &AgentState) -> Option<String> {
 /// Extracts the subdomain from the Host header, finds the matching container
 /// by name (`litebin-{subdomain}`), and wakes it if stopped.
 /// For multi-service projects, health-checks all services (throttled) and proxies.
-pub async fn wake(
-    State(state): State<AgentState>,
-    req: Request<Body>,
-) -> Response<Body> {
+pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Response<Body> {
     let (parts, body) = req.into_parts();
     let headers = parts.headers.clone();
     let method = parts.method.clone();
@@ -112,10 +101,7 @@ pub async fn wake(
     };
 
     // Extract subdomain from Host header
-    let host = headers
-        .get("host")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("");
 
     let subdomain = match extract_subdomain(host, &domain) {
         Some(s) => s.to_string(),
@@ -124,34 +110,28 @@ pub async fn wake(
         }
     };
 
-    let is_background = state.project_meta.read().unwrap()
-        .get(&subdomain)
-        .map(|entry| entry.is_background)
-        .unwrap_or(false);
+    let is_background =
+        state.project_meta.read().unwrap().get(&subdomain).map(|entry| entry.is_background).unwrap_or(false);
     if is_background {
         return not_found_page();
     }
 
     // Try to find the container — single-service name first, then multi-service prefix
-    let container_id = if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}", subdomain)).await {
-        id
-    } else if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}.", subdomain)).await {
-        id
-    } else {
-        return not_found_page();
-    };
+    let container_id =
+        if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}", subdomain)).await {
+            id
+        } else if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}.", subdomain)).await {
+            id
+        } else {
+            return not_found_page();
+        };
 
     // A Docker observation sidecar does not make a single-image project
     // multi-service. The persisted Compose file is the source of truth.
-    let is_multi_service =
-        litebin_common::docker::DockerManager::read_compose(&subdomain).is_some();
+    let is_multi_service = litebin_common::docker::DockerManager::read_compose(&subdomain).is_some();
 
     // Check if container is running
-    let is_running = state
-        .docker
-        .is_container_running(&container_id)
-        .await
-        .unwrap_or(false);
+    let is_running = state.docker.is_container_running(&container_id).await.unwrap_or(false);
 
     if is_running && is_multi_service {
         // If a wake is still in progress (e.g. DNS wait after container start), show loading page
@@ -192,10 +172,7 @@ pub async fn wake(
                 }
                 // Completed one-shots (exit 0) are healthy — do not treat as crashed.
                 if oneshot_containers.contains(cname)
-                    && matches!(
-                        state.docker.container_exit_code(&id).await.ok().flatten(),
-                        Some(0)
-                    )
+                    && matches!(state.docker.container_exit_code(&id).await.ok().flatten(), Some(0))
                 {
                     continue;
                 }
@@ -207,9 +184,7 @@ pub async fn wake(
 
                 // Check if the public service is among the crashed ones
                 let public_upstream = find_public_service_upstream(&subdomain);
-                let public_container_name = public_upstream.as_ref()
-                    .and_then(|u| u.split(':').next())
-                    .unwrap_or("");
+                let public_container_name = public_upstream.as_ref().and_then(|u| u.split(':').next()).unwrap_or("");
 
                 let public_down = stopped_services.iter().any(|s| s == public_container_name);
 
@@ -229,7 +204,9 @@ pub async fn wake(
                                 }
                                 tracing::info!(project = %subdomain_clone, "agent waker: background recovery succeeded");
                             }
-                            Err(e) => tracing::warn!(project = %subdomain_clone, error = %e, "agent waker: background recovery failed"),
+                            Err(e) => {
+                                tracing::warn!(project = %subdomain_clone, error = %e, "agent waker: background recovery failed")
+                            }
                         }
                     });
                 }
@@ -239,7 +216,15 @@ pub async fn wake(
         if public_service_up {
             // Public service is healthy — proxy the request to the container
             if let Some(upstream) = find_public_service_upstream(&subdomain) {
-                let resp = proxy_request(&state.proxy_client, method, &upstream, uri.path_and_query().map(|pq| pq.as_str()), &headers, body).await;
+                let resp = proxy_request(
+                    &state.proxy_client,
+                    method,
+                    &upstream,
+                    uri.path_and_query().map(|pq| pq.as_str()),
+                    &headers,
+                    body,
+                )
+                .await;
                 if resp.status() == StatusCode::BAD_GATEWAY {
                     return if json { starting_json_response() } else { loading_page(&subdomain) };
                 }
@@ -257,13 +242,7 @@ pub async fn wake(
     }
 
     // Check auto_start_enabled before waking
-    let auto_start = state
-        .project_meta
-        .read()
-        .unwrap()
-        .get(&subdomain)
-        .map(|e| e.auto_start_enabled)
-        .unwrap_or(true); // default true if not pushed yet
+    let auto_start = state.project_meta.read().unwrap().get(&subdomain).map(|e| e.auto_start_enabled).unwrap_or(true); // default true if not pushed yet
 
     if !auto_start {
         return if json { offline_json_response() } else { offline_page() };
@@ -460,17 +439,13 @@ fn completed_oneshot_container_names(project_id: &str) -> std::collections::Hash
         return std::collections::HashSet::new();
     };
     let extra_env = crate::routes::containers::read_project_env(project_id);
-    let Ok(plan) = litebin_common::compose_run::build_compose_run_plan(
-        &yaml, project_id, &extra_env, None,
-    ) else {
+    let Ok(plan) = litebin_common::compose_run::build_compose_run_plan(&yaml, project_id, &extra_env, None) else {
         return std::collections::HashSet::new();
     };
     plan.configs
         .iter()
         .filter(|c| c.is_oneshot)
-        .map(|c| {
-            litebin_common::types::container_name(project_id, &c.service_name, None)
-        })
+        .map(|c| litebin_common::types::container_name(project_id, &c.service_name, None))
         .collect()
 }
 
@@ -490,11 +465,7 @@ fn extract_subdomain<'a>(host: &'a str, domain: &str) -> Option<&'a str> {
 fn loading_page(project_id: &str) -> Response<Body> {
     let html = litebin_common::waker_pages::loading_page_html(project_id);
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "text/html")
-        .body(Body::from(html))
-        .unwrap()
+    Response::builder().status(StatusCode::OK).header("Content-Type", "text/html").body(Body::from(html)).unwrap()
 }
 
 fn error_page(_project_id: &str) -> Response<Body> {

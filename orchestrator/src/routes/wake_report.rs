@@ -1,15 +1,15 @@
 use axum::{
+    Json,
     extract::State,
     http::{HeaderMap, StatusCode},
-    Json,
 };
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 
-use litebin_common::types::ProjectStatus;
-use crate::status::{self, ProjectUpdateFields};
 use crate::AppState;
+use crate::status::{self, ProjectUpdateFields};
+use litebin_common::types::ProjectStatus;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -72,20 +72,19 @@ pub async fn wake_report(
     }
 
     // Look up the node's agent_secret from DB
-    let secret: Option<String> = match sqlx::query_scalar::<_, Option<String>>(
-        "SELECT agent_secret FROM nodes WHERE id = ?",
-    )
-    .bind(&node_id)
-    .fetch_optional(&state.db)
-    .await
-    {
-        Ok(Some(Some(s))) => Some(s),
-        Ok(_) => None, // node not found or agent_secret is NULL
-        Err(e) => {
-            tracing::error!(error = %e, "wake report: DB error fetching node secret");
-            return StatusCode::INTERNAL_SERVER_ERROR;
-        }
-    };
+    let secret: Option<String> =
+        match sqlx::query_scalar::<_, Option<String>>("SELECT agent_secret FROM nodes WHERE id = ?")
+            .bind(&node_id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(Some(Some(s))) => Some(s),
+            Ok(_) => None, // node not found or agent_secret is NULL
+            Err(e) => {
+                tracing::error!(error = %e, "wake report: DB error fetching node secret");
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
+        };
 
     let secret = match secret {
         Some(s) => s,
@@ -120,14 +119,13 @@ pub async fn wake_report(
     );
 
     // Update the specific service that was woken (matched by container_id)
-    let svc_name: Option<String> = sqlx::query_scalar(
-        "SELECT service_name FROM project_services WHERE project_id = ? AND container_id = ?",
-    )
-    .bind(&report.project_id)
-    .bind(&report.container_id)
-    .fetch_optional(&state.db)
-    .await
-    .unwrap_or(None);
+    let svc_name: Option<String> =
+        sqlx::query_scalar("SELECT service_name FROM project_services WHERE project_id = ? AND container_id = ?")
+            .bind(&report.project_id)
+            .bind(&report.container_id)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
 
     let now = chrono::Utc::now().timestamp();
 
@@ -138,7 +136,9 @@ pub async fn wake_report(
             &svc_name,
             &report.container_id,
             Some(report.mapped_port as i64),
-        ).await {
+        )
+        .await
+        {
             tracing::warn!(project_id = %report.project_id, service = %svc_name, error = %e, "wake report: failed to set service running");
         }
     }

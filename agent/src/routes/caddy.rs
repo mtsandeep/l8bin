@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use serde_json::Value;
 
 use crate::AgentState;
@@ -6,10 +6,7 @@ use crate::AgentState;
 /// POST /caddy/sync
 /// Receives a full Caddy JSON config from the orchestrator, persists it to disk,
 /// and pushes it to the local Caddy sidecar's Admin API.
-pub async fn sync_caddy(
-    State(state): State<AgentState>,
-    Json(config): Json<Value>,
-) -> StatusCode {
+pub async fn sync_caddy(State(state): State<AgentState>, Json(config): Json<Value>) -> StatusCode {
     let caddy = match state.caddy.as_ref() {
         Some(c) => c,
         None => {

@@ -24,11 +24,7 @@ pub enum ComposeError {
     MultiplePublicServices { services: String },
 
     #[error("invalid field '{field}' on service '{service}': {reason}")]
-    InvalidField {
-        service: String,
-        field: String,
-        reason: String,
-    },
+    InvalidField { service: String, field: String, reason: String },
 
     #[error("variable interpolation error: {0}")]
     InterpolationError(String),

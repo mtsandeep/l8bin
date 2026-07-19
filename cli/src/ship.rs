@@ -61,11 +61,7 @@ pub async fn run(
     let projects: Vec<ProjectInfo> = serde_json::from_value(projects_json).unwrap_or_default();
 
     let choices = vec!["New project", "Existing project"];
-    let selection = Select::new()
-        .with_prompt("Deploy to")
-        .items(&choices)
-        .default(0)
-        .interact()?;
+    let selection = Select::new().with_prompt("Deploy to").items(&choices).default(0).interact()?;
 
     if selection == 0 {
         new_project_flow(client, server, project_dir, port_override, secret_override).await
@@ -90,10 +86,7 @@ async fn new_project_flow(
             if input.is_empty() {
                 return Err("Project name is required");
             }
-            if !input
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-            {
+            if !input.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
                 return Err("Use only lowercase letters, numbers, and hyphens");
             }
             Ok(())
@@ -103,58 +96,28 @@ async fn new_project_flow(
     let is_background = select_background_project()?;
 
     println!("  {} Creating project {}...", "::", name.cyan());
-    auth::session_post(
-        client,
-        server,
-        "/projects",
-        &json!({"id": &name, "is_background": is_background}),
-    )
+    auth::session_post(client, server, "/projects", &json!({"id": &name, "is_background": is_background}))
         .await
         .with_context(|| format!("failed to create project '{}'", name))?;
     println!("  {} Project created", "✔".green());
 
     println!("  {} Generating deploy token for {}...", "::", name.cyan());
-    let token_resp = auth::session_post(
-        client,
-        server,
-        "/deploy-tokens",
-        &json!({"project_id": &name, "name": "cli-generated"}),
-    )
-    .await?;
+    let token_resp =
+        auth::session_post(client, server, "/deploy-tokens", &json!({"project_id": &name, "name": "cli-generated"}))
+            .await?;
 
-    let token = token_resp["token"]
-        .as_str()
-        .unwrap_or("<error>")
-        .to_string();
+    let token = token_resp["token"].as_str().unwrap_or("<error>").to_string();
 
     println!();
-    println!(
-        "  {} Deploy token generated for {}",
-        "🔐".dimmed(),
-        name.cyan()
-    );
+    println!("  {} Deploy token generated for {}", "🔐".dimmed(), name.cyan());
     println!("  {} Save it for CI/CD:", "!".yellow());
     println!("  {}", format!("L8B_TOKEN={}", token).dimmed());
     println!();
 
-    let port = if is_background {
-        None
-    } else {
-        Some(resolve_app_port(project_dir, port_override)?)
-    };
+    let port = if is_background { None } else { Some(resolve_app_port(project_dir, port_override)?) };
 
-    let url = build_and_deploy(
-        client,
-        server,
-        &name,
-        project_dir,
-        port,
-        is_background,
-        secret_override,
-        true,
-        None,
-    )
-    .await?;
+    let url =
+        build_and_deploy(client, server, &name, project_dir, port, is_background, secret_override, true, None).await?;
 
     if let Some(url) = url {
         print_live_url(&url);
@@ -163,10 +126,7 @@ async fn new_project_flow(
     }
     println!("  {} Use this token to redeploy from CI/CD:", "💡".dimmed());
     let deploy_hint = if is_background {
-        format!(
-            "L8B_TOKEN={} l8b deploy --project {} --background",
-            token, name
-        )
+        format!("L8B_TOKEN={} l8b deploy --project {} --background", token, name)
     } else {
         format!(
             "L8B_TOKEN={} l8b deploy --project {} --port {}",
@@ -198,7 +158,9 @@ async fn existing_project_flow(
         .map(|p| {
             let status = match &p.status {
                 ProjectStatus::Running => p.status.to_string().green().to_string(),
-                ProjectStatus::Pending | ProjectStatus::Stopped | ProjectStatus::Unconfigured => p.status.to_string().yellow().to_string(),
+                ProjectStatus::Pending | ProjectStatus::Stopped | ProjectStatus::Unconfigured => {
+                    p.status.to_string().yellow().to_string()
+                }
                 ProjectStatus::Error | ProjectStatus::Degraded => p.status.to_string().red().to_string(),
                 _ => p.status.to_string(),
             };
@@ -221,17 +183,14 @@ async fn existing_project_flow(
         })
         .collect();
 
-    let idx = Select::new()
-        .with_prompt("Select project")
-        .items(&items)
-        .interact()?;
+    let idx = Select::new().with_prompt("Select project").items(&items).interact()?;
 
     let project = &projects[idx];
     let project_id = &project.id;
 
     let staged = project.status == ProjectStatus::Unconfigured && project_is_staged(project);
-    let awaiting_first_deploy = project.status == ProjectStatus::Pending
-        || (project.status == ProjectStatus::Unconfigured && !staged);
+    let awaiting_first_deploy =
+        project.status == ProjectStatus::Pending || (project.status == ProjectStatus::Unconfigured && !staged);
     let actions: Vec<&str> = if staged {
         vec!["Resume deployment", "Redeploy", "Delete"]
     } else if awaiting_first_deploy {
@@ -239,21 +198,12 @@ async fn existing_project_flow(
     } else {
         vec!["Redeploy", "Recreate", "Start", "Stop", "Delete"]
     };
-    let action_idx = Select::new()
-        .with_prompt("Action")
-        .items(&actions)
-        .default(0)
-        .interact()?;
+    let action_idx = Select::new().with_prompt("Action").items(&actions).default(0).interact()?;
 
     match actions[action_idx] {
         "Resume deployment" => {
-            let started = await_runtime_config_and_start(
-                client,
-                server,
-                project_id,
-                project.node_id.as_deref(),
-            )
-            .await?;
+            let started =
+                await_runtime_config_and_start(client, server, project_id, project.node_id.as_deref()).await?;
             if started {
                 if project.is_background {
                     print_no_managed_url();
@@ -292,46 +242,25 @@ async fn existing_project_flow(
         }
         "Recreate" => {
             println!("  {} Recreating {}...", "::", project_id.cyan());
-            auth::session_post(
-                client,
-                server,
-                &format!("/projects/{}/recreate", project_id),
-                &json!({}),
-            )
-            .await?;
+            auth::session_post(client, server, &format!("/projects/{}/recreate", project_id), &json!({})).await?;
             println!("  {} Recreated", "✔".green());
             println!();
         }
         "Start" => {
             println!("  {} Starting {}...", "::", project_id.cyan());
-            auth::session_post(
-                client,
-                server,
-                &format!("/projects/{}/start", project_id),
-                &json!({}),
-            )
-            .await?;
+            auth::session_post(client, server, &format!("/projects/{}/start", project_id), &json!({})).await?;
             println!("  {} Started", "✔".green());
             println!();
         }
         "Stop" => {
             println!("  {} Stopping {}...", "::", project_id.cyan());
-            auth::session_post(
-                client,
-                server,
-                &format!("/projects/{}/stop", project_id),
-                &json!({}),
-            )
-            .await?;
+            auth::session_post(client, server, &format!("/projects/{}/stop", project_id), &json!({})).await?;
             println!("  {} Stopped", "✔".green());
             println!();
         }
         "Delete" => {
             let confirmed = Confirm::new()
-                .with_prompt(format!(
-                    "Delete project {}? This cannot be undone.",
-                    project_id.red()
-                ))
+                .with_prompt(format!("Delete project {}? This cannot be undone.", project_id.red()))
                 .default(false)
                 .interact()?;
             if !confirmed {
@@ -366,23 +295,12 @@ fn resolve_app_port(project_dir: &Path, port_override: Option<u16>) -> Result<u1
             Ok(*single)
         }
         [first, rest @ ..] => {
-            let all: Vec<String> = std::iter::once(first)
-                .chain(rest.iter())
-                .map(|p| p.to_string())
-                .collect();
-            println!(
-                "  {} Detected ports: {} — using {}",
-                "::".dimmed(),
-                all.join(", "),
-                first
-            );
+            let all: Vec<String> = std::iter::once(first).chain(rest.iter()).map(|p| p.to_string()).collect();
+            println!("  {} Detected ports: {} — using {}", "::".dimmed(), all.join(", "), first);
             Ok(*first)
         }
         [] => {
-            let input: String = Input::new()
-                .with_prompt("App port")
-                .default("3000".to_string())
-                .interact_text()?;
+            let input: String = Input::new().with_prompt("App port").default("3000".to_string()).interact_text()?;
             input.parse::<u16>().context("Port must be a number (1-65535)")
         }
     }
@@ -419,14 +337,12 @@ fn parse_container_port(port_str: &str) -> Option<u16> {
 
 fn service_has_public_label(svc: &serde_yaml::Value) -> bool {
     match svc.get("labels") {
-        Some(serde_yaml::Value::Mapping(m)) => m.keys().any(|k| {
-            k.as_str()
-                .map(|k| k == "litebin.public" || k.ends_with(".public"))
-                .unwrap_or(false)
-        }),
-        Some(serde_yaml::Value::Sequence(seq)) => seq
-            .iter()
-            .any(|v| v.as_str().map(|s| s.contains("litebin.public")).unwrap_or(false)),
+        Some(serde_yaml::Value::Mapping(m)) => {
+            m.keys().any(|k| k.as_str().map(|k| k == "litebin.public" || k.ends_with(".public")).unwrap_or(false))
+        }
+        Some(serde_yaml::Value::Sequence(seq)) => {
+            seq.iter().any(|v| v.as_str().map(|s| s.contains("litebin.public")).unwrap_or(false))
+        }
         _ => false,
     }
 }
@@ -452,10 +368,7 @@ fn public_service_candidates(compose: &serde_yaml::Value) -> (Vec<(String, u16)>
                             has_well_known = true;
                         }
                         if !candidates.iter().any(|(_, ep)| *ep == p) {
-                            candidates.push((
-                                svc_name.as_str().unwrap_or_default().to_string(),
-                                p,
-                            ));
+                            candidates.push((svc_name.as_str().unwrap_or_default().to_string(), p));
                         }
                     }
                 }
@@ -473,20 +386,11 @@ fn pick_public_service(compose: &serde_yaml::Value) -> Result<Option<String>> {
         return Ok(None);
     }
 
-    let items: Vec<String> = candidates
-        .iter()
-        .map(|(name, port)| format!("{} (port {})", name, port))
-        .collect();
+    let items: Vec<String> = candidates.iter().map(|(name, port)| format!("{} (port {})", name, port)).collect();
 
-    println!(
-        "  {} Multiple services expose ports — select the public service",
-        "!".yellow()
-    );
-    let selection = Select::new()
-        .with_prompt("Public service (main subdomain entry point)")
-        .items(&items)
-        .default(0)
-        .interact()?;
+    println!("  {} Multiple services expose ports — select the public service", "!".yellow());
+    let selection =
+        Select::new().with_prompt("Public service (main subdomain entry point)").items(&items).default(0).interact()?;
 
     Ok(Some(candidates[selection].0.clone()))
 }
@@ -509,8 +413,8 @@ fn auto_pick_public_service(compose: &serde_yaml::Value) -> Option<String> {
 }
 
 fn inject_public_label(yaml: &str, service_name: &str) -> Result<String> {
-    let mut doc: serde_yaml::Value = serde_yaml::from_str(yaml)
-        .with_context(|| "failed to parse compose YAML for label injection")?;
+    let mut doc: serde_yaml::Value =
+        serde_yaml::from_str(yaml).with_context(|| "failed to parse compose YAML for label injection")?;
 
     if let Some(services) = doc.get_mut("services").and_then(|s| s.as_mapping_mut()) {
         if let Some(svc) = services.get_mut(&serde_yaml::Value::String(service_name.to_string())) {
@@ -528,8 +432,7 @@ fn inject_public_label(yaml: &str, service_name: &str) -> Result<String> {
         }
     }
 
-    serde_yaml::to_string(&doc)
-        .with_context(|| "failed to serialize compose YAML after label injection")
+    serde_yaml::to_string(&doc).with_context(|| "failed to serialize compose YAML after label injection")
 }
 
 fn env_precedence_score(name: &str) -> i32 {
@@ -552,11 +455,7 @@ fn discover_env_files(dir: &Path, exclude_example: bool) -> Result<Vec<String>> 
         .filter(|name| !(exclude_example && name == ".env.example"))
         .collect();
 
-    env_files.sort_by(|a, b| {
-        env_precedence_score(a)
-            .cmp(&env_precedence_score(b))
-            .then(a.cmp(b))
-    });
+    env_files.sort_by(|a, b| env_precedence_score(a).cmp(&env_precedence_score(b)).then(a.cmp(b)));
     Ok(env_files)
 }
 
@@ -571,11 +470,7 @@ fn select_env_files(project_dir: &Path, mode: EnvSelectMode) -> Result<Vec<PathB
         EnvSelectMode::AutoAllExceptExample => {
             let files = discover_env_files(project_dir, true)?;
             if !files.is_empty() {
-                println!(
-                    "  {} Using .env files: {}",
-                    "::".dimmed(),
-                    files.join(", ").dimmed()
-                );
+                println!("  {} Using .env files: {}", "::".dimmed(), files.join(", ").dimmed());
             }
             Ok(files.into_iter().map(|n| project_dir.join(n)).collect())
         }
@@ -587,11 +482,8 @@ fn select_env_files(project_dir: &Path, mode: EnvSelectMode) -> Result<Vec<PathB
 
             let allow_custom = matches!(mode, EnvSelectMode::Interactive);
             loop {
-                let mut choices = vec![
-                    "Yes (all / standard order)".to_string(),
-                    "No".to_string(),
-                    "Pick specific...".to_string(),
-                ];
+                let mut choices =
+                    vec!["Yes (all / standard order)".to_string(), "No".to_string(), "Pick specific...".to_string()];
                 if allow_custom {
                     choices.push("Custom order (manual input)".to_string());
                 }
@@ -604,10 +496,7 @@ fn select_env_files(project_dir: &Path, mode: EnvSelectMode) -> Result<Vec<PathB
 
                 match selection {
                     0 => {
-                        println!(
-                            "  {} Using standard merge order (later files override earlier ones):",
-                            "::".dimmed()
-                        );
+                        println!("  {} Using standard merge order (later files override earlier ones):", "::".dimmed());
                         println!("     {}", env_files.join(" < ").dimmed());
                         return Ok(env_files.iter().map(|n| project_dir.join(n)).collect());
                     }
@@ -638,15 +527,9 @@ fn select_env_files(project_dir: &Path, mode: EnvSelectMode) -> Result<Vec<PathB
                         return Ok(chosen.into_iter().map(|i| project_dir.join(&env_files[i])).collect());
                     }
                     3 if allow_custom => {
-                        println!(
-                            "  {} Available files: {}",
-                            "::".dimmed(),
-                            env_files.join(", ").dimmed()
-                        );
+                        println!("  {} Available files: {}", "::".dimmed(), env_files.join(", ").dimmed());
                         let input: String = Input::new()
-                            .with_prompt(
-                                "  🔒 Enter filenames in merge order (space separated, e.g. .env .env.local)",
-                            )
+                            .with_prompt("  🔒 Enter filenames in merge order (space separated, e.g. .env .env.local)")
                             .interact_text()?;
 
                         let parts: Vec<&str> = input.split_whitespace().collect();
@@ -663,11 +546,7 @@ fn select_env_files(project_dir: &Path, mode: EnvSelectMode) -> Result<Vec<PathB
                             println!("  {} {}", "!".red(), "No valid files entered.".yellow());
                             continue;
                         }
-                        println!(
-                            "  {} Merging in your exact order: {}",
-                            "::".dimmed(),
-                            parts.join(" < ").dimmed()
-                        );
+                        println!("  {} Merging in your exact order: {}", "::".dimmed(), parts.join(" < ").dimmed());
                         return Ok(selected);
                     }
                     _ => unreachable!(),
@@ -682,10 +561,7 @@ fn merge_service_env_files(root_env: &[PathBuf], svc_dir: &Path) -> Vec<PathBuf>
     if let Ok(entries) = std::fs::read_dir(svc_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(".env")
-                && !secret
-                    .iter()
-                    .any(|p| p.file_name() == Some(entry.file_name().as_os_str()))
+            if name.starts_with(".env") && !secret.iter().any(|p| p.file_name() == Some(entry.file_name().as_os_str()))
             {
                 secret.push(entry.path());
             }
@@ -710,12 +586,7 @@ fn stop_buildkit() {
         .status();
 }
 
-async fn resolve_live_url(
-    client: &reqwest::Client,
-    server: &str,
-    project_id: &str,
-    api_url: Option<&str>,
-) -> String {
+async fn resolve_live_url(client: &reqwest::Client, server: &str, project_id: &str, api_url: Option<&str>) -> String {
     if let Some(url) = api_url {
         let url = url.trim();
         if !url.is_empty() && !url.contains("https://https://") && !url.contains(".https://") {
@@ -749,35 +620,20 @@ fn show_env_path(server: &str, project_id: &str, node_id: Option<&str>) {
         home_env.yellow(),
         rel_env.yellow()
     );
-    println!(
-        "     {}",
-        "(default install path; if custom -InstallDir was used, prepend that path instead)".dimmed()
-    );
+    println!("     {}", "(default install path; if custom -InstallDir was used, prepend that path instead)".dimmed());
     if node_id.is_some() && node_id != Some("local") {
-        println!(
-            "     {}",
-            "Edit this file on the selected agent node before continuing.".dimmed()
-        );
+        println!("     {}", "Edit this file on the selected agent node before continuing.".dimmed());
     }
 }
 
 fn project_is_staged(project: &ProjectInfo) -> bool {
     project.is_staged
-        || project
-            .public_stats
-            .as_ref()
-            .and_then(|ps| ps.image.as_ref())
-            .map(|img| !img.is_empty())
-            .unwrap_or(false)
+        || project.public_stats.as_ref().and_then(|ps| ps.image.as_ref()).map(|img| !img.is_empty()).unwrap_or(false)
 }
 
 fn short_image(image: &str) -> String {
     let hash = image.strip_prefix("sha256:").unwrap_or(image);
-    if hash.len() > 12 {
-        hash[..12].to_string()
-    } else {
-        hash.to_string()
-    }
+    if hash.len() > 12 { hash[..12].to_string() } else { hash.to_string() }
 }
 
 fn print_live_url(url: &str) {
@@ -793,33 +649,20 @@ fn print_no_managed_url() {
 }
 
 fn select_background_project() -> Result<bool> {
-    let choices = [
-        "Web app / HTTP API — expose a managed URL",
-        "Background project — no managed URL; stays running",
-    ];
-    let selection = Select::new()
-        .with_prompt("Project type")
-        .items(&choices)
-        .default(0)
-        .interact()?;
+    let choices = ["Web app / HTTP API — expose a managed URL", "Background project — no managed URL; stays running"];
+    let selection = Select::new().with_prompt("Project type").items(&choices).default(0).interact()?;
     Ok(selection == 1)
 }
 
 /// Detect compose file in the given directory. Returns the filename or None.
 pub fn detect_compose_file(project_dir: &Path) -> Option<&'static str> {
-    COMPOSE_FILE_NAMES
-        .iter()
-        .find(|p| project_dir.join(p).exists())
-        .copied()
+    COMPOSE_FILE_NAMES.iter().find(|p| project_dir.join(p).exists()).copied()
 }
 
 /// Resolve the target Docker platform string from a list of nodes.
 pub fn resolve_platform(nodes: &[crate::auth::NodeInfo], node_id: Option<&str>) -> Option<String> {
     let arch = match node_id {
-        Some(id) => nodes
-            .iter()
-            .find(|n| n.id == id)
-            .and_then(|n| n.architecture.as_deref()),
+        Some(id) => nodes.iter().find(|n| n.id == id).and_then(|n| n.architecture.as_deref()),
         None => nodes
             .iter()
             .find(|n| n.recommended == Some(true))
@@ -852,20 +695,13 @@ async fn poll_deploy_status(
             anyhow::bail!("{}", fail_label);
         }
         _ => {
-            println!(
-                "  {} Deployment is taking longer than expected.",
-                "!".yellow()
-            );
+            println!("  {} Deployment is taking longer than expected.", "!".yellow());
             let choices = vec!["Wait", "Detach"];
-            let selection = Select::new()
-                .with_prompt("Continue waiting or detach?")
-                .items(&choices)
-                .default(0)
-                .interact()?;
+            let selection =
+                Select::new().with_prompt("Continue waiting or detach?").items(&choices).default(0).interact()?;
 
             if selection == 0 {
-                let final_status =
-                    crate::status::poll_project_status(client, server, project_id, 300).await?;
+                let final_status = crate::status::poll_project_status(client, server, project_id, 300).await?;
                 match final_status.as_ref() {
                     Some(ProjectStatus::Running) => {
                         println!("  {} {}", "✔".green(), success_label);
@@ -877,19 +713,13 @@ async fn poll_deploy_status(
                     }
                     _ => {
                         println!("  Still deploying. Check status with:");
-                        println!(
-                            "    {}",
-                            format!("l8b status --project {}", project_id).cyan()
-                        );
+                        println!("    {}", format!("l8b status --project {}", project_id).cyan());
                         Ok(())
                     }
                 }
             } else {
                 println!("  Detached. Check status with:");
-                println!(
-                    "    {}",
-                    format!("l8b status --project {}", project_id).cyan()
-                );
+                println!("    {}", format!("l8b status --project {}", project_id).cyan());
                 Ok(())
             }
         }
@@ -903,59 +733,32 @@ async fn await_runtime_config_and_start(
     node_id: Option<&str>,
 ) -> Result<bool> {
     println!();
-    println!(
-        "  {} {}",
-        "⏸".yellow(),
-        "Awaiting runtime configuration".bold()
-    );
+    println!("  {} {}", "⏸".yellow(), "Awaiting runtime configuration".bold());
     show_env_path(server, project_id, node_id);
+    println!("     {}", "Add runtime variables now if needed (DB passwords, API keys, etc.).".dimmed());
     println!(
         "     {}",
-        "Add runtime variables now if needed (DB passwords, API keys, etc.).".dimmed()
-    );
-    println!(
-        "     {}",
-        "Select \"Start containers now\" if your compose/app already has defaults or needs no env."
-            .dimmed()
+        "Select \"Start containers now\" if your compose/app already has defaults or needs no env.".dimmed()
     );
 
     let choices = vec!["Start containers now", "Pause — start later"];
-    let selection = Select::new()
-        .with_prompt("Ready to start containers?")
-        .items(&choices)
-        .default(0)
-        .interact()?;
+    let selection = Select::new().with_prompt("Ready to start containers?").items(&choices).default(0).interact()?;
 
     if selection != 0 {
         println!();
-        println!(
-            "  {} {}",
-            "!".yellow(),
-            "Paused — containers were not started.".bold()
-        );
-        println!(
-            "     {}",
-            "Your image is ready. Edit the .env above if needed, then run:".dimmed()
-        );
+        println!("  {} {}", "!".yellow(), "Paused — containers were not started.".bold());
+        println!("     {}", "Your image is ready. Edit the .env above if needed, then run:".dimmed());
         println!("       {}", "l8b ship".cyan());
-        println!(
-            "     {}",
-            "Select this project and choose \"Resume deployment\".".dimmed()
-        );
+        println!("     {}", "Select this project and choose \"Resume deployment\".".dimmed());
         return Ok(false);
     }
 
     let start_spinner = spinner("  🚀 {spinner} {msg}");
     start_spinner.set_message("Starting containers...");
 
-    auth::session_post(
-        client,
-        server,
-        &format!("/projects/{}/start", project_id),
-        &json!({}),
-    )
-    .await
-    .with_context(|| format!("failed to start staged project '{}'", project_id))?;
+    auth::session_post(client, server, &format!("/projects/{}/start", project_id), &json!({}))
+        .await
+        .with_context(|| format!("failed to start staged project '{}'", project_id))?;
 
     start_spinner.set_message("Waiting for deployment...");
     start_spinner.finish_and_clear();
@@ -971,11 +774,7 @@ async fn await_runtime_config_and_start(
     Ok(true)
 }
 
-async fn select_target_node(
-    client: &reqwest::Client,
-    server: &str,
-    existing: Option<&str>,
-) -> Result<Option<String>> {
+async fn select_target_node(client: &reqwest::Client, server: &str, existing: Option<&str>) -> Result<Option<String>> {
     if let Some(id) = existing {
         return Ok(Some(id.to_string()));
     }
@@ -994,23 +793,12 @@ async fn select_target_node(
                 .iter()
                 .map(|n| {
                     let arch = n.architecture.as_deref().unwrap_or("unknown");
-                    let rec = if n.recommended == Some(true) {
-                        " [recommended]"
-                    } else {
-                        ""
-                    };
+                    let rec = if n.recommended == Some(true) { " [recommended]" } else { "" };
                     format!("  {} ({}){} ", n.name, arch, rec)
                 })
                 .collect();
-            let default_idx = nodes
-                .iter()
-                .position(|n| n.recommended == Some(true))
-                .unwrap_or(0);
-            let idx = Select::new()
-                .with_prompt("Select target node")
-                .items(&items)
-                .default(default_idx)
-                .interact()?;
+            let default_idx = nodes.iter().position(|n| n.recommended == Some(true)).unwrap_or(0);
+            let idx = Select::new().with_prompt("Select target node").items(&items).default(default_idx).interact()?;
             Ok(Some(nodes[idx].id.clone()))
         }
     }
@@ -1031,24 +819,13 @@ fn collect_build_infos(compose: &serde_yaml::Value) -> Vec<BuildInfo> {
             Some(b) if b.as_str().is_some() => (b.as_str().unwrap_or(&name).to_string(), None),
             Some(b) if b.as_mapping().is_some() => {
                 let build_map = b.as_mapping().unwrap();
-                let context = build_map
-                    .get("context")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or(&name)
-                    .to_string();
-                let df = build_map
-                    .get("dockerfile")
-                    .and_then(|d| d.as_str())
-                    .map(|s| s.to_string());
+                let context = build_map.get("context").and_then(|c| c.as_str()).unwrap_or(&name).to_string();
+                let df = build_map.get("dockerfile").and_then(|d| d.as_str()).map(|s| s.to_string());
                 (context, df)
             }
             _ => (name.clone(), None),
         };
-        build_infos.push(BuildInfo {
-            svc_name: name,
-            build_context: ctx,
-            dockerfile,
-        });
+        build_infos.push(BuildInfo { svc_name: name, build_context: ctx, dockerfile });
     }
     build_infos
 }
@@ -1058,10 +835,7 @@ fn rewrite_compose_images(
     resolved_images: &std::collections::HashMap<String, String>,
 ) -> Result<String> {
     let mut resolved_compose = compose.clone();
-    if let Some(services_map) = resolved_compose
-        .get_mut("services")
-        .and_then(|s| s.as_mapping_mut())
-    {
+    if let Some(services_map) = resolved_compose.get_mut("services").and_then(|s| s.as_mapping_mut()) {
         for entry in services_map.iter_mut() {
             let svc_name = entry.0.as_str().unwrap_or_default().to_string();
             if let Some(image_id) = resolved_images.get(&svc_name) {
@@ -1092,46 +866,19 @@ async fn build_and_upload_services(
     let mut resolved_images = std::collections::HashMap::new();
 
     for info in build_infos {
-        let svc_dir = project_dir
-            .join(&info.build_context)
-            .canonicalize()
-            .with_context(|| {
-                format!(
-                    "build context '{}' does not exist for service '{}'",
-                    info.build_context, info.svc_name
-                )
-            })?;
+        let svc_dir = project_dir.join(&info.build_context).canonicalize().with_context(|| {
+            format!("build context '{}' does not exist for service '{}'", info.build_context, info.svc_name)
+        })?;
         let svc_dir = Path::new(svc_dir.to_str().unwrap().trim_start_matches(r"\\?"));
 
         let secret = merge_service_env_files(root_env_paths, svc_dir);
-        let image_tag = format!(
-            "{}/{}-{}",
-            crate::config::IMAGE_PREFIX,
-            project_id,
-            info.svc_name
-        );
-        println!(
-            "    {} {} ({})",
-            "→".dimmed(),
-            info.svc_name.cyan(),
-            svc_dir.display()
-        );
+        let image_tag = format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, info.svc_name);
+        println!("    {} {} ({})", "→".dimmed(), info.svc_name.cyan(), svc_dir.display());
 
-        let saved_image = crate::build::build_project(
-            svc_dir,
-            info.dockerfile.as_deref(),
-            &image_tag,
-            secret,
-            ci_mode,
-            platform,
-        )
-        .await?;
-        println!(
-            "    {} {} — {}",
-            "  ✓".green(),
-            info.svc_name,
-            HumanBytes(saved_image.compressed_size)
-        );
+        let saved_image =
+            crate::build::build_project(svc_dir, info.dockerfile.as_deref(), &image_tag, secret, ci_mode, platform)
+                .await?;
+        println!("    {} {} — {}", "  ✓".green(), info.svc_name, HumanBytes(saved_image.compressed_size));
 
         let image_id = crate::upload::upload_tar(
             client,
@@ -1211,11 +958,7 @@ async fn validate_compose_for_deploy(
     let findings = resp["report"]["findings"].as_array().cloned().unwrap_or_default();
     let missing: Vec<String> = resp["missing_capabilities"]
         .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
 
     println!("  {} Compose compatibility", "::".dimmed());
@@ -1242,13 +985,8 @@ async fn validate_compose_for_deploy(
             "translated" => g.translated.push((service, message.to_string())),
             "overridden" => g.overridden.push((service, message.to_string())),
             "supported" => {
-                if let (Some(svc), Some(field)) =
-                    (service.as_deref(), message.strip_suffix(" is supported"))
-                {
-                    g.supported_fields
-                        .entry(svc.to_string())
-                        .or_default()
-                        .push(field.to_string());
+                if let (Some(svc), Some(field)) = (service.as_deref(), message.strip_suffix(" is supported")) {
+                    g.supported_fields.entry(svc.to_string()).or_default().push(field.to_string());
                 } else {
                     g.supported_other.push((service, message.to_string()));
                 }
@@ -1264,8 +1002,7 @@ async fn validate_compose_for_deploy(
         println!("  {}", title);
         // Preserve order: project-level first, then services alphabetically
         let mut project = Vec::new();
-        let mut by_svc: std::collections::BTreeMap<String, Vec<&str>> =
-            std::collections::BTreeMap::new();
+        let mut by_svc: std::collections::BTreeMap<String, Vec<&str>> = std::collections::BTreeMap::new();
         for (svc, line) in items {
             match svc {
                 Some(s) => by_svc.entry(s.clone()).or_default().push(line.as_str()),
@@ -1299,10 +1036,7 @@ async fn validate_compose_for_deploy(
     }
 
     let mut grants: Vec<String> = pregranted.to_vec();
-    let still_missing: Vec<String> = missing
-        .into_iter()
-        .filter(|c| !grants.iter().any(|g| g == c))
-        .collect();
+    let still_missing: Vec<String> = missing.into_iter().filter(|c| !grants.iter().any(|g| g == c)).collect();
 
     if still_missing.is_empty() {
         if grants.is_empty() {
@@ -1318,15 +1052,8 @@ async fn validate_compose_for_deploy(
         );
     }
 
-    println!(
-        "  {} This compose file requires: {}",
-        "!".yellow(),
-        still_missing.join(", ")
-    );
-    let approve = Confirm::new()
-        .with_prompt("Grant these capabilities for this project?")
-        .default(false)
-        .interact()?;
+    println!("  {} This compose file requires: {}", "!".yellow(), still_missing.join(", "));
+    let approve = Confirm::new().with_prompt("Grant these capabilities for this project?").default(false).interact()?;
     if !approve {
         anyhow::bail!("capabilities not granted — aborting deploy");
     }
@@ -1335,11 +1062,7 @@ async fn validate_compose_for_deploy(
 }
 
 fn load_compose(project_dir: &Path, compose_name: &str) -> Result<serde_yaml::Value> {
-    println!(
-        "  {} Found {} — deploying as multi-service",
-        "🐳".dimmed(),
-        compose_name.cyan()
-    );
+    println!("  {} Found {} — deploying as multi-service", "🐳".dimmed(), compose_name.cyan());
 
     let compose_yaml = std::fs::read_to_string(project_dir.join(compose_name))
         .with_context(|| format!("failed to read {}", compose_name))?;
@@ -1351,33 +1074,19 @@ fn print_compose_build_summary(compose: &serde_yaml::Value, build_infos: &[Build
         return;
     }
 
-    let total_services = compose
-        .get("services")
-        .and_then(|s| s.as_mapping())
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let total_services = compose.get("services").and_then(|s| s.as_mapping()).map(|m| m.len()).unwrap_or(0);
     let pull_count = total_services.saturating_sub(build_infos.len());
     let pull_info = if pull_count > 0 {
         format!(" ({} pre-built will be pulled by orchestrator)", pull_count)
     } else {
         String::new()
     };
-    println!(
-        "  {} Found {} services — building {}{}",
-        "🐳".dimmed(),
-        total_services,
-        build_infos.len(),
-        pull_info
-    );
+    println!("  {} Found {} services — building {}{}", "🐳".dimmed(), total_services, build_infos.len(), pull_info);
 }
 
 fn print_building_services(build_infos: &[BuildInfo]) {
     if !build_infos.is_empty() {
-        println!(
-            "  {} Building {} service(s)...",
-            "🔨".dimmed(),
-            build_infos.len()
-        );
+        println!("  {} Building {} service(s)...", "🔨".dimmed(), build_infos.len());
     }
 }
 
@@ -1448,23 +1157,14 @@ async fn build_and_deploy(
     }
 
     println!("  🔍 Analyzing project...");
-    let info =
-        crate::build::detect_project(project_dir).unwrap_or_else(|_| crate::build::ProjectInfo {
-            project_type: "Unknown".to_string(),
-            package: String::new(),
-        });
+    let info = crate::build::detect_project(project_dir)
+        .unwrap_or_else(|_| crate::build::ProjectInfo { project_type: "Unknown".to_string(), package: String::new() });
     let has_dockerfile = project_dir.join("Dockerfile").exists();
 
     if has_dockerfile {
-        println!(
-            "  🔍 {} (using Dockerfile)",
-            format!("Detected {}", info.project_type).dimmed()
-        );
+        println!("  🔍 {} (using Dockerfile)", format!("Detected {}", info.project_type).dimmed());
     } else {
-        println!(
-            "  🔍 {}",
-            format!("Detected {}", info.project_type).dimmed()
-        );
+        println!("  🔍 {}", format!("Detected {}", info.project_type).dimmed());
         if !info.package.is_empty() {
             println!("  📦 Package: {}", info.package.dimmed());
         }
@@ -1477,10 +1177,7 @@ async fn build_and_deploy(
     if cfg!(target_os = "windows") && !has_dockerfile {
         let masked = crate::build::gitignored_dirs(project_dir);
         if !masked.is_empty() {
-            println!(
-                "  🪟  Windows detected — masking [{}]",
-                masked.join(", ").dimmed()
-            );
+            println!("  🪟  Windows detected — masking [{}]", masked.join(", ").dimmed());
         } else {
             println!("  🪟  Windows detected — using Docker for Railpack");
         }
@@ -1496,9 +1193,7 @@ async fn build_and_deploy(
         p
     };
 
-    let image =
-        crate::build::build_project(project_dir, None, &image_tag, secret, false, platform.as_deref())
-            .await?;
+    let image = crate::build::build_project(project_dir, None, &image_tag, secret, false, platform.as_deref()).await?;
 
     println!("  📦 Image built — {}", HumanBytes(image.image_size));
     if image.compressed_size < image.image_size {
@@ -1517,11 +1212,7 @@ async fn build_and_deploy(
     .await?;
 
     let deploy_spinner = spinner("  🚢 {spinner} {msg}");
-    deploy_spinner.set_message(if is_new_project {
-        "Staging deployment..."
-    } else {
-        "Deploying..."
-    });
+    deploy_spinner.set_message(if is_new_project { "Staging deployment..." } else { "Deploying..." });
     let deploy_resp = crate::deploy::redeploy(
         client,
         server,
@@ -1588,9 +1279,7 @@ async fn finish_deploy_response(
         if is_background {
             return Ok(None);
         }
-        return Ok(Some(
-            resolve_live_url(client, server, project_id, api_url).await,
-        ));
+        return Ok(Some(resolve_live_url(client, server, project_id, api_url).await));
     }
 
     if status == ProjectStatus::Deploying {
@@ -1613,9 +1302,7 @@ async fn finish_deploy_response(
     if is_background {
         return Ok(None);
     }
-    Ok(Some(
-        resolve_live_url(client, server, project_id, api_url).await,
-    ))
+    Ok(Some(resolve_live_url(client, server, project_id, api_url).await))
 }
 
 async fn deploy_compose(
@@ -1630,11 +1317,7 @@ async fn deploy_compose(
     platform: Option<&str>,
 ) -> Result<Option<String>> {
     let compose = load_compose(project_dir, compose_name)?;
-    let selected_public = if is_background {
-        None
-    } else {
-        pick_public_service(&compose)?
-    };
+    let selected_public = if is_background { None } else { pick_public_service(&compose)? };
     let mut build_infos = collect_build_infos(&compose);
     print_compose_build_summary(&compose, &build_infos);
 
@@ -1644,37 +1327,26 @@ async fn deploy_compose(
             let svc_names: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
             loop {
                 let choices = vec!["Build all", "Pick specific..."];
-                let selection = Select::new()
-                    .with_prompt("  🔨 Which services to build?")
-                    .items(&choices)
-                    .default(0)
-                    .interact()?;
+                let selection =
+                    Select::new().with_prompt("  🔨 Which services to build?").items(&choices).default(0).interact()?;
 
                 match selection {
                     0 => break,
                     1 => {
                         let chosen = MultiSelect::new()
-                            .with_prompt(
-                                "  🔨 Select services to build [Space to select, Enter to confirm]",
-                            )
+                            .with_prompt("  🔨 Select services to build [Space to select, Enter to confirm]")
                             .items(&svc_names)
                             .interact()?;
                         if chosen.is_empty() {
                             println!(
                                 "  {} {}",
                                 "!".red(),
-                                "No services selected. Pick at least one, or choose 'Build all'."
-                                    .yellow()
+                                "No services selected. Pick at least one, or choose 'Build all'.".yellow()
                             );
                             continue;
                         }
-                        let selected_names: Vec<&str> =
-                            chosen.iter().map(|&i| svc_names[i]).collect();
-                        println!(
-                            "  {} Building: {}",
-                            "::".dimmed(),
-                            selected_names.join(", ").dimmed()
-                        );
+                        let selected_names: Vec<&str> = chosen.iter().map(|&i| svc_names[i]).collect();
+                        println!("  {} Building: {}", "::".dimmed(), selected_names.join(", ").dimmed());
                         build_infos = chosen.into_iter().map(|i| build_infos[i].clone()).collect();
                         is_partial_build = true;
                         break;
@@ -1702,22 +1374,10 @@ async fn deploy_compose(
     .await?;
 
     let deploy_spinner = spinner("  🚢 {spinner} {msg}");
-    deploy_spinner.set_message(if is_new_project {
-        "Staging compose deployment..."
-    } else {
-        "Deploying compose..."
-    });
+    deploy_spinner.set_message(if is_new_project { "Staging compose deployment..." } else { "Deploying compose..." });
 
-    let grants = validate_compose_for_deploy(
-        client,
-        server,
-        project_id,
-        &resolved_yaml,
-        is_background,
-        true,
-        &[],
-    )
-    .await?;
+    let grants =
+        validate_compose_for_deploy(client, server, project_id, &resolved_yaml, is_background, true, &[]).await?;
 
     let resp = submit_compose(
         client,
@@ -1770,11 +1430,7 @@ pub async fn deploy_compose_noninteractive(
     platform: Option<&str>,
 ) -> Result<String> {
     let compose = load_compose(project_dir, compose_name)?;
-    let selected_public = if opts.is_background {
-        None
-    } else {
-        auto_pick_public_service(&compose)
-    };
+    let selected_public = if opts.is_background { None } else { auto_pick_public_service(&compose) };
     let mut build_infos = collect_build_infos(&compose);
 
     let is_partial_build = if let Some(ref targets) = opts.target_services {

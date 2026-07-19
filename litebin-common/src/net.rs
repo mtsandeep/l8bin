@@ -32,9 +32,5 @@ async fn try_fetch_ip(client: &reqwest::Client, url: &str) -> Option<String> {
     }
     let ip = resp.text().await.ok()?;
     let ip = ip.trim().to_string();
-    if ip.parse::<std::net::Ipv4Addr>().is_ok() {
-        Some(ip)
-    } else {
-        None
-    }
+    if ip.parse::<std::net::Ipv4Addr>().is_ok() { Some(ip) } else { None }
 }
