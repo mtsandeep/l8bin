@@ -47,8 +47,6 @@ async fn require_live_host_network_target(state: &AppState, target_node_id: &str
     if target_node_id == "local" {
         let host = state.docker.host_info().await.ok();
         return litebin_common::docker::require_host_network_eligible(
-            host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref().and_then(|info| info.operating_system.as_deref()),
             host.as_ref().and_then(|info| info.rootless),
             Some(3),
         );
@@ -71,12 +69,7 @@ async fn require_live_host_network_target(state: &AppState, target_node_id: &str
         .json::<litebin_common::types::HealthReport>()
         .await
         .map_err(|error| anyhow::anyhow!("failed to read selected agent health: {error}"))?;
-    litebin_common::docker::require_host_network_eligible(
-        health.docker_os_type.as_deref(),
-        health.docker_operating_system.as_deref(),
-        health.docker_rootless,
-        Some(health.protocol_version as i64),
-    )
+    litebin_common::docker::require_host_network_eligible(health.docker_rootless, Some(health.protocol_version as i64))
 }
 
 #[utoipa::path(

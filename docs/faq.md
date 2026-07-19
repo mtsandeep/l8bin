@@ -331,7 +331,9 @@ If your compose declares one of these (e.g., `ports: - "8282:80/tcp"` for a web 
 
 ### Networks defined in my compose file are ignored
 
-LiteBin creates and manages a single Docker network per project (`litebin_<project_id>`) and connects bridged services to it. Custom Compose networks are not created. Background services may instead request `network_mode: host` with the `host-network` capability; this is limited to Linux rootful Docker nodes and cannot be combined with Compose `ports` or custom networks.
+LiteBin creates and manages a single Docker network per project (`litebin_<project_id>`) and connects bridged services to it. Custom Compose networks are not created. Background services may instead request `network_mode: host` with the `host-network` capability; this requires a Linux Docker engine in rootful mode and cannot be combined with Compose `ports` or custom networks.
+
+Docker Desktop requires version 4.34 or newer with **Settings → Resources → Network → Enable host networking** turned on. Apply the setting and restart Docker Desktop before deploying the project. Only Linux containers are supported, and Enhanced Container Isolation must be disabled.
 
 ### My app uses Docker socket (`/var/run/docker.sock`) but it's not working
 

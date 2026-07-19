@@ -43,12 +43,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
             anyhow::bail!("host-network workload is not authorized as a background project");
         }
         let host = state.docker.host_info().await.ok();
-        litebin_common::docker::require_host_network_eligible(
-            host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref().and_then(|info| info.operating_system.as_deref()),
-            host.as_ref().and_then(|info| info.rootless),
-            Some(3),
-        )?;
+        litebin_common::docker::require_host_network_eligible(host.as_ref().and_then(|info| info.rootless), Some(3))?;
     }
 
     // Apply allow_raw_ports flag from agent state

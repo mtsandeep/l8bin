@@ -153,7 +153,7 @@ Docker socket declarations are always removed, including mounts marked `:ro`; fi
 
 Observation is host-wide. Responses can include container metadata, environment values, and logs from other projects on the node. LiteBin does not expose mutating Docker API access.
 
-Host networking is restricted to background projects on native Linux nodes using rootful Docker; Docker Desktop is not eligible. Compose `ports` and custom networks cannot be combined with it. The workload shares the host network namespace, so it can reach host-bound services and its listeners bind directly on the host. LiteBin's capability drops, `no-new-privileges`, resource limits, and log limits still apply.
+Host networking is restricted to background projects using a Linux Docker engine in rootful mode. Compose `ports` and custom networks cannot be combined with it. The workload shares the Docker host network, so it can reach host-bound services and its listeners bind directly on that network. LiteBin's capability drops, `no-new-privileges`, resource limits, and log limits still apply.
 
 When a host-network service also uses `docker-observe`, the HAProxy sidecar remains on an isolated bridge and is published only to a Docker-assigned loopback port. LiteBin injects `DOCKER_HOST=tcp://127.0.0.1:<port>` into that approved service; the proxy is never bound to a non-loopback host address.
 

@@ -302,8 +302,6 @@ pub struct HealthReport {
     /// Agent API protocol version used for compatibility checks.
     pub protocol_version: u32,
     pub architecture: String,
-    pub docker_os_type: Option<String>,
-    pub docker_operating_system: Option<String>,
     pub docker_rootless: Option<bool>,
     pub memory_available: u64,
     pub memory_total: u64,

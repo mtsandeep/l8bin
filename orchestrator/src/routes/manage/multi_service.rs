@@ -207,13 +207,8 @@ pub async fn start_services(
             return Err((StatusCode::FORBIDDEN, "host-network capability was not authorized".into()));
         }
         let host = state.docker.host_info().await.ok();
-        litebin_common::docker::require_host_network_eligible(
-            host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref().and_then(|info| info.operating_system.as_deref()),
-            host.as_ref().and_then(|info| info.rootless),
-            Some(3),
-        )
-        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
+        litebin_common::docker::require_host_network_eligible(host.as_ref().and_then(|info| info.rootless), Some(3))
+            .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
     }
 
     // 1b. Apply per-service overrides from project_services (dashboard-set memory/cpu)

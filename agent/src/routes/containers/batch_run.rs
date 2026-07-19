@@ -180,12 +180,9 @@ pub async fn batch_run(State(state): State<AgentState>, Json(req): Json<BatchRun
                 .into_response();
         }
         let host = state.docker.host_info().await.ok();
-        if let Err(error) = litebin_common::docker::require_host_network_eligible(
-            host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref().and_then(|info| info.operating_system.as_deref()),
-            host.as_ref().and_then(|info| info.rootless),
-            Some(3),
-        ) {
+        if let Err(error) =
+            litebin_common::docker::require_host_network_eligible(host.as_ref().and_then(|info| info.rootless), Some(3))
+        {
             return (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse { error: error.to_string() }))
                 .into_response();
         }
@@ -772,7 +769,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires native Linux with rootful Docker, host networking, /var/run/docker.sock, registry access, and free loopback ports"]
+    #[ignore = "requires a rootful Linux Docker engine with host networking, /var/run/docker.sock, registry access, and free loopback ports"]
     async fn live_background_host_observer_runs_through_batch_handler_and_recreates() {
         let _meta_snapshot = FileSnapshot::capture("data/project-meta.json");
         let project_id = format!("live-host-observer-{}", std::process::id());
@@ -781,12 +778,7 @@ mod tests {
 
         let result: anyhow::Result<()> = async {
             let host = state.docker.host_info().await?;
-            litebin_common::docker::require_host_network_eligible(
-                host.os_type.as_deref(),
-                host.operating_system.as_deref(),
-                host.rootless,
-                Some(3),
-            )?;
+            litebin_common::docker::require_host_network_eligible(host.rootless, Some(3))?;
             let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
             let listen_port = listener.local_addr()?.port();
             drop(listener);

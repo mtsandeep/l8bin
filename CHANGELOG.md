@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - **Workspace Rust formatting** — Added a shared 120-column rustfmt configuration and formatted every Rust crate consistently.
+- **Host-network platform handling** — Relies on Docker to reject unsupported host-network platforms while retaining rootful Docker and agent protocol checks;
 
 ### Fixed
 - **Dashboard log viewer strips ANSI** — Container logs with terminal color codes render as plain text instead of raw escape sequences like `\u001b[95m`.

@@ -38,7 +38,7 @@ Grants are stored in `project_capabilities`. Approve them from:
 
 Docker socket mounts are always stripped, even when declared read-only. Approved requesting services receive `DOCKER_HOST`; the managed HAProxy sidecar permits only read-only observation endpoints. It does not filter results by project, so responses may expose host-wide metadata, environment values, and logs. Mutating Docker access is unavailable.
 
-`network_mode: host` is available only to background projects on Linux nodes using rootful Docker and requires `host-network`. Such services cannot declare Compose `ports` or custom networks. Their listeners bind directly on the host. When combined with `docker-observe`, LiteBin keeps HAProxy bridged and exposes it only through a Docker-assigned `127.0.0.1` port.
+`network_mode: host` is available only to background projects using a Linux Docker engine in rootful mode and requires `host-network`. Such services cannot declare Compose `ports` or custom networks. Their listeners bind directly on the Docker host network. When combined with `docker-observe`, LiteBin keeps HAProxy bridged and exposes it only through a Docker-assigned `127.0.0.1` port.
 
 ---
 

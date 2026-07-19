@@ -269,12 +269,9 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
             entry.is_background = true;
         }
         let host = state.docker.host_info().await.ok();
-        if let Err(error) = litebin_common::docker::require_host_network_eligible(
-            host.as_ref().and_then(|info| info.os_type.as_deref()),
-            host.as_ref().and_then(|info| info.operating_system.as_deref()),
-            host.as_ref().and_then(|info| info.rootless),
-            Some(3),
-        ) {
+        if let Err(error) =
+            litebin_common::docker::require_host_network_eligible(host.as_ref().and_then(|info| info.rootless), Some(3))
+        {
             return (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse { error: error.to_string() }))
                 .into_response();
         }
