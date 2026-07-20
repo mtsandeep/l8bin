@@ -3,7 +3,7 @@ use std::hash::{Hash as StdHash, Hasher};
 
 /// Base directory for all project files on this agent.
 pub(crate) fn projects_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from("projects")
+    litebin_common::types::projects_dir()
 }
 
 /// Ensure the project-specific directory exists and has a placeholder .env if missing.

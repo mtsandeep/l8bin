@@ -757,7 +757,7 @@ mod tests {
 
     async fn cleanup_live_project(state: &AgentState, project_id: &str) {
         let _ = state.docker.cleanup_project_resources(project_id, &[]).await;
-        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
+        let _ = std::fs::remove_dir_all(projects_dir().join(project_id));
     }
 
     #[test]
@@ -917,7 +917,7 @@ mod tests {
                 "host listener was not reachable"
             );
 
-            let data_dir = std::path::PathBuf::from("projects")
+            let data_dir = projects_dir()
                 .join(&project_id)
                 .join("agent-data");
             anyhow::ensure!(

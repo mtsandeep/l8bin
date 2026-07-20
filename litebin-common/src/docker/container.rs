@@ -206,7 +206,7 @@ impl DockerManager {
                     == Some(&bollard::models::HealthStatusEnum::HEALTHY)
         });
         let config_is_current = std::fs::read_to_string(
-            std::path::PathBuf::from("projects").join(project_id).join("docker-observe").join("haproxy.cfg"),
+            crate::types::projects_dir().join(project_id).join("docker-observe").join("haproxy.cfg"),
         )
         .is_ok_and(|config| config == crate::types::DOCKER_OBSERVE_HAPROXY_CONFIG);
         let image_is_current = inspect.config.as_ref().and_then(|config| config.image.as_deref())
@@ -283,7 +283,7 @@ impl DockerManager {
                 );
             let config_is_current = project_id.is_some_and(|project_id| {
                 std::fs::read_to_string(
-                    std::path::PathBuf::from("projects").join(project_id).join("docker-observe").join("haproxy.cfg"),
+                    crate::types::projects_dir().join(project_id).join("docker-observe").join("haproxy.cfg"),
                 )
                 .is_ok_and(|config| config == crate::types::DOCKER_OBSERVE_HAPROXY_CONFIG)
             });
@@ -500,7 +500,7 @@ impl DockerManager {
 
     /// Read the compose.yaml for a project. Returns None if the file doesn't exist.
     pub fn read_compose(project_id: &str) -> Option<String> {
-        let path = std::path::PathBuf::from("projects").join(project_id).join("compose.yaml");
+        let path = crate::types::projects_dir().join(project_id).join("compose.yaml");
         std::fs::read_to_string(&path).ok()
     }
 

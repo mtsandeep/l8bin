@@ -545,13 +545,27 @@ backend docker_socket
     server docker /var/run/docker.sock
 "#;
 
+/// On-disk projects root.
+///
+/// Prefer `/app/projects` when that mount exists (agent installs mount host
+/// projects there while `WORKDIR` is `/etc/litebin`). Otherwise use relative
+/// `projects` (orchestrator `WORKDIR` `/app`, local tests).
+pub fn projects_dir() -> PathBuf {
+    let mounted = PathBuf::from("/app/projects");
+    if mounted.is_dir() {
+        mounted
+    } else {
+        PathBuf::from("projects")
+    }
+}
+
 /// Build the project data directory path.
-/// - Primary: `projects/{project_id}/data/`
-/// - With instance: `projects/{project_id}-{instance_id}/data/`
+/// - Primary: `{projects_dir}/{project_id}/data/`
+/// - With instance: `{projects_dir}/{project_id}-{instance_id}/data/`
 pub fn project_data_dir(project_id: &str, instance_id: Option<&str>) -> PathBuf {
     match instance_id {
-        Some(id) => PathBuf::from("projects").join(format!("{}-{}", project_id, id)).join("data"),
-        None => PathBuf::from("projects").join(project_id).join("data"),
+        Some(id) => projects_dir().join(format!("{}-{}", project_id, id)).join("data"),
+        None => projects_dir().join(project_id).join("data"),
     }
 }
 

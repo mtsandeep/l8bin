@@ -131,7 +131,7 @@ impl ComposeRunPlan {
         if !self.configs.iter().any(config_requests_docker_socket) {
             return Ok(false);
         }
-        let config_dir = std::path::PathBuf::from("projects").join(project_id).join("docker-observe");
+        let config_dir = crate::types::projects_dir().join(project_id).join("docker-observe");
         std::fs::create_dir_all(&config_dir)?;
         let proxy_config_path = config_dir.join("haproxy.cfg");
         std::fs::write(&proxy_config_path, crate::types::DOCKER_OBSERVE_HAPROXY_CONFIG)?;
@@ -436,7 +436,7 @@ services:
         assert!(proxy.binds.as_ref().unwrap().iter().any(|v| v.starts_with("/var/run/docker.sock:")));
 
         let generated = std::fs::read_to_string(
-            std::path::PathBuf::from("projects").join(&project_id).join("docker-observe").join("haproxy.cfg"),
+            crate::types::projects_dir().join(&project_id).join("docker-observe").join("haproxy.cfg"),
         )
         .unwrap();
         assert!(generated.contains("acl read_method method GET HEAD"));
@@ -446,7 +446,7 @@ services:
         assert!(generated.contains("deny_status 403 unless read_method"));
         assert!(generated.contains("deny_status 403 unless observe_endpoint"));
 
-        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
+        let _ = std::fs::remove_dir_all(crate::types::projects_dir().join(project_id));
     }
 
     #[test]
@@ -482,7 +482,7 @@ services:
         assert!(!unrelated.docker_observe);
         assert!(unrelated.binds.is_none());
 
-        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join("observe-revoked"));
+        let _ = std::fs::remove_dir_all(crate::types::projects_dir().join("observe-revoked"));
     }
 
     #[test]
@@ -544,7 +544,7 @@ services:
         plan.reuse_existing_docker_observe_proxy();
         assert!(!plan.service_order.iter().any(|name| name == crate::types::DOCKER_PROXY_SERVICE));
         assert!(plan.configs.iter().all(|config| !config.is_managed_docker_proxy));
-        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
+        let _ = std::fs::remove_dir_all(crate::types::projects_dir().join(project_id));
     }
 
     #[test]
@@ -621,7 +621,7 @@ services:
             let workload = plan.configs.iter().find(|config| config.service_name == "collector").unwrap();
             assert!(workload.env.iter().any(|value| value == "DOCKER_HOST=tcp://127.0.0.1:49161"));
 
-            let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(project_id));
+            let _ = std::fs::remove_dir_all(crate::types::projects_dir().join(project_id));
         }
     }
 
@@ -676,7 +676,7 @@ services:
         assert!(workload.docker_observe);
         assert_eq!(workload.networks.as_ref().unwrap().len(), 2);
         assert!(workload.env.iter().any(|value| value == "DOCKER_HOST=tcp://litebin-docker-proxy:2375"));
-        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(&project.id));
+        let _ = std::fs::remove_dir_all(crate::types::projects_dir().join(&project.id));
     }
 
     #[tokio::test]
@@ -694,7 +694,7 @@ services:
         assert!(plan.inject_docker_observe_proxy(&project_id).unwrap());
         let proxy = plan.configs.iter_mut().find(|config| config.is_managed_docker_proxy).unwrap();
         let config_path = std::fs::canonicalize(
-            std::path::PathBuf::from("projects").join(&project_id).join("docker-observe").join("haproxy.cfg"),
+            crate::types::projects_dir().join(&project_id).join("docker-observe").join("haproxy.cfg"),
         )
         .unwrap();
         let config_path = config_path.to_string_lossy().trim_start_matches(r"\\?\").to_string();
@@ -727,7 +727,7 @@ services:
         let _ = docker.remove_container(&container_id).await;
         let _ = docker.remove_named_network(&observe_network).await;
         let _ = docker.remove_project_network(&project_id, None).await;
-        let _ = std::fs::remove_dir_all(std::path::PathBuf::from("projects").join(&project_id));
+        let _ = std::fs::remove_dir_all(crate::types::projects_dir().join(&project_id));
 
         let (ping, version, mutation, delete, unlisted) = policy_result.unwrap();
         assert!(ping.is_success());
