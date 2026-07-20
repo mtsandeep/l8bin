@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-07-20
+
 ### Changed
 - **Installer firewall hints** — Master vs agent ports; ask agent API port before opening/warning.
 - **Installer menu** — Shows master/agent installed status and version.
