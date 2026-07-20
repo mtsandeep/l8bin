@@ -91,9 +91,9 @@ The two modes are hot-swappable from the dashboard. Start with master proxy for 
 
 All orchestrator-to-agent traffic uses mutual TLS with self-signed certificates.
 
-- **No application-level auth needed on the agent** — The TLS handshake is the auth. Connections without a valid client cert are rejected before any HTTP request is processed.
-- **No shared secrets over the network** — Certificates are generated once on the master and distributed during agent setup. No API keys in env vars, no token rotation.
-- **Works over public internet** — Agents can be on different VPS providers, different networks, even home servers behind NAT. mTLS encrypts and authenticates everything.
-- **Simple to reason about** — Either the connection has a valid cert signed by the Root CA, or it doesn't. No OAuth flows, no JWT validation, no session management.
+- **mTLS is the auth on the agent API** — The TLS handshake authenticates master → agent. Peers that do not present the master identity are rejected before any HTTP request is processed.
+- **Shared agent identity** — Production uses one CA-signed `agent.pem` on every worker (simple install). Master dials known node IPs; agent → master wake/heartbeat use a per-node `agent_secret` (HMAC), not a unique TLS cert.
+- **Works over public internet** — Agents can be on different VPS providers, different networks, even home servers behind NAT. mTLS encrypts and authenticates the control channel.
+- **Simple to reason about** — Either the peer presents a cert signed by your Root CA, or it doesn't. No OAuth flows, no JWT validation, no session management on the agent API.
 
-The trade-off is that adding a new agent requires distributing a cert bundle. This is intentional — it limits who can connect to your agents to people you've explicitly given certs to.
+The trade-off is that adding a new agent requires distributing the cert bundle (and registering the node so it receives `agent_secret`). This is intentional — it limits who can speak on the agent API to parties you've given the CA-signed material to.

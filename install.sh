@@ -164,38 +164,164 @@ unpack_cert_bundle() {
   '
 }
 
+# Configure OS firewall for a role: master | agent [agent_port]
 configure_ufw() {
-  if command -v ufw &>/dev/null; then
-    info "Opening required ports..."
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    ufw allow 443/udp
-    ufw allow 5083/tcp
-    info "Ports 80, 443, 5083 opened."
-  else
-    warn "UFW not found. Make sure ports 80, 443, 5083 are open on your firewall."
+  local role="${1:-}"
+  local agent_port="${2:-5083}"
+  if ! command -v ufw &>/dev/null; then
+    case "$role" in
+      master)
+        warn "UFW not found. Open inbound 80/tcp and 443/tcp+udp on your firewall."
+        ;;
+      agent)
+        warn "UFW not found. Open inbound ${agent_port}/tcp on your firewall."
+        warn "If the master uses cloudflare_dns routing, also open 80/tcp and 443/tcp+udp."
+        ;;
+      *)
+        warn "UFW not found. Configure firewall ports manually for this role."
+        ;;
+    esac
+    return
   fi
+
+  info "Opening required ports..."
+  case "$role" in
+    master)
+      ufw allow 80/tcp
+      ufw allow 443/tcp
+      ufw allow 443/udp
+      info "Ports 80, 443 opened."
+      ;;
+    agent)
+      ufw allow "${agent_port}/tcp"
+      info "Port ${agent_port} opened."
+      warn "If the master uses cloudflare_dns routing, also open 80/tcp and 443/tcp+udp."
+      ;;
+    *)
+      warn "Unknown firewall role '${role}'; skipping UFW rules."
+      ;;
+  esac
 }
 
 # -- Path helpers -----------------------------------------------------------
 find_install_dir() {
   local not_found_msg="${1:-LiteBin installation not found. Run the setup first.}"
-  if [ "$(id -u)" -eq 0 ] && [ -d "/opt/litebin" ]; then
+
+  if [ -d "/opt/litebin" ]; then
     echo "/opt/litebin"
-  elif [ -d "${HOME}/litebin" ]; then
-    echo "${HOME}/litebin"
-  else
-    die "$not_found_msg"
+    return
   fi
+  if [ -d "${HOME}/litebin" ]; then
+    echo "${HOME}/litebin"
+    return
+  fi
+  # sudo without /opt: check the invoking user's home (e.g. install was non-root)
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    local sudo_home=""
+    if command -v getent &>/dev/null; then
+      sudo_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    elif [ -d "/home/${SUDO_USER}" ]; then
+      sudo_home="/home/${SUDO_USER}"
+    fi
+    if [ -n "$sudo_home" ] && [ -d "${sudo_home}/litebin" ]; then
+      echo "${sudo_home}/litebin"
+      return
+    fi
+  fi
+
+  error "$not_found_msg"
+  error "Looked in /opt/litebin and ${HOME}/litebin."
+  die "Run the installer as the same user that installed LiteBin (avoid sudo if you installed as a normal user)."
 }
 
 find_certs_dir() {
   local install_dir="$1"
-  if [ "$(id -u)" -eq 0 ]; then
+  # Root installs keep certs under /etc; user installs keep them next to the install dir.
+  if [ "$install_dir" = "/opt/litebin" ]; then
     echo "/etc/litebin/certs"
   else
     echo "${install_dir}/certs"
   fi
+}
+
+# Resolve master install dir (docker-compose.yml present). Empty if none.
+detect_master_dir() {
+  if [ -f "/opt/litebin/docker-compose.yml" ]; then
+    echo "/opt/litebin"
+    return
+  fi
+  if [ -f "${HOME}/litebin/docker-compose.yml" ]; then
+    echo "${HOME}/litebin"
+    return
+  fi
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    local sudo_home=""
+    if command -v getent &>/dev/null; then
+      sudo_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    elif [ -d "/home/${SUDO_USER}" ]; then
+      sudo_home="/home/${SUDO_USER}"
+    fi
+    if [ -n "$sudo_home" ] && [ -f "${sudo_home}/litebin/docker-compose.yml" ]; then
+      echo "${sudo_home}/litebin"
+      return
+    fi
+  fi
+}
+
+is_agent_installed() {
+  docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^litebin-agent$" \
+    || [ -d "${HOME}/litebin/agent" ] \
+    || [ -d "/opt/litebin/agent" ]
+}
+
+is_agent_running() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^litebin-agent$"
+}
+
+# Parent install dir for an agent (contains agent/ and usually .version).
+detect_agent_dir() {
+  if [ -d "/opt/litebin/agent" ]; then
+    echo "/opt/litebin"
+    return
+  fi
+  if [ -d "${HOME}/litebin/agent" ]; then
+    echo "${HOME}/litebin"
+    return
+  fi
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    local sudo_home=""
+    if command -v getent &>/dev/null; then
+      sudo_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    elif [ -d "/home/${SUDO_USER}" ]; then
+      sudo_home="/home/${SUDO_USER}"
+    fi
+    if [ -n "$sudo_home" ] && [ -d "${sudo_home}/litebin/agent" ]; then
+      echo "${sudo_home}/litebin"
+      return
+    fi
+  fi
+}
+
+read_install_version() {
+  local dir="$1"
+  if [ -n "$dir" ] && [ -f "${dir}/.version" ]; then
+    tr -d '[:space:]' < "${dir}/.version"
+  fi
+}
+
+# Cert management is master-only. Die with a clear message on agent-only hosts.
+require_master_for_certs() {
+  local master_dir
+  master_dir=$(detect_master_dir)
+  if [ -n "$master_dir" ]; then
+    echo "$master_dir"
+    return
+  fi
+  if is_agent_installed; then
+    die "Certificate management must be run on the master server (this host looks like an agent).
+  On the master: curl -fsSL ${L8B_IN} | bash -s certs"
+  fi
+  die "LiteBin master not found. Run master setup first, then: curl -fsSL ${L8B_IN} | bash -s certs"
 }
 
 ensure_agent_network() {
@@ -368,7 +494,7 @@ install_master() {
     certs_dir="/etc/litebin/certs"
   else
     warn "Not running as root. Installing to ${HOME}/litebin"
-    warn "Configure your firewall manually (ports 80, 443, 5083)."
+    warn "Open inbound firewall ports manually: 80/tcp, 443/tcp, 443/udp."
     install_dir="${HOME}/litebin"
     certs_dir="${install_dir}/certs"
   fi
@@ -610,7 +736,7 @@ CADDYFILE
 
   # -- Configure firewall (Linux only) ----------------------------------
   if is_linux && [ "$(id -u)" -eq 0 ]; then
-    configure_ufw
+    configure_ufw master
   fi
 
   # -- Start ------------------------------------------------------------
@@ -674,12 +800,12 @@ CADDYFILE
 # -- Agent Server Setup ------------------------------------------------------
 show_cert_bundle() {
   local install_dir certs_dir
-  install_dir=$(find_install_dir "LiteBin installation not found. Run the master setup first.")
+  install_dir=$(require_master_for_certs)
   certs_dir=$(find_certs_dir "$install_dir")
 
-  [ -f "${certs_dir}/ca.pem" ] || die "No certificates found. Generate certs first."
-  [ -f "${certs_dir}/agent.pem" ] || die "Agent certificate not found. Generate certs first."
-  [ -f "${certs_dir}/agent-key.pem" ] || die "Agent key not found. Generate certs first."
+  [ -f "${certs_dir}/ca.pem" ] || die "No certificates found. Run: curl -fsSL ${L8B_IN} | bash -s certs"
+  [ -f "${certs_dir}/agent.pem" ] || die "Agent certificate not found. Run: curl -fsSL ${L8B_IN} | bash -s certs"
+  [ -f "${certs_dir}/agent-key.pem" ] || die "Agent key not found. Run: curl -fsSL ${L8B_IN} | bash -s certs"
 
   local cert_bundle
   cert_bundle=$(cat "${certs_dir}/ca.pem" "${certs_dir}/agent.pem" "${certs_dir}/agent-key.pem" | gzip -9 | base64_encode)
@@ -697,7 +823,7 @@ show_cert_bundle() {
 
 manage_certs() {
   local install_dir certs_dir
-  install_dir=$(find_install_dir "LiteBin installation not found. Run the master setup first.")
+  install_dir=$(require_master_for_certs)
   certs_dir=$(find_certs_dir "$install_dir")
 
   echo ""
@@ -706,7 +832,7 @@ manage_certs() {
 
   if [ -f "${certs_dir}/ca.pem" ]; then
     echo "    1) Regenerate certificates (invalidates all existing agents)"
-    echo "    2) Show agent cert bundle (for connecting new/existing agents)"
+    echo "    2) Show existing agent cert bundle"
     echo ""
     local choice
     echo -ne "  ${CYAN}Choose [1-2]:${NC} "
@@ -731,13 +857,15 @@ regenerate_certs() {
   # Only supported on the master (Linux)
   local platform
   platform=$(detect_platform)
-  [ "$platform" != "linux" ] && die "Worker setup requires running on the master server (Linux)."
+  [ "$platform" != "linux" ] && die "Certificate management must be run on the master server (Linux)."
 
-  install_dir=$(find_install_dir "LiteBin installation not found. Run the master setup first.")
+  install_dir=$(require_master_for_certs)
   certs_dir=$(find_certs_dir "$install_dir")
 
   # Check if certs already exist
+  local was_regen=false
   if [ -f "${certs_dir}/ca.pem" ]; then
+    was_regen=true
     echo ""
     echo -e "  ${YELLOW}Warning: Existing mTLS certificates found.${NC}"
     echo -e "  ${YELLOW}All connected agents will lose access until their certs are updated.${NC}"
@@ -839,29 +967,48 @@ EOF
   fi
 
   # Add certs mount to docker-compose.yml if missing
+  # Matches both ./projects and absolute/relative projects bind mounts under orchestrator.
+  local certs_mount_added=false
   if ! grep -q "/certs:ro" "${install_dir}/docker-compose.yml" 2>/dev/null; then
-    sed -i '/\.\.\/projects:\/app\/projects/a\      - '"${certs_dir}"':/certs:ro' "${install_dir}/docker-compose.yml"
-    info "Added certs mount to docker-compose.yml"
+    if grep -qE '[[:space:]]+- .*:/app/projects' "${install_dir}/docker-compose.yml"; then
+      sed -i '/[[:space:]]\+- .*:\/app\/projects/a\      - '"${certs_dir}"':/certs:ro' "${install_dir}/docker-compose.yml"
+      info "Added certs mount to docker-compose.yml"
+      certs_mount_added=true
+    else
+      warn "Could not auto-add certs mount. Add this under orchestrator volumes:"
+      warn "  - ${certs_dir}:/certs:ro"
+    fi
   fi
 
-  # Restart orchestrator to pick up new certs
+  # Restart orchestrator to pick up new certs / volume mounts
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "litebin-orchestrator"; then
     info "Restarting orchestrator to load certificates..."
-    (cd "$install_dir" && docker compose up -d --build 2>&1 | tail -3)
+    if [ "$certs_mount_added" = true ]; then
+      (cd "$install_dir" && docker compose up -d --build --force-recreate orchestrator 2>&1 | tail -5)
+    else
+      (cd "$install_dir" && docker compose up -d --build 2>&1 | tail -3)
+    fi
   fi
 
   echo ""
   echo -e "  ${GREEN}${BOLD}Agent certificates ready!${NC}"
   echo ""
-  echo -e "  Run this on your agent server:"
-  echo ""
-  echo -e "    ${DIM}curl -fsSL ${L8B_IN} | bash -s agent${NC}"
-  echo ""
   echo -e "  When prompted, paste this cert bundle:"
   echo ""
   echo -e "    ${CYAN}${cert_bundle}${NC}"
   echo ""
-  echo -e "  Then go to Dashboard -> Agents -> Add Agent to connect."
+  if [ "$was_regen" = true ]; then
+    echo "  New agent:"
+    echo -e "    ${DIM}curl -fsSL ${L8B_IN} | bash -s agent${NC}"
+    echo ""
+    echo "  Existing agents (update certs on each):"
+    echo -e "    ${DIM}curl -fsSL ${L8B_IN} | bash -s agent --update-certs${NC}"
+  else
+    echo "  Run this on your agent server:"
+    echo -e "    ${DIM}curl -fsSL ${L8B_IN} | bash -s agent${NC}"
+  fi
+  echo ""
+  echo -e "  Visit Dashboard to add/connect agent: Dashboard -> Agents -> Add Agent to connect."
   echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
 }
 
@@ -882,8 +1029,11 @@ install_agent() {
     echo ""
     echo -e "  ${BOLD}Update agent certificates${NC}"
     echo ""
+    echo -e "  Paste the base64 cert bundle from the master."
+    echo -e "  ${DIM}To generate or get the cert, run on the master: curl -fsSL ${L8B_IN} | bash -s certs${NC}"
+    echo ""
     local cert_bundle
-    echo -ne "  ${CYAN}Paste the base64 cert bundle from the master:${NC} "
+    echo -ne "${CYAN}Cert bundle:${NC} "
     _tty_read cert_bundle
     [ -z "$cert_bundle" ] && die "Cert bundle is required"
 
@@ -926,7 +1076,6 @@ install_agent() {
     certs_dir="/etc/litebin/certs"
   else
     warn "Not running as root. Installing to ${HOME}/litebin"
-    warn "Configure your firewall manually (ports 80, 443, 5083)."
     install_dir="${HOME}/litebin"
     certs_dir="${install_dir}/certs"
   fi
@@ -1000,13 +1149,21 @@ AGENT_DOCKERFILE
   echo ""
   echo -e "${BOLD}LiteBin Agent Setup${NC}"
   echo ""
+  echo -e "  ${DIM}Port the master uses to reach this agent (published on the host).${NC}"
+  prompt "Agent API port" AGENT_PORT "5083"
 
-  prompt "Agent port (host-side)" AGENT_PORT "5083"
+  # Firewall after port is known (root opens UFW; non-root gets manual instructions)
+  if [ "$(id -u)" -eq 0 ]; then
+    configure_ufw agent "$AGENT_PORT"
+  else
+    warn "Open inbound firewall port manually: ${AGENT_PORT}/tcp."
+    warn "If the master uses cloudflare_dns routing, also open 80/tcp and 443/tcp+udp."
+  fi
 
   # Certs
   echo ""
-  echo -e "  Paste the base64 cert bundle from the master setup or"
-  echo -e "  ${DIM}(Run 'curl -fsSL ${L8B_IN} | bash -s certs --show-bundle' on the master to get one.)${NC}"
+  echo -e "  Paste the base64 cert bundle from the master."
+  echo -e "  ${DIM}To generate or get the cert, run on the master: curl -fsSL ${L8B_IN} | bash -s certs${NC}"
   echo ""
   local cert_bundle
   echo -ne "${CYAN}Cert bundle:${NC} "
@@ -1060,11 +1217,6 @@ EOF
 
   info "Starting agent..."
   run_agent_container "$install_dir" "$certs_dir" "$AGENT_PORT"
-
-  # -- Firewall ---------------------------------------------------------
-  if [ "$(id -u)" -eq 0 ]; then
-    configure_ufw
-  fi
 
   # -- Done -------------------------------------------------------------
   # Save installed version
@@ -1465,6 +1617,12 @@ show_menu() {
     exit 1
   fi
 
+  local master_dir agent_dir master_ver agent_ver
+  master_dir=$(detect_master_dir)
+  agent_dir=$(detect_agent_dir)
+  master_ver=$(read_install_version "$master_dir")
+  agent_ver=$(read_install_version "$agent_dir")
+
   echo ""
   echo -e "  ${PURPLE}██╗      █████╗ ██████╗ ██╗███╗   ██╗${NC}"
   echo -e "  ${PURPLE}██║     ██╔══██╗██╔══██╗██║████╗  ██║${NC}"
@@ -1477,7 +1635,27 @@ show_menu() {
   latest=$(get_latest_release 2>/dev/null) || true
   echo -e "  ${BOLD}LiteBin Installer${NC}  ${DIM}${latest:-}${NC}"
   echo ""
-  echo "  What would you like to install?"
+  echo "  This host:"
+  if [ -n "$master_dir" ]; then
+    if [ -n "$master_ver" ]; then
+      echo -e "    Master:  ${GREEN}installed${NC}  ${CYAN}${master_ver}${NC}  ${DIM}(${master_dir})${NC}"
+    else
+      echo -e "    Master:  ${GREEN}installed${NC}  ${DIM}(${master_dir})${NC}"
+    fi
+  else
+    echo -e "    Master:  ${DIM}not installed${NC}"
+  fi
+  if is_agent_installed; then
+    if [ -n "$agent_ver" ]; then
+      echo -e "    Agent:   ${GREEN}installed${NC}  ${CYAN}${agent_ver}${NC}"
+    else
+      echo -e "    Agent:   ${GREEN}installed${NC}"
+    fi
+  else
+    echo -e "    Agent:   ${DIM}not installed${NC}"
+  fi
+  echo ""
+  echo "  What would you like to do?"
   echo ""
   echo "    1) Master Server (orchestrator + dashboard + Caddy)"
   echo "    2) Agent (worker daemon)"
@@ -1502,6 +1680,7 @@ show_menu() {
 
 # -- Certs CLI helper --------------------------------------------------------
 certs_cmd() {
+  require_master_for_certs >/dev/null
   case "${1:-}" in
     --show-bundle) show_cert_bundle ;;
     --regenerate)  regenerate_certs ;;

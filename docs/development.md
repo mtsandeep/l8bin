@@ -226,16 +226,15 @@ pnpm build
 
 ## Generating mTLS Certificates (Multi-Node)
 
+Production (shared agent cert bundle):
+
 ```bash
-bash setup/generate-certs.sh
+curl -fsSL https://l8b.in | bash -s certs
 ```
 
-Creates:
-- Root CA (`certs/root-ca.pem`)
-- Master server cert + key (`certs/master.{pem,key}`)
-- Per-node client certs (`certs/nodes/<node-id>/{cert,key}.pem`)
+Creates on the master: Root CA, master `server.pem` / `server-key.pem`, and one shared `agent.pem` / `agent-key.pem` distributed to every agent.
 
-See [Multi-Server Setup](multi-server.md) for full details.
+For local/dev experiments, `bash setup/generate-certs.sh` can still mint certs under `certs/`; prefer the installer path above for real multi-server setups. See [Multi-Server Setup](multi-server.md).
 
 ---
 

@@ -178,15 +178,15 @@ All management services share a single Docker bridge network (`litebin-network`)
 
 ## mTLS (Master <-> Agent)
 
-- Master holds a server cert signed by the Root CA
-- Each agent holds a client cert signed by the same Root CA
-- Both sides verify the certificate chain
-- No HTTP fallback — mTLS is mandatory
+- Orchestrator authenticates with `server.pem` when connecting to agents
+- All agents share one `agent.pem` for the agent API on port 5083
+- Both sides verify the certificate chain; no HTTP fallback
+- Per-node `agent_secret` authenticates agent → master wake/heartbeat (HMAC), separate from TLS
 
 ```
 Root CA (self-signed, ECDSA P-256)
-+-- Master server cert
-+-- Node client cert (one per agent)
++-- Master identity (server.pem) — orchestrator → agent
++-- Shared agent identity (agent.pem) — agent API (same on every agent)
 ```
 
 ## Container Hardening
@@ -213,7 +213,7 @@ Root CA (self-signed, ECDSA P-256)
 | host | TEXT | IP or hostname |
 | public_ip | TEXT | Public IP address |
 | agent_port | INTEGER | Default 8443 |
-| agent_secret | TEXT | Agent authentication secret |
+| agent_secret | TEXT | Per-node HMAC secret for agent → master wake/heartbeat |
 | region | TEXT | Optional metadata |
 | status | TEXT | `online`, `offline`, `draining`, `pending_setup` |
 | total_memory | INTEGER | Bytes, reported by agent |

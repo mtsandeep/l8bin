@@ -170,11 +170,11 @@ Key details:
 
 ```
 Root CA (ca.pem) — generated once on master, trusted by all parties
-├── Server cert (server.pem + server-key.pem) — master's mTLS client cert
-├── Agent cert (agent.pem + agent-key.pem) — used two ways:
-│   ├── Agent API mTLS server (loaded from /certs/ volume mount)
-│   └── Agent Caddy TLS server (embedded inline via load_pem in Caddy JSON)
-└── All certs are ECDSA P-256, 10-year validity, SAN=DNS:agent
+├── Master identity (server.pem + server-key.pem) — orchestrator → agent connections
+├── Agent identity (agent.pem + agent-key.pem) — used two ways:
+│   ├── Agent API TLS on port 8443/5083 (loaded from /certs/ volume mount)
+│   └── Agent Caddy TLS (embedded inline via load_pem in Caddy JSON)
+└── All certs are ECDSA P-256, 10-year validity, agent SAN=DNS:agent
 ```
 
 How certs are used:
@@ -183,7 +183,7 @@ How certs are used:
 |---|---|---|
 | Agent API (Axum, port 8443) | `/certs/agent.pem` + `/certs/agent-key.pem` + `/certs/ca.pem` | File read at startup from volume mount |
 | Agent Caddy (port 443) | Same agent.pem + agent-key.pem | Embedded inline in Caddy JSON via `load_pem` (pushed via admin API) |
-| Master → Agent TLS | `/certs/ca.pem` (in master Caddy container) | Referenced in Caddy transport config via `root_ca_pem_files` |
+| Orchestrator → agent | `/certs/server.pem` + key (orchestrator); `/certs/ca.pem` to verify agent | mTLS from orchestrator; Caddy may also reference `ca.pem` via `root_ca_pem_files` |
 
 The agent Caddy does **not** need certs mounted as files — the agent reads them from its own `/certs/` volume and embeds the PEM content directly in the Caddy JSON config. This avoids issues with cert file paths inside different containers.
 

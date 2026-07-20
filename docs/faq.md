@@ -56,10 +56,10 @@ curl -v --cert /etc/litebin/certs/agent.pem \
 | File | Used By | Purpose |
 |------|---------|---------|
 | `ca.pem` | Master + Agent | Root CA that signs both master and agent certs |
-| `server.pem` | Master (orchestrator) | Master's TLS certificate (client cert when talking to agents) |
-| `server-key.pem` | Master (orchestrator) | Master's private key |
-| `agent.pem` | Agent | Agent's TLS certificate (server cert for incoming connections) |
-| `agent-key.pem` | Agent | Agent's private key |
+| `server.pem` | Master (orchestrator) | Master identity — used when the orchestrator connects to agents |
+| `server-key.pem` | Master (orchestrator) | Private key for `server.pem` |
+| `agent.pem` | Agent | Shared agent identity — TLS on the agent API (port 5083); same file on every agent |
+| `agent-key.pem` | Agent | Private key for `agent.pem` |
 
 ### How to show the cert bundle for adding a new agent
 

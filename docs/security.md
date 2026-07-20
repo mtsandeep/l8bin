@@ -70,16 +70,19 @@ Host
 
 Mutual TLS using `rustls` + `WebPkiClientVerifier`. No HTTP fallback — mTLS is mandatory.
 
-- Master holds a server cert signed by the Root CA
-- Each agent holds a client cert signed by the same Root CA
-- Both sides verify the other's certificate chain
+- Orchestrator authenticates with `server.pem` / `server-key.pem` when it connects to an agent
+- Every agent terminates TLS on port 5083 with the same `agent.pem` / `agent-key.pem` (`CN=agent`, `SAN=DNS:agent`)
+- Both sides verify the peer chain against the same Root CA
 - Certs are ECDSA P-256 (production installer), valid for 10 years
+- Per-node identity for agent → master callbacks uses `agent_secret` (HMAC), not a unique TLS cert
 
 ```
 Root CA (self-signed, ECDSA P-256)
-├── Master server cert (SAN: hostname + IP)
-└── Node client cert (CN: <node-name>, one per agent)
+├── Master identity (server.pem) — orchestrator → agent connections
+└── Shared agent identity (agent.pem) — agent API on port 5083 (same on every agent)
 ```
+
+Production installs distribute the same agent cert bundle to every worker via `bash -s certs`. That keeps setup simple; a compromised agent key can impersonate the shared agent TLS identity (other agent hosts are not automatically owned). Agent → master wake/heartbeat still require that node's unique `agent_secret`.
 
 ---
 
@@ -120,13 +123,13 @@ Capabilities still blocked (not added back): `CAP_NET_RAW` (no packet sniffing o
 
 ## Agent Security
 
-Agent API has no application-level auth — security relies entirely on mTLS:
+Master → agent API auth is mTLS (shared agent identity + master identity):
 
 - mTLS is mandatory (agent fails to start without certs)
-- Each agent has a unique client cert signed by the private Root CA
-- Connections without a valid cert are rejected at the TLS handshake
+- All agents use the same CA-signed agent identity on port 5083; peers must present the master identity or the handshake fails
 - Agent port (5083) is open to all IPs — mTLS is the auth layer, not firewall rules
-- Config is pushed from orchestrator over mTLS via `POST /internal/register`, no secrets in agent env vars
+- Config is pushed from orchestrator over mTLS via `POST /internal/register` (includes per-node `agent_secret`), no secrets in agent env vars
+- Agent → master wake/heartbeat use HMAC-SHA256 with that node's `agent_secret` (see [Wake-Report Endpoint](#wake-report-endpoint))
 
 ---
 

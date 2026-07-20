@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Installer firewall hints** — Master vs agent ports; ask agent API port before opening/warning.
+- **Installer menu** — Shows master/agent installed status and version.
+- **Cert messaging** — Clearer generate/regenerate/show-bundle and agent paste hints (`bash -s certs`).
+- **Certs on agents** — Cert management refused on agent-only hosts.
+- **mTLS docs** — Shared agent identity + per-node `agent_secret` (not unique per-agent certs).
+
+### Fixed
+- **Certs volume mount** — Compose `/certs` mount added correctly; orchestrator force-recreated when new.
+- **Installer path under sudo** — Finds `/opt`, `$HOME`, or `SUDO_USER` install; clearer same-user error.
+
 ## [0.3.5] - 2026-07-19
 
 ### Added
