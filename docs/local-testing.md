@@ -1,4 +1,4 @@
-# Local Testing
+## Local Testing
 
 ## Prepare Local Release
 
@@ -13,6 +13,9 @@ This creates:
 local-release/
   litebin-orchestrator-x86_64-linux
   l8b-dashboard-dist/
+    dist/
+    nginx.conf
+    Dockerfile
   checksums.txt
 ```
 

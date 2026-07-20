@@ -82,8 +82,16 @@ jobs:
           cd dashboard
           pnpm install --frozen-lockfile
           pnpm build
-          tar -czf ../l8b-dashboard.tar.gz dist/
-          cd ../dashboard && zip -r ../l8b-dashboard.zip dist/
+          # Package layout (matches install.sh): dist/ + nginx.conf + Dockerfile
+          PKG=/tmp/l8b-dash-pkg
+          rm -rf "$PKG"
+          mkdir -p "$PKG"
+          cp -r dist "$PKG/"
+          cp nginx.conf "$PKG/"
+          cp Dockerfile.runtime "$PKG/Dockerfile"
+          tar -czf "${{ github.workspace }}/l8b-dashboard.tar.gz" -C "$PKG" dist nginx.conf Dockerfile
+          (cd "$PKG" && zip -r "${{ github.workspace }}/l8b-dashboard.zip" dist nginx.conf Dockerfile)
+          rm -rf "$PKG"
 
       - name: Stage artifacts
         run: |

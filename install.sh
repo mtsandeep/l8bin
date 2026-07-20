@@ -437,6 +437,30 @@ volumes:
 COMPOSE_EOF
 }
 
+# Install dashboard release package (dist/ + nginx.conf + Dockerfile) into install_dir/dashboard.
+install_dashboard_package() {
+  local install_dir="$1"
+  local release_url="${2:-}"
+  mkdir -p "${install_dir}/dashboard"
+
+  if [ -n "${L8B_RELEASE_DIR:-}" ] && [ -d "${L8B_RELEASE_DIR}/l8b-dashboard-dist" ]; then
+    info "Using local dashboard..."
+    rm -rf "${install_dir}/dashboard/dist"
+    cp -a "${L8B_RELEASE_DIR}/l8b-dashboard-dist/." "${install_dir}/dashboard/"
+  else
+    [ -n "$release_url" ] || die "Dashboard release tag is required"
+    local tmp_tar="/tmp/l8b-dashboard.tar.gz"
+    download_and_verify \
+      "https://github.com/${REPO}/releases/download/${release_url}/l8b-dashboard.tar.gz" \
+      "$tmp_tar" \
+      "dashboard"
+    rm -rf "${install_dir}/dashboard/dist"
+    rm -f "${install_dir}/dashboard/nginx.conf" "${install_dir}/dashboard/Dockerfile"
+    tar -xzf "$tmp_tar" -C "${install_dir}/dashboard/"
+    rm -f "$tmp_tar"
+  fi
+}
+
 # -- CLI Install -------------------------------------------------------------
 install_cli() {
   local platform arch binary install_name
@@ -541,20 +565,7 @@ install_master() {
   chmod +x "${install_dir}/orchestrator/litebin-orchestrator"
 
   # Download dashboard
-  if [ -n "${L8B_RELEASE_DIR:-}" ] && [ -d "${L8B_RELEASE_DIR}/l8b-dashboard-dist" ]; then
-    # Local mode: copy directory directly (avoids tar format issues)
-    info "Using local dashboard..."
-    mkdir -p "${install_dir}/dashboard/dist"
-    cp -r "${L8B_RELEASE_DIR}/l8b-dashboard-dist/." "${install_dir}/dashboard/dist/"
-  else
-    local tmp_tar="/tmp/l8b-dashboard.tar.gz"
-    download_and_verify \
-      "https://github.com/${REPO}/releases/download/${release_url}/l8b-dashboard.tar.gz" \
-      "$tmp_tar" \
-      "dashboard"
-    tar -xzf "$tmp_tar" -C "${install_dir}/dashboard/"
-    rm -f "$tmp_tar"
-  fi
+  install_dashboard_package "$install_dir" "$release_url"
 
   # Generate orchestrator Dockerfile
   cat > "${install_dir}/orchestrator/Dockerfile" <<'ORCH_DOCKERFILE'
@@ -566,13 +577,6 @@ WORKDIR /app
 RUN mkdir -p /app/data
 CMD ["/app/litebin-orchestrator"]
 ORCH_DOCKERFILE
-
-  # Generate dashboard Dockerfile
-  cat > "${install_dir}/dashboard/Dockerfile" <<'DASH_DOCKERFILE'
-FROM nginx:alpine
-COPY dist/ /usr/share/nginx/html/
-EXPOSE 80
-DASH_DOCKERFILE
 
   # -- Interactive prompts ------------------------------------------------
   echo ""
@@ -1368,19 +1372,7 @@ update_master() {
   chmod +x "${install_dir}/orchestrator/litebin-orchestrator"
 
   # Download new dashboard
-  if [ -n "${L8B_RELEASE_DIR:-}" ] && [ -d "${L8B_RELEASE_DIR}/l8b-dashboard-dist" ]; then
-    info "Using local dashboard..."
-    mkdir -p "${install_dir}/dashboard/dist"
-    cp -r "${L8B_RELEASE_DIR}/l8b-dashboard-dist/." "${install_dir}/dashboard/dist/"
-  else
-    local tmp_tar="/tmp/l8b-dashboard.tar.gz"
-    download_and_verify \
-      "https://github.com/${REPO}/releases/download/${target_release}/l8b-dashboard.tar.gz" \
-      "$tmp_tar" \
-      "dashboard ${target_release}"
-    tar -xzf "$tmp_tar" -C "${install_dir}/dashboard/"
-    rm -f "$tmp_tar"
-  fi
+  install_dashboard_package "$install_dir" "$target_release"
 
   # Save installed version
   echo "$target_release" > "${install_dir}/.version"

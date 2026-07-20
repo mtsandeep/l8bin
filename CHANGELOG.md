@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Certs volume mount** — Compose `/certs` mount added correctly; orchestrator force-recreated when new.
 - **Installer path under sudo** — Finds `/opt`, `$HOME`, or `SUDO_USER` install; clearer same-user error.
+- **Dashboard deep-link reload 404** — Release packages `nginx.conf` + runtime Dockerfile with the dashboard; install unpacks them (SPA `try_files` → `index.html`).
 
 ## [0.3.5] - 2026-07-19
 

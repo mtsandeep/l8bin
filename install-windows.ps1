@@ -208,8 +208,8 @@ function Install-Master {
     Write-Info "  litebin-orchestrator-$Arch-linux  (${orchMB} MB)"
 
     # -- Dashboard --------------------------------------------------------------
-    $dashDist = Join-Path $DashDir "dist"
-    New-Item -ItemType Directory -Force -Path $dashDist | Out-Null
+    # Zip layout matches release: dist/ + nginx.conf + Dockerfile
+    New-Item -ItemType Directory -Force -Path $DashDir | Out-Null
 
     if ($Tag -eq "local") {
         $dashZipSrc = Join-Path $ReleaseBase "l8b-dashboard.zip"
@@ -230,6 +230,8 @@ function Install-Master {
         Expand-Archive -Path $dashZip -DestinationPath $DashDir -Force
         Remove-Item $dashZip -ErrorAction SilentlyContinue
     }
+
+    $dashDist = Join-Path $DashDir "dist"
     $dashKB = [math]::Round((Get-ChildItem $dashDist -Recurse | Measure-Object -Property Length -Sum).Sum / 1KB, 1)
     Write-Info "  l8b-dashboard-dist  (${dashKB} KB)"
 
@@ -242,13 +244,6 @@ RUN chmod +x /app/litebin-orchestrator
 WORKDIR /app
 RUN mkdir -p /app/data
 CMD ["/app/litebin-orchestrator"]
-'@
-
-    # -- Generate dashboard Dockerfile ------------------------------------------
-    Set-Content -Path (Join-Path $DashDir "Dockerfile") -Value @'
-FROM nginx:alpine
-COPY dist/ /usr/share/nginx/html/
-EXPOSE 80
 '@
 
     # -- Generate .env ----------------------------------------------------------
