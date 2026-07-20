@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-07-20
+
 ### Fixed
 - **Agent docker-observe on remote nodes** — Write project files under `/app/projects` when mounted (agent `WORKDIR` is `/etc/litebin`), so HAProxy config reaches the host bind path instead of leaving an empty `haproxy.cfg` directory.
 
