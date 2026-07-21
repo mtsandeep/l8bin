@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Remote project status flipped to stopped** — Periodic Docker sync only reconciles local-node projects; remote container IDs were checked on the master and wrongly marked stopped.
+
 ## [0.3.8] - 2026-07-21
 
 ### Fixed

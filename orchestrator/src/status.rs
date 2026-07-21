@@ -556,11 +556,15 @@ pub async fn sync_project_from_docker(db: &SqlitePool, docker: &DockerManager, p
     SyncResult { old_status: current_status, new_status, caddy_dirty }
 }
 
-/// Batch-sync all local projects from Docker state.
-/// Skips transient states and projects with no container_ids.
+/// Batch-sync all **local** projects from Docker state.
+/// Skips transient states, remote-node projects, and projects with no container_ids.
 pub async fn sync_all_local_from_docker(db: &SqlitePool, docker: &DockerManager) -> Vec<SyncResult> {
     let project_ids: Vec<String> = match sqlx::query_scalar(
-        "SELECT DISTINCT project_id FROM project_services WHERE container_id IS NOT NULL AND container_id != ''",
+        "SELECT DISTINCT ps.project_id
+         FROM project_services ps
+         JOIN projects p ON p.id = ps.project_id
+         WHERE ps.container_id IS NOT NULL AND ps.container_id != ''
+           AND (p.node_id IS NULL OR p.node_id = 'local')",
     )
     .fetch_all(db)
     .await
