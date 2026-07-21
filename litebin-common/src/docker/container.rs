@@ -487,7 +487,7 @@ impl DockerManager {
         }
 
         // 5. Remove project directory if it exists
-        let project_dir = std::path::Path::new("projects").join(project_id);
+        let project_dir = crate::types::projects_dir().join(project_id);
         if project_dir.is_dir() {
             if let Err(e) = std::fs::remove_dir_all(&project_dir) {
                 tracing::warn!(project = %project_id, error = %e, "cleanup: failed to remove project directory");

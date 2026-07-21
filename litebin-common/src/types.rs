@@ -10,6 +10,9 @@ pub const COMPOSE_FILE_NAMES: &[&str] = &["compose.yaml", "docker-compose.yml", 
 /// Reserved service name for LiteBin's managed Docker observation proxy.
 pub const DOCKER_PROXY_SERVICE: &str = "litebin-docker-proxy";
 
+/// Shared Docker network for LiteBin services (override via `DOCKER_NETWORK`).
+pub const DEFAULT_DOCKER_NETWORK: &str = "litebin-network";
+
 // ── Port constants ───────────────────────────────────────────────────────────
 
 pub const CADDY_HTTP_PORT: &str = "80";

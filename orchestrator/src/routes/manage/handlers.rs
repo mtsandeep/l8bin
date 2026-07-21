@@ -587,12 +587,21 @@ pub async fn start_project(
 }
 
 /// Build a list of scoped volume names for a project (from DB for multi-service, from JSON for single-service).
-fn build_volume_list(project: &crate::db::models::Project) -> Vec<String> {
+async fn build_volume_list(db: &sqlx::SqlitePool, project: &crate::db::models::Project) -> Vec<String> {
     if uses_compose_lifecycle(project.deploy_type.as_ref()) {
-        // Multi-service: volumes are in project_volumes table (already scoped at deploy time)
-        // For remote delete, we pass what we have from the project record
-        // The agent will discover volumes from its own state
-        Vec::new()
+        match sqlx::query_as::<_, (String,)>(
+            "SELECT volume_name FROM project_volumes WHERE project_id = ? AND volume_name IS NOT NULL",
+        )
+        .bind(&project.id)
+        .fetch_all(db)
+        .await
+        {
+            Ok(rows) => rows.into_iter().map(|(name,)| name).collect(),
+            Err(e) => {
+                tracing::warn!(project = %project.id, error = %e, "delete: failed to fetch project volumes");
+                Vec::new()
+            }
+        }
     } else if let Some(ref vols_json) = project.volumes {
         serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(vols_json)
             .unwrap_or_default()
@@ -645,13 +654,13 @@ pub async fn delete_project(
             super::multi_service::delete_all_services(&state, &project_id).await;
         } else {
             // Collect volumes for single-service local cleanup
-            let volumes: Vec<String> = build_volume_list(&project);
+            let volumes: Vec<String> = build_volume_list(&state.db, &project).await;
             let _ = state.docker.cleanup_project_resources(&project_id, &volumes).await;
         }
     } else {
         // Remote: call agent cleanup endpoint
         let node_id = project.node_id.as_deref().unwrap();
-        let volumes = build_volume_list(&project);
+        let volumes = build_volume_list(&state.db, &project).await;
         let client = nodes::client::get_node_client(&state.node_clients, node_id)
             .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
         let node = get_node_from_db(&state.db, node_id).await?;

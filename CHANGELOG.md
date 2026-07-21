@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Project delete on agents** — Disconnect remaining endpoints (agent/caddy) before removing project networks; stop joining `*-docker-observe` networks on agent/orchestrator startup.
+- **Remote compose delete leaves files** — Pass `project_volumes` to the agent on delete (was always empty for Compose); remove relative binds under `/app/projects` on agents.
+
 ## [0.3.7] - 2026-07-20
 
 ### Fixed

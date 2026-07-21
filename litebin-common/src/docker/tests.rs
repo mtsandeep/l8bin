@@ -153,6 +153,25 @@ fn full_project_cleanup_selects_workload_proxy_and_private_network() {
 }
 
 #[test]
+fn app_project_network_excludes_observation_and_defaults() {
+    use super::image::is_app_project_network;
+
+    assert!(is_app_project_network("litebin-myapp"));
+    assert!(!is_app_project_network("litebin-myapp-docker-observe"));
+    assert!(!is_app_project_network(crate::types::DEFAULT_DOCKER_NETWORK));
+    assert!(!is_app_project_network("bridge"));
+    assert!(!is_app_project_network("other-net"));
+}
+
+#[test]
+fn relative_bind_host_path_uses_projects_dir() {
+    use super::image::relative_bind_host_path;
+
+    let path = relative_bind_host_path("projects/myapp/data");
+    assert_eq!(path, crate::types::projects_dir().join("myapp").join("data"));
+}
+
+#[test]
 fn host_network_startup_stabilization_only_applies_to_workload_daemons() {
     use super::container::should_stabilize_startup;
 

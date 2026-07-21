@@ -1,6 +1,6 @@
 use std::env;
 
-use litebin_common::types::{DEFAULT_ORCHESTRATOR_PORT, RoutingMode};
+use litebin_common::types::{DEFAULT_DOCKER_NETWORK, DEFAULT_ORCHESTRATOR_PORT, RoutingMode};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -31,7 +31,7 @@ impl Config {
             domain: env::var("DOMAIN").unwrap_or_else(|_| "localhost".into()),
             caddy_admin_url: env::var("CADDY_ADMIN_URL").unwrap_or_else(|_| "http://localhost:2019".into()),
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./data/litebin.db".into()),
-            docker_network: env::var("DOCKER_NETWORK").unwrap_or_else(|_| "litebin-network".into()),
+            docker_network: env::var("DOCKER_NETWORK").unwrap_or_else(|_| DEFAULT_DOCKER_NETWORK.into()),
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into()),
             port: env::var("PORT").unwrap_or_else(|_| DEFAULT_ORCHESTRATOR_PORT.into()).parse()?,
             default_auto_stop_mins: env::var("DEFAULT_AUTO_STOP_MINS").unwrap_or_else(|_| "15".into()).parse()?,

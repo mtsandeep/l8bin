@@ -1,5 +1,5 @@
 use bollard::auth::DockerCredentials;
-use bollard::models::{EndpointSettings, NetworkConnectRequest, NetworkCreateRequest};
+use bollard::models::{EndpointSettings, NetworkConnectRequest, NetworkCreateRequest, NetworkDisconnectRequest};
 use bollard::query_parameters::{
     CreateImageOptions, ImportImageOptions, ListImagesOptions, PruneImagesOptions, RemoveImageOptions,
     RemoveVolumeOptions, StatsOptions,
@@ -10,6 +10,24 @@ use serde::Deserialize;
 use crate::types::{VolumeKind, classify_volume, project_network_name};
 
 use super::{ContainerStats, CpuSample, DiskUsage, DockerErrorKind, DockerManager};
+
+/// Networks the agent/orchestrator should join for app proxying.
+/// Excludes the shared default network and private Docker observation networks.
+pub(crate) fn is_app_project_network(name: &str) -> bool {
+    name.starts_with("litebin-")
+        && name != crate::types::DEFAULT_DOCKER_NETWORK
+        && !name.ends_with("-docker-observe")
+}
+
+/// Resolve a LiteBin-scoped relative bind (`projects/...`) to the on-disk path.
+/// Uses `/app/projects` when mounted (agent), otherwise cwd-relative `projects/`.
+pub(crate) fn relative_bind_host_path(scoped_name: &str) -> std::path::PathBuf {
+    if let Some(rest) = scoped_name.strip_prefix("projects/") {
+        crate::types::projects_dir().join(rest)
+    } else {
+        std::path::PathBuf::from(scoped_name)
+    }
+}
 
 impl DockerManager {
     pub async fn ensure_network(&self) -> anyhow::Result<()> {
@@ -32,12 +50,13 @@ impl DockerManager {
 
     /// Connect a container (e.g. the orchestrator) to all existing per-project networks.
     /// This ensures the orchestrator can proxy to multi-service containers after a restart.
+    /// Does not join `*-docker-observe` networks (those stay private to observation workloads).
     pub async fn connect_to_project_networks(&self, container_name: &str) {
         match self.docker.list_networks(None).await {
             Ok(networks) => {
                 for net in networks {
                     if let Some(name) = net.name.as_deref() {
-                        if name.starts_with("litebin-") && name != "litebin-network" && name != self.network {
+                        if is_app_project_network(name) {
                             if let Err(e) = self.connect_container_to_network(container_name, name).await {
                                 tracing::warn!(network = name, error = %e, "failed to connect to project network");
                             }
@@ -248,7 +267,50 @@ impl DockerManager {
         self.remove_named_network(&network_name).await
     }
 
+    /// Disconnect a container from a network (idempotent).
+    pub async fn disconnect_container_from_network(
+        &self,
+        container_name: &str,
+        network_name: &str,
+    ) -> anyhow::Result<()> {
+        let config = NetworkDisconnectRequest {
+            container: container_name.to_string(),
+            force: Some(true),
+        };
+        match self.docker.disconnect_network(network_name, config).await {
+            Ok(_) => {
+                tracing::info!(
+                    container = %container_name,
+                    network = %network_name,
+                    "disconnected container from network"
+                );
+                Ok(())
+            }
+            Err(e) => match DockerErrorKind::from_bollard_error(&e) {
+                DockerErrorKind::NotFound | DockerErrorKind::Forbidden => {
+                    tracing::debug!(
+                        container = %container_name,
+                        network = %network_name,
+                        "container already off network"
+                    );
+                    Ok(())
+                }
+                _ => Err(e.into()),
+            },
+        }
+    }
+
+    /// Disconnect every remaining endpoint, then remove the network (idempotent).
+    /// Needed because agent/orchestrator/caddy stay attached for proxying.
     pub async fn remove_named_network(&self, network_name: &str) -> anyhow::Result<()> {
+        if let Ok(inspect) = self.docker.inspect_network(network_name, None).await {
+            if let Some(containers) = inspect.containers {
+                for container_id in containers.keys() {
+                    let _ = self.disconnect_container_from_network(container_id, network_name).await;
+                }
+            }
+        }
+
         match self.docker.remove_network(network_name).await {
             Ok(_) => {
                 tracing::info!(network = %network_name, "removed per-project docker network");
@@ -287,10 +349,10 @@ impl DockerManager {
         match classify_volume(scoped_name) {
             VolumeKind::DockerVolume => self.remove_volume(scoped_name).await,
             VolumeKind::RelativeBindMount => {
-                let path = std::path::Path::new(scoped_name);
+                let path = relative_bind_host_path(scoped_name);
                 if path.exists() {
-                    std::fs::remove_dir_all(path)?;
-                    tracing::info!(path = %scoped_name, "removed bind mount directory");
+                    std::fs::remove_dir_all(&path)?;
+                    tracing::info!(path = %path.display(), "removed bind mount directory");
                 }
                 Ok(())
             }
