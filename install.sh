@@ -234,6 +234,20 @@ find_install_dir() {
   die "Run the installer as the same user that installed LiteBin (avoid sudo if you installed as a normal user)."
 }
 
+# Bail out clearly when an existing install dir isn't writable by the current
+# user (e.g. a root-owned /opt/litebin being touched by a non-root sudoer).
+# $1 = dir, $2 = action phrase (default "the update"), $3 = rerun subcommand.
+require_writable() {
+  local dir="$1" action="${2:-the update}" rerun="${3:-update}"
+  if [ -w "$dir" ]; then
+    return 0
+  fi
+  error "LiteBin is installed at ${dir} (owned by root)."
+  error "Current user '$(id -un)' can't write to it — ${action} needs root."
+  echo    "" >&2
+  die "Re-run as root:  curl -fsSL ${L8B_IN} | sudo bash -s ${rerun}"
+}
+
 find_certs_dir() {
   local install_dir="$1"
   # Root installs keep certs under /etc; user installs keep them next to the install dir.
@@ -904,6 +918,7 @@ regenerate_certs() {
 
   install_dir=$(require_master_for_certs)
   certs_dir=$(find_certs_dir "$install_dir")
+  require_writable "$install_dir" "certificate management" "certs"
 
   # Check if certs already exist
   local was_regen=false
@@ -1133,11 +1148,7 @@ install_agent() {
 
   # Check for master installation on this server
   local master_dir=""
-  if [ "$(id -u)" -eq 0 ] && [ -f "/opt/litebin/docker-compose.yml" ]; then
-    master_dir="/opt/litebin"
-  elif [ -f "${HOME}/litebin/docker-compose.yml" ]; then
-    master_dir="${HOME}/litebin"
-  fi
+  master_dir=$(detect_master_dir)
   if [ -n "$master_dir" ]; then
     echo ""
     warn "LiteBin master is already installed at ${master_dir}."
@@ -1289,6 +1300,7 @@ update_master() {
   # Find install directory
   local install_dir
   install_dir=$(find_install_dir "LiteBin not found. Run 'curl -fsSL ${L8B_IN} | bash -s master' to install.")
+  require_writable "$install_dir" "the update" "update"
 
   ensure_docker
   ensure_docker_compose
@@ -1447,14 +1459,10 @@ update_master() {
 # -- Auto-detect Update ------------------------------------------------------
 update_litebin() {
   local is_master=false is_agent=false
-  local master_dir="" agent_dir=""
+  local master_dir=""
 
   # Detect master
-  if [ "$(id -u)" -eq 0 ] && [ -f "/opt/litebin/docker-compose.yml" ]; then
-    master_dir="/opt/litebin"
-  elif [ -f "${HOME}/litebin/docker-compose.yml" ]; then
-    master_dir="${HOME}/litebin"
-  fi
+  master_dir=$(detect_master_dir)
   [ -n "$master_dir" ] && is_master=true
 
   # Detect agent
@@ -1500,6 +1508,7 @@ update_agent() {
 
   local install_dir
   install_dir=$(find_install_dir)
+  require_writable "$install_dir" "the agent update" "update"
   [ -d "${install_dir}/agent" ] || die "Agent installation not found at ${install_dir}/agent"
 
   ensure_docker
