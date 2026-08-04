@@ -35,9 +35,9 @@ impl ComposeParser {
         // so they should NOT be interpolated themselves but used to interpolate other fields).
         let compose_env = interpolate::extract_compose_env(&value);
 
-        // Build env map: compose env < extra_env < system env (system env is base, overridden by extras)
+        // Env precedence (high → low): compose literals > extra_env (.env) > system env.
         let mut env = interpolate::build_env_map(extra_env);
-        env.extend(compose_env); // compose env takes highest priority
+        env.extend(compose_env);
 
         interpolate::interpolate(&mut value, &env)?;
 

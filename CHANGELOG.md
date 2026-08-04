@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Remote project status flipped to stopped** — Periodic Docker sync only reconciles local-node projects; remote container IDs were checked on the master and wrongly marked stopped.
+- **Compose env interpolation** — Self-referential vars (e.g. `PUBLIC_URL: ${PUBLIC_URL:-default}`) resolved to their own literal instead of the default; added the `${VAR:?msg}` operator (now errors instead of silently emptying).
 
 ## [0.3.8] - 2026-07-21
 

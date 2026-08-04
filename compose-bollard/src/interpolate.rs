@@ -60,7 +60,7 @@ fn interpolate_string(s: &str, env: &HashMap<String, String>) -> Result<String> 
                             }
                         }
                     }
-                    result.push_str(&resolve_expression(&expr, env));
+                    result.push_str(&resolve_expression(&expr, env)?);
                 }
                 _ => {
                     // $VAR form — take alphanumeric + underscore chars
@@ -88,20 +88,40 @@ fn interpolate_string(s: &str, env: &HashMap<String, String>) -> Result<String> 
     Ok(result)
 }
 
-/// Resolve a `${expr}` expression which may contain modifiers like `:-` or `:+`.
-fn resolve_expression(expr: &str, env: &HashMap<String, String>) -> String {
-    if let Some(idx) = expr.find(":-") {
-        let var = &expr[..idx];
-        let default = &expr[idx + 2..];
-        let val = resolve_var(var, env);
-        if val.is_empty() { default.to_string() } else { val }
-    } else if let Some(idx) = expr.find(":+") {
-        let var = &expr[..idx];
-        let alternate = &expr[idx + 2..];
-        let val = resolve_var(var, env);
-        if val.is_empty() { String::new() } else { alternate.to_string() }
+/// Resolve a `${expr}` with modifiers: `:-` (default), `:+` (alternate), `:?` (error).
+/// Bare `-`/`+` are unsupported and fall through to a plain lookup.
+fn resolve_expression(expr: &str, env: &HashMap<String, String>) -> Result<String> {
+    let (var, rest) = match expr.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        Some(idx) => (&expr[..idx], &expr[idx..]),
+        None => (expr, ""),
+    };
+
+    if var.is_empty() {
+        return Ok(resolve_var(expr, env));
+    }
+
+    let val = resolve_var(var, env);
+
+    if let Some(default) = rest.strip_prefix(":-") {
+        Ok(if val.is_empty() { default.to_string() } else { val })
+    } else if let Some(alternate) = rest.strip_prefix(":+") {
+        Ok(if val.is_empty() { String::new() } else { alternate.to_string() })
+    } else if let Some(msg) = rest.strip_prefix(":?") {
+        if val.is_empty() {
+            let message = if msg.is_empty() {
+                format!("required variable '{var}' is not set or is empty")
+            } else {
+                msg.to_string()
+            };
+            Err(ComposeError::InterpolationError(message))
+        } else {
+            Ok(val)
+        }
+    } else if rest.is_empty() {
+        Ok(val)
     } else {
-        resolve_var(expr, env)
+        // Unknown operator suffix (e.g. bare `-`/`+`); resolve as a plain lookup.
+        Ok(resolve_var(expr, env))
     }
 }
 
@@ -128,9 +148,9 @@ pub fn build_env_map(extra_env: &[String]) -> HashMap<String, String> {
     env
 }
 
-/// Pre-extract environment variable definitions from the compose file's
-/// `environment` sections so they are available for interpolation of other values.
-/// Values that themselves contain `${}` are NOT interpolated (they are the definitions).
+/// Seed literal `environment:` values for cross-field interpolation (e.g.
+/// `command: ${DB_URL}`). Templated values (`$`) are skipped so self-referential
+/// vars resolve in place instead of to their own literal.
 pub fn extract_compose_env(compose_value: &serde_yaml::Value) -> HashMap<String, String> {
     let mut env = HashMap::new();
     let services = match compose_value.get("services").and_then(|s| s.as_mapping()) {
@@ -141,7 +161,9 @@ pub fn extract_compose_env(compose_value: &serde_yaml::Value) -> HashMap<String,
         if let Some(env_val) = svc.get("environment").and_then(|e| e.as_mapping()) {
             for (k, v) in env_val {
                 if let (Some(key), Some(val)) = (k.as_str(), v.as_str()) {
-                    env.insert(key.to_string(), val.to_string());
+                    if !val.contains('$') {
+                        env.insert(key.to_string(), val.to_string());
+                    }
                 }
             }
         }
@@ -246,5 +268,88 @@ mod tests {
         let env = build_env_map(&["FOO=bar".to_string(), "BAZ=qux".to_string()]);
         assert_eq!(env.get("FOO").unwrap(), "bar");
         assert_eq!(env.get("BAZ").unwrap(), "qux");
+    }
+
+    // ── Self-referential env vars (the original bug) ─────────────────────────
+
+    #[test]
+    fn test_self_referential_default_when_unset() {
+        // A service defines `PUBLIC_URL: ${PUBLIC_URL:-https://x}` and PUBLIC_URL
+        // is not provided anywhere. extract_compose_env must NOT seed the literal,
+        // so the `:-` default fires instead of resolving to the raw `${...}` text.
+        let yaml = "services:\n  web:\n    environment:\n      PUBLIC_URL: ${PUBLIC_URL:-https://cms.example.com}\n";
+        let mut value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let compose_env = extract_compose_env(&value);
+        // Templated value must not be seeded.
+        assert!(!compose_env.contains_key("PUBLIC_URL"));
+
+        let env = build_env_map(&[]);
+        interpolate(&mut value, &env).unwrap();
+        let url = value["services"]["web"]["environment"]["PUBLIC_URL"].as_str().unwrap();
+        assert_eq!(url, "https://cms.example.com");
+    }
+
+    #[test]
+    fn test_self_referential_uses_extra_env_when_provided() {
+        // When the var IS provided via extra_env, the self-referential reference
+        // resolves to that value rather than the default.
+        let yaml = "services:\n  web:\n    environment:\n      PUBLIC_URL: ${PUBLIC_URL:-https://default}\n";
+        let mut value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let mut env = build_env_map(&[]);
+        env.insert("PUBLIC_URL".to_string(), "https://override".to_string());
+        interpolate(&mut value, &env).unwrap();
+        let url = value["services"]["web"]["environment"]["PUBLIC_URL"].as_str().unwrap();
+        assert_eq!(url, "https://override");
+    }
+
+    // ── `:?` error-if-unset ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_required_var_set() {
+        let mut env = HashMap::new();
+        env.insert("SECRET".to_string(), "abc123".to_string());
+
+        let mut val = serde_yaml::Value::String("${SECRET:?SECRET is required}".to_string());
+        interpolate(&mut val, &env).unwrap();
+        assert_eq!(val.as_str().unwrap(), "abc123");
+    }
+
+    #[test]
+    fn test_required_var_unset_errors() {
+        let env = HashMap::new();
+        let mut val = serde_yaml::Value::String("${SECRET:?SECRET is required}".to_string());
+        let err = interpolate(&mut val, &env).unwrap_err();
+        match err {
+            ComposeError::InterpolationError(msg) => assert_eq!(msg, "SECRET is required"),
+            other => panic!("expected InterpolationError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_required_var_empty_errors() {
+        let mut env = HashMap::new();
+        env.insert("SECRET".to_string(), "".to_string());
+
+        let mut val = serde_yaml::Value::String("${SECRET:?}".to_string());
+        let err = interpolate(&mut val, &env).unwrap_err();
+        match err {
+            ComposeError::InterpolationError(msg) => assert!(msg.contains("SECRET"), "msg was: {msg}"),
+            other => panic!("expected InterpolationError, got {other:?}"),
+        }
+    }
+
+    // ── Cross-field literal resolution still works ────────────────────────────
+
+    #[test]
+    fn test_cross_field_literal_env_reference() {
+        // A literal env value is available for interpolation of OTHER fields.
+        let yaml = "services:\n  web:\n    environment:\n      DB_URL: postgres://x\n    command: app --db ${DB_URL}\n";
+        let mut value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        // Mirror parse_with_interpolation: literal env values are seeded for cross-field use.
+        let mut env = build_env_map(&[]);
+        env.extend(extract_compose_env(&value));
+        interpolate(&mut value, &env).unwrap();
+        let cmd = value["services"]["web"]["command"].as_str().unwrap();
+        assert_eq!(cmd, "app --db postgres://x");
     }
 }
