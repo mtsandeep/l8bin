@@ -86,7 +86,7 @@ pub(super) async fn approved_docker_observe_requesters(
 
     let extra_env = read_local_project_env(&project.id);
     let plan = if let Some(yaml) = litebin_common::docker::DockerManager::read_compose(&project.id) {
-        let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env)
+        let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env, false)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid stored compose.yaml: {e}")))?;
         litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, &project.id, &extra_env, None)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stored compose plan error: {e}")))?
@@ -174,7 +174,7 @@ pub async fn start_services(
     let is_single_image = compose_yaml.is_none();
 
     let mut plan = if let Some(yaml) = compose_yaml {
-        let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env)
+        let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env, true)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid compose.yaml: {e}")))?;
         litebin_common::compose_run::ComposeRunPlan::from_compose(&compose, project_id, &extra_env, None)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose error: {e}")))?

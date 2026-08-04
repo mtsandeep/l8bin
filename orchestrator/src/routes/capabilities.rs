@@ -414,7 +414,7 @@ mod tests {
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 "#;
-            let mut plan = litebin_common::compose_run::build_compose_run_plan(compose, &project_id, &[], None)?;
+            let mut plan = litebin_common::compose_run::build_compose_run_plan(compose, &project_id, &[], None, false)?;
             anyhow::ensure!(plan.inject_docker_observe_proxy(&project_id)?);
             state.docker.pull_image_with_opts(litebin_common::types::DOCKER_OBSERVE_PROXY_IMAGE, false).await?;
             state.docker.ensure_project_network(&project_id, None).await?;

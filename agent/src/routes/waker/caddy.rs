@@ -15,7 +15,7 @@ fn get_domain(state: &AgentState) -> Option<String> {
 pub(super) fn find_public_service_upstream(project_id: &str) -> Option<String> {
     let compose_yaml = DockerManager::read_compose(project_id)?;
     let extra_env = crate::routes::containers::read_project_env(project_id);
-    let plan = litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None).ok()?;
+    let plan = litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None, false).ok()?;
 
     let public = plan.configs.iter().find(|c| c.is_public)?;
     let port = public.port.unwrap_or(80) as u16;

@@ -35,7 +35,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 
     let extra_env = crate::routes::containers::read_project_env(project_id);
 
-    let mut plan = litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None)?;
+    let mut plan = litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None, true)?;
     let requests_host_network = plan.configs.iter().any(|config| config.host_network);
     if requests_host_network {
         let meta = state.project_meta.read().unwrap().get(project_id).cloned();

@@ -8,24 +8,28 @@ use crate::error::ComposeError;
 ///
 /// Variable lookup order: (1) provided `env` map, (2) system environment variables.
 /// `$$` produces a literal `$`.
-pub fn interpolate(value: &mut serde_yaml::Value, env: &HashMap<String, String>) -> Result<()> {
+///
+/// `strict` controls `${VAR:?msg}`: when true, a missing/empty required variable is a
+/// hard error; when false it resolves to empty. Use strict only where the full env is
+/// known (e.g. on the node, with its `.env` loaded), not for central validation.
+pub fn interpolate(value: &mut serde_yaml::Value, env: &HashMap<String, String>, strict: bool) -> Result<()> {
     match value {
         serde_yaml::Value::Mapping(map) => {
             // Collect keys to avoid borrow issues
             let keys: Vec<serde_yaml::Value> = map.keys().cloned().collect();
             for key in keys {
                 if let Some(v) = map.get_mut(&key) {
-                    interpolate(v, env)?;
+                    interpolate(v, env, strict)?;
                 }
             }
         }
         serde_yaml::Value::Sequence(seq) => {
             for item in seq.iter_mut() {
-                interpolate(item, env)?;
+                interpolate(item, env, strict)?;
             }
         }
         serde_yaml::Value::String(s) => {
-            *s = interpolate_string(s, env)?;
+            *s = interpolate_string(s, env, strict)?;
         }
         _ => {}
     }
@@ -33,7 +37,7 @@ pub fn interpolate(value: &mut serde_yaml::Value, env: &HashMap<String, String>)
 }
 
 /// Replace variable references in a single string.
-fn interpolate_string(s: &str, env: &HashMap<String, String>) -> Result<String> {
+fn interpolate_string(s: &str, env: &HashMap<String, String>, strict: bool) -> Result<String> {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
 
@@ -60,7 +64,7 @@ fn interpolate_string(s: &str, env: &HashMap<String, String>) -> Result<String> 
                             }
                         }
                     }
-                    result.push_str(&resolve_expression(&expr, env)?);
+                    result.push_str(&resolve_expression(&expr, env, strict)?);
                 }
                 _ => {
                     // $VAR form — take alphanumeric + underscore chars
@@ -90,7 +94,7 @@ fn interpolate_string(s: &str, env: &HashMap<String, String>) -> Result<String> 
 
 /// Resolve a `${expr}` with modifiers: `:-` (default), `:+` (alternate), `:?` (error).
 /// Bare `-`/`+` are unsupported and fall through to a plain lookup.
-fn resolve_expression(expr: &str, env: &HashMap<String, String>) -> Result<String> {
+fn resolve_expression(expr: &str, env: &HashMap<String, String>, strict: bool) -> Result<String> {
     let (var, rest) = match expr.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
         Some(idx) => (&expr[..idx], &expr[idx..]),
         None => (expr, ""),
@@ -107,7 +111,7 @@ fn resolve_expression(expr: &str, env: &HashMap<String, String>) -> Result<Strin
     } else if let Some(alternate) = rest.strip_prefix(":+") {
         Ok(if val.is_empty() { String::new() } else { alternate.to_string() })
     } else if let Some(msg) = rest.strip_prefix(":?") {
-        if val.is_empty() {
+        if val.is_empty() && strict {
             let message = if msg.is_empty() {
                 format!("required variable '{var}' is not set or is empty")
             } else {
@@ -181,7 +185,7 @@ mod tests {
         env.insert("PORT".to_string(), "8080".to_string());
 
         let mut val = serde_yaml::Value::String("${PORT}".to_string());
-        interpolate(&mut val, &env).unwrap();
+        interpolate(&mut val, &env, false).unwrap();
         assert_eq!(val.as_str().unwrap(), "8080");
     }
 
@@ -191,7 +195,7 @@ mod tests {
         env.insert("HOST".to_string(), "localhost".to_string());
 
         let mut val = serde_yaml::Value::String("$HOST".to_string());
-        interpolate(&mut val, &env).unwrap();
+        interpolate(&mut val, &env, false).unwrap();
         assert_eq!(val.as_str().unwrap(), "localhost");
     }
 
@@ -201,7 +205,7 @@ mod tests {
         // MISSING_VAR is not set
 
         let mut val = serde_yaml::Value::String("${MISSING_VAR:-3306}".to_string());
-        interpolate(&mut val, &env).unwrap();
+        interpolate(&mut val, &env, false).unwrap();
         assert_eq!(val.as_str().unwrap(), "3306");
     }
 
@@ -211,7 +215,7 @@ mod tests {
         env.insert("DEBUG".to_string(), "1".to_string());
 
         let mut val = serde_yaml::Value::String("${DEBUG:+verbose}".to_string());
-        interpolate(&mut val, &env).unwrap();
+        interpolate(&mut val, &env, false).unwrap();
         assert_eq!(val.as_str().unwrap(), "verbose");
     }
 
@@ -221,21 +225,21 @@ mod tests {
         // DEBUG is not set
 
         let mut val = serde_yaml::Value::String("${DEBUG:+verbose}".to_string());
-        interpolate(&mut val, &env).unwrap();
+        interpolate(&mut val, &env, false).unwrap();
         assert_eq!(val.as_str().unwrap(), "");
     }
 
     #[test]
     fn test_escaped_dollar() {
         let mut val = serde_yaml::Value::String("$$HOME".to_string());
-        interpolate(&mut val, &HashMap::new()).unwrap();
+        interpolate(&mut val, &HashMap::new(), false).unwrap();
         assert_eq!(val.as_str().unwrap(), "$HOME");
     }
 
     #[test]
     fn test_unset_empty() {
         let mut val = serde_yaml::Value::String("${NONEXISTENT}".to_string());
-        interpolate(&mut val, &HashMap::new()).unwrap();
+        interpolate(&mut val, &HashMap::new(), false).unwrap();
         assert_eq!(val.as_str().unwrap(), "");
     }
 
@@ -246,7 +250,7 @@ mod tests {
 
         let yaml = "environment:\n  DATABASE_URL: postgres://${DB_HOST}:5432/mydb";
         let mut value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        interpolate(&mut value, &env).unwrap();
+        interpolate(&mut value, &env, false).unwrap();
 
         let url = value.get("environment").unwrap().get("DATABASE_URL").unwrap().as_str().unwrap();
         assert_eq!(url, "postgres://postgres:5432/mydb");
@@ -258,7 +262,7 @@ mod tests {
         env.insert("PORT".to_string(), "".to_string());
 
         let mut val = serde_yaml::Value::String("${PORT:-3000}".to_string());
-        interpolate(&mut val, &env).unwrap();
+        interpolate(&mut val, &env, false).unwrap();
         // :- checks if empty, should use default
         assert_eq!(val.as_str().unwrap(), "3000");
     }
@@ -284,7 +288,7 @@ mod tests {
         assert!(!compose_env.contains_key("PUBLIC_URL"));
 
         let env = build_env_map(&[]);
-        interpolate(&mut value, &env).unwrap();
+        interpolate(&mut value, &env, false).unwrap();
         let url = value["services"]["web"]["environment"]["PUBLIC_URL"].as_str().unwrap();
         assert_eq!(url, "https://cms.example.com");
     }
@@ -297,7 +301,7 @@ mod tests {
         let mut value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
         let mut env = build_env_map(&[]);
         env.insert("PUBLIC_URL".to_string(), "https://override".to_string());
-        interpolate(&mut value, &env).unwrap();
+        interpolate(&mut value, &env, false).unwrap();
         let url = value["services"]["web"]["environment"]["PUBLIC_URL"].as_str().unwrap();
         assert_eq!(url, "https://override");
     }
@@ -310,7 +314,7 @@ mod tests {
         env.insert("SECRET".to_string(), "abc123".to_string());
 
         let mut val = serde_yaml::Value::String("${SECRET:?SECRET is required}".to_string());
-        interpolate(&mut val, &env).unwrap();
+        interpolate(&mut val, &env, false).unwrap();
         assert_eq!(val.as_str().unwrap(), "abc123");
     }
 
@@ -318,7 +322,7 @@ mod tests {
     fn test_required_var_unset_errors() {
         let env = HashMap::new();
         let mut val = serde_yaml::Value::String("${SECRET:?SECRET is required}".to_string());
-        let err = interpolate(&mut val, &env).unwrap_err();
+        let err = interpolate(&mut val, &env, true).unwrap_err();
         match err {
             ComposeError::InterpolationError(msg) => assert_eq!(msg, "SECRET is required"),
             other => panic!("expected InterpolationError, got {other:?}"),
@@ -331,11 +335,21 @@ mod tests {
         env.insert("SECRET".to_string(), "".to_string());
 
         let mut val = serde_yaml::Value::String("${SECRET:?}".to_string());
-        let err = interpolate(&mut val, &env).unwrap_err();
+        let err = interpolate(&mut val, &env, true).unwrap_err();
         match err {
             ComposeError::InterpolationError(msg) => assert!(msg.contains("SECRET"), "msg was: {msg}"),
             other => panic!("expected InterpolationError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_required_var_lenient_resolves_empty() {
+        // Non-strict mode (central validation, no runtime secrets): a missing
+        // required var resolves to empty instead of erroring.
+        let env = HashMap::new();
+        let mut val = serde_yaml::Value::String("${SECRET:?SECRET is required}".to_string());
+        interpolate(&mut val, &env, false).unwrap();
+        assert_eq!(val.as_str().unwrap(), "");
     }
 
     // ── Cross-field literal resolution still works ────────────────────────────
@@ -348,7 +362,7 @@ mod tests {
         // Mirror parse_with_interpolation: literal env values are seeded for cross-field use.
         let mut env = build_env_map(&[]);
         env.extend(extract_compose_env(&value));
-        interpolate(&mut value, &env).unwrap();
+        interpolate(&mut value, &env, false).unwrap();
         let cmd = value["services"]["web"]["command"].as_str().unwrap();
         assert_eq!(cmd, "app --db postgres://x");
     }

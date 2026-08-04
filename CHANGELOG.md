@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Installer update as non-root on root-owned install** — `update`/`certs` now detect `/opt/litebin` regardless of invoking user (matched what the menu reported); when the dir isn't writable, it fails with a clear message and the exact `sudo bash -s …` command instead of a misleading "not found".
+- **`${VAR:?msg}` tripped at deploy time** — Required-var check is now enforced only at container start (on the node, with its `.env` loaded); central validation is lenient since it has no access to runtime secrets.
 
 ## [0.3.9] - 2026-08-04
 

@@ -268,13 +268,17 @@ impl ComposeRunPlan {
 /// Build a `ComposeRunPlan` from compose YAML string.
 /// Parses with variable interpolation, validates, and builds configs in one step.
 /// Use this when you just need the plan (e.g. agent wake, batch-run).
+///
+/// `strict` controls `${VAR:?msg}`: pass `true` at runtime (node `.env` available),
+/// `false` for central validation/analysis that has no runtime secrets.
 pub fn build_compose_run_plan(
     compose_yaml: &str,
     project_id: &str,
     extra_env: &[String],
     instance_id: Option<&str>,
+    strict: bool,
 ) -> anyhow::Result<ComposeRunPlan> {
-    let compose = ComposeParser::parse_with_interpolation(compose_yaml, extra_env)
+    let compose = ComposeParser::parse_with_interpolation(compose_yaml, extra_env, strict)
         .map_err(|e| anyhow::anyhow!("invalid compose: {}", e))?;
 
     ComposeRunPlan::from_compose(&compose, project_id, extra_env, instance_id)
@@ -413,7 +417,7 @@ services:
   app:
     image: example/app
 "#;
-        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None).unwrap();
+        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None, false).unwrap();
         plan.inject_docker_observe_proxy(&project_id).unwrap();
 
         let observer = plan.configs.iter().find(|c| c.service_name == "observer").unwrap();
@@ -452,7 +456,7 @@ services:
     #[test]
     fn docker_observe_grant_without_socket_request_does_not_start_proxy() {
         let yaml = "services:\n  app:\n    image: example/app\n";
-        let mut plan = build_compose_run_plan(yaml, "observe-unused", &[], None).unwrap();
+        let mut plan = build_compose_run_plan(yaml, "observe-unused", &[], None, false).unwrap();
         assert!(!plan.inject_docker_observe_proxy("observe-unused").unwrap());
         assert!(!plan.service_order.iter().any(|name| name == crate::types::DOCKER_PROXY_SERVICE));
     }
@@ -468,11 +472,11 @@ services:
   unrelated:
     image: registry.invalid/generic-worker:fixture
 "#;
-        let mut granted = build_compose_run_plan(yaml, "observe-revoked", &[], None).unwrap();
+        let mut granted = build_compose_run_plan(yaml, "observe-revoked", &[], None, false).unwrap();
         assert!(granted.inject_docker_observe_proxy("observe-revoked").unwrap());
         assert!(granted.service_order.iter().any(|service| service == crate::types::DOCKER_PROXY_SERVICE));
 
-        let revoked = build_compose_run_plan(yaml, "observe-revoked", &[], None).unwrap();
+        let revoked = build_compose_run_plan(yaml, "observe-revoked", &[], None, false).unwrap();
         assert!(revoked.service_order.iter().all(|service| service != crate::types::DOCKER_PROXY_SERVICE));
         let collector = revoked.configs.iter().find(|config| config.service_name == "collector").unwrap();
         assert!(!collector.docker_observe);
@@ -501,7 +505,7 @@ services:
   unrelated:
     image: example/not-an-observer
 "#;
-        let plan = build_compose_run_plan(yaml, "requester-names", &[], None).unwrap();
+        let plan = build_compose_run_plan(yaml, "requester-names", &[], None, false).unwrap();
 
         assert_eq!(
             plan.docker_socket_requester_names(),
@@ -520,7 +524,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 "#;
-        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None).unwrap();
+        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None, false).unwrap();
         assert!(plan.configs[0].host_network);
         assert!(!plan.configs[0].allow_raw_ports);
         assert!(plan.configs[0].port.is_none());
@@ -628,7 +632,7 @@ services:
     #[test]
     fn reserved_proxy_service_name_is_rejected_by_run_plan() {
         let yaml = "services:\n  litebin-docker-proxy:\n    image: attacker/image\n";
-        let error = match build_compose_run_plan(yaml, "reserved-name", &[], None) {
+        let error = match build_compose_run_plan(yaml, "reserved-name", &[], None, false) {
             Ok(_) => panic!("reserved proxy service name was accepted"),
             Err(error) => error,
         };
@@ -690,7 +694,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 "#;
-        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None).unwrap();
+        let mut plan = build_compose_run_plan(yaml, &project_id, &[], None, false).unwrap();
         assert!(plan.inject_docker_observe_proxy(&project_id).unwrap());
         let proxy = plan.configs.iter_mut().find(|config| config.is_managed_docker_proxy).unwrap();
         let config_path = std::fs::canonicalize(

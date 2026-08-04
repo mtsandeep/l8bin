@@ -155,7 +155,7 @@ pub async fn batch_run(State(state): State<AgentState>, Json(req): Json<BatchRun
     }
     let extra_env = read_project_env(&req.project_id);
     let mut plan =
-        match litebin_common::compose_run::build_compose_run_plan(&req.compose_yaml, &req.project_id, &extra_env, None)
+        match litebin_common::compose_run::build_compose_run_plan(&req.compose_yaml, &req.project_id, &extra_env, None, true)
         {
             Ok(plan) => plan,
             Err(e) => {

@@ -25,10 +25,15 @@ impl ComposeParser {
 
     /// Parse a compose YAML string with variable interpolation.
     ///
-    /// Supports `${VAR}`, `${VAR:-default}`, `${VAR:+alternate}`, `$VAR`, and `$$`.
-    /// Variables are resolved from: (1) the compose file's own `environment` sections,
-    /// (2) `extra_env` KEY=VALUE strings (e.g. from `.env` files), (3) system environment.
-    pub fn parse_with_interpolation(yaml: &str, extra_env: &[String]) -> Result<ComposeFile> {
+    /// Supports `${VAR}`, `${VAR:-default}`, `${VAR:+alternate}`, `${VAR:?msg}`,
+    /// `$VAR`, and `$$`. Variables are resolved from: (1) the compose file's own
+    /// `environment` sections, (2) `extra_env` KEY=VALUE strings (e.g. from `.env`
+    /// files), (3) system environment.
+    ///
+    /// `strict` controls `${VAR:?msg}`: pass `true` only where the full env is known
+    /// (on the node, with its `.env` loaded); pass `false` for central validation,
+    /// which has no access to runtime secrets.
+    pub fn parse_with_interpolation(yaml: &str, extra_env: &[String], strict: bool) -> Result<ComposeFile> {
         let mut value: serde_yaml::Value = serde_yaml::from_str(yaml)?;
 
         // Pre-extract environment values from the compose itself (they define the values,
@@ -39,7 +44,7 @@ impl ComposeParser {
         let mut env = interpolate::build_env_map(extra_env);
         env.extend(compose_env);
 
-        interpolate::interpolate(&mut value, &env)?;
+        interpolate::interpolate(&mut value, &env, strict)?;
 
         let compose: ComposeFile = serde_yaml::from_value(value)?;
         Ok(compose)

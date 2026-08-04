@@ -223,7 +223,7 @@ pub async fn deploy_compose(
     // Parse compose file with variable interpolation for validation.
     // The original YAML (with ${VAR} references) is stored to disk so env changes
     // take effect on restart; interpolation happens again at container start time.
-    let compose = match compose_bollard::ComposeParser::parse_with_interpolation(&compose_yaml, &[]) {
+    let compose = match compose_bollard::ComposeParser::parse_with_interpolation(&compose_yaml, &[], false) {
         Ok(c) => c,
         Err(e) => {
             return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("invalid compose YAML: {e}")})))
