@@ -8,6 +8,7 @@ use utoipa::OpenApi;
 mod db;
 mod nodes;
 mod openapi;
+mod platform;
 mod routes;
 mod routing_helpers;
 mod sleep;
@@ -40,6 +41,8 @@ use litebin_common::routing::{MasterProxyRouter, RoutingProvider};
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
+    /// Live platform hostname settings (DB-backed; prefer over config.domain/subdomains).
+    pub platform: platform::PlatformHandle,
     pub db: SqlitePool,
     pub docker: Arc<DockerManager>,
     pub router: Arc<RwLock<Arc<dyn RoutingProvider>>>,
@@ -56,6 +59,8 @@ pub struct AppState {
     pub multi_svc_health_check: Arc<DashMap<String, std::time::Instant>>,
     // In-memory deploy log buffers (project_id -> log lines)
     pub deploy_logs: Arc<DashMap<String, std::sync::Mutex<Vec<String>>>>,
+    /// In-flight platform domain change jobs (job_id -> job).
+    pub domain_jobs: Arc<DashMap<String, platform::DomainJob>>,
 }
 
 #[tokio::main]
@@ -133,6 +138,27 @@ async fn main() -> anyhow::Result<()> {
     .bind(&config.poke_subdomain)
     .execute(&db)
     .await?;
+
+    // Platform hostname settings: seed from env once, then prefer DB
+    let platform = platform::load_platform_settings(&db, &config).await?;
+
+    // Prefer routing_mode + CF credentials from DB over env after seed
+    let db_routing_mode: String = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'routing_mode'")
+        .fetch_optional(&db)
+        .await?
+        .unwrap_or_else(|| config.routing_mode.to_string());
+    let routing_mode: litebin_common::types::RoutingMode = match db_routing_mode.as_str() {
+        "cloudflare_dns" => litebin_common::types::RoutingMode::CloudflareDns,
+        _ => litebin_common::types::RoutingMode::MasterProxy,
+    };
+    let cf_token: String = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'cloudflare_api_token'")
+        .fetch_optional(&db)
+        .await?
+        .unwrap_or_else(|| config.cloudflare_api_token.clone());
+    let cf_zone: String = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'cloudflare_zone_id'")
+        .fetch_optional(&db)
+        .await?
+        .unwrap_or_else(|| config.cloudflare_zone_id.clone());
 
     // Read actual global defaults from DB (user may have changed them after initial seed)
     let default_mem_mb: i64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_memory_limit_mb'")
@@ -239,11 +265,11 @@ async fn main() -> anyhow::Result<()> {
     // Ensure the app network exists
     docker.ensure_network().await?;
 
-    // Init routing provider
+    // Init routing provider (routing_mode + CF from DB)
     let router = Arc::new(RwLock::new(build_routing_provider(
-        &config.routing_mode,
-        &config.cloudflare_api_token,
-        &config.cloudflare_zone_id,
+        &routing_mode,
+        &cf_token,
+        &cf_zone,
         &config.caddy_admin_url,
         node_clients.clone(),
         db.clone(),
@@ -255,6 +281,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         config: Arc::new(config.clone()),
+        platform: platform.clone(),
         db: db.clone(),
         docker: Arc::new(docker),
         router: router.clone(),
@@ -266,26 +293,29 @@ async fn main() -> anyhow::Result<()> {
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
+        domain_jobs: Arc::new(DashMap::new()),
     };
 
     // Sync routes for any previously running projects (retry up to 5 times)
+    let platform_snap = platform.snapshot();
     let orchestrator_upstream = format!("litebin-orchestrator:{}", config.port);
     for attempt in 1..=5 {
-        let routes = match routing_helpers::resolve_all_routes(&db, &config.domain, &orchestrator_upstream).await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(error = %e, "startup: failed to resolve routes (attempt {})", attempt);
-                Vec::new()
-            }
-        };
+        let routes =
+            match routing_helpers::resolve_all_routes(&db, &platform_snap.domain, &orchestrator_upstream).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(error = %e, "startup: failed to resolve routes (attempt {})", attempt);
+                    Vec::new()
+                }
+            };
         let r = router.read().await.clone();
         match r
             .sync_routes(
                 &routes,
-                &config.domain,
+                &platform_snap.domain,
                 &orchestrator_upstream,
-                &config.dashboard_subdomain,
-                &config.poke_subdomain,
+                &platform_snap.dashboard_subdomain,
+                &platform_snap.poke_subdomain,
                 true,
             )
             .await
@@ -330,6 +360,7 @@ async fn main() -> anyhow::Result<()> {
         state.db.clone(),
         state.router.clone(),
         state.config.clone(),
+        state.platform.clone(),
         shutdown_rx.clone(),
     ));
 
@@ -390,6 +421,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/settings", patch(routes::global_settings::update_settings))
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
         .route("/settings/sync-dns", post(routes::global_settings::sync_dns))
+        .route("/settings/domain/preflight", post(routes::global_settings::domain_preflight))
+        .route("/settings/domain/apply", post(routes::global_settings::domain_apply))
+        .route("/settings/domain/jobs/{id}", get(routes::global_settings::domain_job_status))
+        .route("/settings/domain/jobs/{id}/retry", post(routes::global_settings::domain_job_retry))
         .route("/system/stats", get(routes::health::system_stats))
         .route("/scan", get(routes::scan::scan_containers))
         .route("/scan/import", post(routes::scan::import_containers))
@@ -435,7 +470,7 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(
         addr = %addr,
-        domain = %config.domain,
+        domain = %platform.domain(),
         version = env!("CARGO_PKG_VERSION"),
         "startup complete — accepting connections"
     );

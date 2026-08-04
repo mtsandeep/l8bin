@@ -260,7 +260,7 @@ pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>)
     let register_body = serde_json::json!({
         "node_id": node.id,
         "secret": secret,
-        "domain": state.config.domain,
+        "domain": state.platform.domain(),
         "wake_report_url": format_wake_report_url(&state),
         "heartbeat_url": format_heartbeat_url(&state),
     });
@@ -325,7 +325,7 @@ pub fn format_wake_report_url(state: &AppState) -> String {
         format!("http://localhost:{}/internal/wake-report", state.config.port)
     } else {
         // Production: route through Caddy (port 443) for proper TLS
-        format!("https://{}.{}/internal/wake-report", state.config.poke_subdomain, state.config.domain)
+        format!("https://{}.{}/internal/wake-report", state.platform.poke_subdomain(), state.platform.domain())
     }
 }
 
@@ -335,8 +335,72 @@ pub fn format_heartbeat_url(state: &AppState) -> String {
         format!("http://localhost:{}/internal/heartbeat", state.config.port)
     } else {
         // Production: route through Caddy (port 443) for proper TLS
-        format!("https://{}.{}/internal/heartbeat", state.config.poke_subdomain, state.config.domain)
+        format!("https://{}.{}/internal/heartbeat", state.platform.poke_subdomain(), state.platform.domain())
     }
+}
+
+/// Push /internal/register to all online remote agents with current platform domain + URLs.
+/// Returns (success_count, error messages).
+pub async fn reregister_online_agents(state: &AppState) -> (usize, Vec<String>) {
+    let nodes = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE status = 'online' AND id != 'local'")
+        .fetch_all(&state.db)
+        .await
+    {
+        Ok(n) => n,
+        Err(e) => return (0, vec![format!("failed to list nodes: {e}")]),
+    };
+
+    let mut ok = 0usize;
+    let mut errs = Vec::new();
+
+    for node in nodes {
+        let client = match crate::nodes::client::get_node_client(&state.node_clients, &node.id) {
+            Ok(c) => c,
+            Err(_) => {
+                match build_node_client(
+                    &state.config.ca_cert_path,
+                    &state.config.client_cert_path,
+                    &state.config.client_key_path,
+                ) {
+                    Ok(c) => {
+                        let arc = Arc::new(c);
+                        state.node_clients.insert(node.id.clone(), arc.clone());
+                        arc
+                    }
+                    Err(e) => {
+                        errs.push(format!("node {}: cannot build client: {e}", node.id));
+                        continue;
+                    }
+                }
+            }
+        };
+
+        let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
+        let secret = node.agent_secret.clone().unwrap_or_default();
+        let register_body = serde_json::json!({
+            "node_id": node.id,
+            "secret": secret,
+            "domain": state.platform.domain(),
+            "wake_report_url": format_wake_report_url(state),
+            "heartbeat_url": format_heartbeat_url(state),
+        });
+
+        match client.post(&format!("{}/internal/register", base_url)).json(&register_body).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                ok += 1;
+                tracing::info!(node_id = %node.id, "re-registered agent with new platform domain");
+            }
+            Ok(resp) => {
+                let body = resp.text().await.unwrap_or_default();
+                errs.push(format!("node {}: agent rejected registration: {body}", node.id));
+            }
+            Err(e) => {
+                errs.push(format!("node {}: failed to register: {e}", node.id));
+            }
+        }
+    }
+
+    (ok, errs)
 }
 
 #[utoipa::path(

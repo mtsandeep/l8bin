@@ -227,12 +227,12 @@ pub async fn create_project(
     }
 
     // Reserve the dashboard subdomain
-    if payload.id == state.config.dashboard_subdomain {
+    if payload.id == state.platform.dashboard_subdomain() {
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "This ID is reserved"}))));
     }
 
     // Reserve the poke subdomain
-    if payload.id == state.config.poke_subdomain {
+    if payload.id == state.platform.poke_subdomain() {
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "This ID is reserved"}))));
     }
 

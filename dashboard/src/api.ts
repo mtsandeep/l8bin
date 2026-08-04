@@ -176,6 +176,35 @@ export interface GlobalSettings {
   cloudflare_zone_id: string;
   dashboard_subdomain: string;
   poke_subdomain: string;
+  tryout?: boolean;
+}
+
+export interface DomainPreflightResult {
+  ok: boolean;
+  domain: string;
+  errors: string[];
+  warnings: string[];
+}
+
+export type DomainJobStatus = 'pending' | 'running' | 'failed' | 'completed';
+export type DomainStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+
+export interface DomainJobStep {
+  id: string;
+  label: string;
+  status: DomainStepStatus;
+  error?: string;
+}
+
+export interface DomainJob {
+  id: string;
+  status: DomainJobStatus;
+  domain: string;
+  old_domain: string;
+  steps: DomainJobStep[];
+  error?: string;
+  resume_from: number;
+  dashboard_url: string;
 }
 
 export async function fetchGlobalSettings(): Promise<GlobalSettings> {
@@ -194,6 +223,55 @@ export async function updateGlobalSettings(patch: Partial<GlobalSettings>): Prom
   if (!res.ok) {
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Failed to update settings'));
+  }
+  return res.json();
+}
+
+export async function domainPreflight(domain: string): Promise<DomainPreflightResult> {
+  const res = await fetch(`${API_BASE}/settings/domain/preflight`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ domain }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Domain preflight failed'));
+  }
+  return res.json();
+}
+
+export async function domainApply(domain: string, acknowledgeDns: boolean): Promise<{ job_id: string }> {
+  const res = await fetch(`${API_BASE}/settings/domain/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ domain, acknowledge_dns: acknowledgeDns }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Failed to start domain change'));
+  }
+  return res.json();
+}
+
+export async function fetchDomainJob(jobId: string): Promise<DomainJob> {
+  const res = await fetch(`${API_BASE}/settings/domain/jobs/${jobId}`, { credentials: 'include' });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Failed to fetch domain job'));
+  }
+  return res.json();
+}
+
+export async function retryDomainJob(jobId: string): Promise<{ job_id: string }> {
+  const res = await fetch(`${API_BASE}/settings/domain/jobs/${jobId}/retry`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Failed to retry domain job'));
   }
   return res.json();
 }

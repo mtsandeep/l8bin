@@ -14,6 +14,7 @@ use tower_sessions_sqlx_store::SqliteStore;
 use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::config::Config;
+use crate::platform::{PlatformHandle, PlatformSettings};
 use litebin_common::docker::DockerManager;
 use litebin_common::routing::{MasterProxyRouter, RoutingProvider};
 
@@ -41,8 +42,16 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
         String::new(),
     ))));
 
+    let platform = PlatformHandle::new(PlatformSettings {
+        domain: config.domain.clone(),
+        dashboard_subdomain: config.dashboard_subdomain.clone(),
+        poke_subdomain: config.poke_subdomain.clone(),
+        dns_target: String::new(),
+    });
+
     let state = AppState {
         config: config.clone(),
+        platform,
         db: db.clone(),
         docker,
         router,
@@ -54,6 +63,7 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
+        domain_jobs: Arc::new(DashMap::new()),
     };
 
     let app = build_router(state);
@@ -89,8 +99,16 @@ pub async fn test_server() -> TestServer {
         String::new(),
     ))));
 
+    let platform = PlatformHandle::new(PlatformSettings {
+        domain: config.domain.clone(),
+        dashboard_subdomain: config.dashboard_subdomain.clone(),
+        poke_subdomain: config.poke_subdomain.clone(),
+        dns_target: String::new(),
+    });
+
     let state = AppState {
         config: config.clone(),
+        platform,
         db: db.clone(),
         docker,
         router,
@@ -102,6 +120,7 @@ pub async fn test_server() -> TestServer {
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
+        domain_jobs: Arc::new(DashMap::new()),
     };
 
     let app = build_router(state);

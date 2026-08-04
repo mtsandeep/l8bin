@@ -583,15 +583,7 @@ ORCH_DOCKERFILE
   echo -e "${BOLD}LiteBin Master Setup${NC}"
   echo ""
 
-  local domain_default="localhost"
-  if is_linux; then
-    domain_default=""
-  fi
-
-  prompt "Domain name (e.g. example.com)" DOMAIN "$domain_default"
-  [ -z "$DOMAIN" ] && die "Domain is required"
-
-  # Auto-detect public IP for DNS instructions
+  # Auto-detect public IP early (needed for tryout sslip domain and DNS hints)
   PUBLIC_IP=$(curl -sf --connect-timeout 3 --max-time 5 https://api.ipify.org 2>/dev/null \
     || curl -sf --connect-timeout 3 --max-time 5 https://checkip.amazonaws.com 2>/dev/null \
     || curl -sf --connect-timeout 3 --max-time 5 https://ipv4.icanhazip.com 2>/dev/null \
@@ -599,13 +591,50 @@ ORCH_DOCKERFILE
   PUBLIC_IP=$(echo "$PUBLIC_IP" | tr -d '[:space:]')
   [ -z "$PUBLIC_IP" ] && warn "Could not detect public IP automatically — update it via Dashboard > Settings after setup"
 
+  local tryout=0
+  local domain_default="localhost"
+  if is_linux; then
+    domain_default=""
+    echo "  Do you have a domain or subdomain ready for LiteBin?"
+    echo "    Yes — use your own domain (recommended for production)"
+    echo "    No  — tryout with ${PUBLIC_IP:-YOUR_IP}.sslip.io (full features; TLS may fail)"
+    echo ""
+    local domain_ready
+    echo -ne "${CYAN}Domain ready? [y/N]: ${NC}"
+    _tty_read domain_ready
+    case "${domain_ready}" in
+      [yY]|[yY][eE][sS])
+        prompt "Domain name (e.g. example.com or apps.example.com)" DOMAIN "$domain_default"
+        [ -z "$DOMAIN" ] && die "Domain is required"
+        ;;
+      *)
+        if [ -z "$PUBLIC_IP" ]; then
+          die "Cannot set up tryout without a public IP. Set one manually or provide a domain."
+        fi
+        # sslip.io uses dashed IPs for hostnames (1-2-3-4.sslip.io)
+        local sslip_host
+        sslip_host=$(echo "$PUBLIC_IP" | tr '.' '-')
+        DOMAIN="${sslip_host}.sslip.io"
+        tryout=1
+        echo ""
+        echo -e "  ${YELLOW}Tryout mode:${NC} DOMAIN=${DOMAIN}"
+        echo "  Full LiteBin features work. Let's Encrypt may fail on shared sslip DNS."
+        echo "  Change to a real domain later in Dashboard → Settings."
+        echo ""
+        ;;
+    esac
+  else
+    prompt "Domain name (e.g. example.com)" DOMAIN "$domain_default"
+    [ -z "$DOMAIN" ] && die "Domain is required"
+  fi
+
   local dash_default="l8bin"
 
   prompt "Dashboard subdomain" DASHBOARD_SUBDOMAIN "$dash_default"
   prompt "Poke subdomain" POKE_SUBDOMAIN "poke"
 
   local routing_mode="master_proxy"
-  if [ "$DOMAIN" != "localhost" ]; then
+  if [ "$tryout" -eq 0 ] && [ "$DOMAIN" != "localhost" ]; then
     echo ""
     echo "  Routing mode:"
     echo "    1) master_proxy  (default — all traffic through this server)"
@@ -618,6 +647,8 @@ ORCH_DOCKERFILE
       2) routing_mode="cloudflare_dns" ;;
       *) routing_mode="master_proxy" ;;
     esac
+  elif [ "$tryout" -eq 1 ]; then
+    echo "  Routing mode: master_proxy (required for tryout / sslip)"
   fi
 
   local cf_api_token="" cf_zone_id=""
@@ -766,25 +797,33 @@ CADDYFILE
 
   if [ "$DOMAIN" != "localhost" ]; then
     local ip_display="${PUBLIC_IP:-<your server IP>}"
-    echo "  DNS setup required:"
-    if [ "$routing_mode" = "cloudflare_dns" ]; then
-      echo -e "    You chose ${BOLD}cloudflare_dns${NC} mode."
+    if echo "$DOMAIN" | grep -Eq '\.(sslip\.io|nip\.io)$'; then
+      echo -e "  ${YELLOW}Tryout DNS:${NC} no manual DNS needed for ${DOMAIN}."
+      echo "  TLS (Let's Encrypt) may fail on shared sslip/nip hosts — HTTP may still work."
+      echo "  When ready for production, set a real domain in Dashboard → Settings."
       echo ""
-      echo "    DNS records for dashboard and poke have been added automatically."
-      echo "    Please verify in your Cloudflare dashboard that these A records exist:"
-      echo ""
-      echo -e "      ${YELLOW}A${NC}  ${DASHBOARD_SUBDOMAIN}.${DOMAIN}  →  ${ip_display}"
-      echo -e "      ${YELLOW}A${NC}  ${POKE_SUBDOMAIN}.${DOMAIN}  →  ${ip_display}"
-      echo ""
-      echo "    All app subdomains are managed automatically via the Cloudflare API."
     else
-      echo "    You chose ${BOLD}master_proxy${NC} mode. Create this DNS record (DNS-only, grey cloud):"
+      echo "  DNS setup required:"
+      if [ "$routing_mode" = "cloudflare_dns" ]; then
+        echo -e "    You chose ${BOLD}cloudflare_dns${NC} mode."
+        echo ""
+        echo "    DNS records for dashboard and poke have been added automatically."
+        echo "    Please verify in your Cloudflare dashboard that these A records exist:"
+        echo ""
+        echo -e "      ${YELLOW}A${NC}  ${DASHBOARD_SUBDOMAIN}.${DOMAIN}  →  ${ip_display}"
+        echo -e "      ${YELLOW}A${NC}  ${POKE_SUBDOMAIN}.${DOMAIN}  →  ${ip_display}"
+        echo ""
+        echo "    All app subdomains are managed automatically via the Cloudflare API."
+      else
+        echo "    You chose ${BOLD}master_proxy${NC} mode. Create this DNS record (DNS-only, grey cloud):"
+        echo ""
+        echo -e "      ${YELLOW}*${NC}  .${DOMAIN}  →  ${ip_display}"
+        echo ""
+        echo "    This wildcard record routes all subdomains (*.${DOMAIN}) to this server."
+        echo "    Specific records (e.g. mail.${DOMAIN}) override the wildcard and can point elsewhere."
+      fi
       echo ""
-      echo -e "      ${YELLOW}*${NC}  .${DOMAIN}  →  ${ip_display}"
-      echo ""
-      echo "    This wildcard record routes all subdomains (*.${DOMAIN}) to this server."
     fi
-    echo ""
   fi
 
   echo "  Next steps:"

@@ -231,7 +231,7 @@ async fn set_project_running(state: &AppState, project: &Project) {
     // Sync routes
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
     let routes =
-        match crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await
+        match crate::routing_helpers::resolve_all_routes(&state.db, &state.platform.domain(), &orchestrator_upstream).await
         {
             Ok(r) => r,
             Err(e) => {
@@ -245,10 +245,10 @@ async fn set_project_running(state: &AppState, project: &Project) {
         .await
         .sync_routes(
             &routes,
-            &state.config.domain,
+            &state.platform.domain(),
             &orchestrator_upstream,
-            &state.config.dashboard_subdomain,
-            &state.config.poke_subdomain,
+            &state.platform.dashboard_subdomain(),
+            &state.platform.poke_subdomain(),
             true,
         )
         .await;

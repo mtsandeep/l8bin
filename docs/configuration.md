@@ -6,9 +6,9 @@ All configuration is done via environment variables in `.env` after install.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DOMAIN` | *(required on Linux)* | Your server domain (e.g. `example.com`) |
-| `DASHBOARD_SUBDOMAIN` | `l8bin` | Dashboard served at `{subdomain}.{domain}` |
-| `POKE_SUBDOMAIN` | `poke` | Wake-report endpoint subdomain |
+| `DOMAIN` | *(seeded at install)* | Platform domain (e.g. `example.com` or `apps.example.com`). After install, live value is stored in the DB and editable via Dashboard → Settings. |
+| `DASHBOARD_SUBDOMAIN` | `l8bin` | Dashboard served at `{subdomain}.{domain}` (DB-backed after seed) |
+| `POKE_SUBDOMAIN` | `poke` | Wake-report endpoint subdomain (DB-backed; no Settings UI) |
 | `CADDY_ADMIN_URL` | `http://caddy:2019` | Caddy admin API URL |
 | `DATABASE_URL` | `sqlite:./data/litebin.db` | SQLite database path |
 | `DOCKER_NETWORK` | `litebin-network` | Docker bridge network shared by all services and app containers |

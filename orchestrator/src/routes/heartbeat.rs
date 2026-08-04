@@ -112,9 +112,9 @@ pub async fn heartbeat(
         return StatusCode::OK;
     }
 
-    let domain_suffix = format!(".{}", state.config.domain);
-    let dashboard_host = format!("{}.{}", state.config.dashboard_subdomain, state.config.domain);
-    let poke_host = format!("{}.{}", state.config.poke_subdomain, state.config.domain);
+    let domain_suffix = format!(".{}", state.platform.domain());
+    let dashboard_host = format!("{}.{}", state.platform.dashboard_subdomain(), state.platform.domain());
+    let poke_host = format!("{}.{}", state.platform.poke_subdomain(), state.platform.domain());
 
     let mut subdomain_ids: Vec<&str> = Vec::new();
     let mut custom_domains: Vec<&str> = Vec::new();

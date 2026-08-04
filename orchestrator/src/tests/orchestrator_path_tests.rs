@@ -66,6 +66,15 @@ async fn live_orchestrator_state() -> anyhow::Result<AppState> {
 
     Ok(AppState {
         config: Arc::new(super::helpers::test_config()),
+        platform: {
+            let c = super::helpers::test_config();
+            crate::platform::PlatformHandle::new(crate::platform::PlatformSettings {
+                domain: c.domain,
+                dashboard_subdomain: c.dashboard_subdomain,
+                poke_subdomain: c.poke_subdomain,
+                dns_target: String::new(),
+            })
+        },
         db,
         docker: Arc::new(docker),
         router,
@@ -77,6 +86,7 @@ async fn live_orchestrator_state() -> anyhow::Result<AppState> {
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
+        domain_jobs: Arc::new(DashMap::new()),
     })
 }
 

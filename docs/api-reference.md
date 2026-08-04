@@ -128,8 +128,12 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/settings` | Session | Get global settings |
-| `PATCH` | `/settings` | Session | Update global settings (hot-swaps router if routing_mode changes) |
+| `GET` | `/settings` | Session | Get global settings (includes `tryout` when domain is sslip/nip) |
+| `PATCH` | `/settings` | Session | Update global settings (hot-swaps router if routing_mode changes). Domain must use `/settings/domain/apply`. Dashboard subdomain change syncs routes and re-registers agents. |
+| `POST` | `/settings/domain/preflight` | Session | Validate a new platform domain (`{ domain }` → `{ ok, errors[], warnings[] }`) |
+| `POST` | `/settings/domain/apply` | Session | Start domain change job (`{ domain, acknowledge_dns }` → `{ job_id }`) |
+| `GET` | `/settings/domain/jobs/:id` | Session | Poll domain change job progress |
+| `POST` | `/settings/domain/jobs/:id/retry` | Session | Retry a failed domain change job from the failed step |
 | `POST` | `/settings/cleanup-dns` | Session | Delete all Cloudflare A records for the domain |
 | `POST` | `/settings/sync-dns` | Session | Sync Cloudflare DNS records |
 

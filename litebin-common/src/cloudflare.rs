@@ -42,6 +42,47 @@ impl CloudflareClient {
         format!("https://api.cloudflare.com/client/v4/zones/{}/dns_records", self.zone_id)
     }
 
+    fn zone_url(&self) -> String {
+        format!("https://api.cloudflare.com/client/v4/zones/{}", self.zone_id)
+    }
+
+    /// Fetch the zone name (e.g. `example.com`) for the configured zone ID.
+    pub async fn get_zone_name(&self) -> anyhow::Result<String> {
+        #[derive(Debug, Deserialize)]
+        struct ZoneInfo {
+            name: String,
+        }
+
+        let resp = self
+            .client
+            .get(self.zone_url())
+            .header("Authorization", format!("Bearer {}", self.api_token))
+            .send()
+            .await
+            .context("cloudflare get_zone request failed")?;
+
+        let status = resp.status();
+        let raw = resp.text().await.context("cloudflare get_zone: failed to read response body")?;
+
+        let body: CfResponse<ZoneInfo> = serde_json::from_str(&raw)
+            .with_context(|| format!("cloudflare get_zone response parse failed (status {}): {}", status, raw))?;
+
+        if !body.success {
+            let errors =
+                body.errors.unwrap_or_default().iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
+            anyhow::bail!("cloudflare get_zone failed: {}", errors);
+        }
+
+        body.result.map(|z| z.name).context("cloudflare get_zone returned no result")
+    }
+
+    /// True if `hostname` is the zone apex or a subdomain of it.
+    pub fn zone_covers_hostname(zone_name: &str, hostname: &str) -> bool {
+        let zone = zone_name.trim_end_matches('.').to_ascii_lowercase();
+        let host = hostname.trim_end_matches('.').to_ascii_lowercase();
+        host == zone || host.ends_with(&format!(".{zone}"))
+    }
+
     /// List DNS records, optionally filtered by name and type.
     pub async fn list_records(&self, name: &str, record_type: &str) -> anyhow::Result<Vec<DnsRecord>> {
         let url = format!("{}?name={}&type={}", self.base_url(), urlencoding::encode(name), record_type);

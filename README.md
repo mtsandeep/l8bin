@@ -58,7 +58,7 @@ curl -fsSL https://l8b.in | bash -s cli
 
 ## Master Server Setup
 
-Run on a Linux VPS with Docker installed. Requires a domain with DNS pointed to the server.
+Run on a Linux VPS with Docker installed. A domain is recommended for production; you can also try LiteBin without one (sslip.io).
 
 ```bash
 curl -fsSL https://l8b.in | bash -s master
@@ -68,15 +68,16 @@ The installer will prompt for:
 
 | Prompt | Description | Default |
 |--------|-------------|---------|
-| Domain | Your server's domain (e.g. `example.com`) | *(required)* |
+| Domain ready? | Yes = your domain/subdomain; No = tryout via `{ip}.sslip.io` | No |
+| Domain | Your server's domain (e.g. `example.com` or `apps.example.com`) | *(if Yes)* |
 | Dashboard subdomain | Subdomain for the dashboard | `l8bin` |
 | Poke subdomain | Subdomain for agent wake endpoint | `poke` |
-| Routing mode | `master_proxy` or `cloudflare_dns` | `master_proxy` |
+| Routing mode | `master_proxy` or `cloudflare_dns` (skipped on tryout) | `master_proxy` |
 
 After setup:
 
-1. Open `https://l8bin.example.com` and create an admin account
-2. Configure DNS for your domain (see below)
+1. Open `https://l8bin.example.com` (or your tryout URL) and create an admin account
+2. Configure DNS for your domain if not using tryout (see below)
 3. Deploy apps using any method below
 
 ### DNS Setup
@@ -89,7 +90,11 @@ Create **DNS-only** (grey cloud, not proxied) A records in your DNS provider. Th
 | `cloudflare_dns` | `{DASHBOARD_SUBDOMAIN}.{domain}` → master IP<br>`{POKE_SUBDOMAIN}.{domain}` → master IP | Manual (2 records) |
 | | All app subdomains (e.g. `{project}.{domain}`) | **Automatic** via Cloudflare API |
 
-> **cloudflare_dns mode:** Do NOT create a wildcard (`*`) record. It is not needed and will conflict with the per-project records created automatically. Also requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` in your `.env` or Dashboard Settings.
+Specific DNS records always override wildcards — you can keep `mail.` / other hosts on the same zone pointing elsewhere. Apex (`domain.com`) is not covered by `*.domain.com`; use a subdomain as `DOMAIN` (e.g. `apps.example.com`) if you need the apex for something else.
+
+> **cloudflare_dns mode:** Do NOT create a wildcard (`*`) record. It is not needed and will conflict with the per-project records created automatically. Also requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` in your `.env` or Dashboard Settings. `DOMAIN` may be a subdomain of your Cloudflare zone.
+
+> **Tryout (sslip.io):** No DNS setup. Full features work; Let's Encrypt may fail. Change to a real domain later in **Dashboard → Settings**.
 
 ### Multi-node (optional)
 

@@ -5,10 +5,16 @@ import {
   createDeployToken,
   createProject,
   type DeployTokenInfo,
+  domainApply,
+  domainPreflight,
+  type DomainJob,
+  type DomainPreflightResult,
+  fetchDomainJob,
   fetchGlobalSettings,
   fetchProjects,
   type GlobalSettings,
   type Project,
+  retryDomainJob,
   RoutingMode,
   revokeDeployToken,
   syncDnsRecords,
@@ -96,7 +102,6 @@ function GeneralTab() {
     (cfToken !== (settings.cloudflare_api_token || '') ||
       cfZoneId !== (settings.cloudflare_zone_id || '') ||
       routingMode !== (settings.routing_mode || RoutingMode.MasterProxy) ||
-      domain !== settings.domain ||
       dnsTarget !== settings.dns_target ||
       memMb !== settings.default_memory_limit_mb ||
       cpu !== settings.default_cpu_limit ||
@@ -110,6 +115,13 @@ function GeneralTab() {
   } | null>(null);
   const [removing, setRemoving] = useState(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+  const [showDomainConfirm, setShowDomainConfirm] = useState(false);
+  const [domainDraft, setDomainDraft] = useState('');
+  const [domainConfirmTyped, setDomainConfirmTyped] = useState('');
+  const [domainAck, setDomainAck] = useState(false);
+  const [domainPreflightResult, setDomainPreflightResult] = useState<DomainPreflightResult | null>(null);
+  const [domainJob, setDomainJob] = useState<DomainJob | null>(null);
+  const [domainBusy, setDomainBusy] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -128,21 +140,42 @@ function GeneralTab() {
       .catch(() => setError('Failed to load settings'));
   }, []);
 
+  useEffect(() => {
+    if (!domainJob || domainJob.status === 'completed' || domainJob.status === 'failed') return;
+    const timer = setInterval(() => {
+      fetchDomainJob(domainJob.id)
+        .then((job) => {
+          setDomainJob(job);
+          if (job.status === 'completed') {
+            setDomain(job.domain);
+            setSettings((prev) => (prev ? { ...prev, domain: job.domain, tryout: undefined } : prev));
+            setShowDomainConfirm(false);
+            showToast('Platform domain updated', 'success');
+          }
+        })
+        .catch(() => {});
+    }, 800);
+    return () => clearInterval(timer);
+  }, [domainJob, showToast]);
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
     try {
-      await updateGlobalSettings({
+      const updated = await updateGlobalSettings({
         default_memory_limit_mb: memMb,
         default_cpu_limit: cpu,
-        domain: domain.trim() || undefined,
-        dns_target: dnsTarget.trim() || undefined,
+        dns_target: dnsTarget.trim(),
         routing_mode: routingMode,
         cloudflare_api_token: routingMode === RoutingMode.CloudflareDns ? cfToken : '',
         cloudflare_zone_id: routingMode === RoutingMode.CloudflareDns ? cfZoneId : '',
         dashboard_subdomain: dashboardSubdomain.trim() || undefined,
       });
+      setSettings(updated);
+      setDomain(updated.domain);
+      setDashboardSubdomain(updated.dashboard_subdomain || 'l8bin');
       setSaved(true);
+      showToast('Settings saved', 'success');
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to save';
@@ -150,6 +183,50 @@ function GeneralTab() {
       showToast(msg);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openDomainChange = () => {
+    setDomainDraft(domain);
+    setDomainConfirmTyped('');
+    setDomainAck(false);
+    setDomainPreflightResult(null);
+    setDomainJob(null);
+    setShowDomainConfirm(true);
+  };
+
+  const runDomainPreflight = async () => {
+    setDomainBusy(true);
+    setError(null);
+    try {
+      const result = await domainPreflight(domainDraft.trim());
+      setDomainPreflightResult(result);
+      if (!result.ok) {
+        showToast(result.errors[0] || 'Domain preflight failed');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Domain preflight failed';
+      setError(msg);
+      showToast(msg);
+    } finally {
+      setDomainBusy(false);
+    }
+  };
+
+  const applyDomainChange = async () => {
+    setDomainBusy(true);
+    setError(null);
+    try {
+      const needsAck = (domainPreflightResult?.warnings.length ?? 0) > 0;
+      const { job_id } = await domainApply(domainDraft.trim(), needsAck ? domainAck : true);
+      const job = await fetchDomainJob(job_id);
+      setDomainJob(job);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to apply domain';
+      setError(msg);
+      showToast(msg);
+    } finally {
+      setDomainBusy(false);
     }
   };
 
@@ -165,10 +242,24 @@ function GeneralTab() {
     );
   }
 
+  const domainDirty = domainDraft.trim().toLowerCase() !== settings.domain.toLowerCase();
+  const canContinueDomain =
+    domainDirty &&
+    domainConfirmTyped.trim().toLowerCase() === domainDraft.trim().toLowerCase() &&
+    (!domainPreflightResult || domainPreflightResult.ok) &&
+    (!(domainPreflightResult?.warnings.length) || domainAck);
+
   return (
     <div className="space-y-5">
       {error && (
         <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">{error}</div>
+      )}
+
+      {settings.tryout && (
+        <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-3 py-2">
+          Tryout DNS ({settings.domain}) — fine for exploring; Let&apos;s Encrypt may fail. Switch to a real domain
+          when ready.
+        </div>
       )}
 
       {/* Memory */}
@@ -218,19 +309,28 @@ function GeneralTab() {
         <label htmlFor="global-domain" className="block text-xs text-slate-300 mb-1.5">
           Platform Domain
         </label>
-        <input
-          id="global-domain"
-          type="text"
-          value={domain}
-          onChange={(e) => setDomain(e.target.value)}
-          placeholder="l8b.in"
-          className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
-        />
+        <div className="flex gap-2">
+          <input
+            id="global-domain"
+            type="text"
+            value={domain}
+            readOnly
+            className="flex-1 bg-slate-900/60 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-300 font-mono"
+          />
+          <button
+            type="button"
+            onClick={openDomainChange}
+            className="shrink-0 px-3 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-100 hover:bg-slate-600 transition-colors cursor-pointer"
+          >
+            Change
+          </button>
+        </div>
         <p className="text-[10px] text-slate-600 mt-1">
           Projects get subdomains like{' '}
           <span className="text-slate-400 font-mono">
             {'{id}'}.{domain || 'example.com'}
           </span>
+          . Changing domain rebuilds routes and requires re-login on the new host.
         </p>
       </div>
 
@@ -486,11 +586,203 @@ function GeneralTab() {
       <button
         type="button"
         onClick={handleSave}
-        disabled={saving}
+        disabled={saving || !hasUnsavedChanges}
         className="w-full py-2 rounded-md text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
       >
         {saving ? 'Saving...' : saved ? 'Saved' : 'Save'}
       </button>
+
+      {/* Domain change modal */}
+      {showDomainConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-md mx-4 p-5 shadow-2xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertTriangle size={16} className="text-amber-400" />
+              <h3 className="text-sm font-semibold text-slate-100">Change platform domain</h3>
+            </div>
+
+            {domainJob && (domainJob.status === 'running' || domainJob.status === 'pending') ? (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-300">Applying domain change to {domainJob.domain}…</p>
+                <ul className="space-y-2">
+                  {domainJob.steps.map((step) => (
+                    <li key={step.id} className="flex items-start gap-2 text-xs">
+                      <span
+                        className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${
+                          step.status === 'done' || step.status === 'skipped'
+                            ? 'bg-green-400'
+                            : step.status === 'running'
+                              ? 'bg-violet-400 animate-pulse'
+                              : step.status === 'failed'
+                                ? 'bg-red-400'
+                                : 'bg-slate-600'
+                        }`}
+                      />
+                      <span className="text-slate-300">
+                        {step.label}
+                        {step.status === 'skipped' ? ' (skipped)' : ''}
+                        {step.error ? <span className="block text-red-400 mt-0.5">{step.error}</span> : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : domainJob?.status === 'completed' ? (
+              <div className="space-y-3">
+                <p className="text-xs text-green-400">Domain updated. Open the new dashboard and sign in again.</p>
+                <a
+                  href={domainJob.dashboard_url}
+                  className="block text-xs text-violet-300 font-mono break-all hover:underline"
+                >
+                  {domainJob.dashboard_url}
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowDomainConfirm(false)}
+                  className="w-full py-2 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            ) : domainJob?.status === 'failed' ? (
+              <div className="space-y-3">
+                <p className="text-xs text-red-400">{domainJob.error || 'Domain change failed'}</p>
+                <ul className="space-y-1">
+                  {domainJob.steps.map((step) => (
+                    <li key={step.id} className="text-xs text-slate-400">
+                      {step.label}: {step.status}
+                      {step.error ? ` — ${step.error}` : ''}
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDomainConfirm(false)}
+                    className="flex-1 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-200 cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setDomainBusy(true);
+                      try {
+                        await retryDomainJob(domainJob.id);
+                        const job = await fetchDomainJob(domainJob.id);
+                        setDomainJob(job);
+                      } catch (e) {
+                        showToast(e instanceof Error ? e.message : 'Retry failed');
+                      } finally {
+                        setDomainBusy(false);
+                      }
+                    }}
+                    disabled={domainBusy}
+                    className="flex-1 py-2 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <ul className="text-xs text-slate-400 list-disc list-inside space-y-1">
+                  <li>
+                    Old URLs under <span className="font-mono text-slate-300">*.{settings.domain}</span> will stop
+                    working
+                  </li>
+                  <li>Custom domains on projects are unchanged</li>
+                  <li>Update DNS (wildcard or Cloudflare) for the new domain</li>
+                  <li>You must reopen the dashboard on the new host and sign in again</li>
+                </ul>
+                <div>
+                  <label htmlFor="domain-draft" className="block text-xs text-slate-300 mb-1.5">
+                    New domain
+                  </label>
+                  <input
+                    id="domain-draft"
+                    type="text"
+                    value={domainDraft}
+                    onChange={(e) => {
+                      setDomainDraft(e.target.value);
+                      setDomainPreflightResult(null);
+                      setDomainAck(false);
+                    }}
+                    placeholder="apps.example.com"
+                    className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="domain-confirm-typed" className="block text-xs text-slate-300 mb-1.5">
+                    Type the new domain to confirm
+                  </label>
+                  <input
+                    id="domain-confirm-typed"
+                    type="text"
+                    value={domainConfirmTyped}
+                    onChange={(e) => setDomainConfirmTyped(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+                  />
+                </div>
+                {domainPreflightResult && (
+                  <div className="space-y-2">
+                    {domainPreflightResult.errors.map((msg) => (
+                      <p key={msg} className="text-xs text-red-400">
+                        {msg}
+                      </p>
+                    ))}
+                    {domainPreflightResult.warnings.map((msg) => (
+                      <p key={msg} className="text-xs text-amber-300">
+                        {msg}
+                      </p>
+                    ))}
+                    {domainPreflightResult.warnings.length > 0 && domainPreflightResult.ok && (
+                      <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={domainAck}
+                          onChange={(e) => setDomainAck(e.target.checked)}
+                          className="mt-0.5"
+                        />
+                        I have pointed DNS at this server (or accept that traffic will fail until I do)
+                      </label>
+                    )}
+                  </div>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowDomainConfirm(false)}
+                    disabled={domainBusy}
+                    className="flex-1 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  {!domainPreflightResult?.ok ? (
+                    <button
+                      type="button"
+                      onClick={runDomainPreflight}
+                      disabled={domainBusy || !domainDirty}
+                      className="flex-1 py-2 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer"
+                    >
+                      {domainBusy ? 'Checking…' : 'Check DNS'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={applyDomainChange}
+                      disabled={domainBusy || !canContinueDomain}
+                      className="flex-1 py-2 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer"
+                    >
+                      {domainBusy ? 'Starting…' : 'Apply'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

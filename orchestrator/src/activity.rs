@@ -11,9 +11,9 @@ use crate::AppState;
 /// and updates `last_active_at` for projects that received traffic.
 pub async fn run_activity_tracker(state: AppState, shutdown_rx: tokio::sync::watch::Receiver<bool>) {
     info!("activity tracker: starting");
-    let domain = state.config.domain.clone();
-    let dashboard_host = format!("{}.{}", state.config.dashboard_subdomain, domain);
-    let poke_host = format!("{}.{}", state.config.poke_subdomain, domain);
+    let domain = state.platform.domain().clone();
+    let dashboard_host = format!("{}.{}", state.platform.dashboard_subdomain(), domain);
+    let poke_host = format!("{}.{}", state.platform.poke_subdomain(), domain);
 
     let caddy_container = std::env::var("CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-caddy".into());
 
@@ -37,7 +37,7 @@ pub async fn run_activity_tracker(state: AppState, shutdown_rx: tokio::sync::wat
 /// Update `last_active_at` for running projects that match the given hosts.
 async fn update_active_projects(state: &AppState, hosts: HashSet<String>, dashboard_host: &str, poke_host: &str) {
     let now = chrono::Utc::now().timestamp();
-    let domain_suffix = format!(".{}", state.config.domain);
+    let domain_suffix = format!(".{}", state.platform.domain());
     let mut subdomain_ids: Vec<String> = Vec::new();
     let mut custom_domains: Vec<String> = Vec::new();
 

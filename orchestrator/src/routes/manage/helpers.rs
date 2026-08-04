@@ -325,7 +325,7 @@ pub async fn capture_service_digests(
 pub async fn sync_caddy(state: &AppState) {
     let routes = match crate::routing_helpers::resolve_all_routes(
         &state.db,
-        &state.config.domain,
+        &state.platform.domain(),
         &format!("litebin-orchestrator:{}", state.config.port),
     )
     .await
@@ -344,10 +344,10 @@ pub async fn sync_caddy(state: &AppState) {
         .await
         .sync_routes(
             &routes,
-            &state.config.domain,
+            &state.platform.domain(),
             &upstream,
-            &state.config.dashboard_subdomain,
-            &state.config.poke_subdomain,
+            &state.platform.dashboard_subdomain(),
+            &state.platform.poke_subdomain(),
             true,
         )
         .await

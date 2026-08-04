@@ -28,7 +28,7 @@ pub async fn ask(State(state): State<AppState>, Query(query): Query<AskQuery>) -
     let domain = &query.domain;
 
     // 1. Subdomain match: strip ".{domain}" suffix to get project_id
-    let subdomain = domain.strip_suffix(&format!(".{}", state.config.domain)).unwrap_or(domain);
+    let subdomain = domain.strip_suffix(&format!(".{}", state.platform.domain())).unwrap_or(domain);
 
     let subdomain_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
         .bind(subdomain)
@@ -90,7 +90,7 @@ pub async fn ask(State(state): State<AppState>, Query(query): Query<AskQuery>) -
     }
 
     // 5. Alias routes: check if domain matches "{alias}.{project_id}.{domain}" or "{alias}.{domain}"
-    let suffix = format!(".{}", state.config.domain);
+    let suffix = format!(".{}", state.platform.domain());
     if let Some(rest) = domain.strip_suffix(&suffix) {
         // Case A: "{alias}.{project_id}" — project-scoped alias (e.g., api2.test.localhost)
         if let Some((alias, project_id)) = rest.rsplit_once('.') {
@@ -137,14 +137,14 @@ pub async fn ask(State(state): State<AppState>, Query(query): Query<AskQuery>) -
     }
 
     // 6. Dashboard subdomain approval
-    let dashboard_host = format!("{}.{}", state.config.dashboard_subdomain, state.config.domain);
+    let dashboard_host = format!("{}.{}", state.platform.dashboard_subdomain(), state.platform.domain());
     if domain == &dashboard_host {
         tracing::debug!(domain = %domain, "caddy ask: approved (dashboard subdomain)");
         return StatusCode::OK;
     }
 
     // 7. Poke subdomain approval
-    let poke_host = format!("{}.{}", state.config.poke_subdomain, state.config.domain);
+    let poke_host = format!("{}.{}", state.platform.poke_subdomain(), state.platform.domain());
     if domain == &poke_host {
         tracing::debug!(domain = %domain, "caddy ask: approved (poke subdomain)");
         return StatusCode::OK;

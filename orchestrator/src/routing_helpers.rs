@@ -270,6 +270,7 @@ pub async fn run_route_sync(
     db: SqlitePool,
     router: Arc<RwLock<Arc<dyn RoutingProvider>>>,
     config: Arc<Config>,
+    platform: crate::platform::PlatformHandle,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     loop {
@@ -296,8 +297,9 @@ pub async fn run_route_sync(
         while rx.try_recv().is_ok() {}
 
         // Perform a single route sync for the entire batch
+        let snap = platform.snapshot();
         let orchestrator_upstream = format!("litebin-orchestrator:{}", config.port);
-        let routes = match resolve_all_routes(&db, &config.domain, &orchestrator_upstream).await {
+        let routes = match resolve_all_routes(&db, &snap.domain, &orchestrator_upstream).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "route sync: failed to resolve routes");
@@ -309,10 +311,10 @@ pub async fn run_route_sync(
         if let Err(e) = r
             .sync_routes(
                 &routes,
-                &config.domain,
+                &snap.domain,
                 &orchestrator_upstream,
-                &config.dashboard_subdomain,
-                &config.poke_subdomain,
+                &snap.dashboard_subdomain,
+                &snap.poke_subdomain,
                 true,
             )
             .await

@@ -209,7 +209,7 @@ pub async fn deploy_compose(
     };
 
     // Basic validation
-    if project_id == state.config.dashboard_subdomain || project_id == state.config.poke_subdomain {
+    if project_id == state.platform.dashboard_subdomain() || project_id == state.platform.poke_subdomain() {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "This ID is reserved"}))).into_response();
     }
     if !crate::validation::is_valid_project_id(&project_id) {
@@ -888,7 +888,7 @@ pub async fn deploy_compose(
                 "status": "unconfigured",
                 "project_id": project_id,
                 "node_id": target_node_id,
-                "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.config.domain)) },
+                "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.platform.domain())) },
                 "message": "Deployment staged. Configure runtime secrets, then start the project.",
             })),
         ).into_response();
@@ -1178,7 +1178,7 @@ pub async fn deploy_compose(
             Json(json!({
                 "status": "deployed",
                 "project_id": project_id,
-                "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.config.domain)) },
+                "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.platform.domain())) },
                 "warnings": agent_warnings,
             })),
         ).into_response();
@@ -1331,12 +1331,12 @@ pub async fn deploy_compose(
             // Full route sync after deploy
             crate::routes::deploy::logs::push_deploy_log(&state_clone, &project_id_clone, "Syncing routes...");
             let orchestrator_upstream = format!("litebin-orchestrator:{}", state_clone.config.port);
-            let route_entries = crate::routing_helpers::resolve_all_routes(&state_clone.db, &state_clone.config.domain, &orchestrator_upstream).await?;
+            let route_entries = crate::routing_helpers::resolve_all_routes(&state_clone.db, &state_clone.platform.domain(), &orchestrator_upstream).await?;
             let _ = state_clone
                 .router
                 .read()
                 .await
-                .sync_routes(&route_entries, &state_clone.config.domain, &orchestrator_upstream, &state_clone.config.dashboard_subdomain, &state_clone.config.poke_subdomain, true)
+                .sync_routes(&route_entries, &state_clone.platform.domain(), &orchestrator_upstream, &state_clone.platform.dashboard_subdomain(), &state_clone.platform.poke_subdomain(), true)
                 .await;
 
             tracing::info!(
@@ -1403,7 +1403,7 @@ pub async fn deploy_compose(
         Json(json!({
             "status": "deploying",
             "project_id": project_id,
-            "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.config.domain)) },
+            "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.platform.domain())) },
             "message": "Compose deployment started in background",
             "warnings": sock_warnings,
         })),

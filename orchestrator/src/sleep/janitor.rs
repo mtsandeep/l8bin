@@ -96,15 +96,15 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
     //    waker instead of a dead upstream (eliminates the 502/timeout window)
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
     let routes =
-        crate::routing_helpers::resolve_all_routes(&state.db, &state.config.domain, &orchestrator_upstream).await?;
+        crate::routing_helpers::resolve_all_routes(&state.db, &state.platform.domain(), &orchestrator_upstream).await?;
 
     router
         .sync_routes(
             &routes,
-            &state.config.domain,
+            &state.platform.domain(),
             &orchestrator_upstream,
-            &state.config.dashboard_subdomain,
-            &state.config.poke_subdomain,
+            &state.platform.dashboard_subdomain(),
+            &state.platform.poke_subdomain(),
             false,
         )
         .await?;

@@ -49,7 +49,7 @@ pub async fn wake_for_host(
     headers: &HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    let domain_suffix = format!(".{}", state.config.domain);
+    let domain_suffix = format!(".{}", state.platform.domain());
 
     let project = if host.ends_with(&domain_suffix) {
         // Subdomain URL (e.g., myapp.l8b.in) — extract project ID
@@ -481,15 +481,15 @@ pub async fn waker_intercept(
 ) -> Response {
     let host = req.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
 
-    let config = &state.config;
-    let dashboard_host = format!("{}.{}", config.dashboard_subdomain, config.domain);
-    let poke_host = format!("{}.{}", config.poke_subdomain, config.domain);
+    let snap = state.platform.snapshot();
+    let dashboard_host = format!("{}.{}", snap.dashboard_subdomain, snap.domain);
+    let poke_host = format!("{}.{}", snap.poke_subdomain, snap.domain);
     let host_without_port = host.split(':').next().unwrap_or(&host);
     let orchestrator_name =
         std::env::var("ORCHESTRATOR_CONTAINER_NAME").unwrap_or_else(|_| "litebin-orchestrator".into());
 
     // Let dashboard, poke, bare domain, and internal container requests pass through
-    if host_without_port == config.domain
+    if host_without_port == snap.domain
         || host_without_port == dashboard_host
         || host_without_port == poke_host
         || host_without_port == orchestrator_name

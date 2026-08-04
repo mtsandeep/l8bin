@@ -245,7 +245,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
     let register_body = serde_json::json!({
         "node_id": node.id,
         "secret": secret,
-        "domain": state.config.domain,
+        "domain": state.platform.domain(),
         "wake_report_url": crate::routes::nodes::format_wake_report_url(state),
     });
 
