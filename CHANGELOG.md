@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-08-04
+
 ### Added
 - **Live platform domain Settings** — Domain and dashboard subdomain are DB-backed after install; changing domain runs a confirmed preflight + progress job (routes, agents, Cloudflare cleanup/sync). Dashboard subdomain save syncs routes and re-registers agents.
 - **Tryout install** — Installer asks if a domain is ready; if not, sets `DOMAIN={public_ip}.sslip.io` with `master_proxy` (full features; LE may fail). Upgrade later via Settings.
