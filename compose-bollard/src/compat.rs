@@ -194,6 +194,14 @@ fn volume_source(volume: &str) -> &str {
     volume.split(':').next().unwrap_or(volume).trim()
 }
 
+/// A bind source that refers to the repo working tree (e.g. `./scripts/x.sh`,
+/// `../config`, `.`) — distinct from named volumes, absolute host paths, and
+/// env-interpolated paths (`${VAR}`). LiteBin remaps these under the project
+/// directory but does not transfer their contents to the node.
+fn is_repo_relative_bind(source: &str) -> bool {
+    source == "." || source.starts_with("./") || source.starts_with("../")
+}
+
 /// Docker container name LiteBin will assign (matches `litebin_common::container_name`).
 fn managed_container_name(project_id: &str, service: &str) -> String {
     if service == "web" { format!("litebin-{project_id}") } else { format!("litebin-{project_id}.{service}") }
@@ -717,6 +725,14 @@ fn analyze_volumes(svc_name: &str, svc: &ComposeService, findings: &mut Vec<Comp
                 "host bind contains the Docker daemon socket; mount a declared docker.sock path and grant docker-observe instead",
                 None,
             ));
+        } else if is_repo_relative_bind(source) {
+            findings.push(finding(
+                format!("{prefix} ({vol})"),
+                Some(svc_name.into()),
+                FindingDisposition::Translated,
+                "relative bind path is remapped under the project directory, but its contents are NOT transferred from your repo to the node; ensure the file exists on the node, or bake it into the image with a `build:` context",
+                None,
+            ));
         }
     }
 }
@@ -883,6 +899,26 @@ services:
         );
         assert!(r.ok);
         assert!(r.required_capabilities.contains(&"raw-ports".to_string()));
+    }
+
+    #[test]
+    fn repo_relative_bind_source_is_flagged() {
+        let r = report(
+            r#"
+services:
+  web:
+    image: nginx
+    volumes:
+      - ./scripts/init.sh:/init.sh:ro
+      - /opt/data:/data
+      - pgdata:/var/lib/pg
+"#,
+        );
+        // Relative bind is flagged; absolute host path and named volume are not.
+        assert!(r.findings.iter().any(|f| f.disposition == FindingDisposition::Translated
+            && f.path.ends_with("(./scripts/init.sh:/init.sh:ro)")));
+        assert!(!r.findings.iter().any(|f| f.disposition == FindingDisposition::Translated
+            && f.path.ends_with("(/opt/data:/data)")));
     }
 
     #[test]

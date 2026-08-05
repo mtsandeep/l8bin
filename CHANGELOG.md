@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Repo-relative bind-mount warning** — compat report notes that `./…` sources are remapped but their contents aren't shipped to the node; use `build:` to bake them in.
+
+### Fixed
+- **Compose raw-ports ignored host-port remaps** — `HOST:CONTAINER` mappings now bind the host port instead of forcing host = container port.
+- **Capability-grant prompt hidden behind spinner** — spinner is suspended during the interactive confirm.
+- **Compose build failed on Windows** — `\\?\` verbatim prefix from `canonicalize()` is now stripped via `dunce`.
+
 ## [0.3.10] - 2026-08-04
 
 ### Fixed

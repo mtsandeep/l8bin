@@ -866,17 +866,18 @@ async fn build_and_upload_services(
     let mut resolved_images = std::collections::HashMap::new();
 
     for info in build_infos {
-        let svc_dir = project_dir.join(&info.build_context).canonicalize().with_context(|| {
+        // dunce::canonicalize strips Windows' verbatim "\\?\" prefix (which Docker
+        // rejects), unlike std::fs::canonicalize. No-op on Unix.
+        let svc_dir = dunce::canonicalize(project_dir.join(&info.build_context)).with_context(|| {
             format!("build context '{}' does not exist for service '{}'", info.build_context, info.svc_name)
         })?;
-        let svc_dir = Path::new(svc_dir.to_str().unwrap().trim_start_matches(r"\\?"));
 
-        let secret = merge_service_env_files(root_env_paths, svc_dir);
+        let secret = merge_service_env_files(root_env_paths, &svc_dir);
         let image_tag = format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, info.svc_name);
         println!("    {} {} ({})", "→".dimmed(), info.svc_name.cyan(), svc_dir.display());
 
         let saved_image =
-            crate::build::build_project(svc_dir, info.dockerfile.as_deref(), &image_tag, secret, ci_mode, platform)
+            crate::build::build_project(&svc_dir, info.dockerfile.as_deref(), &image_tag, secret, ci_mode, platform)
                 .await?;
         println!("    {} {} — {}", "  ✓".green(), info.svc_name, HumanBytes(saved_image.compressed_size));
 
@@ -946,6 +947,7 @@ async fn validate_compose_for_deploy(
     is_background: bool,
     interactive: bool,
     pregranted: &[String],
+    spinner: Option<&ProgressBar>,
 ) -> Result<Vec<String>> {
     let body = serde_json::json!({
         "compose": yaml,
@@ -1052,8 +1054,18 @@ async fn validate_compose_for_deploy(
         );
     }
 
-    println!("  {} This compose file requires: {}", "!".yellow(), still_missing.join(", "));
-    let approve = Confirm::new().with_prompt("Grant these capabilities for this project?").default(false).interact()?;
+    // The interactive prompt and the "requires" line must not be clobbered by a
+    // running spinner (which redraws the current line). Suspend it for the duration.
+    let ask = || -> Result<bool> {
+        println!("  {} This compose file requires: {}", "!".yellow(), still_missing.join(", "));
+        let approve =
+            Confirm::new().with_prompt("Grant these capabilities for this project?").default(false).interact()?;
+        Ok(approve)
+    };
+    let approve = match spinner {
+        Some(s) => s.suspend(ask)?,
+        None => ask()?,
+    };
     if !approve {
         anyhow::bail!("capabilities not granted — aborting deploy");
     }
@@ -1377,7 +1389,7 @@ async fn deploy_compose(
     deploy_spinner.set_message(if is_new_project { "Staging compose deployment..." } else { "Deploying compose..." });
 
     let grants =
-        validate_compose_for_deploy(client, server, project_id, &resolved_yaml, is_background, true, &[]).await?;
+        validate_compose_for_deploy(client, server, project_id, &resolved_yaml, is_background, true, &[], Some(&deploy_spinner)).await?;
 
     let resp = submit_compose(
         client,
@@ -1471,6 +1483,7 @@ pub async fn deploy_compose_noninteractive(
         opts.is_background,
         false,
         &opts.grant_capabilities,
+        None,
     )
     .await?;
     let _resp = submit_compose(

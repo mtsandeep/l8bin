@@ -194,29 +194,32 @@ impl ComposeService {
         }
     }
 
-    /// Parse `ports` into a Vec<(container_port, protocol)>.
-    /// Accepts formats: "8080", "8080/tcp", "8080/udp".
-    /// Host-mapped ports ("8080:3000") are noted but only the container port is used.
+    /// Container ports: `(container_port, protocol)`. Drops any host remap.
     pub fn exposed_ports(&self) -> Vec<(u16, String)> {
+        self.port_specs().into_iter().map(|(cport, proto, _host)| (cport, proto)).collect()
+    }
+
+    /// Like `exposed_ports` but keeps an explicit host port when given
+    /// (`HOST:CONTAINER[/proto]`, also `IP:HOST:CONTAINER`).
+    pub fn port_specs(&self) -> Vec<(u16, String, Option<u16>)> {
         let mut result = Vec::new();
         if let Some(ports) = &self.ports {
             for p in ports {
-                // Handle "HOST:CONTAINER/PROTOCOL" or "HOST:CONTAINER" or "CONTAINER/PROTOCOL" or "CONTAINER"
-                let (container_part, protocol) = if let Some((_, after)) = p.rsplit_once(':') {
-                    // Could be "HOST:CONTAINER/PROTOCOL" or just "HOST:CONTAINER"
-                    if let Some((cp, proto)) = after.split_once('/') {
-                        (cp, proto.to_string())
-                    } else {
-                        (after, "tcp".to_string())
-                    }
-                } else if let Some((cp, proto)) = p.split_once('/') {
-                    (cp, proto.to_string())
-                } else {
-                    (p.as_str(), "tcp".to_string())
+                let s = p.as_str();
+                let (core, proto) = match s.rsplit_once('/') {
+                    Some((c, pr @ ("tcp" | "udp"))) => (c, pr),
+                    _ => (s, "tcp"),
                 };
-
-                if let Ok(port) = container_part.parse::<u16>() {
-                    result.push((port, protocol));
+                // The host port is the second-to-last colon segment, if any.
+                let parts: Vec<&str> = core.split(':').collect();
+                let (host, container) = match parts.len() {
+                    1 => (None, parts[0]),
+                    2 => (Some(parts[0]), parts[1]),
+                    _ => (Some(parts[parts.len() - 2]), parts[parts.len() - 1]),
+                };
+                if let Ok(cport) = container.parse::<u16>() {
+                    let host_port = host.and_then(|h| h.parse::<u16>().ok());
+                    result.push((cport, proto.to_string(), host_port));
                 }
             }
         }

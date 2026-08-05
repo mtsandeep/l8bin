@@ -213,6 +213,7 @@ impl ComposeRunPlan {
             bollard_create_body: Some(create_body),
             bollard_host_config: Some(host_config),
             allow_raw_ports: false,
+            raw_port_host_overrides: HashMap::new(),
             docker_observe: true,
             is_managed_docker_proxy: true,
         };
@@ -317,6 +318,13 @@ fn build_configs(
 
             let bollard_config = svc.to_bollard_config(&options);
 
+            // Preserve explicit compose host-port remaps for the raw-ports binder.
+            let raw_port_host_overrides: HashMap<String, u16> = svc
+                .port_specs()
+                .into_iter()
+                .filter_map(|(cport, proto, hport)| hport.map(|h| (format!("{}/{}", cport, proto), h)))
+                .collect();
+
             let memory_limit_mb: Option<i64> = svc.memory_bytes().map(|bytes| (bytes / (1024 * 1024)) as i64);
             let cpu_limit: Option<f64> =
                 svc.cpus.as_ref().and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())));
@@ -354,6 +362,7 @@ fn build_configs(
                 bollard_create_body: Some(bollard_config.create_body),
                 bollard_host_config: Some(bollard_config.host_config),
                 allow_raw_ports: false,
+                raw_port_host_overrides,
                 docker_observe: false,
                 is_managed_docker_proxy: false,
             })

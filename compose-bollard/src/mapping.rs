@@ -313,4 +313,27 @@ mod tests {
         assert_eq!(ports[1], (3000, "tcp".to_string()));
         assert_eq!(ports[2], (9090, "udp".to_string()));
     }
+
+    #[test]
+    fn port_specs_preserves_host_remapping() {
+        let svc = ComposeService {
+            image: Some("app".to_string()),
+            ports: Some(vec![
+                "8080".to_string(),
+                "3000:3000".to_string(),
+                "9080:8080/udp".to_string(),
+                "127.0.0.1:9081:8081".to_string(),
+            ]),
+            ..Default::default()
+        };
+
+        let specs: std::collections::HashMap<(u16, String), Option<u16>> =
+            svc.port_specs().into_iter().map(|(c, p, h)| ((c, p), h)).collect();
+
+        assert_eq!(specs.get(&(8080, "tcp".to_string())), Some(&None));
+        assert_eq!(specs.get(&(3000, "tcp".to_string())), Some(&Some(3000)));
+        assert_eq!(specs.get(&(8080, "udp".to_string())), Some(&Some(9080)));
+        // IP:HOST:CONTAINER yields HOST, not the IP.
+        assert_eq!(specs.get(&(8081, "tcp".to_string())), Some(&Some(9081)));
+    }
 }

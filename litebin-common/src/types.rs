@@ -402,6 +402,9 @@ pub struct RunServiceConfig {
     /// When true, all ports from compose are bound directly on the host
     /// (bypassing Caddy). Only meaningful for compose services.
     pub allow_raw_ports: bool,
+    /// Compose host-port remaps for raw-ports services: container spec
+    /// ("PORT/proto") -> host port. Honored by the raw-ports binder.
+    pub raw_port_host_overrides: HashMap<String, u16>,
     /// True only for services approved to use LiteBin's read-only Docker observation proxy.
     pub docker_observe: bool,
     /// Internal marker authorizing the managed sidecar to mount the daemon socket.
@@ -458,6 +461,7 @@ impl RunServiceConfig {
             bollard_create_body: None,
             bollard_host_config: None,
             allow_raw_ports: false,
+            raw_port_host_overrides: HashMap::new(),
             docker_observe: false,
             is_managed_docker_proxy: false,
         }

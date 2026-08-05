@@ -565,9 +565,13 @@ impl DockerManager {
                         if port_bindings.contains_key(port_spec) {
                             continue;
                         }
-                        // Parse the port number from spec (e.g. "5432/udp" -> "5432")
-                        let host_port = port_spec.split('/').next().unwrap_or("0");
-                        if reserved_ports.iter().any(|p| p == host_port) {
+                        // Honor an explicit compose host-port remap; else bind host = container port.
+                        let host_port = config
+                            .raw_port_host_overrides
+                            .get(port_spec)
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| port_spec.split('/').next().unwrap_or("0").to_string());
+                        if reserved_ports.iter().any(|p| *p == host_port) {
                             tracing::warn!(
                                 service = %config.service_name,
                                 project_id = %config.project_id,
