@@ -865,21 +865,30 @@ async fn build_and_upload_services(
 ) -> Result<std::collections::HashMap<String, String>> {
     let mut resolved_images = std::collections::HashMap::new();
 
-    for info in build_infos {
+    // Services sharing an identical (context, dockerfile) produce the same image;
+    // build + upload once per group and share the resulting image ID.
+    for group in group_build_infos(build_infos) {
+        let primary = &group[0];
         // dunce::canonicalize strips Windows' verbatim "\\?\" prefix (which Docker
         // rejects), unlike std::fs::canonicalize. No-op on Unix.
-        let svc_dir = dunce::canonicalize(project_dir.join(&info.build_context)).with_context(|| {
-            format!("build context '{}' does not exist for service '{}'", info.build_context, info.svc_name)
+        let svc_dir = dunce::canonicalize(project_dir.join(&primary.build_context)).with_context(|| {
+            format!("build context '{}' does not exist for service '{}'", primary.build_context, primary.svc_name)
         })?;
 
         let secret = merge_service_env_files(root_env_paths, &svc_dir);
-        let image_tag = format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, info.svc_name);
-        println!("    {} {} ({})", "→".dimmed(), info.svc_name.cyan(), svc_dir.display());
+        let image_tag = format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, primary.svc_name);
+        let names: Vec<&str> = group.iter().map(|g| g.svc_name.as_str()).collect();
+        let label = if group.len() > 1 {
+            format!("{} (shared image)", names.join(", "))
+        } else {
+            primary.svc_name.clone()
+        };
+        println!("    {} {} ({})", "→".dimmed(), label.cyan(), svc_dir.display());
 
         let saved_image =
-            crate::build::build_project(&svc_dir, info.dockerfile.as_deref(), &image_tag, secret, ci_mode, platform)
+            crate::build::build_project(&svc_dir, primary.dockerfile.as_deref(), &image_tag, secret, ci_mode, platform)
                 .await?;
-        println!("    {} {} — {}", "  ✓".green(), info.svc_name, HumanBytes(saved_image.compressed_size));
+        println!("    {} {} — {}", "  ✓".green(), names.join(", "), HumanBytes(saved_image.compressed_size));
 
         let image_id = crate::upload::upload_tar(
             client,
@@ -891,12 +900,31 @@ async fn build_and_upload_services(
             ci_mode,
         )
         .await?;
-
-        resolved_images.insert(info.svc_name.clone(), image_id);
         let _ = std::fs::remove_file(&saved_image.path);
+
+        for info in &group {
+            resolved_images.insert(info.svc_name.clone(), image_id.clone());
+        }
     }
 
     Ok(resolved_images)
+}
+
+/// Group `BuildInfo`s whose `(build_context, dockerfile)` are identical, preserving
+/// first-seen order. Each group yields one image build + upload shared by its members.
+fn group_build_infos(build_infos: &[BuildInfo]) -> Vec<Vec<&BuildInfo>> {
+    let mut keys: Vec<String> = Vec::new();
+    let mut groups: Vec<Vec<&BuildInfo>> = Vec::new();
+    for info in build_infos {
+        let key = format!("{}::{}", info.build_context, info.dockerfile.as_deref().unwrap_or(""));
+        if let Some(idx) = keys.iter().position(|k| *k == key) {
+            groups[idx].push(info);
+        } else {
+            keys.push(key);
+            groups.push(vec![info]);
+        }
+    }
+    groups
 }
 
 async fn submit_compose(
@@ -1504,4 +1532,30 @@ pub async fn deploy_compose_noninteractive(
     println!("  {} Compose deploy submitted.", "🚢".dimmed());
     stop_buildkit();
     Ok(project_id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{group_build_infos, BuildInfo};
+
+    fn info(name: &str, ctx: &str, df: Option<&str>) -> BuildInfo {
+        BuildInfo { svc_name: name.to_string(), build_context: ctx.to_string(), dockerfile: df.map(str::to_string) }
+    }
+
+    #[test]
+    fn groups_identical_context_and_dockerfile() {
+        let infos = vec![
+            info("a", ".", Some("Dockerfile.init")),
+            info("b", ".", Some("Dockerfile.init")),
+            info("c", ".", Some("Dockerfile")),
+            info("d", ".", Some("Dockerfile.init")),
+            info("e", "web", Some("Dockerfile")),
+        ];
+        let groups = group_build_infos(&infos);
+
+        // names that ended up sharing each group, in first-seen order
+        let grouped: Vec<Vec<&str>> =
+            groups.iter().map(|g| g.iter().map(|i| i.svc_name.as_str()).collect()).collect();
+        assert_eq!(grouped, vec![vec!["a", "b", "d"], vec!["c"], vec!["e"]]);
+    }
 }
