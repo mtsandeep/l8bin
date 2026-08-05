@@ -292,6 +292,26 @@ services:
     }
 
     #[test]
+    fn oneshot_service_names_from_label() {
+        // A fire-and-forget init task nothing depends on is marked via label.
+        let yaml = r#"
+services:
+  app:
+    image: app
+    ports:
+      - "3000:3000"
+  seed:
+    image: app
+    labels:
+      litebin.oneshot: "true"
+"#;
+        let compose = ComposeParser::parse(yaml).unwrap();
+        let oneshots = compose.oneshot_service_names();
+        assert!(oneshots.contains("seed"));
+        assert!(!oneshots.contains("app"));
+    }
+
+    #[test]
     fn detect_public_by_label() {
         let yaml = r#"
 services:

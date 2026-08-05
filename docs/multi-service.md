@@ -177,7 +177,17 @@ When a service is a dependency with `service_completed_successfully`, LiteBin tr
 3. Completed jobs do **not** make the project `degraded` and are not restarted on partial wake recovery
 4. If the one-shot container is removed (redeploy / force recreate), it runs again; a still-present exit-0 container is left alone (Compose behavior)
 
-Detection is Compose-native only: any service named as a `service_completed_successfully` dependency.
+Detection: any service named as a `service_completed_successfully` dependency, **or** any service with the label `litebin.oneshot=true` (for fire-and-forget init tasks that nothing depends on, e.g. a seeder that runs after the app starts).
+
+```yaml
+services:
+  seed:
+    image: app
+    labels:
+      litebin.oneshot: "true"
+    depends_on:
+      app: { condition: service_started }
+```
 
 ### Rollback on failure
 

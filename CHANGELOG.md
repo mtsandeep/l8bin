@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Repo-relative bind-mount warning** — compat report notes that `./…` sources are remapped but their contents aren't shipped to the node; use `build:` to bake them in.
 - **Shared build dedup** — services with an identical `(context, dockerfile)` are built and uploaded once, then share the image ID.
+- **`litebin.oneshot` label** — marks a fire-and-forget init task as one-shot (completed, not stopped) when no other service depends on it via `service_completed_successfully`.
 
 ### Fixed
 - **Compose raw-ports ignored host-port remaps** — `HOST:CONTAINER` mappings now bind the host port instead of forcing host = container port.

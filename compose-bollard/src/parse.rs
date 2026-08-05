@@ -9,10 +9,17 @@ pub struct ComposeFile {
 }
 
 impl ComposeFile {
-    /// Names of services that any other service depends on with
-    /// `condition: service_completed_successfully`.
+    /// Services treated as one-shot: those another service depends on with
+    /// `condition: service_completed_successfully`, plus any explicitly marked
+    /// with the `litebin.oneshot=true` label (fire-and-forget init tasks that
+    /// nothing waits on).
     pub fn oneshot_service_names(&self) -> std::collections::HashSet<String> {
         let mut names = std::collections::HashSet::new();
+        for (name, svc) in &self.services {
+            if svc.is_oneshot_by_label() {
+                names.insert(name.clone());
+            }
+        }
         for service in self.services.values() {
             for (dep, cond) in service.dependency_conditions() {
                 if cond == "service_completed_successfully" {
@@ -289,6 +296,20 @@ impl ComposeService {
             }
             Some(serde_yaml::Value::Sequence(list)) => {
                 list.iter().any(|v| v.as_str().map(|s| s == "litebin.public=true").unwrap_or(false))
+            }
+            _ => false,
+        }
+    }
+
+    /// Explicitly marked as a one-shot via `litebin.oneshot=true`.
+    pub fn is_oneshot_by_label(&self) -> bool {
+        match &self.labels {
+            None => false,
+            Some(serde_yaml::Value::Mapping(map)) => {
+                map.iter().any(|(k, v)| k.as_str() == Some("litebin.oneshot") && v.as_str() == Some("true"))
+            }
+            Some(serde_yaml::Value::Sequence(list)) => {
+                list.iter().any(|v| v.as_str().map(|s| s == "litebin.oneshot=true").unwrap_or(false))
             }
             _ => false,
         }
