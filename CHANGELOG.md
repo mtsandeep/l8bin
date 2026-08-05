@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-08-05
+
 ### Added
 - **Repo-relative bind-mount warning** — compat report notes that `./…` sources are remapped but their contents aren't shipped to the node; use `build:` to bake them in.
 - **Shared build dedup** — services with an identical `(context, dockerfile)` are built and uploaded once, then share the image ID.
