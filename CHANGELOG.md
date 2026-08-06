@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-08-06
+
 ### Fixed
 - **`/nodes/image-stats` hung ~30s with an offline node** — now queries online nodes only (skips re-probing offline ones each call) with a 5s per-node timeout, fetched concurrently.
 - **Delete node failed with FK error 787** — returns a clear `409` listing the projects that must be deleted first, instead of the raw foreign-key failure.
