@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Project delete failed when its node was offline/destroyed** — remote container cleanup is now best-effort: an unavailable node is skipped and the project record is still deleted, instead of blocking on the agent.
+- **Offline-node projects freeze in the dashboard** — a remote project whose node is offline now shows an overlay with only Details (read-only DB view) and Delete; all other actions are blocked. Mutating API calls (start/stop/recreate/restart-service) return a clear `503 node is offline` instead of hanging or emitting an internal "node client unavailable" error.
+
 ## [0.3.12] - 2026-08-06
 
 ### Fixed

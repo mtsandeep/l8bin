@@ -6,7 +6,7 @@ use std::hash::Hasher;
 
 use crate::AppState;
 use crate::nodes;
-use litebin_common::types::Node;
+use litebin_common::types::{Node, NodeStatus};
 
 #[derive(Serialize, Default, utoipa::ToSchema)]
 pub struct MessageResponse {
@@ -32,6 +32,18 @@ pub async fn get_node_from_db(db: &sqlx::SqlitePool, node_id: &str) -> Result<No
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("node '{}' not found", node_id)))
+}
+
+/// Ensure a remote node is reachable before a mutating action against its agent.
+/// Returns the node on success, or a 503 when the node is offline or missing from
+/// the client pool. Delete intentionally bypasses this — a project can always be
+/// removed from the DB even when its node is gone.
+pub async fn ensure_node_reachable(state: &AppState, node_id: &str) -> Result<Node, (StatusCode, String)> {
+    let node = get_node_from_db(&state.db, node_id).await?;
+    if node.status != NodeStatus::Online || nodes::client::get_node_client(&state.node_clients, node_id).is_err() {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, format!("node '{}' is offline", node.name)));
+    }
+    Ok(node)
 }
 
 /// Ensure the project-specific directory exists and has a placeholder .env if missing.

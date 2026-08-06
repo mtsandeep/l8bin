@@ -14,9 +14,9 @@ import {
   User,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { formatBytes, ProjectStatus } from '../api';
+import { formatBytes, NodeStatus, type Project, ProjectStatus } from '../api';
 import { useHomeData } from '../hooks/useHomeData';
 import { useNodes } from '../hooks/useNodes';
 import { useSettings } from '../hooks/useSettings';
@@ -36,7 +36,7 @@ export default function HomePage() {
   const { domain, projectsDir, dnsTarget } = useSettings(user);
   const { nodes } = useNodes(user);
 
-  const [statusFilter, setStatusFilter] = useState<ProjectStatus | null>(null);
+  const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'offline' | null>(null);
   const [stackExpanded, setStackExpanded] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
@@ -63,8 +63,23 @@ export default function HomePage() {
   const stopped = projects.filter((p) => p.status === ProjectStatus.Stopped).length;
   const stopping = projects.filter((p) => p.status === ProjectStatus.Stopping).length;
 
+  // "offline" is a node-level state, not a project status: a project counts as
+  // offline when it sits on a remote node that is currently not online.
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const isOffline = (p: Project) => {
+    const nid = p.node_id;
+    if (!nid || nid === 'local') return false;
+    const node = nodeById.get(nid);
+    return !!node && node.status !== NodeStatus.Online;
+  };
+  const offline = projects.filter(isOffline).length;
+
   const sortedProjects = [...projects].sort((a, b) => b.id.localeCompare(a.id));
-  const filteredProjects = statusFilter ? sortedProjects.filter((p) => p.status === statusFilter) : sortedProjects;
+  const filteredProjects = statusFilter
+    ? statusFilter === 'offline'
+      ? sortedProjects.filter(isOffline)
+      : sortedProjects.filter((p) => p.status === statusFilter)
+    : sortedProjects;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
@@ -289,6 +304,15 @@ export default function HomePage() {
                 className={`hover:underline cursor-pointer ${statusFilter === ProjectStatus.Stopping ? 'underline' : ''}`}
               >
                 <span className="text-orange-400 font-medium">{stopping}</span> stopping
+              </button>
+            )}
+            {offline > 0 && (
+              <button
+                type="button"
+                onClick={() => setStatusFilter(statusFilter === 'offline' ? null : 'offline')}
+                className={`hover:underline cursor-pointer ${statusFilter === 'offline' ? 'underline' : ''}`}
+              >
+                <span className="text-amber-400 font-medium">{offline}</span> offline
               </button>
             )}
           </div>

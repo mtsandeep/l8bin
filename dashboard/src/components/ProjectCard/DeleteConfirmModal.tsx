@@ -5,11 +5,19 @@ import type { Project, ServiceVolumeInfo } from '../../api';
 interface DeleteConfirmModalProps {
   project: Project;
   isDeleting: boolean;
+  /** When true, the project's node is offline — deletion only removes the DB record. */
+  nodeOffline?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export default function DeleteConfirmModal({ project, isDeleting, onConfirm, onCancel }: DeleteConfirmModalProps) {
+export default function DeleteConfirmModal({
+  project,
+  isDeleting,
+  nodeOffline,
+  onConfirm,
+  onCancel,
+}: DeleteConfirmModalProps) {
   const [confirmed, setConfirmed] = useState(false);
 
   const volumes: ServiceVolumeInfo[] = project.public_stats?.volumes ?? [];
@@ -35,12 +43,20 @@ export default function DeleteConfirmModal({ project, isDeleting, onConfirm, onC
 
         {/* Body */}
         <div className="px-5 py-4 space-y-3">
-          <p className="text-xs text-slate-400">
-            This action is <span className="text-red-400 font-medium">permanent and irreversible</span>. All containers,
-            networks, and project data will be removed.
-          </p>
+          {nodeOffline ? (
+            <p className="text-xs text-slate-400">
+              This project's node is <span className="text-amber-400 font-medium">offline</span>. Deleting removes the
+              database record only — no remote containers or volumes can be cleaned up since the agent is unreachable.
+              This action is <span className="text-red-400 font-medium">permanent and irreversible</span>.
+            </p>
+          ) : (
+            <p className="text-xs text-slate-400">
+              This action is <span className="text-red-400 font-medium">permanent and irreversible</span>. All
+              containers, networks, and project data will be removed.
+            </p>
+          )}
 
-          {hasAnyVolumes && (
+          {!nodeOffline && hasAnyVolumes && (
             <div className="space-y-2">
               <p className="text-xs font-medium text-slate-300">Volume cleanup</p>
 

@@ -3,6 +3,7 @@ import {
   Clock,
   Copy,
   ExternalLink,
+  Info,
   Layers,
   Loader2,
   Moon,
@@ -15,12 +16,14 @@ import {
   Square,
   Terminal,
   Trash2,
+  WifiOff,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   type Node as ApiNode,
   DeployType,
   deleteProject,
+  NodeStatus,
   type Project,
   type ProjectStats,
   ProjectStatus,
@@ -35,6 +38,7 @@ import StatusBadge from '../StatusBadge';
 import { useToast } from '../ToastContext';
 import AppSettingsPopover from './AppSettingsPopover';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import ProjectDetailsModal from './ProjectDetailsModal';
 import StatsGrid from './ProjectStats';
 import RedeployModal from './RedeployModal';
 import ServiceSelectModal from './ServiceSelectModal';
@@ -92,6 +96,9 @@ export default function ProjectCard({
 
   // Redeploy modal from actions dropdown (single-service only, uses project values)
   const [showRedeployModal, setShowRedeployModal] = useState(false);
+
+  // Details modal for offline-node projects (read-only DB view)
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
 
   // Service select modal for multi-service recreate/redeploy
   const [showServiceSelectModal, setShowServiceSelectModal] = useState(false);
@@ -191,6 +198,11 @@ export default function ProjectCard({
   const isStopped = effectiveStatus === ProjectStatus.Stopped;
   const isStopping = effectiveStatus === ProjectStatus.Stopping;
   const isDegraded = effectiveStatus === ProjectStatus.Degraded;
+  // A remote project whose node is currently offline is frozen: no live data is
+  // accurate and no agent actions work. Only delete (and a read-only DB view) apply.
+  const node =
+    project.node_id && project.node_id !== 'local' ? (nodes.find((n) => n.id === project.node_id) ?? null) : null;
+  const nodeOffline = node !== null && node.status !== NodeStatus.Online;
   const setupStatus =
     project.status === ProjectStatus.Pending || project.status === ProjectStatus.Unconfigured
       ? project.status === ProjectStatus.Unconfigured && !project.is_staged
@@ -231,17 +243,19 @@ export default function ProjectCard({
                 </button>
               )}
             </div>
-            {!project.is_background && <div className="flex items-center gap-1 ml-auto flex-shrink-0">
-              <a
-                href={`https://${project.custom_domain || `${project.id}.${domain}`}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-400 hover:text-sky-400 transition-colors"
-                title="Open app"
-              >
-                <ExternalLink size={14} />
-              </a>
-            </div>}
+            {!project.is_background && (
+              <div className="flex items-center gap-1 ml-auto flex-shrink-0">
+                <a
+                  href={`https://${project.custom_domain || `${project.id}.${domain}`}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-slate-400 hover:text-sky-400 transition-colors"
+                  title="Open app"
+                >
+                  <ExternalLink size={14} />
+                </a>
+              </div>
+            )}
             {/* Services popover — below the title row */}
             {showServicesPopover && (
               <div
@@ -328,22 +342,22 @@ export default function ProjectCard({
               <span className="text-slate-500">No managed URL</span>
             ) : (
               <>
-            <span
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-                autoStop ? 'bg-slate-700/60' : 'bg-slate-800/40'
-              }`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${autoStop ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-              <span className="text-slate-400">Auto-stop{autoStop && ` · ${timeoutMins}m`}</span>
-            </span>
-            <span
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-                autoStart ? 'bg-slate-700/60' : 'bg-slate-800/40'
-              }`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${autoStart ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-              <span className="text-slate-400">Auto-start</span>
-            </span>
+                <span
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
+                    autoStop ? 'bg-slate-700/60' : 'bg-slate-800/40'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${autoStop ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                  <span className="text-slate-400">Auto-stop{autoStop && ` · ${timeoutMins}m`}</span>
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
+                    autoStart ? 'bg-slate-700/60' : 'bg-slate-800/40'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${autoStart ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                  <span className="text-slate-400">Auto-start</span>
+                </span>
               </>
             )}
           </div>
@@ -634,6 +648,40 @@ export default function ProjectCard({
           </button>
         </div>
       </div>
+      {/* Node-offline overlay — freezes the card; only Details + Delete are reachable */}
+      {nodeOffline && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center text-center px-5 bg-slate-900/80 backdrop-blur-sm rounded-lg">
+          <div className="absolute top-3 left-4 right-4 flex items-center min-w-0">
+            <span className="text-sm font-semibold text-slate-200 truncate" title={project.name || project.id}>
+              {project.name || project.id}
+            </span>
+          </div>
+          <WifiOff size={20} className="text-amber-400 mb-2" />
+          <p className="text-sm font-semibold text-slate-100">Node offline</p>
+          <p className="text-[11px] text-slate-400 mt-1 max-w-xs">
+            This project&rsquo;s node is unreachable. Live data may be stale and no actions are available.
+          </p>
+          <div className="flex items-center gap-2 mt-4">
+            <button
+              type="button"
+              onClick={() => setShowDetailsModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 transition-colors cursor-pointer"
+            >
+              <Info size={12} />
+              Details
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-red-600 text-white hover:bg-red-500 transition-colors cursor-pointer"
+            >
+              <Trash2 size={12} />
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       {showLogs && (
         <LogViewer
           projectId={project.id}
@@ -647,12 +695,18 @@ export default function ProjectCard({
       {showDeleteConfirm && (
         <DeleteConfirmModal
           project={project}
+          nodeOffline={nodeOffline}
           isDeleting={loading === 'delete'}
           onConfirm={() =>
             handleAction('delete', () => deleteProject(project.id)).then(() => setShowDeleteConfirm(false))
           }
           onCancel={() => setShowDeleteConfirm(false)}
         />
+      )}
+
+      {/* Read-only details modal (used when the node is offline) */}
+      {showDetailsModal && (
+        <ProjectDetailsModal project={project} nodes={nodes} onClose={() => setShowDetailsModal(false)} />
       )}
 
       {/* Redeploy modal from actions dropdown (uses project values) */}

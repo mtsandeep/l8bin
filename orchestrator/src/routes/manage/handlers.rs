@@ -8,10 +8,11 @@ use tokio::sync::Semaphore;
 use crate::AppState;
 use crate::nodes;
 use crate::status::{self, ProjectUpdateFields};
-use litebin_common::types::{DeployType, ProjectStatus};
+use litebin_common::types::{DeployType, NodeStatus, ProjectStatus};
 
 use super::helpers::{
-    MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, project_is_staged, sync_caddy,
+    MessageResponse, agent_base_url, cleanup_unused_image, ensure_node_reachable, get_node_from_db, project_is_staged,
+    sync_caddy,
 };
 use super::multi_service::{
     StartServicesOpts, approved_docker_observe_requesters, proxy_needed_after_stop, recreate_services, start_services,
@@ -52,6 +53,10 @@ pub async fn stop_project(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
         .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+
+    if let Some(node_id) = project.node_id.as_deref().filter(|n| *n != "local") {
+        ensure_node_reachable(&state, node_id).await?;
+    }
 
     if !can_attempt_full_stop(&project.status) {
         return Err((StatusCode::BAD_REQUEST, format!("project is not running (status: {})", project.status)));
@@ -171,6 +176,10 @@ pub async fn start_project(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
         .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+
+    if let Some(node_id) = project.node_id.as_deref().filter(|n| *n != "local") {
+        ensure_node_reachable(&state, node_id).await?;
+    }
 
     if project.status == ProjectStatus::Running {
         return Ok(Json(MessageResponse {
@@ -658,26 +667,41 @@ pub async fn delete_project(
             let _ = state.docker.cleanup_project_resources(&project_id, &volumes).await;
         }
     } else {
-        // Remote: call agent cleanup endpoint
+        // Remote: best-effort container cleanup via the agent. When the node is
+        // offline/destroyed (no client, or status != online) there's nothing to
+        // clean up remotely — skip and proceed to DB deletion so the project
+        // isn't stuck on a node that no longer exists.
         let node_id = project.node_id.as_deref().unwrap();
         let volumes = build_volume_list(&state.db, &project).await;
-        let client = nodes::client::get_node_client(&state.node_clients, node_id)
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
-        let node = get_node_from_db(&state.db, node_id).await?;
-        let base_url = agent_base_url(&state.config, &node);
-        let response = client
-            .post(&format!("{}/containers/cleanup", base_url))
-            .json(&json!({
-                "project_id": project_id,
-                "volumes": volumes,
-            }))
-            .send()
-            .await
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent cleanup failed: {e}")))?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err((StatusCode::BAD_GATEWAY, format!("agent cleanup returned {status}: {body}")));
+
+        let reachable = match get_node_from_db(&state.db, node_id).await {
+            Ok(node) if node.status == NodeStatus::Online => {
+                nodes::client::get_node_client(&state.node_clients, node_id).is_ok()
+            }
+            _ => false,
+        };
+
+        if reachable {
+            let client = nodes::client::get_node_client(&state.node_clients, node_id)
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
+            let node = get_node_from_db(&state.db, node_id).await?;
+            let base_url = agent_base_url(&state.config, &node);
+            let response = client
+                .post(&format!("{}/containers/cleanup", base_url))
+                .json(&json!({
+                    "project_id": project_id,
+                    "volumes": volumes,
+                }))
+                .send()
+                .await
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent cleanup failed: {e}")))?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err((StatusCode::BAD_GATEWAY, format!("agent cleanup returned {status}: {body}")));
+            }
+        } else {
+            tracing::warn!(project = %project_id, node_id = %node_id, "node unavailable; skipping remote container cleanup and deleting project record");
         }
     }
 
@@ -749,6 +773,10 @@ pub async fn recreate_project(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
         .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
+
+    if let Some(node_id) = project.node_id.as_deref().filter(|n| *n != "local") {
+        ensure_node_reachable(&state, node_id).await?;
+    }
 
     if project.status == ProjectStatus::Deploying {
         return Err((StatusCode::BAD_REQUEST, "project is already deploying".to_string()));
@@ -1216,6 +1244,7 @@ pub async fn stop_service(
         .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
     if let Some(node_id) = project.node_id.as_deref().filter(|node| *node != "local") {
+        ensure_node_reachable(&state, node_id).await?;
         let requesters = approved_docker_observe_requesters(&state, &project).await?;
         let client = nodes::client::get_node_client(&state.node_clients, node_id)
             .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
