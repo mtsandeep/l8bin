@@ -429,19 +429,20 @@ pub async fn delete_node(State(state): State<AppState>, Path(id): Path<String>) 
             .into_response();
     }
 
-    // Check for running projects on this node
-    let running_projects =
-        sqlx::query_as::<_, (String,)>("SELECT id FROM projects WHERE status = 'running' AND node_id = ?")
-            .bind(&id)
-            .fetch_all(&state.db)
-            .await;
+    // Reject if any project still references this node (projects.node_id has no
+    // ON DELETE CASCADE, so deleting would trip the FK). Caller must clear them first.
+    let projects_on_node =
+        sqlx::query_as::<_, (String,)>("SELECT id FROM projects WHERE node_id = ?").bind(&id).fetch_all(&state.db).await;
 
-    match running_projects {
+    match projects_on_node {
         Ok(projects) if !projects.is_empty() => {
             let project_ids: Vec<String> = projects.into_iter().map(|(pid,)| pid).collect();
             return (
                 StatusCode::CONFLICT,
-                Json(ConflictResponse { error: "node has running projects".to_string(), project_ids }),
+                Json(ConflictResponse {
+                    error: "delete all projects on this node before removing the node".to_string(),
+                    project_ids,
+                }),
             )
                 .into_response();
         }
@@ -498,10 +499,14 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
 
     results.push(NodeImageStatsResponse { node_id: "local".to_string(), node_name: name, image_stats: stats });
 
-    // Remote nodes: get stats from agent health endpoint
-    let nodes = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id != 'local' ORDER BY name")
-        .fetch_all(&state.db)
-        .await
+    // Remote nodes: query online nodes only (offline ones have no agent and would
+    // hang on connect), concurrently with a short timeout so one slow node stalls
+    // at most 5s.
+    let nodes = match sqlx::query_as::<_, Node>(
+        "SELECT * FROM nodes WHERE id != 'local' AND status = 'online' ORDER BY name",
+    )
+    .fetch_all(&state.db)
+    .await
     {
         Ok(nodes) => nodes,
         Err(e) => {
@@ -510,31 +515,32 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
         }
     };
 
-    for node in nodes {
-        let client = match crate::nodes::client::get_node_client(&state.node_clients, &node.id) {
-            Ok(client) => client,
-            Err(e) => {
-                tracing::warn!(node_id = %node.id, error = %e, "no client for remote node");
-                continue;
+    let fetches = nodes.iter().map(|node| {
+        let node_id = node.id.clone();
+        let node_name = node.name.clone();
+        let node_clients = state.node_clients.clone();
+        let config = state.config.clone();
+        async move {
+            let client = crate::nodes::client::get_node_client(&node_clients, &node_id).ok()?;
+            let base_url = crate::routes::manage::agent_base_url(&config, node);
+            let resp = client
+                .get(format!("{}/health", base_url))
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+                .ok()?;
+            if !resp.status().is_success() {
+                tracing::warn!(node_id = %node_id, status = %resp.status(), "agent returned non-success for image stats");
+                return None;
             }
-        };
-        let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
-        match client.get(&format!("{}/health", base_url)).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(health) = resp.json::<HealthReport>().await {
-                    results.push(NodeImageStatsResponse {
-                        node_id: node.id.clone(),
-                        node_name: node.name.clone(),
-                        image_stats: health.image_stats,
-                    });
-                }
-            }
-            Ok(resp) => {
-                tracing::warn!(node_id = %node.id, status = %resp.status(), "agent returned non-success for image stats");
-            }
-            Err(e) => {
-                tracing::warn!(node_id = %node.id, error = %e, "failed to get image stats from remote node");
-            }
+            let health = resp.json::<HealthReport>().await.ok()?;
+            Some(NodeImageStatsResponse { node_id, node_name, image_stats: health.image_stats })
+        }
+    });
+
+    for resp in futures_util::future::join_all(fetches).await {
+        if let Some(r) = resp {
+            results.push(r);
         }
     }
 
