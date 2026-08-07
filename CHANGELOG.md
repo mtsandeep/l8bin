@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.18] - 2026-08-07
+
 ### Fixed
 - **Direct upload 502 (Caddy couldn't reach the upload server)** — the `/__l8b_upload` route and the on-demand `ask` endpoint used `host.docker.internal`, which doesn't resolve in the agent Caddy container. Both now use the container DNS name `litebin-agent` (matching how the orchestrator already addresses the agent over the shared Docker network).
 
