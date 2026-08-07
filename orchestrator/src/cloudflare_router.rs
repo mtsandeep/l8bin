@@ -591,7 +591,34 @@ impl CloudflareDnsRouter {
                     // Also add the www variant as a redirect handled by Caddy,
                     // but we still need a DNS record pointing to the same IP
                     let www = if cd.starts_with("www.") { cd[4..].to_string() } else { format!("www.{}", cd) };
-                    desired.insert(www, ip);
+                    desired.insert(www, ip.clone());
+                }
+
+                // Custom alias/subdomain routes (project_routes): each generated
+                // hostname gets a Caddy route but also needs an A record to resolve.
+                // Mirrors the hosts built in build_master_caddy_config/build_agent_caddy_config.
+                let alias_rows: Vec<(String, Option<String>)> = match sqlx::query_as(
+                    "SELECT route_type, subdomain FROM project_routes WHERE project_id = ? AND subdomain IS NOT NULL AND subdomain != ''",
+                )
+                .bind(project_id)
+                .fetch_all(&self.db)
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(project_id = %project_id, error = %e, "sync_dns: failed to fetch project_routes");
+                        vec![]
+                    }
+                };
+                for (route_type, sub) in alias_rows {
+                    if let Some(alias) = sub {
+                        // {alias}.{project}.{domain} (both 'subdomain' and 'alias' types)
+                        desired.insert(format!("{}.{}.{}", alias, project_id, domain), ip.clone());
+                        // {alias}.{domain} (short form, 'alias' type only)
+                        if route_type == "alias" {
+                            desired.insert(format!("{}.{}", alias, domain), ip.clone());
+                        }
+                    }
                 }
             }
         }

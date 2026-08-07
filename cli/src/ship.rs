@@ -1472,7 +1472,9 @@ async fn deploy_compose(
         is_partial_build,
         &build_infos,
         node_id,
-        is_new_project,
+        // Interactive deploys always stage first so the env-edit checkpoint fires
+        // (user updates the node .env, then starts) — for both first deploy and redeploy.
+        true,
         is_background,
         &grants,
     )

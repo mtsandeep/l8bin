@@ -656,7 +656,7 @@ pub async fn deploy_compose(
             .ports
             .as_ref()
             .and_then(|p| p.first())
-            .and_then(|p| p.split(':').last()?.parse().ok())
+            .and_then(|spec| litebin_common::compose_run::container_port(spec))
             .map(|p: u16| p as i64);
         let is_public = !is_background && public_service.as_deref() == Some(svc_name.as_str());
         let is_oneshot = oneshot_names.contains(svc_name);

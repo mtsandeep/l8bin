@@ -64,6 +64,11 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
         multi_svc_health_check: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
         domain_jobs: Arc::new(DashMap::new()),
+        upload_store: Arc::new(litebin_common::upload::UploadStore::new(
+            std::env::temp_dir().join("l8b-test-upload-store"),
+            litebin_common::upload::DEFAULT_CHUNK_SIZE,
+        )
+        .expect("upload store")),
     };
 
     let app = build_router(state);
@@ -121,6 +126,11 @@ pub async fn test_server() -> TestServer {
         multi_svc_health_check: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
         domain_jobs: Arc::new(DashMap::new()),
+        upload_store: Arc::new(litebin_common::upload::UploadStore::new(
+            std::env::temp_dir().join("l8b-test-upload-store"),
+            litebin_common::upload::DEFAULT_CHUNK_SIZE,
+        )
+        .expect("upload store")),
     };
 
     let app = build_router(state);

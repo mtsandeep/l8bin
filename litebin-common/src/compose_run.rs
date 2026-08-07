@@ -5,6 +5,24 @@ use compose_bollard::{BollardMappingOptions, ComposeFile, ComposeParser};
 
 use crate::types::{NetworkConfig, RunServiceConfig, is_windows_drive_path};
 
+/// Parse a single compose port spec into its **container** port.
+/// Handles short (`3000`), host-remapped (`8080:3000`), IP-bound
+/// (`127.0.0.1:8080:3000`), and protocol-suffixed (`3000/udp`) forms.
+/// (Same logic the first-port extraction used inline — now shared.)
+pub fn container_port(spec: &str) -> Option<u16> {
+    let core = spec.rsplit_once('/').map(|(c, _)| c).unwrap_or(spec);
+    core.split(':').last()?.parse().ok()
+}
+
+/// All container ports a service exposes, deduped and sorted.
+/// Replaces the old `.ports.first()` extraction that only kept the first port.
+pub fn service_container_ports(ports: &Option<Vec<String>>) -> Vec<u16> {
+    let mut out: Vec<u16> = ports.iter().flatten().filter_map(|spec| container_port(spec)).collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// Result of building service configs from a compose file.
 /// Contains everything needed to deploy/wake a multi-service project.
 pub struct ComposeRunPlan {
@@ -313,8 +331,7 @@ fn build_configs(
             let is_public = pub_service_name.as_deref() == Some(svc_name.as_str());
             let is_oneshot = oneshot_names.contains(svc_name);
 
-            let port: Option<u16> =
-                svc.ports.as_ref().and_then(|p| p.first()).and_then(|p| p.split(':').last()?.parse().ok());
+            let port: Option<u16> = svc.ports.as_ref().and_then(|p| p.first()).and_then(|p| container_port(p));
 
             let bollard_config = svc.to_bollard_config(&options);
 

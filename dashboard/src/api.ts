@@ -62,6 +62,9 @@ export interface ServiceInfo {
   cpu_limit?: number;
   disk_gb?: number;
   volumes?: ServiceVolumeInfo[];
+  /** All container ports this service exposes (compose projects), for route suggestions.
+   *  Empty for single-image / scan-imported services — fall back to `port`. */
+  ports?: number[];
 }
 
 export interface Project {

@@ -666,6 +666,7 @@ mod tests {
     use serde_json::Value;
 
     use super::{BatchRunRequest, FAIL_NEXT_PROXY_READINESS_CHECK, batch_run, host_network_authorized};
+    use super::projects_dir;
     use crate::config::Config;
     use crate::{AgentState, ProjectMetaEntry, WakeGuard};
 
@@ -705,6 +706,7 @@ mod tests {
         Ok(AgentState {
             config: Arc::new(Config {
                 agent_port: 0,
+                upload_port: 0,
                 cert_path: String::new(),
                 key_path: String::new(),
                 ca_cert_path: String::new(),
@@ -721,6 +723,10 @@ mod tests {
             project_meta: Arc::new(RwLock::new(HashMap::<String, ProjectMetaEntry>::new())),
             proxy_client: reqwest::Client::new(),
             multi_svc_health_check: Arc::new(DashMap::new()),
+            upload_store: Arc::new(litebin_common::upload::UploadStore::new(
+                std::env::temp_dir().join(format!("l8b-test-upload-{}", std::process::id())),
+                litebin_common::upload::DEFAULT_CHUNK_SIZE,
+            )?),
         })
     }
 

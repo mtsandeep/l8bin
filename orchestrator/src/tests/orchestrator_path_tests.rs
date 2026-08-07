@@ -87,6 +87,10 @@ async fn live_orchestrator_state() -> anyhow::Result<AppState> {
         multi_svc_health_check: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
         domain_jobs: Arc::new(DashMap::new()),
+        upload_store: Arc::new(litebin_common::upload::UploadStore::new(
+            std::env::temp_dir().join("l8b-test-upload-store"),
+            litebin_common::upload::DEFAULT_CHUNK_SIZE,
+        )?),
     })
 }
 
@@ -263,6 +267,7 @@ async fn live_agent_state() -> anyhow::Result<litebin_agent::AgentState> {
     Ok(litebin_agent::AgentState {
         config: Arc::new(litebin_agent::Config {
             agent_port: 0,
+            upload_port: 0,
             cert_path: String::new(),
             key_path: String::new(),
             ca_cert_path: String::new(),
@@ -279,6 +284,10 @@ async fn live_agent_state() -> anyhow::Result<litebin_agent::AgentState> {
         project_meta: Arc::new(RwLock::new(HashMap::new())),
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
+        upload_store: Arc::new(litebin_common::upload::UploadStore::new(
+            std::env::temp_dir().join("l8b-test-upload-store"),
+            litebin_common::upload::DEFAULT_CHUNK_SIZE,
+        )?),
     })
 }
 

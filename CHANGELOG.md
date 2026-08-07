@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Custom alias/subdomain routes not synced to Cloudflare** — `project_routes` alias entries (`{alias}.{domain}`) got a Caddy route but no Cloudflare DNS record, so they never resolved. DNS sync now creates A records for these hostnames (pointing to the project node's IP), matching the Caddy config.
+
+### Changed
+- **Interactive compose deploys now stage through the env checkpoint on every deploy** — first deploy and redeploy both stage (lenient) → show the node `.env` path → Start, so runtime env can be updated in the same flow. CI (`l8b deploy`) is unchanged (deploys directly).
+
 ## [0.3.19] - 2026-08-07
 
 ### Fixed

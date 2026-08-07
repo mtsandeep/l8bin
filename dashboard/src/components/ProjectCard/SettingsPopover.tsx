@@ -9,8 +9,8 @@ import {
   type Project,
   type ProjectCapabilityStatus,
   type ProjectRoute,
-  revokeProjectCapability,
   RouteType,
+  revokeProjectCapability,
   type ServiceInfo,
   updateProjectSettings,
 } from '../../api';
@@ -276,27 +276,29 @@ export default function SettingsPopover({
           >
             General
           </button>
-          {!project.is_background && <button
-            type="button"
-            onClick={() => setSettingsTab('routes')}
-            className={`flex-1 px-3 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
-              settingsTab === 'routes'
-                ? 'text-violet-300 border-b-2 border-violet-500'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Routes
-          </button>}
-          <button
+          {!project.is_background && (
+            <button
               type="button"
-              onClick={() => setSettingsTab('capabilities')}
+              onClick={() => setSettingsTab('routes')}
               className={`flex-1 px-3 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
-                settingsTab === 'capabilities'
+                settingsTab === 'routes'
                   ? 'text-violet-300 border-b-2 border-violet-500'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Capabilities
+              Routes
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setSettingsTab('capabilities')}
+            className={`flex-1 px-3 py-2 text-[10px] font-medium transition-colors cursor-pointer ${
+              settingsTab === 'capabilities'
+                ? 'text-violet-300 border-b-2 border-violet-500'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Capabilities
           </button>
         </div>
 
@@ -343,83 +345,85 @@ export default function SettingsPopover({
             </button>
 
             {/* Custom domain */}
-            {!project.is_background && <div className="border-t border-slate-700/50 pt-3 space-y-2">
-              <div className="text-[11px] text-slate-500">
-                Subdomain:{' '}
-                <span className="text-slate-300 font-mono">
-                  {project.id}.{domain}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={customDomainInput}
-                  onChange={(e) => onCustomDomainChange(e.target.value)}
-                  placeholder="app.example.com"
-                  className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
-                />
-                {project.custom_domain && (
+            {!project.is_background && (
+              <div className="border-t border-slate-700/50 pt-3 space-y-2">
+                <div className="text-[11px] text-slate-500">
+                  Subdomain:{' '}
+                  <span className="text-slate-300 font-mono">
+                    {project.id}.{domain}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={customDomainInput}
+                    onChange={(e) => onCustomDomainChange(e.target.value)}
+                    placeholder="app.example.com"
+                    className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
+                  />
+                  {project.custom_domain && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveCustomDomain}
+                      disabled={customDomainSaving}
+                      className="p-1.5 text-slate-400 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-50"
+                      title="Remove custom domain"
+                    >
+                      <XIcon size={14} />
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={handleRemoveCustomDomain}
-                    disabled={customDomainSaving}
-                    className="p-1.5 text-slate-400 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-50"
-                    title="Remove custom domain"
+                    onClick={handleSetCustomDomain}
+                    disabled={customDomainSaving || !customDomainInput.trim()}
+                    className="px-2.5 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    <XIcon size={14} />
+                    {customDomainSaving ? <Loader2 size={12} className="animate-spin" /> : 'Set'}
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleSetCustomDomain}
-                  disabled={customDomainSaving || !customDomainInput.trim()}
-                  className="px-2.5 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  {customDomainSaving ? <Loader2 size={12} className="animate-spin" /> : 'Set'}
-                </button>
-              </div>
-              {project.custom_domain && (
-                <div className="flex items-center gap-1 text-[10px] text-slate-600">
-                  <span className="text-slate-500">Active:</span>
-                  <span className="text-slate-400 font-mono">{project.custom_domain}</span>
                 </div>
-              )}
-              <div className="text-[10px] text-slate-600 space-y-0.5">
-                {(() => {
-                  const cd = customDomainInput.trim() || project.custom_domain;
-                  if (!cd) return null;
-                  const parts = cd.split('.');
-                  const isApex = parts.length <= 2;
-                  if (isApex) {
-                    return (
-                      <>
-                        {dnsTarget && (
+                {project.custom_domain && (
+                  <div className="flex items-center gap-1 text-[10px] text-slate-600">
+                    <span className="text-slate-500">Active:</span>
+                    <span className="text-slate-400 font-mono">{project.custom_domain}</span>
+                  </div>
+                )}
+                <div className="text-[10px] text-slate-600 space-y-0.5">
+                  {(() => {
+                    const cd = customDomainInput.trim() || project.custom_domain;
+                    if (!cd) return null;
+                    const parts = cd.split('.');
+                    const isApex = parts.length <= 2;
+                    if (isApex) {
+                      return (
+                        <>
+                          {dnsTarget && (
+                            <div>
+                              A record <span className="text-slate-400 font-mono">{cd}</span> →{' '}
+                              <span className="text-slate-400 font-mono">{dnsTarget}</span>
+                            </div>
+                          )}
                           <div>
-                            A record <span className="text-slate-400 font-mono">{cd}</span> →{' '}
-                            <span className="text-slate-400 font-mono">{dnsTarget}</span>
+                            CNAME <span className="text-slate-400 font-mono">{cd}</span> →{' '}
+                            <span className="text-slate-400 font-mono">
+                              {project.id}.{domain}
+                            </span>{' '}
+                            <span className="text-slate-500">(Cloudflare only)</span>
                           </div>
-                        )}
-                        <div>
-                          CNAME <span className="text-slate-400 font-mono">{cd}</span> →{' '}
-                          <span className="text-slate-400 font-mono">
-                            {project.id}.{domain}
-                          </span>{' '}
-                          <span className="text-slate-500">(Cloudflare only)</span>
-                        </div>
-                      </>
+                        </>
+                      );
+                    }
+                    return (
+                      <div>
+                        CNAME <span className="text-slate-400 font-mono">{cd}</span> →{' '}
+                        <span className="text-slate-400 font-mono">
+                          {project.id}.{domain}
+                        </span>
+                      </div>
                     );
-                  }
-                  return (
-                    <div>
-                      CNAME <span className="text-slate-400 font-mono">{cd}</span> →{' '}
-                      <span className="text-slate-400 font-mono">
-                        {project.id}.{domain}
-                      </span>
-                    </div>
-                  );
-                })()}
+                  })()}
+                </div>
               </div>
-            </div>}
+            )}
           </div>
         )}
 
@@ -556,32 +560,39 @@ export default function SettingsPopover({
                   )}
                 </div>
               )}
-              <div className="relative">
-                <input
-                  type="text"
-                  value={newRouteUpstream}
-                  onChange={(e) => setNewRouteUpstream(e.target.value)}
-                  placeholder="litebin-myapp-api:3001"
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500 pr-2"
-                />
-                {services.length > 0 && (
-                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex gap-0.5">
-                    {services
-                      .filter((s) => s.port != null)
-                      .map((s) => (
-                        <button
-                          key={s.service_name}
-                          type="button"
-                          onClick={() => setNewRouteUpstream(`litebin-${project.id}.${s.service_name}:${s.port}`)}
-                          className="px-1.5 py-0.5 rounded text-[9px] bg-slate-600 text-slate-300 hover:bg-slate-500 transition-colors cursor-pointer"
-                          title={`${s.service_name}:${s.port}`}
-                        >
-                          {s.port}
-                        </button>
-                      ))}
-                  </div>
-                )}
-              </div>
+              <input
+                type="text"
+                value={newRouteUpstream}
+                onChange={(e) => setNewRouteUpstream(e.target.value)}
+                placeholder="litebin-myapp-api:3001"
+                className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
+              />
+              {services.length > 0 && (
+                <div className="flex flex-col items-end gap-1">
+                  {services
+                    .map((s) => ({
+                      s,
+                      ports: s.ports && s.ports.length > 0 ? s.ports : s.port != null ? [s.port] : [],
+                    }))
+                    .filter(({ ports }) => ports.length > 0)
+                    .map(({ s, ports }) => (
+                      <div key={s.service_name} className="flex items-center gap-1">
+                        <span className="text-[9px] text-slate-600 font-mono">{s.service_name}</span>
+                        {ports.map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setNewRouteUpstream(`litebin-${project.id}.${s.service_name}:${p}`)}
+                            className="px-1.5 py-0.5 rounded text-[9px] bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors cursor-pointer"
+                            title={`${s.service_name}:${p}`}
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-slate-500 shrink-0">Priority</span>
                 <input
@@ -624,12 +635,8 @@ export default function SettingsPopover({
               <>
                 {(() => {
                   const requested = capabilities.filter((c) => c.requested_reason);
-                  const grantedExtra = capabilities.filter(
-                    (c) => c.granted && !c.requested_reason,
-                  );
-                  const catalog = capabilities.filter(
-                    (c) => !c.requested_reason && !c.granted,
-                  );
+                  const grantedExtra = capabilities.filter((c) => c.granted && !c.requested_reason);
+                  const catalog = capabilities.filter((c) => !c.requested_reason && !c.granted);
                   const q = capabilitySearch.trim().toLowerCase();
                   const catalogFiltered = q
                     ? catalog.filter(
@@ -640,10 +647,7 @@ export default function SettingsPopover({
                       )
                     : catalog;
 
-                  const renderCap = (
-                    cap: ProjectCapabilityStatus,
-                    opts?: { showReason?: boolean },
-                  ) => (
+                  const renderCap = (cap: ProjectCapabilityStatus, opts?: { showReason?: boolean }) => (
                     <div key={cap.id} className="bg-slate-900/50 rounded px-2.5 py-2 space-y-1.5">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
@@ -663,9 +667,7 @@ export default function SettingsPopover({
                           {opts?.showReason && cap.requested_reason && (
                             <p className="text-[10px] text-amber-300/80 mt-1">{cap.requested_reason}</p>
                           )}
-                          {cap.risk && (
-                            <p className="text-[10px] text-amber-400/80 mt-1">{cap.risk}</p>
-                          )}
+                          {cap.risk && <p className="text-[10px] text-amber-400/80 mt-1">{cap.risk}</p>}
                           {cap.requires_recreate && (
                             <p className="text-[10px] text-slate-500 mt-1">Requires recreate to apply</p>
                           )}
@@ -677,11 +679,7 @@ export default function SettingsPopover({
                             disabled={capabilityActionId === cap.id}
                             className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-slate-700 text-slate-300 hover:bg-red-500/20 hover:text-red-300 transition-colors disabled:opacity-50 cursor-pointer"
                           >
-                            {capabilityActionId === cap.id ? (
-                              <Loader2 size={11} className="animate-spin" />
-                            ) : (
-                              'Revoke'
-                            )}
+                            {capabilityActionId === cap.id ? <Loader2 size={11} className="animate-spin" /> : 'Revoke'}
                           </button>
                         ) : (
                           <button
@@ -690,11 +688,7 @@ export default function SettingsPopover({
                             disabled={capabilityActionId === cap.id}
                             className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
                           >
-                            {capabilityActionId === cap.id ? (
-                              <Loader2 size={11} className="animate-spin" />
-                            ) : (
-                              'Grant'
-                            )}
+                            {capabilityActionId === cap.id ? <Loader2 size={11} className="animate-spin" /> : 'Grant'}
                           </button>
                         )}
                       </div>
@@ -728,9 +722,7 @@ export default function SettingsPopover({
                       {catalog.length > 0 && (
                         <details
                           open={capabilityCatalogOpen}
-                          onToggle={(e) =>
-                            setCapabilityCatalogOpen((e.target as HTMLDetailsElement).open)
-                          }
+                          onToggle={(e) => setCapabilityCatalogOpen((e.target as HTMLDetailsElement).open)}
                           className="rounded border border-slate-700/50 bg-slate-900/30"
                         >
                           <summary className="px-2.5 py-2 text-[11px] text-slate-400 cursor-pointer select-none">
@@ -760,7 +752,6 @@ export default function SettingsPopover({
             )}
           </div>
         )}
-
       </div>
     </div>
   );

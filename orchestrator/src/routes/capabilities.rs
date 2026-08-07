@@ -361,6 +361,12 @@ mod tests {
         let (route_sync_tx, _) = tokio::sync::mpsc::unbounded_channel();
         Ok(AppState {
             config: Arc::new(crate::tests::helpers::test_config()),
+            platform: crate::platform::PlatformHandle::new(crate::platform::PlatformSettings {
+                domain: String::new(),
+                dashboard_subdomain: String::new(),
+                poke_subdomain: String::new(),
+                dns_target: String::new(),
+            }),
             db,
             docker: Arc::new(docker),
             router,
@@ -372,6 +378,11 @@ mod tests {
             proxy_client: reqwest::Client::new(),
             multi_svc_health_check: Arc::new(DashMap::new()),
             deploy_logs: Arc::new(DashMap::new()),
+            domain_jobs: Arc::new(DashMap::new()),
+            upload_store: Arc::new(litebin_common::upload::UploadStore::new(
+                std::env::temp_dir().join("l8b-test-upload-store"),
+                litebin_common::upload::DEFAULT_CHUNK_SIZE,
+            )?),
         })
     }
 

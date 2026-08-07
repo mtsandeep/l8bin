@@ -93,6 +93,7 @@ fn public_stats_from_project(project: &Project) -> Option<ServiceInfo> {
         cpu_limit: project.cpu_limit,
         disk_gb: None,
         volumes,
+        ports: vec![],
     })
 }
 
@@ -157,6 +158,7 @@ async fn to_project_response(project: &Project, db: &sqlx::SqlitePool) -> Projec
                     cpu_limit,
                     disk_gb: None,
                     volumes,
+                    ports: vec![],
                 })
             }
             None => None,

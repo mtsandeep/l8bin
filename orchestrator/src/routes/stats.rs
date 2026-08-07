@@ -38,6 +38,10 @@ pub struct ServiceInfo {
     pub disk_gb: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub volumes: Vec<ServiceVolumeInfo>,
+    /// All container ports this service exposes (compose projects), for route
+    /// suggestions. Empty for single-image / scan-imported services (use `port`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<i64>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -257,6 +261,7 @@ async fn batch_load_services(
                 cpu_limit,
                 disk_gb: None,
                 volumes: vec![],
+                ports: vec![],
             },
             container_id,
         ));
@@ -348,6 +353,7 @@ mod tests {
             cpu_limit: None,
             disk_gb: None,
             volumes: vec![],
+            ports: vec![],
         }
     }
 
@@ -438,6 +444,44 @@ mod tests {
     }
 }
 
+/// Read each compose project's on-disk `compose.yaml` and collect **every** container
+/// port per service. Used to populate `ServiceInfo.ports` for route suggestions (so all
+/// of a service's ports are offered, not just the first). Single-image / scan-imported
+/// projects have no compose file and are skipped — the dashboard falls back to `port`.
+/// Missing/unparseable files are silently ignored.
+fn compose_service_ports(
+    projects: &[crate::db::models::Project],
+) -> std::collections::HashMap<String, std::collections::HashMap<String, Vec<i64>>> {
+    let mut out: std::collections::HashMap<String, std::collections::HashMap<String, Vec<i64>>> =
+        std::collections::HashMap::new();
+    for project in projects {
+        if project.deploy_type != Some(DeployType::Compose) {
+            continue;
+        }
+        let Some(yaml) = litebin_common::docker::DockerManager::read_compose(&project.id) else {
+            continue;
+        };
+        let Ok(compose) = compose_bollard::ComposeParser::parse(&yaml) else {
+            continue;
+        };
+        let entry = compose
+            .services
+            .iter()
+            .map(|(name, svc)| {
+                (
+                    name.clone(),
+                    litebin_common::compose_run::service_container_ports(&svc.ports)
+                        .into_iter()
+                        .map(|p| p as i64)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        out.insert(project.id.clone(), entry);
+    }
+    out
+}
+
 /// GET /projects/stats — returns stats + disk + services for all projects in one call
 #[utoipa::path(
     get,
@@ -465,7 +509,19 @@ pub async fn all_project_stats(
 
     // Batch-load services for ALL projects upfront
     let all_ids: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
-    let services_map = batch_load_services(&state.db, &all_ids).await;
+    let mut services_map = batch_load_services(&state.db, &all_ids).await;
+
+    // Attach every container port per service (compose projects) for route suggestions.
+    let compose_ports = compose_service_ports(&projects);
+    for (pid, services) in services_map.iter_mut() {
+        if let Some(svc_ports) = compose_ports.get(pid) {
+            for (svc, _) in services.iter_mut() {
+                if let Some(ports) = svc_ports.get(&svc.service_name) {
+                    svc.ports = ports.clone();
+                }
+            }
+        }
+    }
 
     // Map project_id -> last_active_at for stats response
     let last_active_map: std::collections::HashMap<String, Option<i64>> =
