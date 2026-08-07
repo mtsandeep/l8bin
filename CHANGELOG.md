@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.14] - 2026-08-07
+
 ### Added
 - **Resumable chunked image upload** — Image tars are now uploaded in 32 MiB chunks with per-chunk auto-retry; a dropped chunk is resent instead of restarting the whole image. Uploads resume from the chunks the server has already confirmed (across attempts, re-mints, and client restarts), and the progress bar reflects server-confirmed bytes rather than rewinding to 0. Applies to all destinations — local node, relay via master, and direct to agent.
 - **Direct-to-agent upload** — Remote-agent images can be pushed straight from the client to the agent over `:443`, skipping the master relay entirely. The CLI prompts for "Direct to agent (recommended) / Relay via master" when the node has a public IP; nodes without one fall back to relay automatically. Uses the agent's existing CA-signed cert with hostname verification skipped (same posture as master↔agent), so no new certs, DNS, or install step.
