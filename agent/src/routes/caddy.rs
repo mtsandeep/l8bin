@@ -28,7 +28,7 @@ pub async fn sync_caddy(State(state): State<AgentState>, Json(config): Json<Valu
     // config omits/clobbers these, so every sync must re-apply them — otherwise
     // direct uploads and agent-local TLS issuance break until the next local rebuild.
     let mut enriched = config.clone();
-    let upload_upstream = format!("host.docker.internal:{}", state.config.upload_port);
+    let upload_upstream = format!("litebin-agent:{}", state.config.upload_port);
     crate::routes::waker::enrich_agent_config(
         &mut enriched,
         &state.config.cert_pem,

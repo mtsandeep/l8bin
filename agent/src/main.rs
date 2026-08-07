@@ -103,7 +103,7 @@ async fn main() -> Result<()> {
             // Re-apply all agent-local enrichments (upload route, agent cert for
             // SNI=agent, agent's own on-demand ask) — the persisted base is the
             // raw orchestrator config, which omits/clobbers these.
-            let upload_upstream = format!("host.docker.internal:{}", cfg.upload_port);
+            let upload_upstream = format!("litebin-agent:{}", cfg.upload_port);
             routes::waker::enrich_agent_config(&mut config, &cfg.cert_pem, &cfg.key_pem, &upload_upstream);
             let url = format!("{}/load", caddy.admin_url());
             match caddy.post_json(&url, &config).await {
@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
             let base_config = routes::waker::build_base_caddy_config(
                 &cfg.cert_pem,
                 &cfg.key_pem,
-                &format!("host.docker.internal:{}", cfg.upload_port),
+                &format!("litebin-agent:{}", cfg.upload_port),
             );
             let url = format!("{}/load", caddy.admin_url());
             match caddy.post_json(&url, &base_config).await {

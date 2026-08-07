@@ -92,7 +92,7 @@ pub fn ensure_agent_cert_loaded(config: &mut serde_json::Value, cert_pem: &str, 
 
 /// Address of the agent's own wake/permission server, as reachable from the
 /// agent Caddy container. Same address used for the wake reverse-proxy routes.
-const AGENT_WAKE_UPSTREAM: &str = "host.docker.internal:8444";
+const AGENT_WAKE_UPSTREAM: &str = "litebin-agent:8444";
 
 /// Force the on-demand TLS permission endpoint to the agent's own `caddy-ask`
 /// (loopback/Docker network) instead of the orchestrator's public HTTP listener.
@@ -149,7 +149,7 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
         None => return Ok(()),
     };
 
-    let upload_upstream = format!("host.docker.internal:{}", state.config.upload_port);
+    let upload_upstream = format!("litebin-agent:{}", state.config.upload_port);
 
     // List all running litebin containers with their ports
     let mut containers = state.docker.list_running_litebin_containers().await?;
@@ -230,7 +230,7 @@ fn merge_routes_with_persisted(
     }
 
     // Build routes: multi-service -> wake server, single-service -> direct to container
-    let wake_server_upstream = "host.docker.internal:8444";
+    let wake_server_upstream = "litebin-agent:8444";
     for (project_id, svc_containers) in &by_project {
         let subdomain_host = format!("{}.{}", project_id, domain);
 
@@ -348,7 +348,7 @@ fn build_config_from_scratch(
         by_project.entry(c.project_id.clone()).or_default().push(c);
     }
 
-    let wake_server_upstream = "host.docker.internal:8444";
+    let wake_server_upstream = "litebin-agent:8444";
     for (project_id, svc_containers) in &by_project {
         let host = format!("{}.{}", project_id, domain);
         if DockerManager::read_compose(project_id).is_some() {
