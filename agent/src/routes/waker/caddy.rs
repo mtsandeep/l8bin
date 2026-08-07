@@ -4,16 +4,15 @@ use serde_json::json;
 use crate::AgentState;
 use litebin_common::docker::DockerManager;
 
-/// Route name used to skip access-logging for direct uploads (the token is in the path).
-const UPLOAD_ROUTE_NAME: &str = "l8b_direct_upload";
+/// Path matched by the direct-upload reverse-proxy route.
+const UPLOAD_PATH: &str = "/__l8b_upload/*";
 
 /// The path-based reverse-proxy route that sends `/__l8b_upload/*` to the agent's
 /// loopback upload server. Matched by path (not host) so it works for direct
 /// uploads to the node's raw IP, which won't match any site host. Must be first.
 fn upload_route(upload_upstream: &str) -> serde_json::Value {
     json!({
-        "name": UPLOAD_ROUTE_NAME,
-        "match": [{ "path": ["/__l8b_upload/*"] }],
+        "match": [{ "path": [UPLOAD_PATH] }],
         "handle": [{
             "handler": "reverse_proxy",
             "upstreams": [{ "dial": upload_upstream }]
@@ -21,22 +20,17 @@ fn upload_route(upload_upstream: &str) -> serde_json::Value {
     })
 }
 
-/// Ensure the server skips access-logging for the upload route (token in path).
-fn ensure_upload_log_skip(config: &mut serde_json::Value) {
-    let logs = &mut config["apps"]["http"]["servers"]["srv0"]["logs"];
-    if logs.is_null() || !logs.is_object() {
-        *logs = json!({});
-    }
-    let skip = &mut logs["skip"];
-    if skip.is_null() || !skip.is_array() {
-        *skip = json!([]);
-    }
-    if let Some(arr) = skip.as_array_mut() {
-        let has = arr.iter().any(|v| v.as_str() == Some(UPLOAD_ROUTE_NAME));
-        if !has {
-            arr.push(json!(UPLOAD_ROUTE_NAME));
-        }
-    }
+/// Whether a routes array already contains the upload route (matched by path).
+fn has_upload_route(routes: &[serde_json::Value]) -> bool {
+    routes.iter().any(|r| {
+        r["match"]
+            .as_array()
+            .and_then(|m| m.first())
+            .and_then(|m| m["path"].as_array())
+            .and_then(|p| p.first())
+            .and_then(|v| v.as_str())
+            == Some(UPLOAD_PATH)
+    })
 }
 
 /// Ensure the agent's own certificate (SAN=DNS:agent) is loaded as a manual
@@ -59,7 +53,7 @@ pub fn ensure_upload_route(config: &mut serde_json::Value, upload_upstream: &str
     else {
         return;
     };
-    let exists = routes.iter().any(|r| r["name"].as_str() == Some(UPLOAD_ROUTE_NAME));
+    let exists = has_upload_route(routes);
     if !exists {
         routes.insert(0, upload_route(upload_upstream));
     }
@@ -331,7 +325,6 @@ fn merge_routes_with_persisted(
     let mut config = base.clone();
     config["apps"]["http"]["servers"]["srv0"]["routes"] = json!(routes);
     config["apps"]["http"]["servers"]["srv0"]["errors"] = error_routes;
-    ensure_upload_log_skip(&mut config);
     config
 }
 
@@ -404,7 +397,7 @@ fn build_config_from_scratch(
 
     let logging = litebin_common::heartbeat::caddy_logging_config();
 
-    let mut config = json!({
+    let config = json!({
         "admin": { "listen": "0.0.0.0:2019" },
         "logging": logging["logging"],
         "apps": {
@@ -428,7 +421,6 @@ fn build_config_from_scratch(
             }
         }
     });
-    ensure_upload_log_skip(&mut config);
     config
 }
 
@@ -439,7 +431,7 @@ fn build_config_from_scratch(
 pub fn build_base_caddy_config(cert_pem: &str, key_pem: &str, upload_upstream: &str) -> serde_json::Value {
     let logging = litebin_common::heartbeat::caddy_logging_config();
 
-    let mut config = json!({
+    let config = json!({
         "admin": { "listen": "0.0.0.0:2019" },
         "logging": logging["logging"],
         "apps": {
@@ -472,7 +464,6 @@ pub fn build_base_caddy_config(cert_pem: &str, key_pem: &str, upload_upstream: &
             }
         }
     });
-    ensure_upload_log_skip(&mut config);
     config
 }
 
