@@ -128,7 +128,7 @@ After one successful orchestrator push, an agent can operate fully independently
 | Route traffic to running containers | Yes — local Caddy rebuild from persisted config |
 | Check `auto_start_enabled` before waking | Yes — project metadata persisted locally |
 | Serve traffic after restart | Yes — persisted Caddy config + project metadata loaded on startup |
-| Issue new TLS certificates | No — on-demand TLS needs orchestrator's `/caddy/ask` endpoint |
+| Issue/renew TLS certificates | Yes — on-demand TLS asks the agent's own `/internal/caddy-ask` (loopback); Caddy then obtains the cert from Let's Encrypt directly. No master contact |
 | Add new custom domains | No — done through dashboard (runs on orchestrator) |
 
 ### Agent Persistence
@@ -157,6 +157,26 @@ The orchestrator pushes `auto_start_enabled` flags to agents via `POST /internal
 
 1. **Route sync** — covers deploy, stop, start, custom domain changes
 2. **Settings toggle** — immediate push when `auto_start_enabled` is changed in dashboard
+
+## Image Upload
+
+Built images are shipped to a node as a **chunked, resumable** upload (32 MiB chunks). The client asks the master where to upload (`POST /images/upload-target`), then chunks the tar to `{base}/{token}/{status|chunk/{i}|commit}`. A dropped chunk is resent; uploads resume from the chunks the server already confirmed (across retries, re-mints, and client restarts). Three destinations share one protocol:
+
+| Mode | When | Client talks to | Stages on | Loads on |
+|---|---|---|---|---|
+| **Local** | target node is the master | master | master | master Docker |
+| **Relay** | remote node, via master | master | master | agent (master streams assembled tar at commit) |
+| **Direct** | remote node with a public IP | **agent `:443`** | agent | agent Docker |
+
+- **Local / Relay** use the master's `/images/upload/{token}/…` endpoints; the master mints the token.
+- **Direct** skips the master relay entirely — bytes go straight from the client to the agent. The agent mints the token (`POST /internal/mint-upload-token` over mTLS) and serves `/__l8b_upload/{token}/…` on a loopback listener reached by the agent's Caddy. This is the default for remote nodes with a public IP; the CLI prompts `Direct to agent (recommended) / Relay via master` (or `--upload direct|relay|auto` in CI).
+
+**Direct-upload TLS** — the client connects to the node's raw IP, but the agent cert is issued for `SAN=DNS:agent` (no IP SAN), and Caddy selects certs by SNI. So:
+- The agent ensures its own cert is in Caddy's `load_pem` (served for SNI=`agent`).
+- The client connects using hostname `agent`, pinned to the node's IP via reqwest `resolve` — so it sends SNI=`agent` — and trusts the litebin CA with hostname verification skipped (same posture as master↔agent mTLS).
+- No new certs, DNS, subdomain, or install step.
+
+This keeps remote-agent deploys from crossing the master↔agent link twice (e.g. client near an agent but far from the master), and preserves agent autonomy: a direct upload + the agent's own TLS issuance mean a deploy to a reachable agent doesn't depend on the master staying up.
 
 ## Network
 

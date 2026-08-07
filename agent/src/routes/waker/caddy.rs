@@ -39,6 +39,58 @@ fn ensure_upload_log_skip(config: &mut serde_json::Value) {
     }
 }
 
+/// Ensure the agent's own certificate (SAN=DNS:agent) is loaded as a manual
+/// certificate, so Caddy can serve it for SNI=`agent` without falling back to
+/// on-demand issuance. Used by direct uploads (the client sends SNI=`agent` while
+/// connecting to the node's raw IP). Idempotent; safely creates intermediate
+/// objects (the orchestrator-pushed base may only have `tls.automation`).
+pub fn ensure_agent_cert_loaded(config: &mut serde_json::Value, cert_pem: &str, key_pem: &str) {
+    // `tls` is always an object in practice, but guard defensively.
+    let tls = &mut config["apps"]["tls"];
+    if !tls.is_object() {
+        *tls = json!({});
+    }
+    let certificates = &mut tls["certificates"];
+    if !certificates.is_object() {
+        *certificates = json!({});
+    }
+    let load_pem = &mut certificates["load_pem"];
+    if !load_pem.is_array() {
+        *load_pem = json!([]);
+    }
+    let arr = load_pem.as_array_mut().expect("load_pem is an array");
+    let already = arr.iter().any(|e| e["certificate"].as_str() == Some(cert_pem));
+    if !already {
+        arr.push(json!({ "certificate": cert_pem, "key": key_pem }));
+    }
+}
+
+/// Address of the agent's own wake/permission server, as reachable from the
+/// agent Caddy container. Same address used for the wake reverse-proxy routes.
+const AGENT_WAKE_UPSTREAM: &str = "host.docker.internal:8444";
+
+/// Force the on-demand TLS permission endpoint to the agent's own `caddy-ask`
+/// (loopback/Docker network) instead of the orchestrator's public HTTP listener.
+///
+/// The orchestrator-pushed config points `ask` at `http://<master_public_ip>/caddy/ask`,
+/// which the master redirects http→https; Caddy's on-demand ask client refuses to
+/// follow redirects, so issuance fails. The agent can authorize its own hosted
+/// domains locally (project subdomains + custom-domain routes), so it asks itself
+/// — no master contact, no redirect, and issuance keeps working if the master is down.
+pub fn normalize_ask_endpoint(config: &mut serde_json::Value) {
+    // Only touch configs that actually use on-demand TLS.
+    let Some(tls) = config.get_mut("apps").and_then(|a| a.get_mut("tls")) else { return };
+    let Some(automation) = tls.get_mut("automation") else { return };
+    let Some(on_demand) = automation.get_mut("on_demand") else { return };
+    let permission_ok = on_demand.get("permission").map(|p| p.is_object()).unwrap_or(false);
+    if !permission_ok {
+        on_demand["permission"] = json!({});
+    }
+    let permission = on_demand.get_mut("permission").expect("permission present");
+    permission["module"] = json!("http");
+    permission["endpoint"] = json!(format!("http://{}/internal/caddy-ask", AGENT_WAKE_UPSTREAM));
+}
+
 /// Get the domain from registration state. Returns None if not registered.
 fn get_domain(state: &AgentState) -> Option<String> {
     state.registration.read().unwrap().as_ref().map(|r| r.domain.clone())
@@ -83,7 +135,7 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
         });
     }
 
-    let config = match state.last_caddy_config.read().unwrap().clone() {
+    let mut config = match state.last_caddy_config.read().unwrap().clone() {
         Some(base) => merge_routes_with_persisted(&base, &containers, &domain, &upload_upstream),
         None => build_config_from_scratch(
             &containers,
@@ -93,6 +145,12 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
             &upload_upstream,
         ),
     };
+    // Always ensure the agent cert is loadable for SNI=`agent` (direct uploads),
+    // even when the orchestrator-pushed base only has on-demand automation.
+    ensure_agent_cert_loaded(&mut config, &state.config.cert_pem, &state.config.key_pem);
+    // Route on-demand TLS permission to the agent's own caddy-ask (not the master's
+    // redirect-prone public endpoint).
+    normalize_ask_endpoint(&mut config);
 
     let url = format!("{}/load", caddy.admin_url());
     let resp = caddy.post_json(&url, &config).await?;

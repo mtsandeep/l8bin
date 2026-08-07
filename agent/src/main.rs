@@ -99,7 +99,12 @@ async fn main() -> Result<()> {
     // Push persisted Caddy config on startup (so routes exist immediately)
     if let Some(caddy) = &state.caddy {
         let persisted = last_caddy_config.read().unwrap().clone();
-        if let Some(config) = persisted {
+        if let Some(mut config) = persisted {
+            // Ensure the agent cert (SNI=`agent`) is loadable even if the
+            // orchestrator-pushed base only configured on-demand TLS.
+            routes::waker::ensure_agent_cert_loaded(&mut config, &cfg.cert_pem, &cfg.key_pem);
+            // Route on-demand TLS permission to the agent's own caddy-ask.
+            routes::waker::normalize_ask_endpoint(&mut config);
             let url = format!("{}/load", caddy.admin_url());
             match caddy.post_json(&url, &config).await {
                 Ok(resp) if resp.status().is_success() => {

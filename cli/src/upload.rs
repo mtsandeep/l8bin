@@ -10,8 +10,11 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 use indicatif::HumanBytes;
-use litebin_common::upload::{chunk_url, commit_url, status_url, MASTER_UPLOAD_PREFIX, TOTAL_CHUNKS_HEADER};
+use litebin_common::upload::{
+    chunk_url, commit_url, status_url, AGENT_UPLOAD_PREFIX, MASTER_UPLOAD_PREFIX, TOTAL_CHUNKS_HEADER,
+};
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::path::Path;
 
 use crate::auth::{self, UploadTarget};
@@ -50,14 +53,32 @@ pub async fn upload_image(
 ) -> Result<String> {
     let target = auth::request_upload_target(client, server, project_id, image_id, node_id, mode.hint()).await?;
 
-    let upload_client = if target.mode == "direct" {
+    // For direct mode the broker returns base_url = https://<ip>/__l8b_upload.
+    // We connect using the hostname `agent` (matches the cert's SAN=DNS:agent) and
+    // pin it to that IP via reqwest's resolve, so SNI=`agent` is sent (Caddy serves
+    // the matching cert). Non-direct modes talk to the master normally.
+    let (upload_client, base) = if target.mode == "direct" {
         let ca_pem = target
             .ca_pem
             .as_deref()
             .context("direct upload target did not include ca_pem")?;
-        crate::tls::direct_upload_client(ca_pem)?
+        let base_url = target
+            .base_url
+            .as_deref()
+            .context("direct upload target did not include base_url")?;
+        let url = reqwest::Url::parse(base_url).context("invalid direct base_url")?;
+        let host = url.host_str().context("missing host in base_url")?;
+        let ip: IpAddr = host
+            .parse()
+            .with_context(|| format!("direct upload base_url host is not an IP address: '{host}'"))?;
+        let client = crate::tls::direct_upload_client(ca_pem, ip)?;
+        let base = format!("https://{}{}", crate::tls::DIRECT_HOST, AGENT_UPLOAD_PREFIX);
+        (client, base)
     } else {
-        client.clone()
+        (
+            client.clone(),
+            format!("{}{}", server.trim_end_matches('/'), MASTER_UPLOAD_PREFIX),
+        )
     };
 
     if !ci_mode {
@@ -69,7 +90,7 @@ pub async fn upload_image(
         eprintln!("  {} Uploading {} ({})", "↻".dimmed(), label, tar_path.display());
     }
 
-    chunked_upload(&upload_client, server, &target, tar_path, ci_mode).await
+    chunked_upload(&upload_client, &base, &target, tar_path, ci_mode).await
 }
 
 /// Read the bytes of chunk `index` (0-based) from the file.
@@ -91,7 +112,7 @@ fn read_chunk(path: &Path, index: u64, chunk_size: usize) -> Result<Vec<u8>> {
 /// a manual retry that resumes (no rebuild).
 async fn chunked_upload(
     client: &reqwest::Client,
-    server: &str,
+    base: &str,
     target: &UploadTarget,
     tar_path: &Path,
     ci_mode: bool,
@@ -101,12 +122,6 @@ async fn chunked_upload(
     let file_size = std::fs::metadata(tar_path)?.len();
     let chunk_size = target.chunk_size as usize;
     let total_chunks = file_size.div_ceil(chunk_size as u64);
-
-    // base for chunk requests: agent URL (direct) or master (local/relay).
-    let base = match &target.base_url {
-        Some(b) => b.trim_end_matches('/').to_string(),
-        None => format!("{}{}", server.trim_end_matches('/'), MASTER_UPLOAD_PREFIX),
-    };
 
     let pb = if !ci_mode {
         let pb = ProgressBar::new(file_size);

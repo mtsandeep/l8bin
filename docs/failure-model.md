@@ -20,7 +20,7 @@ How LiteBin handles failures at every layer. What breaks, what degrades, and wha
 | Auto-stop idle apps | Broken — janitor runs on orchestrator | Restart orchestrator |
 | Activity tracking (Mode A) | Broken — log tailer runs on orchestrator | Restart orchestrator |
 | Activity tracking (Mode B) | Agents continue tailing logs but can't report to master | Master comes back, agents flush queued hosts |
-| TLS certificate provisioning | New certs won't be issued (on-demand TLS needs `/caddy/ask`) | Restart orchestrator |
+| TLS certificate provisioning | **Works** in Mode B — agent issues/renews certs via its own `/internal/caddy-ask` (loopback), no master contact. Broken in Mode A (master terminates TLS) | Automatic (Mode B) |
 | Cloudflare DNS management | Broken — no API calls | Restart orchestrator |
 
 **Key takeaway:** In Mode B, a master outage is nearly invisible to users. Agents serve running apps, wake sleeping apps, and route traffic independently. The only things that break are deploy and management operations.

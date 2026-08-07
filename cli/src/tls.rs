@@ -1,18 +1,25 @@
 //! TLS client for direct-to-agent uploads.
 //!
-//! Direct uploads connect to the agent by raw IP on `:443`; the agent serves a
-//! cert signed by the litebin CA with `SAN=DNS:agent` (no IP SAN). So — exactly
-//! like the master does (`orchestrator/src/nodes/client.rs`) — we trust the CA
-//! and skip hostname verification. The agent CA PEM is handed to the client by
-//! the master's `/images/upload-target` broker.
+//! Direct uploads connect to the agent by raw IP on `:443`, but the agent serves
+//! a cert signed by the litebin CA with `SAN=DNS:agent` (no IP SAN). Caddy selects
+//! certs by SNI, and no SNI is sent for an IP-literal host — so we connect using
+//! the hostname `agent` (matching the cert's SAN) and pin it to the node's public
+//! IP via reqwest's `resolve`, sending SNI=`agent`. We then trust the CA and skip
+//! hostname verification (mirroring `orchestrator/src/nodes/client.rs`). The agent
+//! CA PEM is handed to the client by the master's `/images/upload-target` broker.
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-/// Build a reqwest client that trusts the given CA PEM and skips hostname
-/// verification (agent certs carry `SAN=DNS:agent`, accessed by IP).
-pub fn direct_upload_client(ca_pem: &str) -> Result<reqwest::Client> {
+/// The hostname used in the URL / SNI for direct uploads. Matches the agent
+/// cert's `SAN=DNS:agent`; pinned to the node's public IP via reqwest `resolve`.
+pub const DIRECT_HOST: &str = "agent";
+
+/// Build a reqwest client that connects to `agent` (pinned to `agent_ip:443`),
+/// trusts the given CA PEM, and skips hostname verification.
+pub fn direct_upload_client(ca_pem: &str, agent_ip: IpAddr) -> Result<reqwest::Client> {
     // Ensure the ring crypto provider is installed (CLI doesn't install one globally).
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -28,6 +35,9 @@ pub fn direct_upload_client(ca_pem: &str) -> Result<reqwest::Client> {
 
     let client = reqwest::Client::builder()
         .use_preconfigured_tls(config)
+        // Pin the `agent` hostname to the node's public IP so reqwest sends
+        // SNI=`agent` (Caddy serves the matching cert) without real DNS.
+        .resolve(DIRECT_HOST, SocketAddr::new(agent_ip, 443))
         .timeout(std::time::Duration::from_secs(1800))
         .build()?;
 

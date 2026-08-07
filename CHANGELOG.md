@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **On-demand TLS issuance broken (agent sites)** — the agent Caddy's permission check pointed at the master's public HTTP `/caddy/ask`, which redirects http→https; Caddy's ask client refuses redirects, so new/renewing site certs failed to issue. Agents now use their own `/internal/caddy-ask` over the loopback/Docker network (permission + ACME happen entirely on-agent, no master contact — restoring Mode B autonomy for TLS).
+- **Direct-to-agent upload TLS handshake** — connecting to the agent by raw IP sent no SNI, and the agent Caddy had no cert to match (on-demand only), aborting the handshake. The agent now always loads its own cert (SAN=`agent`) for SNI=`agent`, and the client connects via hostname `agent` (pinned to the node's IP) so SNI=`agent` is sent. No new certs/DNS/port.
+
 ## [0.3.14] - 2026-08-07
 
 ### Added
