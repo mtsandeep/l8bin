@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Agent Caddy config clobbered on every orchestrator sync** — `/caddy/sync` pushed the orchestrator's config raw, wiping the `/__l8b_upload` route, the SNI=`agent` cert, and the agent-local `ask` endpoint every few minutes (so direct uploads and autonomous TLS issuance broke until the next local rebuild). All agent-local enrichments are now applied in one place on every config push (startup, local rebuild, and `/caddy/sync`), so the orchestrator can no longer clobber them.
+- **Direct-upload commit error now self-describing** — `missing image_id in commit response` includes the actual HTTP status and body, so a truncated/empty response (e.g. a connection dropped during a long `docker load`) is distinguishable from a genuine server error.
+
 ## [0.3.15] - 2026-08-07
 
 ### Fixed

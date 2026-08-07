@@ -15,15 +15,29 @@ pub async fn sync_caddy(State(state): State<AgentState>, Json(config): Json<Valu
         }
     };
 
-    // Persist to state + file (so rebuild_local_caddy can use as base)
+    // Persist the orchestrator-pushed base (raw) to state + file, so
+    // rebuild_local_caddy can use it as a base later.
     {
         let mut guard = state.last_caddy_config.write().unwrap();
         *guard = Some(config.clone());
     }
     crate::save_caddy_config_to_file(&config);
 
+    // Push an ENRICHED copy: re-add the /__l8b_upload route, the agent cert
+    // (SNI=agent), and the agent's own on-demand ask endpoint. The orchestrator's
+    // config omits/clobbers these, so every sync must re-apply them — otherwise
+    // direct uploads and agent-local TLS issuance break until the next local rebuild.
+    let mut enriched = config.clone();
+    let upload_upstream = format!("host.docker.internal:{}", state.config.upload_port);
+    crate::routes::waker::enrich_agent_config(
+        &mut enriched,
+        &state.config.cert_pem,
+        &state.config.key_pem,
+        &upload_upstream,
+    );
+
     let url = format!("{}/load", caddy.admin_url());
-    match caddy.post_json(&url, &config).await {
+    match caddy.post_json(&url, &enriched).await {
         Ok(resp) if resp.status().is_success() => {
             tracing::info!("agent caddy config loaded and persisted");
             StatusCode::OK

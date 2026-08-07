@@ -301,12 +301,13 @@ async fn commit(client: &reqwest::Client, base: &str, token: &str) -> Result<Str
     let url = commit_url(base, token);
     let resp = client.post(&url).send().await.context("commit request failed")?;
     let status = resp.status();
-    let v: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
     if !status.is_success() {
-        anyhow::bail!("commit failed ({status}): {}", v["error"].as_str().unwrap_or("unknown"));
+        anyhow::bail!("commit failed ({status}): {}", v["error"].as_str().unwrap_or(&body));
     }
     v["image_id"]
         .as_str()
         .map(|s| s.to_string())
-        .context("missing image_id in commit response")
+        .with_context(|| format!("missing image_id in commit response (status {status}, body: {body})"))
 }

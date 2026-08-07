@@ -100,11 +100,11 @@ async fn main() -> Result<()> {
     if let Some(caddy) = &state.caddy {
         let persisted = last_caddy_config.read().unwrap().clone();
         if let Some(mut config) = persisted {
-            // Ensure the agent cert (SNI=`agent`) is loadable even if the
-            // orchestrator-pushed base only configured on-demand TLS.
-            routes::waker::ensure_agent_cert_loaded(&mut config, &cfg.cert_pem, &cfg.key_pem);
-            // Route on-demand TLS permission to the agent's own caddy-ask.
-            routes::waker::normalize_ask_endpoint(&mut config);
+            // Re-apply all agent-local enrichments (upload route, agent cert for
+            // SNI=agent, agent's own on-demand ask) — the persisted base is the
+            // raw orchestrator config, which omits/clobbers these.
+            let upload_upstream = format!("host.docker.internal:{}", cfg.upload_port);
+            routes::waker::enrich_agent_config(&mut config, &cfg.cert_pem, &cfg.key_pem, &upload_upstream);
             let url = format!("{}/load", caddy.admin_url());
             match caddy.post_json(&url, &config).await {
                 Ok(resp) if resp.status().is_success() => {

@@ -44,6 +44,37 @@ fn ensure_upload_log_skip(config: &mut serde_json::Value) {
 /// on-demand issuance. Used by direct uploads (the client sends SNI=`agent` while
 /// connecting to the node's raw IP). Idempotent; safely creates intermediate
 /// objects (the orchestrator-pushed base may only have `tls.automation`).
+/// Idempotently ensure the `/__l8b_upload/*` reverse-proxy route is present
+/// (first, so it wins), pointing at the agent's loopback upload server. The
+/// orchestrator-pushed config doesn't include this route, so it must be re-added
+/// whenever the orchestrator syncs.
+pub fn ensure_upload_route(config: &mut serde_json::Value, upload_upstream: &str) {
+    let Some(routes) = config
+        .get_mut("apps")
+        .and_then(|a| a.get_mut("http"))
+        .and_then(|h| h.get_mut("servers"))
+        .and_then(|s| s.get_mut("srv0"))
+        .and_then(|s| s.get_mut("routes"))
+        .and_then(|r| r.as_array_mut())
+    else {
+        return;
+    };
+    let exists = routes.iter().any(|r| r["name"].as_str() == Some(UPLOAD_ROUTE_NAME));
+    if !exists {
+        routes.insert(0, upload_route(upload_upstream));
+    }
+}
+
+/// Apply all agent-local enrichments to a Caddy config before pushing it: the
+/// `/__l8b_upload` route, the agent cert (SNI=`agent`), and the agent's own
+/// on-demand `ask` endpoint. Idempotent. Call from every push path (startup,
+/// rebuild, `/caddy/sync`) so the orchestrator can't clobber them.
+pub fn enrich_agent_config(config: &mut serde_json::Value, cert_pem: &str, key_pem: &str, upload_upstream: &str) {
+    ensure_upload_route(config, upload_upstream);
+    ensure_agent_cert_loaded(config, cert_pem, key_pem);
+    normalize_ask_endpoint(config);
+}
+
 pub fn ensure_agent_cert_loaded(config: &mut serde_json::Value, cert_pem: &str, key_pem: &str) {
     // `tls` is always an object in practice, but guard defensively.
     let tls = &mut config["apps"]["tls"];
