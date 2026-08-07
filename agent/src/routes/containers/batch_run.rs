@@ -154,8 +154,10 @@ pub async fn batch_run(State(state): State<AgentState>, Json(req): Json<BatchRun
             .into_response();
     }
     let extra_env = read_project_env(&req.project_id);
+    // `${VAR:?}` is enforced at start, not staging (the node .env isn't complete yet).
+    let strict = !req.stage_only;
     let mut plan =
-        match litebin_common::compose_run::build_compose_run_plan(&req.compose_yaml, &req.project_id, &extra_env, None, true)
+        match litebin_common::compose_run::build_compose_run_plan(&req.compose_yaml, &req.project_id, &extra_env, None, strict)
         {
             Ok(plan) => plan,
             Err(e) => {
