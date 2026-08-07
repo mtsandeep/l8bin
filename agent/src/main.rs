@@ -5,12 +5,13 @@ use anyhow::Result;
 use axum::{Router, routing::get};
 use dashmap::DashMap;
 use litebin_agent::{
-    AgentState, Config, build_router, load_caddy_config_from_file, load_project_meta_from_file,
-    load_registration_from_file, routes,
+    AgentState, Config, build_router, build_upload_router, load_caddy_config_from_file,
+    load_project_meta_from_file, load_registration_from_file, routes,
 };
 use litebin_common::caddy::CaddyClient;
 use litebin_common::docker::DockerManager;
 use litebin_common::types::DEFAULT_DOCKER_NETWORK;
+use litebin_common::upload::{DEFAULT_CHUNK_SIZE, UploadStore};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
@@ -75,6 +76,9 @@ async fn main() -> Result<()> {
     // Load persisted project meta (project_id → auto_start_enabled + allow_raw_ports)
     let project_meta = Arc::new(std::sync::RwLock::new(load_project_meta_from_file().unwrap_or_default()));
 
+    // Chunked direct-upload store + staging dir.
+    let upload_store = Arc::new(UploadStore::new("data/uploads", DEFAULT_CHUNK_SIZE)?);
+
     let state = AgentState {
         config: cfg.clone(),
         docker,
@@ -89,6 +93,7 @@ async fn main() -> Result<()> {
         project_meta: project_meta.clone(),
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
+        upload_store: upload_store.clone(),
     };
 
     // Push persisted Caddy config on startup (so routes exist immediately)
@@ -110,7 +115,11 @@ async fn main() -> Result<()> {
         } else {
             // No persisted config — push base config with TLS cert + catch-all 502
             // so agent Caddy has TLS ready for incoming master connections
-            let base_config = routes::waker::build_base_caddy_config(&cfg.cert_pem, &cfg.key_pem);
+            let base_config = routes::waker::build_base_caddy_config(
+                &cfg.cert_pem,
+                &cfg.key_pem,
+                &format!("host.docker.internal:{}", cfg.upload_port),
+            );
             let url = format!("{}/load", caddy.admin_url());
             match caddy.post_json(&url, &base_config).await {
                 Ok(resp) if resp.status().is_success() => {
@@ -158,6 +167,50 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "failed to bind internal wake server on port 8444");
+                }
+            }
+        });
+    }
+
+    // Spawn internal upload server (HTTP, no TLS, Docker network only).
+    // Reached by agent Caddy on :443 via the /__l8b_upload/* reverse-proxy route
+    // for direct client→agent uploads. Token-gated; not host-exposed.
+    {
+        let upload_state = state.clone();
+        let mut upload_shutdown_rx = shutdown_rx.clone();
+        let upload_port = cfg.upload_port;
+        tokio::spawn(async move {
+            let upload_addr = SocketAddr::from(([0, 0, 0, 0], upload_port));
+            let upload_app = build_upload_router(upload_state);
+            info!("Starting internal upload server on {}", upload_addr);
+            match tokio::net::TcpListener::bind(upload_addr).await {
+                Ok(listener) => {
+                    if let Err(e) = axum::serve(listener, upload_app)
+                        .with_graceful_shutdown(async move {
+                            let _ = upload_shutdown_rx.changed().await;
+                        })
+                        .await
+                    {
+                        tracing::error!(error = %e, "internal upload server failed");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to bind internal upload server on port {upload_port}");
+                }
+            }
+        });
+    }
+
+    // Periodic GC of expired upload sessions + orphaned staging dirs.
+    {
+        let gc_store = upload_store.clone();
+        let mut gc_shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => gc_store.gc(),
+                    _ = gc_shutdown_rx.changed() => break,
                 }
             }
         });

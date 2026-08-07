@@ -4,5 +4,6 @@ pub mod health;
 pub mod images;
 pub mod project_meta;
 pub mod register;
+pub mod upload;
 pub mod volumes;
 pub mod waker;

@@ -7,6 +7,7 @@ mod mise;
 mod railpack;
 mod ship;
 mod status;
+mod tls;
 mod upload;
 
 use anyhow::{Result, bail};
@@ -297,13 +298,14 @@ async fn main() -> Result<()> {
                 .await?;
 
                 ci_mode.println("Uploading image...");
-                let image_id = upload::upload_tar(
+                let image_id = upload::upload_image(
                     &client,
                     &server,
                     &project,
                     std::path::Path::new(&image.path),
                     &image.image_id,
                     effective_node.as_deref(),
+                    upload::UploadMode::Auto,
                     ci_mode.enabled,
                 )
                 .await?;

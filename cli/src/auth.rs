@@ -285,6 +285,9 @@ pub struct NodeInfo {
     pub status: NodeStatus,
     pub architecture: Option<String>,
     pub recommended: Option<bool>,
+    /// Public IP if the node is directly reachable for uploads (enables direct mode).
+    #[serde(default)]
+    pub public_ip: Option<String>,
 }
 
 /// Fetch online nodes from the server. Returns empty vec on failure.
@@ -296,4 +299,62 @@ pub async fn fetch_online_nodes(client: &reqwest::Client, server: &str) -> Vec<N
         }
         Err(_) => Vec::new(),
     }
+}
+
+/// Where/how to upload an image. Returned by the master's `/images/upload-target` broker.
+#[derive(Debug, Deserialize)]
+pub struct UploadTarget {
+    /// "local" | "relay" | "direct"
+    pub mode: String,
+    pub token: String,
+    pub chunk_size: u64,
+    #[allow(dead_code)]
+    pub expires_at: i64,
+    /// Present only for direct: agent public base URL (`https://<ip>/__l8b_upload`).
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Present only for direct: agent CA PEM the client must trust.
+    #[serde(default)]
+    pub ca_pem: Option<String>,
+}
+
+/// Ask the master where to upload. `mode_hint` is "direct" or "relay" (None = auto).
+pub async fn request_upload_target(
+    client: &reqwest::Client,
+    server: &str,
+    project_id: &str,
+    image_id: &str,
+    node_id: Option<&str>,
+    mode_hint: Option<&str>,
+) -> Result<UploadTarget> {
+    let mut body = serde_json::json!({
+        "project_id": project_id,
+        "image_id": image_id,
+    });
+    if let Some(n) = node_id {
+        body["node_id"] = serde_json::Value::String(n.to_string());
+    }
+    if let Some(m) = mode_hint {
+        body["mode"] = serde_json::Value::String(m.to_string());
+    }
+
+    let url = format!("{}/images/upload-target", server.trim_end_matches('/'));
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .with_context(|| format!("POST {} failed", url))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        let err = json["error"].as_str().unwrap_or(&text);
+        anyhow::bail!("{} ({}): {}", url, status, err);
+    }
+    let target: UploadTarget = serde_json::from_str(&text)
+        .with_context(|| format!("failed to parse upload-target response: {}", text))?;
+    Ok(target)
 }

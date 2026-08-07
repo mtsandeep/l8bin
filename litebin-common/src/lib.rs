@@ -9,5 +9,6 @@ pub mod proxy;
 pub mod routing;
 pub mod scan;
 pub mod sys;
+pub mod upload;
 pub mod types;
 pub mod waker_pages;

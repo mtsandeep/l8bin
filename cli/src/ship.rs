@@ -804,6 +804,33 @@ async fn select_target_node(client: &reqwest::Client, server: &str, existing: Op
     }
 }
 
+/// Decide how to upload. An explicit flag always wins; in CI the broker auto-decides;
+/// interactively, offer direct upload when the chosen node has a public IP.
+fn resolve_upload_mode(
+    nodes: &[auth::NodeInfo],
+    node_id: Option<&str>,
+    ci_mode: bool,
+    flag: crate::upload::UploadMode,
+) -> crate::upload::UploadMode {
+    use crate::upload::UploadMode;
+    if !matches!(flag, UploadMode::Auto) {
+        return flag;
+    }
+    if ci_mode {
+        return UploadMode::Auto;
+    }
+    if let Some(id) = node_id {
+        if let Some(n) = nodes.iter().find(|n| n.id == id) {
+            if n.public_ip.as_deref().filter(|s| !s.is_empty()).is_some() {
+                let items = ["Direct to agent (recommended)", "Relay via master"];
+                let idx = Select::new().with_prompt("Upload path").items(&items).default(0).interact().unwrap_or(0);
+                return if idx == 0 { UploadMode::Direct } else { UploadMode::Relay };
+            }
+        }
+    }
+    UploadMode::Auto
+}
+
 fn collect_build_infos(compose: &serde_yaml::Value) -> Vec<BuildInfo> {
     let mut build_infos = Vec::new();
     let Some(services) = compose.get("services").and_then(|s| s.as_mapping()) else {
@@ -861,6 +888,7 @@ async fn build_and_upload_services(
     root_env_paths: &[PathBuf],
     node_id: Option<&str>,
     platform: Option<&str>,
+    mode: crate::upload::UploadMode,
     ci_mode: bool,
 ) -> Result<std::collections::HashMap<String, String>> {
     let mut resolved_images = std::collections::HashMap::new();
@@ -890,13 +918,14 @@ async fn build_and_upload_services(
                 .await?;
         println!("    {} {} — {}", "  ✓".green(), names.join(", "), HumanBytes(saved_image.compressed_size));
 
-        let image_id = crate::upload::upload_tar(
+        let image_id = crate::upload::upload_image(
             client,
             server,
             project_id,
             Path::new(&saved_image.path),
             &saved_image.image_id,
             node_id,
+            mode,
             ci_mode,
         )
         .await?;
@@ -1141,6 +1170,7 @@ async fn prepare_compose_deployment(
     env_mode: EnvSelectMode,
     node_id: Option<&str>,
     platform: Option<&str>,
+    mode: crate::upload::UploadMode,
     ci_mode: bool,
 ) -> Result<String> {
     let root_env_paths = select_env_files(project_dir, env_mode)?;
@@ -1153,6 +1183,7 @@ async fn prepare_compose_deployment(
         &root_env_paths,
         node_id,
         platform,
+        mode,
         ci_mode,
     )
     .await?;
@@ -1178,9 +1209,10 @@ async fn build_and_deploy(
     node_id: Option<&str>,
 ) -> Result<Option<String>> {
     let selected_node = select_target_node(client, server, node_id).await?;
+    let nodes = auth::fetch_online_nodes(client, server).await;
+    let upload_mode = resolve_upload_mode(&nodes, selected_node.as_deref(), false, crate::upload::UploadMode::Auto);
 
     if let Some(compose_name) = detect_compose_file(project_dir) {
-        let nodes = auth::fetch_online_nodes(client, server).await;
         let platform = resolve_platform(&nodes, selected_node.as_deref());
         return deploy_compose(
             client,
@@ -1192,6 +1224,7 @@ async fn build_and_deploy(
             is_background,
             selected_node.as_deref(),
             platform.as_deref(),
+            upload_mode,
         )
         .await;
     }
@@ -1225,7 +1258,6 @@ async fn build_and_deploy(
 
     let image_tag = format!("{}/{}:latest", crate::config::IMAGE_PREFIX, project_id);
     let platform = {
-        let nodes = auth::fetch_online_nodes(client, server).await;
         let p = resolve_platform(&nodes, selected_node.as_deref());
         if let Some(ref plat) = p {
             println!("  {} Target platform: {}", "::".dimmed(), plat.cyan());
@@ -1240,13 +1272,14 @@ async fn build_and_deploy(
         println!("  🗜️  Compressed to {}", HumanBytes(image.compressed_size));
     }
 
-    let image_id = crate::upload::upload_tar(
+    let image_id = crate::upload::upload_image(
         client,
         server,
         project_id,
         Path::new(&image.path),
         &image.image_id,
         selected_node.as_deref(),
+        upload_mode,
         false,
     )
     .await?;
@@ -1355,6 +1388,7 @@ async fn deploy_compose(
     is_background: bool,
     node_id: Option<&str>,
     platform: Option<&str>,
+    upload_flag: crate::upload::UploadMode,
 ) -> Result<Option<String>> {
     let compose = load_compose(project_dir, compose_name)?;
     let selected_public = if is_background { None } else { pick_public_service(&compose)? };
@@ -1398,6 +1432,13 @@ async fn deploy_compose(
     }
     print_building_services(&build_infos);
 
+    let upload_mode = resolve_upload_mode(
+        &auth::fetch_online_nodes(client, server).await,
+        node_id,
+        false,
+        upload_flag,
+    );
+
     let resolved_yaml = prepare_compose_deployment(
         client,
         server,
@@ -1409,6 +1450,7 @@ async fn deploy_compose(
         EnvSelectMode::InteractiveNoCustomOrder,
         node_id,
         platform,
+        upload_mode,
         false,
     )
     .await?;
@@ -1498,6 +1540,7 @@ pub async fn deploy_compose_noninteractive(
         EnvSelectMode::AutoAllExceptExample,
         opts.node_id.as_deref(),
         platform,
+        crate::upload::UploadMode::Auto,
         true,
     )
     .await?;

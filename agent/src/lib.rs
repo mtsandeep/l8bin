@@ -11,6 +11,7 @@ use axum::{
 use dashmap::DashMap;
 use litebin_common::caddy::CaddyClient;
 use litebin_common::docker::DockerManager;
+use litebin_common::upload::UploadStore;
 use tokio::sync::Notify;
 
 pub use config::{AgentRegistration, Config};
@@ -36,6 +37,9 @@ pub struct AgentState {
     pub project_meta: Arc<std::sync::RwLock<HashMap<String, ProjectMetaEntry>>>,
     pub proxy_client: reqwest::Client,
     pub multi_svc_health_check: Arc<DashMap<String, std::time::Instant>>,
+    /// Chunked direct-upload token store + staging. Used by the loopback upload
+    /// server (status/chunk/commit) and the mTLS mint endpoint.
+    pub upload_store: Arc<UploadStore>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
@@ -122,6 +126,7 @@ pub fn build_router(state: AgentState) -> Router {
     Router::new()
         .route("/health", get(routes::health::health))
         .route("/internal/register", post(routes::register::register))
+        .route("/internal/mint-upload-token", post(routes::upload::mint_upload_token))
         .route("/internal/project-meta", post(routes::project_meta::update_project_meta))
         .route("/containers/run", post(routes::containers::run_container))
         .route("/containers/recreate", post(routes::containers::recreate_container))
@@ -147,5 +152,17 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/volumes/import", post(routes::volumes::import_volume))
         .route("/caddy/sync", post(routes::caddy::sync_caddy))
         .fallback(routes::waker::wake)
+        .with_state(state)
+}
+
+/// Loopback/Docker-network-only router for direct uploads, reached by the agent
+/// Caddy on `:443` via the `/__l8b_upload/*` reverse-proxy route. Token-gated.
+pub fn build_upload_router(state: AgentState) -> Router {
+    use litebin_common::upload::{MAX_UPLOAD_BODY, agent_commit_route, agent_chunk_route, agent_status_route};
+    Router::new()
+        .route(&agent_status_route(), get(routes::upload::upload_status))
+        .route(&agent_chunk_route(), post(routes::upload::upload_chunk))
+        .route(&agent_commit_route(), post(routes::upload::commit_upload))
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .with_state(state)
 }

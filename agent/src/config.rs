@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub struct Config {
     pub agent_port: u16,
+    pub upload_port: u16,
     pub cert_path: String,
     pub key_path: String,
     pub ca_cert_path: String,
@@ -39,6 +40,7 @@ impl Config {
 
         Ok(Config {
             agent_port: std::env::var("AGENT_PORT").unwrap_or_else(|_| DEFAULT_AGENT_PORT.to_string()).parse()?,
+            upload_port: std::env::var("AGENT_UPLOAD_PORT").unwrap_or_else(|_| "8445".to_string()).parse()?,
             cert_path,
             key_path,
             ca_cert_path: std::env::var("AGENT_CA_CERT_PATH")

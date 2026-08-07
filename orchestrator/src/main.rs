@@ -61,6 +61,8 @@ pub struct AppState {
     pub deploy_logs: Arc<DashMap<String, std::sync::Mutex<Vec<String>>>>,
     /// In-flight platform domain change jobs (job_id -> job).
     pub domain_jobs: Arc<DashMap<String, platform::DomainJob>>,
+    /// Chunked upload store + staging for local-node and relay uploads.
+    pub upload_store: Arc<litebin_common::upload::UploadStore>,
 }
 
 #[tokio::main]
@@ -294,7 +296,24 @@ async fn main() -> anyhow::Result<()> {
         multi_svc_health_check: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
         domain_jobs: Arc::new(DashMap::new()),
+        upload_store: Arc::new(litebin_common::upload::UploadStore::new(
+            "data/uploads",
+            litebin_common::upload::DEFAULT_CHUNK_SIZE,
+        )?),
     };
+
+    // Periodic GC of expired upload sessions + orphaned staging dirs.
+    {
+        let gc_store = state.upload_store.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.tick().await; // skip the immediate first tick
+            loop {
+                interval.tick().await;
+                gc_store.gc();
+            }
+        });
+    }
 
     // Sync routes for any previously running projects (retry up to 5 times)
     let platform_snap = platform.snapshot();
@@ -436,7 +455,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/deploy", put(routes::deploy::single::deploy_update))
         .route("/deploy/compose", post(routes::deploy::compose::deploy_compose))
         .route("/compose/validate", post(routes::capabilities::validate_compose))
-        .route("/images/upload", post(routes::images::upload_image));
+        .route("/images/upload", post(routes::images::upload_image))
+        // Chunked resumable upload (local + relay). Direct uploads are minted by
+        // the agent; this broker returns the agent URL for them.
+        .route("/images/upload-target", post(routes::images::upload_target))
+        .route(&litebin_common::upload::master_status_route(), get(routes::images::chunk_status))
+        .route(&litebin_common::upload::master_chunk_route(), post(routes::images::chunk_upload))
+        .route(&litebin_common::upload::master_commit_route(), post(routes::images::chunk_commit))
+        // Chunk bodies can be up to ~the chunk size; raise axum's default 2 MiB limit.
+        .layer(axum::extract::DefaultBodyLimit::max(litebin_common::upload::MAX_UPLOAD_BODY));
 
     // Routes - Deploy token management (session auth)
     let token_routes = Router::new()

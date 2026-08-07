@@ -4,6 +4,41 @@ use serde_json::json;
 use crate::AgentState;
 use litebin_common::docker::DockerManager;
 
+/// Route name used to skip access-logging for direct uploads (the token is in the path).
+const UPLOAD_ROUTE_NAME: &str = "l8b_direct_upload";
+
+/// The path-based reverse-proxy route that sends `/__l8b_upload/*` to the agent's
+/// loopback upload server. Matched by path (not host) so it works for direct
+/// uploads to the node's raw IP, which won't match any site host. Must be first.
+fn upload_route(upload_upstream: &str) -> serde_json::Value {
+    json!({
+        "name": UPLOAD_ROUTE_NAME,
+        "match": [{ "path": ["/__l8b_upload/*"] }],
+        "handle": [{
+            "handler": "reverse_proxy",
+            "upstreams": [{ "dial": upload_upstream }]
+        }]
+    })
+}
+
+/// Ensure the server skips access-logging for the upload route (token in path).
+fn ensure_upload_log_skip(config: &mut serde_json::Value) {
+    let logs = &mut config["apps"]["http"]["servers"]["srv0"]["logs"];
+    if logs.is_null() || !logs.is_object() {
+        *logs = json!({});
+    }
+    let skip = &mut logs["skip"];
+    if skip.is_null() || !skip.is_array() {
+        *skip = json!([]);
+    }
+    if let Some(arr) = skip.as_array_mut() {
+        let has = arr.iter().any(|v| v.as_str() == Some(UPLOAD_ROUTE_NAME));
+        if !has {
+            arr.push(json!(UPLOAD_ROUTE_NAME));
+        }
+    }
+}
+
 /// Get the domain from registration state. Returns None if not registered.
 fn get_domain(state: &AgentState) -> Option<String> {
     state.registration.read().unwrap().as_ref().map(|r| r.domain.clone())
@@ -37,6 +72,8 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
         None => return Ok(()),
     };
 
+    let upload_upstream = format!("host.docker.internal:{}", state.config.upload_port);
+
     // List all running litebin containers with their ports
     let mut containers = state.docker.list_running_litebin_containers().await?;
     {
@@ -47,8 +84,14 @@ pub async fn rebuild_local_caddy(state: &AgentState) -> anyhow::Result<()> {
     }
 
     let config = match state.last_caddy_config.read().unwrap().clone() {
-        Some(base) => merge_routes_with_persisted(&base, &containers, &domain),
-        None => build_config_from_scratch(&containers, &domain, &state.config.cert_pem, &state.config.key_pem),
+        Some(base) => merge_routes_with_persisted(&base, &containers, &domain, &upload_upstream),
+        None => build_config_from_scratch(
+            &containers,
+            &domain,
+            &state.config.cert_pem,
+            &state.config.key_pem,
+            &upload_upstream,
+        ),
     };
 
     let url = format!("{}/load", caddy.admin_url());
@@ -78,6 +121,7 @@ fn merge_routes_with_persisted(
     base: &serde_json::Value,
     containers: &[litebin_common::docker::RunningContainer],
     domain: &str,
+    upload_upstream: &str,
 ) -> serde_json::Value {
     let existing_routes = base["apps"]["http"]["servers"]["srv0"]["routes"].as_array().cloned().unwrap_or_default();
 
@@ -169,8 +213,9 @@ fn merge_routes_with_persisted(
         }
     }
 
-    // Build routes array: specific routes + catch-all 502
-    let mut routes: Vec<serde_json::Value> = route_map.into_values().collect();
+    // Build routes array: upload route first (path match, any host), then specific routes + catch-all 502
+    let mut routes: Vec<serde_json::Value> = vec![upload_route(upload_upstream)];
+    routes.extend(route_map.into_values());
 
     // Catch-all returns 502 so master Caddy's handle_response triggers the waker
     routes.push(json!({
@@ -197,6 +242,7 @@ fn merge_routes_with_persisted(
     let mut config = base.clone();
     config["apps"]["http"]["servers"]["srv0"]["routes"] = json!(routes);
     config["apps"]["http"]["servers"]["srv0"]["errors"] = error_routes;
+    ensure_upload_log_skip(&mut config);
     config
 }
 
@@ -208,8 +254,10 @@ fn build_config_from_scratch(
     domain: &str,
     cert_pem: &str,
     key_pem: &str,
+    upload_upstream: &str,
 ) -> serde_json::Value {
-    let mut routes: Vec<serde_json::Value> = Vec::new();
+    // Upload route first (path match, any host — works for raw-IP direct uploads).
+    let mut routes: Vec<serde_json::Value> = vec![upload_route(upload_upstream)];
 
     // Group containers by project_id to detect multi-service projects
     let mut by_project: std::collections::HashMap<String, Vec<&litebin_common::docker::RunningContainer>> =
@@ -267,7 +315,7 @@ fn build_config_from_scratch(
 
     let logging = litebin_common::heartbeat::caddy_logging_config();
 
-    json!({
+    let mut config = json!({
         "admin": { "listen": "0.0.0.0:2019" },
         "logging": logging["logging"],
         "apps": {
@@ -290,17 +338,19 @@ fn build_config_from_scratch(
                 }
             }
         }
-    })
+    });
+    ensure_upload_log_skip(&mut config);
+    config
 }
 
 /// Build a minimal base Caddy config with just TLS cert and a catch-all 502.
 /// Pushed on startup before any containers exist, so the agent Caddy has TLS ready
 /// for incoming connections from the master Caddy.
 /// Uses inline PEM content (load_pem) so the certs don't need to exist inside the Caddy container.
-pub fn build_base_caddy_config(cert_pem: &str, key_pem: &str) -> serde_json::Value {
+pub fn build_base_caddy_config(cert_pem: &str, key_pem: &str, upload_upstream: &str) -> serde_json::Value {
     let logging = litebin_common::heartbeat::caddy_logging_config();
 
-    json!({
+    let mut config = json!({
         "admin": { "listen": "0.0.0.0:2019" },
         "logging": logging["logging"],
         "apps": {
@@ -308,13 +358,17 @@ pub fn build_base_caddy_config(cert_pem: &str, key_pem: &str) -> serde_json::Val
                 "servers": {
                     "srv0": {
                         "listen": [":80", ":443"],
-                        "routes": [{
-                            "handle": [{
-                                "handler": "static_response",
-                                "status_code": 502,
-                                "body": "No route found"
-                            }]
-                        }],
+                        "routes": [
+                            // Upload route first (path match, any host).
+                            upload_route(upload_upstream),
+                            {
+                                "handle": [{
+                                    "handler": "static_response",
+                                    "status_code": 502,
+                                    "body": "No route found"
+                                }]
+                            }
+                        ],
                         "logs": {}
                     }
                 }
@@ -328,7 +382,9 @@ pub fn build_base_caddy_config(cert_pem: &str, key_pem: &str) -> serde_json::Val
                 }
             }
         }
-    })
+    });
+    ensure_upload_log_skip(&mut config);
+    config
 }
 
 /// GET /internal/caddy-ask?domain=foo.example.com
