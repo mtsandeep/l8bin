@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use dialoguer::Confirm;
 use std::path::Path;
 use tokio::io::AsyncReadExt;
 
@@ -35,81 +36,107 @@ pub async fn upload_tar(
         None
     };
 
-    let mut last_err = None;
+    // After the automatic retries are exhausted, offer a manual retry in interactive
+    // mode — the built tar is still on disk, so there's no need to rebuild the image
+    // just because the network dropped. CI mode fails immediately (no TTY to prompt).
+    loop {
+        let mut last_err = None;
 
-    for attempt in 0..3 {
-        if attempt > 0 {
-            if let Some(pb) = &pb {
-                pb.reset();
-                pb.set_message(format!("Retrying ({}/{})", attempt + 1, 3));
-            }
-            if !ci_mode {
-                eprintln!("  Upload failed, retrying ({}/{})...", attempt + 1, 3);
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-
-        let file = tokio::fs::File::open(tar_path)
-            .await
-            .with_context(|| format!("failed to open tar file: {}", tar_path.display()))?;
-
-        let progress_pb = pb.clone();
-        let stream = async_stream::stream! {
-            let mut reader = tokio::io::BufReader::new(file);
-            let mut buf = vec![0u8; 64 * 1024];
-            loop {
-                match reader.read(&mut buf).await {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if let Some(ref pb) = progress_pb {
-                            pb.inc(n as u64);
-                        }
-                        yield Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(&buf[..n]));
-                    }
-                    Err(e) => {
-                        yield Err(e);
-                        break;
-                    }
-                }
-            }
-        };
-
-        let body = reqwest::Body::wrap_stream(stream);
-
-        match client
-            .post(&url)
-            .header("Content-Type", "application/x-tar")
-            .timeout(std::time::Duration::from_secs(1800)) // 30 min for large image uploads
-            .body(body)
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
+        for attempt in 0..3 {
+            if attempt > 0 {
                 if let Some(pb) = &pb {
-                    pb.finish_and_clear();
+                    pb.reset();
+                    pb.set_message(format!("Retrying ({}/{})", attempt + 1, 3));
                 }
                 if !ci_mode {
-                    println!("  Upload complete");
+                    eprintln!("  Upload failed, retrying ({}/{})...", attempt + 1, 3);
                 }
-                let json: serde_json::Value = resp.json().await?;
-                if let Some(id) = json["image_id"].as_str().map(|s| s.to_string()) {
-                    return Ok(id);
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+
+            let file = tokio::fs::File::open(tar_path)
+                .await
+                .with_context(|| format!("failed to open tar file: {}", tar_path.display()))?;
+
+            let progress_pb = pb.clone();
+            let stream = async_stream::stream! {
+                let mut reader = tokio::io::BufReader::new(file);
+                let mut buf = vec![0u8; 64 * 1024];
+                loop {
+                    match reader.read(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if let Some(ref pb) = progress_pb {
+                                pb.inc(n as u64);
+                            }
+                            yield Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(&buf[..n]));
+                        }
+                        Err(e) => {
+                            yield Err(e);
+                            break;
+                        }
+                    }
                 }
-                last_err = Some(anyhow::anyhow!("missing image_id in upload response"));
-            }
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                last_err = Some(anyhow::anyhow!("upload failed ({}): {}", status, body));
-            }
-            Err(e) => {
-                last_err = Some(e.into());
+            };
+
+            let body = reqwest::Body::wrap_stream(stream);
+
+            match client
+                .post(&url)
+                .header("Content-Type", "application/x-tar")
+                .timeout(std::time::Duration::from_secs(1800)) // 30 min for large image uploads
+                .body(body)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Some(pb) = &pb {
+                        pb.finish_and_clear();
+                    }
+                    if !ci_mode {
+                        println!("  Upload complete");
+                    }
+                    let json: serde_json::Value = resp.json().await?;
+                    if let Some(id) = json["image_id"].as_str().map(|s| s.to_string()) {
+                        return Ok(id);
+                    }
+                    last_err = Some(anyhow::anyhow!("missing image_id in upload response"));
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    last_err = Some(anyhow::anyhow!("upload failed ({}): {}", status, body));
+                }
+                Err(e) => {
+                    last_err = Some(e.into());
+                }
             }
         }
-    }
 
-    if let Some(pb) = &pb {
-        pb.finish_and_clear();
+        // All automatic retries failed.
+        if let Some(pb) = &pb {
+            pb.finish_and_clear();
+        }
+
+        if ci_mode {
+            return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("upload failed after 3 attempts")));
+        }
+
+        // Interactive prompt: the image is already built, so let the user retry the
+        // upload without rebuilding. Loops until success or the user declines.
+        let retry = Confirm::new()
+            .with_prompt("Upload failed after 3 attempts. Retry upload? (the image won't be rebuilt)")
+            .default(true)
+            .interact()
+            .map_err(|e| anyhow::anyhow!("failed to read retry response: {}", e))?;
+
+        if !retry {
+            return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("upload failed after 3 attempts")));
+        }
+
+        if let Some(pb) = &pb {
+            pb.reset();
+            pb.set_message("Uploading");
+        }
     }
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("upload failed after 3 attempts")))
 }

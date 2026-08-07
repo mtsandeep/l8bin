@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Prompt to retry image upload** — Alongside existing 3 auto retry, after that fails prompt user to retry or not.
+
 ## [0.3.13] - 2026-08-06
 
 ### Fixed
