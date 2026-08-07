@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-08-07
+
 ### Fixed
 - **Direct upload killed agent `:443`** — the `/__l8b_upload` route had an invalid `"name"` field, so Caddy rejected the whole config and fell back to its `:80`-only Caddyfile (`connection refused`). Removed the field.
 
