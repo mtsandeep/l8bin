@@ -46,6 +46,8 @@ pub struct ComposeDeployOpts {
     pub grant_capabilities: Vec<String>,
     /// Deploy the whole project without managed HTTP ingress.
     pub is_background: bool,
+    /// How to upload images (auto/direct/relay). Mirrors the `--upload` flag.
+    pub upload: crate::upload::UploadMode,
 }
 
 pub async fn run(
@@ -1540,7 +1542,7 @@ pub async fn deploy_compose_noninteractive(
         EnvSelectMode::AutoAllExceptExample,
         opts.node_id.as_deref(),
         platform,
-        crate::upload::UploadMode::Auto,
+        opts.upload,
         true,
     )
     .await?;

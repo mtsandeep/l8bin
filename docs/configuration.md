@@ -50,6 +50,7 @@ All agent variables use the `AGENT_` prefix. Not needed on the master.
 | `AGENT_CA_CERT_PATH` | *(required)* | CA cert to verify orchestrator |
 | `AGENT_PUBLIC_IP` | *(auto-detected)* | Override if behind NAT |
 | `AGENT_CADDY_ADMIN_URL` | `http://localhost:2019` | Local Caddy admin API URL |
+| `AGENT_UPLOAD_PORT` | `8445` | Loopback listener for direct chunked uploads (reached by the agent Caddy on `:443` via `/__l8b_upload/*`; not exposed on the host) |
 
 ## CLI
 

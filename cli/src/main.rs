@@ -93,6 +93,12 @@ enum Commands {
         /// Grant a project capability for this deploy (repeatable: docker-observe, host-network, raw-ports)
         #[arg(long = "grant-capability")]
         grant_capability: Vec<String>,
+
+        /// How to upload the image to the node: auto (default, direct when the node
+        /// supports it), direct (client → agent, skipping the master relay), or relay
+        /// (client → master → agent).
+        #[arg(long, value_enum, default_value_t = upload::UploadMode::Auto)]
+        upload: upload::UploadMode,
     },
     /// Interactive deploy — guided flow for new or existing projects
     Ship {
@@ -190,6 +196,7 @@ async fn main() -> Result<()> {
             compose,
             service,
             grant_capability,
+            upload,
         } => {
             if !project.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
                 bail!("Project name must only contain lowercase letters, numbers, and hyphens");
@@ -254,6 +261,7 @@ async fn main() -> Result<()> {
                         node_id: effective_node.clone(),
                         grant_capabilities: grant_capability,
                         is_background: effective_background,
+                        upload,
                     },
                     platform.as_deref(),
                 )
@@ -305,7 +313,7 @@ async fn main() -> Result<()> {
                     std::path::Path::new(&image.path),
                     &image.image_id,
                     effective_node.as_deref(),
-                    upload::UploadMode::Auto,
+                    upload,
                     ci_mode.enabled,
                 )
                 .await?;

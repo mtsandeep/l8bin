@@ -18,7 +18,7 @@ use crate::auth::{self, UploadTarget};
 
 /// How the client prefers to upload. The broker makes the final call (e.g. a node
 /// without a public IP falls back to relay regardless).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
 pub enum UploadMode {
     /// Let the broker decide (direct when the node supports it, else relay/local).
     Auto,

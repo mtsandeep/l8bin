@@ -78,6 +78,7 @@ l8b deploy --project <PROJECT_ID> [options]
 | `--compose` | auto-detect | Force compose mode (deploy as multi-service) |
 | `--service` | *(none)* | Deploy only specific services (repeatable, compose mode only) |
 | `--grant-capability` | *(none)* | Explicitly grant a requested capability; repeatable (`docker-observe`, `host-network`, `raw-ports`) |
+| `--upload` | `auto` | How to upload the image: `auto` (direct when the node supports it, else relay), `direct` (client → agent, skipping the master relay), or `relay` (client → master → agent) |
 
 Global flags (available on all commands):
 

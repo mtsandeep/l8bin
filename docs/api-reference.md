@@ -103,7 +103,11 @@ Most endpoints require session auth (from `l8b login`). The deploy and image upl
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/images/upload?project_id=...&node_id=...` | Session or token | Upload image tar (local or proxied to agent). Body: raw tar. |
+| `POST` | `/images/upload?project_id=...&node_id=...` | Session or token | Upload image tar as a single stream (legacy; local load or proxied to agent). Body: raw tar. |
+| `POST` | `/images/upload-target` | Session or token | Negotiate a chunked upload target. Body: `{project_id, image_id, node_id?, mode?}`. Returns `{mode, token, chunk_size, expires_at, base_url?, ca_pem?}` — `local`/`relay` target the master, `direct` returns the agent's public base URL + CA PEM. |
+| `GET` | `/images/upload/{token}/status` | Token (in path) | Chunk indices the server has already received. |
+| `POST` | `/images/upload/{token}/chunk/{index}` | Token (in path) | Upload one chunk (idempotent). Header `X-Total-Chunks`; body: raw chunk bytes. |
+| `POST` | `/images/upload/{token}/commit` | Token (in path) | Assemble staged chunks and load (local) or stream to the agent (relay). Returns `{image_id}`. |
 
 ### Nodes
 
@@ -192,6 +196,19 @@ All agent endpoints are mTLS-protected (no application-level auth). The orchestr
 | `GET` | `/images/inspect?image=<ref>` | Resolve image reference (tag, digest, ID) to sha256 digest. Returns `{image_id}` |
 | `POST` | `/images/remove-unused` | Remove image if not used by any container |
 | `POST` | `/images/prune` | Prune all dangling images. Returns `{bytes_reclaimed}` |
+
+### Direct upload (mTLS mint + token-gated chunk server)
+
+The mint endpoint lives on the mTLS management port; the chunk endpoints are
+served by a loopback listener reached by the agent's Caddy on `:443` via
+`/__l8b_upload/*` (token-gated, no mTLS).
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/internal/mint-upload-token` | mTLS. Body `{project_id, image_id, node_id, ttl_secs?}` → `{token, expires_at, chunk_size}`. Called by the master to set up a direct upload. |
+| `GET` | `/__l8b_upload/{token}/status` | Chunk indices received so far. |
+| `POST` | `/__l8b_upload/{token}/chunk/{index}` | Upload one chunk (idempotent). Header `X-Total-Chunks`. |
+| `POST` | `/__l8b_upload/{token}/commit` | Assemble staged chunks and `docker load`. Returns `{image_id}`. |
 
 ### Health
 
