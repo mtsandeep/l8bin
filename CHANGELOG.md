@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.19] - 2026-08-07
+
 ### Fixed
 - **Compose `${VAR:?}` is no longer enforced at staging** — required variables are checked at container start (when the node `.env` is complete), not during staging.
 
