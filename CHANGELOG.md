@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Remote-agent project routes looped back to the agent's own `:443` (400/connection reset)** — `container_upstream` was only set for local projects, so the agent's Caddy fell back to `upstream` (the node's public IP) and proxied the request to itself. Now set for all projects; the agent dials the container directly over the Docker network.
 - **Custom alias/subdomain routes not synced to Cloudflare** — `project_routes` alias entries (`{alias}.{domain}`) got a Caddy route but no Cloudflare DNS record, so they never resolved. DNS sync now creates A records for these hostnames (pointing to the project node's IP), matching the Caddy config.
 
 ### Changed

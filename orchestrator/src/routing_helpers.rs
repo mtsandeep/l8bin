@@ -78,7 +78,6 @@ pub async fn resolve_routes(projects: &[Project], db: &SqlitePool, domain: &str)
         // Look up the public service from project_services to get the correct container name.
         // Single-image projects use service_name="web" which container_name() maps to "litebin-{id}",
         // while compose projects use the actual service name (e.g. "api" → "litebin-{id}.api").
-        let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         let public_svc: Option<ProjectService> = sqlx::query_as(
             "SELECT * FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'running' LIMIT 1",
         )
@@ -90,13 +89,17 @@ pub async fn resolve_routes(projects: &[Project], db: &SqlitePool, domain: &str)
             Some(svc) => {
                 let port = svc.port.unwrap_or(project.internal_port.unwrap_or(0)) as u16;
                 let cname = container_name(&project.id, &svc.service_name, None);
-                let cu = if is_local { Some(format!("{}:{}", cname, port)) } else { None };
-                (cname, port as i64, cu)
+                // container_upstream is the direct Docker-network address; set for ALL
+                // projects (the container name is deterministic). The master still dials
+                // `upstream` (host:443 for remote agents), but the agent's own Caddy uses
+                // container_upstream to reach the container locally instead of looping back
+                // to its own public :443.
+                let cu = format!("{}:{}", cname, port);
+                (cname, port as i64, Some(cu))
             }
             None => {
                 let port = project.internal_port.unwrap_or(0);
-                let cu = if is_local { Some(format!("litebin-{}:{}", project.id, port)) } else { None };
-                (format!("litebin-{}", project.id), port, cu)
+                (format!("litebin-{}", project.id), port, Some(format!("litebin-{}:{}", project.id, port)))
             }
         };
 
