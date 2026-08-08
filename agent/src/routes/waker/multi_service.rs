@@ -103,8 +103,8 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
         state.docker.ensure_named_network(&network).await?;
     }
 
-    // Connect Caddy to the project network
-    let caddy_container = std::env::var("CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-caddy".into());
+    // Connect the AGENT's Caddy to the project network so it can proxy to containers.
+    let caddy_container = std::env::var("AGENT_CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent-caddy".into());
     let project_network = litebin_common::types::project_network_name(project_id, None);
     let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
 

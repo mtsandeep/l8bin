@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Agent Caddy never joined project networks (`project not found`)** — the agent connected `litebin-caddy` (the master's Caddy) to project networks instead of `litebin-agent-caddy` (its own), so it couldn't resolve project containers. Now uses the correct container name.
+- **Duplicate DNS records for custom alias routes** — alias routes created both `{alias}.{domain}` and `{alias}.{project}.{domain}` Cloudflare entries. Now each route type gets one: `alias` → `{alias}.{domain}` (short), `subdomain` → `{alias}.{project}.{domain}` (namespaced).
+
 ## [0.3.20] - 2026-08-07
 
 ### Fixed

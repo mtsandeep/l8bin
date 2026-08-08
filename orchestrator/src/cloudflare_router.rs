@@ -612,11 +612,12 @@ impl CloudflareDnsRouter {
                 };
                 for (route_type, sub) in alias_rows {
                     if let Some(alias) = sub {
-                        // {alias}.{project}.{domain} (both 'subdomain' and 'alias' types)
-                        desired.insert(format!("{}.{}.{}", alias, project_id, domain), ip.clone());
-                        // {alias}.{domain} (short form, 'alias' type only)
                         if route_type == "alias" {
+                            // {alias}.{domain} — short alias
                             desired.insert(format!("{}.{}", alias, domain), ip.clone());
+                        } else {
+                            // {alias}.{project}.{domain} — namespaced subdomain
+                            desired.insert(format!("{}.{}.{}", alias, project_id, domain), ip.clone());
                         }
                     }
                 }
