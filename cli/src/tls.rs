@@ -72,8 +72,8 @@ impl rustls::client::danger::ServerCertVerifier for NoHostnameVerifier {
             .map_err(|_| rustls::Error::General("failed to build verifier".into()))?;
         // Verify the chain but pass a dummy server name to skip the hostname check.
         // Agent certs include SAN=DNS:agent for this to work.
-        let dummy_name =
-            rustls::pki_types::ServerName::try_from("agent").map_err(|_| rustls::Error::General("invalid server name".into()))?;
+        let dummy_name = rustls::pki_types::ServerName::try_from("agent")
+            .map_err(|_| rustls::Error::General("invalid server name".into()))?;
         verifier.verify_server_cert(end_entity, intermediates, &dummy_name, _ocsp_response, now)
     }
 

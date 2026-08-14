@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use indicatif::HumanBytes;
 use litebin_common::upload::{
-    chunk_url, commit_url, status_url, AGENT_UPLOAD_PREFIX, MASTER_UPLOAD_PREFIX, TOTAL_CHUNKS_HEADER,
+    AGENT_UPLOAD_PREFIX, MASTER_UPLOAD_PREFIX, TOTAL_CHUNKS_HEADER, chunk_url, commit_url, status_url,
 };
 use std::collections::HashSet;
 use std::net::IpAddr;
@@ -58,27 +58,17 @@ pub async fn upload_image(
     // pin it to that IP via reqwest's resolve, so SNI=`agent` is sent (Caddy serves
     // the matching cert). Non-direct modes talk to the master normally.
     let (upload_client, base) = if target.mode == "direct" {
-        let ca_pem = target
-            .ca_pem
-            .as_deref()
-            .context("direct upload target did not include ca_pem")?;
-        let base_url = target
-            .base_url
-            .as_deref()
-            .context("direct upload target did not include base_url")?;
+        let ca_pem = target.ca_pem.as_deref().context("direct upload target did not include ca_pem")?;
+        let base_url = target.base_url.as_deref().context("direct upload target did not include base_url")?;
         let url = reqwest::Url::parse(base_url).context("invalid direct base_url")?;
         let host = url.host_str().context("missing host in base_url")?;
-        let ip: IpAddr = host
-            .parse()
-            .with_context(|| format!("direct upload base_url host is not an IP address: '{host}'"))?;
+        let ip: IpAddr =
+            host.parse().with_context(|| format!("direct upload base_url host is not an IP address: '{host}'"))?;
         let client = crate::tls::direct_upload_client(ca_pem, ip)?;
         let base = format!("https://{}{}", crate::tls::DIRECT_HOST, AGENT_UPLOAD_PREFIX);
         (client, base)
     } else {
-        (
-            client.clone(),
-            format!("{}{}", server.trim_end_matches('/'), MASTER_UPLOAD_PREFIX),
-        )
+        (client.clone(), format!("{}{}", server.trim_end_matches('/'), MASTER_UPLOAD_PREFIX))
     };
 
     if !ci_mode {
@@ -97,9 +87,7 @@ pub async fn upload_image(
 fn read_chunk(path: &Path, index: u64, chunk_size: usize) -> Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).with_context(|| format!("open tar file: {}", path.display()))?;
-    let offset = index
-        .checked_mul(chunk_size as u64)
-        .context("chunk offset overflow")?;
+    let offset = index.checked_mul(chunk_size as u64).context("chunk offset overflow")?;
     f.seek(SeekFrom::Start(offset))?;
     let mut buf = vec![0u8; chunk_size];
     let n = f.read(&mut buf)?;
@@ -205,9 +193,7 @@ async fn chunked_upload(
             );
             let pb_ref = &pb;
             match pb_ref {
-                Some(pb) => pb.suspend(|| {
-                    dialoguer::Confirm::new().with_prompt(prompt_msg).default(true).interact()
-                }),
+                Some(pb) => pb.suspend(|| dialoguer::Confirm::new().with_prompt(prompt_msg).default(true).interact()),
                 None => dialoguer::Confirm::new().with_prompt(prompt_msg).default(true).interact(),
             }
             .map_err(|e| anyhow::anyhow!("failed to read retry response: {}", e))?
@@ -240,10 +226,7 @@ async fn fetch_status(client: &reqwest::Client, base: &str, token: &str) -> Resu
         anyhow::bail!("status {} failed: {}", url, resp.status());
     }
     let v: serde_json::Value = resp.json().await.context("status response parse failed")?;
-    let set = v["received"]
-        .as_array()
-        .map(|arr| arr.iter().filter_map(|x| x.as_u64()).collect())
-        .unwrap_or_default();
+    let set = v["received"].as_array().map(|arr| arr.iter().filter_map(|x| x.as_u64()).collect()).unwrap_or_default();
     Ok(set)
 }
 

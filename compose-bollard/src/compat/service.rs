@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::parse::ComposeService;
 
 use super::helpers::{
-    docker_socket_is_below, finding, is_docker_sock_source, is_repo_relative_bind, managed_container_name,
+    bind_source_exposes_docker_socket, finding, is_docker_socket_source, is_repo_relative_bind, managed_container_name,
     managed_network_name, volume_source,
 };
 use super::tables::{IGNORED_SERVICE_FIELDS, SUPPORTED_SERVICE_FIELDS, UNSUPPORTED_SERVICE_FIELDS};
@@ -292,7 +292,7 @@ fn analyze_volumes(svc_name: &str, svc: &ComposeService, findings: &mut Vec<Comp
 
     for vol in volumes {
         let source = volume_source(vol);
-        if is_docker_sock_source(source) {
+        if is_docker_socket_source(source) {
             findings.push(finding(
                 format!("{prefix} ({vol})"),
                 Some(svc_name.into()),
@@ -307,7 +307,7 @@ fn analyze_volumes(svc_name: &str, svc: &ComposeService, findings: &mut Vec<Comp
                 "the raw socket is always removed; with docker-observe, DOCKER_HOST points to LiteBin's endpoint-allowlisted read-only proxy",
                 None,
             ));
-        } else if docker_socket_is_below(source) {
+        } else if bind_source_exposes_docker_socket(source) {
             findings.push(finding(
                 format!("{prefix} ({vol})"),
                 Some(svc_name.into()),

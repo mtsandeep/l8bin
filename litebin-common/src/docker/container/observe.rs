@@ -1,38 +1,10 @@
 use bollard::query_parameters::ListContainersOptions;
 
+pub use compose_bollard::naming::{bind_source_exposes_docker_socket, is_docker_socket_source};
+
 use crate::types::container_name;
 
 use super::super::DockerManager;
-
-fn normalize_unix_path(path: &str) -> Option<String> {
-    if !path.starts_with('/') {
-        return None;
-    }
-    let mut components: Vec<&str> = Vec::new();
-    for component in path.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                components.pop();
-            }
-            value => components.push(value),
-        }
-    }
-    Some(format!("/{}", components.join("/")))
-}
-
-pub fn bind_source_exposes_docker_socket(source: &str) -> bool {
-    let Some(source) = normalize_unix_path(source) else {
-        return false;
-    };
-    ["/var/run/docker.sock", "/run/docker.sock"]
-        .iter()
-        .any(|socket| source == *socket || source == "/" || socket.starts_with(&format!("{source}/")))
-}
-
-pub(crate) fn is_docker_socket_source(source: &str) -> bool {
-    matches!(normalize_unix_path(source).as_deref(), Some("/var/run/docker.sock" | "/run/docker.sock"))
-}
 
 pub(crate) fn sanitize_docker_socket_binds(binds: &[String], is_managed_proxy: bool) -> Vec<String> {
     if is_managed_proxy {

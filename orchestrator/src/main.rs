@@ -1,4 +1,5 @@
 mod activity;
+mod app;
 mod auth;
 mod capabilities;
 mod cli;
@@ -20,23 +21,13 @@ mod tests;
 
 use std::sync::Arc;
 
-use axum::{
-    Router,
-    routing::{delete, get, patch, post, put},
-};
-use axum_login::login_required;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tokio::sync::{RwLock, Semaphore};
-use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
 
-use cloudflare_router::CloudflareDnsRouter;
 use config::Config;
-use litebin_common::caddy::CaddyClient;
-use litebin_common::cloudflare::CloudflareClient;
 use litebin_common::docker::DockerManager;
-use litebin_common::routing::{MasterProxyRouter, RoutingProvider};
+use litebin_common::routing::RoutingProvider;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -268,7 +259,7 @@ async fn main() -> anyhow::Result<()> {
     docker.ensure_network().await?;
 
     // Init routing provider (routing_mode + CF from DB)
-    let router = Arc::new(RwLock::new(build_routing_provider(
+    let router = Arc::new(RwLock::new(routing_helpers::build_routing_provider(
         &routing_mode,
         &cf_token,
         &cf_zone,
@@ -389,108 +380,7 @@ async fn main() -> anyhow::Result<()> {
     // Run startup reconciliation pass
     nodes::reconciliation::run_reconciliation(state.clone(), None).await;
 
-    // Routes - Auth public (no login required)
-    let auth_public = Router::new()
-        .route("/auth/login", post(routes::auth::login))
-        .route("/auth/register", post(routes::auth::register))
-        .route("/auth/setup", get(routes::auth::setup_check));
-
-    // Routes - Auth protected (login required)
-    let auth_protected = Router::new()
-        .route("/auth/logout", post(routes::auth::logout))
-        .route("/auth/me", get(routes::auth::me))
-        .route("/auth/change-password", post(routes::auth::change_password))
-        .route("/status", get(routes::auth::status))
-        .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
-
-    // Routes - Protected API (session auth only)
-    let api_routes = Router::new()
-        .route("/projects", post(routes::projects::create_project))
-        .route("/projects", get(routes::projects::list_projects))
-        .route("/projects/stats", get(routes::stats::all_project_stats))
-        .route("/projects/{id}", get(routes::projects::get_project))
-        .route("/projects/{id}/settings", patch(routes::settings::update_project_settings))
-        .route("/projects/{id}/stop", post(routes::manage::handlers::stop_project))
-        .route("/projects/{id}/start", post(routes::manage::handlers::start_project))
-        .route("/projects/{id}", delete(routes::manage::handlers::delete_project))
-        .route("/projects/{id}/stats", get(routes::stats::project_stats))
-        .route("/projects/{id}/disk-usage", get(routes::stats::project_disk_usage))
-        .route("/projects/{id}/logs", get(routes::stats::project_logs))
-        .route("/projects/{id}/deploy-logs", get(routes::stats::deploy_logs))
-        .route("/projects/{id}/recreate", post(routes::manage::handlers::recreate_project))
-        .route("/projects/{id}/services/{name}/start", post(routes::manage::handlers::start_service))
-        .route("/projects/{id}/services/{name}/stop", post(routes::manage::handlers::stop_service))
-        .route("/projects/{id}/services/{name}/restart", post(routes::manage::handlers::restart_service))
-        .route("/projects/{id}/services/{name}/settings", patch(routes::settings::update_service_settings))
-        .route("/projects/{id}/volumes/{name}", delete(routes::volumes::delete_volume))
-        .route("/projects/{id}/volumes", delete(routes::volumes::delete_all_volumes))
-        .route("/projects/{id}/routes", get(routes::projects::list_routes))
-        .route("/projects/{id}/routes", post(routes::projects::create_route))
-        .route("/projects/{id}/routes/{route_id}", delete(routes::projects::delete_route))
-        .route("/projects/{id}/capabilities", get(routes::capabilities::list_project_capabilities))
-        .route("/projects/{id}/capabilities", post(routes::capabilities::grant_project_capabilities))
-        .route("/projects/{id}/capabilities/{capability}", delete(routes::capabilities::revoke_project_capability))
-        .route("/nodes", get(routes::nodes::list_nodes))
-        .route("/nodes", post(routes::nodes::create_node))
-        .route("/nodes/{id}", delete(routes::nodes::delete_node))
-        .route("/nodes/{id}/connect", post(routes::nodes::connect_node))
-        .route("/nodes/image-stats", get(routes::nodes::node_image_stats))
-        .route("/nodes/{id}/images/prune", post(routes::nodes::prune_node_images))
-        .route("/settings", get(routes::global_settings::get_settings))
-        .route("/settings", patch(routes::global_settings::update_settings))
-        .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
-        .route("/settings/sync-dns", post(routes::global_settings::sync_dns))
-        .route("/settings/domain/preflight", post(routes::global_settings::domain_preflight))
-        .route("/settings/domain/apply", post(routes::global_settings::domain_apply))
-        .route("/settings/domain/jobs/{id}", get(routes::global_settings::domain_job_status))
-        .route("/settings/domain/jobs/{id}/retry", post(routes::global_settings::domain_job_retry))
-        .route("/system/stats", get(routes::health::system_stats))
-        .route("/scan", get(routes::scan::scan_containers))
-        .route("/scan/import", post(routes::scan::import_containers))
-        .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
-
-    // Routes - Deploy + image upload (session OR deploy token auth)
-    let deploy_routes = Router::new()
-        .route("/deploy", post(routes::deploy::single::deploy_create))
-        .route("/deploy", put(routes::deploy::single::deploy_update))
-        .route("/deploy/compose", post(routes::deploy::compose::deploy_compose))
-        .route("/compose/validate", post(routes::capabilities::validate_compose))
-        .route("/images/upload", post(routes::images::upload_image))
-        // Chunked resumable upload (local + relay). Direct uploads are minted by
-        // the agent; this broker returns the agent URL for them.
-        .route("/images/upload-target", post(routes::images::upload_target))
-        .route(&litebin_common::upload::master_status_route(), get(routes::images::chunk_status))
-        .route(&litebin_common::upload::master_chunk_route(), post(routes::images::chunk_upload))
-        .route(&litebin_common::upload::master_commit_route(), post(routes::images::chunk_commit))
-        // Chunk bodies can be up to ~the chunk size; raise axum's default 2 MiB limit.
-        .layer(axum::extract::DefaultBodyLimit::max(litebin_common::upload::MAX_UPLOAD_BODY));
-
-    // Routes - Deploy token management (session auth)
-    let token_routes = Router::new()
-        .route("/deploy-tokens", post(routes::deploy_tokens::create_token))
-        .route("/deploy-tokens", get(routes::deploy_tokens::list_tokens))
-        .route("/deploy-tokens/{id}", delete(routes::deploy_tokens::revoke_token))
-        .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
-
-    let app = Router::new()
-        .merge(auth_public)
-        .merge(auth_protected)
-        .merge(api_routes)
-        .merge(deploy_routes)
-        .merge(token_routes)
-        .route("/health", get(routes::health::health_check))
-        .route("/openapi.json", get(routes::openapi::openapi_json))
-        .route("/docs", get(routes::docs::serve_docs))
-        .route("/llms.txt", get(routes::openapi::llms_txt))
-        .route("/caddy/ask", get(routes::caddy::ask))
-        .route("/internal/wake-report", post(routes::wake_report::wake_report))
-        .route("/internal/heartbeat", post(routes::heartbeat::heartbeat))
-        .fallback(routes::waker::wake)
-        .layer(axum::middleware::from_fn_with_state(state.clone(), routes::waker::waker_intercept))
-        .layer(auth::auth_layer(state.clone()))
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+    let app = app::build_app(state);
 
     let addr = format!("{}:{}", config.host, config.port);
 
@@ -536,27 +426,5 @@ async fn wait_for_shutdown_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
-    }
-}
-
-/// Construct the appropriate routing provider based on the given mode.
-/// Used both at startup and during hot-swap when settings change.
-pub(crate) fn build_routing_provider(
-    routing_mode: &litebin_common::types::RoutingMode,
-    cf_token: &str,
-    cf_zone: &str,
-    caddy_admin_url: &str,
-    node_clients: Arc<DashMap<String, Arc<reqwest::Client>>>,
-    db: SqlitePool,
-    config: Arc<Config>,
-) -> Arc<dyn RoutingProvider> {
-    let caddy_client = CaddyClient::new(caddy_admin_url);
-    match routing_mode {
-        litebin_common::types::RoutingMode::CloudflareDns => {
-            tracing::info!(zone_id = %cf_zone, "using cloudflare_dns routing mode");
-            let cloudflare = CloudflareClient::new(cf_token, cf_zone);
-            Arc::new(CloudflareDnsRouter::new(cloudflare, caddy_client, node_clients, db, config))
-        }
-        _ => Arc::new(MasterProxyRouter::new(caddy_client, config.ca_cert_path.clone())),
     }
 }

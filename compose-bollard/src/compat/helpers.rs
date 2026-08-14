@@ -16,36 +16,7 @@ pub(super) fn finding(
     }
 }
 
-pub(super) fn is_docker_sock_source(source: &str) -> bool {
-    matches!(normalize_unix_path(source).as_deref(), Some("/var/run/docker.sock" | "/run/docker.sock"))
-}
-
-pub(super) fn docker_socket_is_below(source: &str) -> bool {
-    let Some(source) = normalize_unix_path(source) else {
-        return false;
-    };
-    ["/var/run/docker.sock", "/run/docker.sock"]
-        .iter()
-        .any(|socket| source == "/" || socket.starts_with(&format!("{source}/")))
-}
-
-fn normalize_unix_path(path: &str) -> Option<String> {
-    let path = path.trim();
-    if !path.starts_with('/') {
-        return None;
-    }
-    let mut components = Vec::new();
-    for component in path.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                components.pop();
-            }
-            value => components.push(value),
-        }
-    }
-    Some(format!("/{}", components.join("/")))
-}
+pub(super) use crate::naming::{bind_source_exposes_docker_socket, container_name, is_docker_socket_source};
 
 pub(super) fn volume_source(volume: &str) -> &str {
     volume.split(':').next().unwrap_or(volume).trim()
@@ -61,13 +32,9 @@ pub(super) fn is_repo_relative_bind(source: &str) -> bool {
 
 /// Docker container name LiteBin will assign (matches `litebin_common::container_name`).
 pub(super) fn managed_container_name(project_id: &str, service: &str) -> String {
-    if service == "web" {
-        format!("litebin-{project_id}")
-    } else {
-        format!("litebin-{project_id}.{service}")
-    }
+    container_name(project_id, service, None)
 }
 
 pub(super) fn managed_network_name(project_id: &str) -> String {
-    format!("litebin-{project_id}")
+    crate::naming::project_network_name(project_id, None)
 }

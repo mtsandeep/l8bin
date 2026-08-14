@@ -249,7 +249,12 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
         "wake_report_url": crate::routes::nodes::format_wake_report_url(state),
     });
 
-    match client.post(&format!("{}/internal/register", base_url)).json(&register_body).send().await {
+    match client
+        .post(&format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
+        .json(&register_body)
+        .send()
+        .await
+    {
         Ok(resp) if resp.status().is_success() => {
             info!(node_id = %node.id, "heartbeat: config pushed to agent");
         }

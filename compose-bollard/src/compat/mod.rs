@@ -10,9 +10,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ComposeParser;
 use crate::error::{ComposeError, Result};
 use crate::parse::{ComposeFile, ComposeService};
-use crate::ComposeParser;
 use helpers::{finding, managed_network_name};
 use service::analyze_service;
 use top_level::analyze_top_level;

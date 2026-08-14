@@ -5,7 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- **Refactor: split `litebin-common/src/docker/container.rs` and `compose-bollard/src/compat.rs` into submodules** — no behavior change; public paths unchanged via re-exports.
+- **Refactor (phase 1): split `litebin-common`'s docker container module and `compose-bollard`'s compat module into smaller files** — no behavior change; public paths unchanged via re-exports.
+- **Refactor (phase 2): split the orchestrator's oversized route/status/routing files into smaller modules** — also extracted the route-registration block out of `main.rs` and relocated the routing-provider factory. No behavior change; handler/type paths unchanged via re-exports.
+- **Refactor (phase 3): split the CLI's `ship` and `build` modules and moved the deploy/status command handlers out of `main.rs`** — no behavior change; `ship::`/`build::` paths unchanged via re-exports.
+- **Refactor (phase 4): deduplicated cross-crate code into shared modules** — shared HMAC agent request signing/verification, container/network naming and Docker-socket path helpers (the documented mirror copies are gone), service-stats wire types moved to litebin-common (the CLI now uses the real type instead of a local mirror), and shared internal-path/compose-file/caddy-name helpers replacing copy-pasted literals.
 
 ## [0.3.21] - 2026-08-08
 

@@ -7,8 +7,65 @@ use bollard::models::{ContainerCreateBody, HostConfig};
 /// Well-known compose file names checked in priority order.
 pub const COMPOSE_FILE_NAMES: &[&str] = &["compose.yaml", "docker-compose.yml", "compose.yml", "docker-compose.yaml"];
 
+/// Find the first existing well-known compose file name in a directory.
+pub fn find_compose_file(dir: &std::path::Path) -> Option<&'static str> {
+    COMPOSE_FILE_NAMES.iter().find(|p| dir.join(p).exists()).copied()
+}
+
+// ── Internal orchestrator↔agent API paths (see also `upload::MINT_PATH`) ─────
+
+pub const WAKE_REPORT_PATH: &str = "/internal/wake-report";
+pub const HEARTBEAT_PATH: &str = "/internal/heartbeat";
+pub const AGENT_REGISTER_PATH: &str = "/internal/register";
+
+/// Container name of the agent's own Caddy (override via `AGENT_CADDY_CONTAINER_NAME`).
+pub fn agent_caddy_container_name() -> String {
+    std::env::var("AGENT_CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent-caddy".into())
+}
+
 /// Reserved service name for LiteBin's managed Docker observation proxy.
 pub const DOCKER_PROXY_SERVICE: &str = "litebin-docker-proxy";
+
+// ── Service stats (orchestrator ↔ dashboard/CLI wire contract) ───────────────
+
+/// Volume attached to a project service.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ServiceVolumeInfo {
+    pub volume_name: Option<String>,
+    pub container_path: String,
+}
+
+/// Per-service runtime info returned by the stats endpoints and embedded in
+/// project responses as `public_stats` for the public service.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, utoipa::ToSchema)]
+pub struct ServiceInfo {
+    pub service_name: String,
+    pub image: String,
+    pub port: Option<i64>,
+    pub mapped_port: Option<i64>,
+    pub is_public: bool,
+    pub status: ProjectStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cmd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_usage: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_limit_mb: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_gb: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub volumes: Vec<ServiceVolumeInfo>,
+    /// All container ports this service exposes (compose projects), for route
+    /// suggestions. Empty for single-image / scan-imported services (use `port`).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub ports: Vec<i64>,
+}
 
 /// Shared Docker network for LiteBin services (override via `DOCKER_NETWORK`).
 pub const DEFAULT_DOCKER_NETWORK: &str = "litebin-network";
@@ -470,24 +527,9 @@ impl RunServiceConfig {
 
 // ── Centralized Naming Functions ────────────────────────────────────────────
 // All container names, network names, and data dirs go through these functions.
-// Future naming changes are localized here.
-
-/// Build the Docker container name for a service.
-/// - Single-service (service_name="web", instance_id=None): `litebin-{project_id}`
-/// - Multi-service (instance_id=None): `litebin-{project_id}.{service_name}`
-/// - With instance: `litebin-{project_id}.{service_name}.{instance_id}`
-pub fn container_name(project_id: &str, service_name: &str, instance_id: Option<&str>) -> String {
-    match instance_id {
-        Some(id) => format!("litebin-{}.{}.{}", project_id, service_name, id),
-        None => {
-            if service_name == "web" {
-                format!("litebin-{}", project_id)
-            } else {
-                format!("litebin-{}.{}", project_id, service_name)
-            }
-        }
-    }
-}
+// The naming primitives live in compose-bollard (the bottom crate) so
+// compose-bollard and litebin-common share one implementation.
+pub use compose_bollard::naming::{container_name, project_network_name};
 
 /// Return the deterministic primary container name when the identity can be
 /// represented unambiguously by LiteBin's naming convention.
@@ -514,16 +556,7 @@ pub fn is_primary_service_container_name(name: &str, project_id: &str, service_n
     })
 }
 
-/// Build the per-project Docker network name.
-/// - Primary: `litebin-{project_id}`
-/// - With instance: `litebin-{project_id}-{instance_id}`
-pub fn project_network_name(project_id: &str, instance_id: Option<&str>) -> String {
-    match instance_id {
-        Some(id) => format!("litebin-{}-{}", project_id, id),
-        None => format!("litebin-{}", project_id),
-    }
-}
-
+/// Build the per-project Docker observe network name (appended `-docker-observe`).
 pub fn docker_observe_network_name(project_id: &str, instance_id: Option<&str>) -> String {
     format!("{}-docker-observe", project_network_name(project_id, instance_id))
 }
@@ -559,11 +592,7 @@ backend docker_socket
 /// `projects` (orchestrator `WORKDIR` `/app`, local tests).
 pub fn projects_dir() -> PathBuf {
     let mounted = PathBuf::from("/app/projects");
-    if mounted.is_dir() {
-        mounted
-    } else {
-        PathBuf::from("projects")
-    }
+    if mounted.is_dir() { mounted } else { PathBuf::from("projects") }
 }
 
 /// Build the project data directory path.

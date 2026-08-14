@@ -3,15 +3,12 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
 };
-use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use sha2::Sha256;
 
 use crate::AppState;
 use crate::status::{self, ProjectUpdateFields};
+use litebin_common::agent_auth::{self, VerifyError};
 use litebin_common::types::ProjectStatus;
-
-type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Deserialize)]
 pub struct WakeReport {
@@ -28,7 +25,7 @@ pub async fn wake_report(
     Json(report): Json<WakeReport>,
 ) -> StatusCode {
     // ── HMAC validation ──────────────────────────────────────────
-    let node_id = match headers.get("X-Agent-Id").and_then(|v| v.to_str().ok()) {
+    let node_id = match headers.get(agent_auth::AGENT_ID_HEADER).and_then(|v| v.to_str().ok()) {
         Some(id) => id.to_string(),
         None => {
             tracing::warn!("wake report: missing X-Agent-Id header");
@@ -36,7 +33,7 @@ pub async fn wake_report(
         }
     };
 
-    let timestamp_str = match headers.get("X-Agent-Timestamp").and_then(|v| v.to_str().ok()) {
+    let timestamp_str = match headers.get(agent_auth::AGENT_TIMESTAMP_HEADER).and_then(|v| v.to_str().ok()) {
         Some(t) => t.to_string(),
         None => {
             tracing::warn!("wake report: missing X-Agent-Timestamp header");
@@ -44,32 +41,13 @@ pub async fn wake_report(
         }
     };
 
-    let signature = match headers.get("X-Agent-Signature").and_then(|v| v.to_str().ok()) {
+    let signature = match headers.get(agent_auth::AGENT_SIGNATURE_HEADER).and_then(|v| v.to_str().ok()) {
         Some(s) => s.to_string(),
         None => {
             tracing::warn!("wake report: missing X-Agent-Signature header");
             return StatusCode::UNAUTHORIZED;
         }
     };
-
-    // Parse timestamp and check freshness (5-minute window)
-    let ts: i64 = match timestamp_str.parse() {
-        Ok(t) => t,
-        Err(_) => {
-            tracing::warn!("wake report: invalid timestamp");
-            return StatusCode::UNAUTHORIZED;
-        }
-    };
-
-    let now = chrono::Utc::now().timestamp();
-    if (now - ts).unsigned_abs() > 300 {
-        tracing::warn!(
-            node_id = %node_id,
-            age_secs = (now - ts).unsigned_abs(),
-            "wake report: timestamp too old or in future"
-        );
-        return StatusCode::UNAUTHORIZED;
-    }
 
     // Look up the node's agent_secret from DB
     let secret: Option<String> =
@@ -94,19 +72,20 @@ pub async fn wake_report(
         }
     };
 
-    // Recompute HMAC: SHA256(secret, "{timestamp}\n{node_id}")
-    let message = format!("{}\n{}", timestamp_str, node_id);
-    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
-        Ok(m) => m,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    mac.update(message.as_bytes());
-    let expected = hex::encode(mac.finalize().into_bytes());
-
-    // Constant-time comparison of hex signatures
-    if !constant_time_eq(expected.as_bytes(), signature.as_bytes()) {
-        tracing::warn!(node_id = %node_id, "wake report: invalid HMAC signature");
-        return StatusCode::UNAUTHORIZED;
+    match agent_auth::verify_agent_signature(&secret, &node_id, &timestamp_str, &signature) {
+        Ok(()) => {}
+        Err(VerifyError::InvalidTimestamp) => {
+            tracing::warn!("wake report: invalid timestamp");
+            return StatusCode::UNAUTHORIZED;
+        }
+        Err(VerifyError::StaleTimestamp(age_secs)) => {
+            tracing::warn!(node_id = %node_id, age_secs, "wake report: timestamp too old or in future");
+            return StatusCode::UNAUTHORIZED;
+        }
+        Err(VerifyError::SignatureMismatch) => {
+            tracing::warn!(node_id = %node_id, "wake report: invalid HMAC signature");
+            return StatusCode::UNAUTHORIZED;
+        }
     }
 
     // ── Process wake report ──────────────────────────────────────
@@ -185,16 +164,4 @@ pub async fn wake_report(
     let _ = state.route_sync_tx.send(());
 
     StatusCode::OK
-}
-
-/// Constant-time byte comparison to prevent timing attacks.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
 }

@@ -1,6 +1,7 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use litebin_common::types::COMPOSE_FILE_NAMES;
 use serde::{Deserialize, Serialize};
+
+use litebin_common::types::find_compose_file;
 
 use crate::AgentState;
 
@@ -191,7 +192,7 @@ pub async fn get_compose_file(
     };
 
     let compose_yaml: Option<String> =
-        COMPOSE_FILE_NAMES.iter().find_map(|name| std::fs::read_to_string(dir.join(name)).ok());
+        find_compose_file(&dir).and_then(|name| std::fs::read_to_string(dir.join(name)).ok());
 
     let env_content: Option<String> = std::fs::read_to_string(dir.join(".env")).ok();
 

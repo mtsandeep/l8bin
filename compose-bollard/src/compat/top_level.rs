@@ -1,5 +1,5 @@
 use super::tables::KNOWN_TOP_LEVEL;
-use super::{finding, managed_network_name, CompatibilityFinding, FindingDisposition};
+use super::{CompatibilityFinding, FindingDisposition, finding, managed_network_name};
 
 pub(super) fn analyze_top_level(
     root: &serde_yaml::Value,

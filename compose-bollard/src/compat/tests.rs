@@ -162,10 +162,11 @@ services:
     assert!(r.findings.iter().any(
         |f| f.disposition == FindingDisposition::Translated && f.path.ends_with("(./scripts/init.sh:/init.sh:ro)")
     ));
-    assert!(!r
-        .findings
-        .iter()
-        .any(|f| f.disposition == FindingDisposition::Translated && f.path.ends_with("(/opt/data:/data)")));
+    assert!(
+        !r.findings
+            .iter()
+            .any(|f| f.disposition == FindingDisposition::Translated && f.path.ends_with("(/opt/data:/data)"))
+    );
 }
 
 #[test]
@@ -208,10 +209,11 @@ services:
 "#,
     );
     assert!(r.ok);
-    assert!(r
-        .findings
-        .iter()
-        .any(|f| { f.path.ends_with("container_name") && f.disposition == FindingDisposition::Overridden }));
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| { f.path.ends_with("container_name") && f.disposition == FindingDisposition::Overridden })
+    );
 }
 
 #[test]

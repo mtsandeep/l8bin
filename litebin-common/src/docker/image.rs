@@ -14,9 +14,7 @@ use super::{ContainerStats, CpuSample, DiskUsage, DockerErrorKind, DockerManager
 /// Networks the agent/orchestrator should join for app proxying.
 /// Excludes the shared default network and private Docker observation networks.
 pub(crate) fn is_app_project_network(name: &str) -> bool {
-    name.starts_with("litebin-")
-        && name != crate::types::DEFAULT_DOCKER_NETWORK
-        && !name.ends_with("-docker-observe")
+    name.starts_with("litebin-") && name != crate::types::DEFAULT_DOCKER_NETWORK && !name.ends_with("-docker-observe")
 }
 
 /// Resolve a LiteBin-scoped relative bind (`projects/...`) to the on-disk path.
@@ -273,10 +271,7 @@ impl DockerManager {
         container_name: &str,
         network_name: &str,
     ) -> anyhow::Result<()> {
-        let config = NetworkDisconnectRequest {
-            container: container_name.to_string(),
-            force: Some(true),
-        };
+        let config = NetworkDisconnectRequest { container: container_name.to_string(), force: Some(true) };
         match self.docker.disconnect_network(network_name, config).await {
             Ok(_) => {
                 tracing::info!(

@@ -3,15 +3,12 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
 };
-use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use sha2::Sha256;
 use sqlx::QueryBuilder;
 use tracing::{debug, error, info, warn};
 
 use crate::AppState;
-
-type HmacSha256 = Hmac<Sha256>;
+use litebin_common::agent_auth::{self, VerifyError};
 
 #[derive(Deserialize)]
 pub struct HeartbeatPayload {
@@ -26,7 +23,7 @@ pub async fn heartbeat(
     Json(payload): Json<HeartbeatPayload>,
 ) -> StatusCode {
     // ── HMAC validation (same pattern as wake_report) ──────────────
-    let node_id = match headers.get("X-Agent-Id").and_then(|v| v.to_str().ok()) {
+    let node_id = match headers.get(agent_auth::AGENT_ID_HEADER).and_then(|v| v.to_str().ok()) {
         Some(id) => id.to_string(),
         None => {
             warn!("heartbeat: missing X-Agent-Id header");
@@ -34,7 +31,7 @@ pub async fn heartbeat(
         }
     };
 
-    let timestamp_str = match headers.get("X-Agent-Timestamp").and_then(|v| v.to_str().ok()) {
+    let timestamp_str = match headers.get(agent_auth::AGENT_TIMESTAMP_HEADER).and_then(|v| v.to_str().ok()) {
         Some(t) => t.to_string(),
         None => {
             warn!("heartbeat: missing X-Agent-Timestamp header");
@@ -42,32 +39,13 @@ pub async fn heartbeat(
         }
     };
 
-    let signature = match headers.get("X-Agent-Signature").and_then(|v| v.to_str().ok()) {
+    let signature = match headers.get(agent_auth::AGENT_SIGNATURE_HEADER).and_then(|v| v.to_str().ok()) {
         Some(s) => s.to_string(),
         None => {
             warn!("heartbeat: missing X-Agent-Signature header");
             return StatusCode::UNAUTHORIZED;
         }
     };
-
-    // Parse timestamp and check freshness (5-minute window)
-    let ts: i64 = match timestamp_str.parse() {
-        Ok(t) => t,
-        Err(_) => {
-            warn!("heartbeat: invalid timestamp");
-            return StatusCode::UNAUTHORIZED;
-        }
-    };
-
-    let now = chrono::Utc::now().timestamp();
-    if (now - ts).unsigned_abs() > 300 {
-        warn!(
-            node_id = %node_id,
-            age_secs = (now - ts).unsigned_abs(),
-            "heartbeat: timestamp too old or in future"
-        );
-        return StatusCode::UNAUTHORIZED;
-    }
 
     // Look up the node's agent_secret from DB
     let secret: Option<String> =
@@ -92,20 +70,23 @@ pub async fn heartbeat(
         }
     };
 
-    // Recompute HMAC: SHA256(secret, "{timestamp}\n{node_id}")
-    let message = format!("{}\n{}", timestamp_str, node_id);
-    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
-        Ok(m) => m,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    mac.update(message.as_bytes());
-    let expected = hex::encode(mac.finalize().into_bytes());
-
-    // Constant-time comparison
-    if !constant_time_eq(expected.as_bytes(), signature.as_bytes()) {
-        warn!(node_id = %node_id, "heartbeat: invalid HMAC signature");
-        return StatusCode::UNAUTHORIZED;
+    match agent_auth::verify_agent_signature(&secret, &node_id, &timestamp_str, &signature) {
+        Ok(()) => {}
+        Err(VerifyError::InvalidTimestamp) => {
+            warn!("heartbeat: invalid timestamp");
+            return StatusCode::UNAUTHORIZED;
+        }
+        Err(VerifyError::StaleTimestamp(age_secs)) => {
+            warn!(node_id = %node_id, age_secs, "heartbeat: timestamp too old or in future");
+            return StatusCode::UNAUTHORIZED;
+        }
+        Err(VerifyError::SignatureMismatch) => {
+            warn!(node_id = %node_id, "heartbeat: invalid HMAC signature");
+            return StatusCode::UNAUTHORIZED;
+        }
     }
+
+    let now = chrono::Utc::now().timestamp();
 
     // ── Process heartbeat ──────────────────────────────────────────
     if payload.hosts.is_empty() {
@@ -191,15 +172,4 @@ pub async fn heartbeat(
     }
 
     StatusCode::OK
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
 }

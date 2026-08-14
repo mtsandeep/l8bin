@@ -156,15 +156,19 @@ pub async fn batch_run(State(state): State<AgentState>, Json(req): Json<BatchRun
     let extra_env = read_project_env(&req.project_id);
     // `${VAR:?}` is enforced at start, not staging (the node .env isn't complete yet).
     let strict = !req.stage_only;
-    let mut plan =
-        match litebin_common::compose_run::build_compose_run_plan(&req.compose_yaml, &req.project_id, &extra_env, None, strict)
-        {
-            Ok(plan) => plan,
-            Err(e) => {
-                return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: format!("invalid compose: {e}") }))
-                    .into_response();
-            }
-        };
+    let mut plan = match litebin_common::compose_run::build_compose_run_plan(
+        &req.compose_yaml,
+        &req.project_id,
+        &extra_env,
+        None,
+        strict,
+    ) {
+        Ok(plan) => plan,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: format!("invalid compose: {e}") }))
+                .into_response();
+        }
+    };
     let requests_host_network = plan.configs.iter().any(|config| config.host_network);
     if requests_host_network {
         if !req.host_network.unwrap_or(false) {
@@ -412,7 +416,7 @@ pub async fn batch_run(State(state): State<AgentState>, Json(req): Json<BatchRun
     }
 
     // Connect the AGENT's Caddy to the project network so it can proxy to containers.
-    let caddy_container = std::env::var("AGENT_CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent-caddy".into());
+    let caddy_container = litebin_common::types::agent_caddy_container_name();
     let project_network = litebin_common::types::project_network_name(&req.project_id, None);
     let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
 
@@ -665,8 +669,8 @@ mod tests {
     use dashmap::DashMap;
     use serde_json::Value;
 
-    use super::{BatchRunRequest, FAIL_NEXT_PROXY_READINESS_CHECK, batch_run, host_network_authorized};
     use super::projects_dir;
+    use super::{BatchRunRequest, FAIL_NEXT_PROXY_READINESS_CHECK, batch_run, host_network_authorized};
     use crate::config::Config;
     use crate::{AgentState, ProjectMetaEntry, WakeGuard};
 

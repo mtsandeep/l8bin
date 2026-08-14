@@ -1,12 +1,38 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
+use crate::cloudflare_router::CloudflareDnsRouter;
 use crate::config::Config;
-use litebin_common::routing::{ProjectCustomRoute, ProjectRoute, RoutingProvider};
+use litebin_common::caddy::CaddyClient;
+use litebin_common::cloudflare::CloudflareClient;
+use litebin_common::routing::{MasterProxyRouter, ProjectCustomRoute, ProjectRoute, RoutingProvider};
 use litebin_common::types::{Project, ProjectService, ProjectStatus, container_name};
+
+/// Construct the appropriate routing provider based on the given mode.
+/// Used both at startup and during hot-swap when settings change.
+pub(crate) fn build_routing_provider(
+    routing_mode: &litebin_common::types::RoutingMode,
+    cf_token: &str,
+    cf_zone: &str,
+    caddy_admin_url: &str,
+    node_clients: Arc<DashMap<String, Arc<reqwest::Client>>>,
+    db: SqlitePool,
+    config: Arc<Config>,
+) -> Arc<dyn RoutingProvider> {
+    let caddy_client = CaddyClient::new(caddy_admin_url);
+    match routing_mode {
+        litebin_common::types::RoutingMode::CloudflareDns => {
+            tracing::info!(zone_id = %cf_zone, "using cloudflare_dns routing mode");
+            let cloudflare = CloudflareClient::new(cf_token, cf_zone);
+            Arc::new(CloudflareDnsRouter::new(cloudflare, caddy_client, node_clients, db, config))
+        }
+        _ => Arc::new(MasterProxyRouter::new(caddy_client, config.ca_cert_path.clone())),
+    }
+}
 
 /// Look up a node's host address and public_ip by node_id.
 /// Returns None if the node doesn't exist in the database.

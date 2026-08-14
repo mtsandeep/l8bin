@@ -354,7 +354,7 @@ pub async fn request_upload_target(
         let err = json["error"].as_str().unwrap_or(&text);
         anyhow::bail!("{} ({}): {}", url, status, err);
     }
-    let target: UploadTarget = serde_json::from_str(&text)
-        .with_context(|| format!("failed to parse upload-target response: {}", text))?;
+    let target: UploadTarget =
+        serde_json::from_str(&text).with_context(|| format!("failed to parse upload-target response: {}", text))?;
     Ok(target)
 }

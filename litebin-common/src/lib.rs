@@ -1,3 +1,4 @@
+pub mod agent_auth;
 pub mod caddy;
 pub mod capabilities;
 pub mod cloudflare;
@@ -9,6 +10,6 @@ pub mod proxy;
 pub mod routing;
 pub mod scan;
 pub mod sys;
-pub mod upload;
 pub mod types;
+pub mod upload;
 pub mod waker_pages;

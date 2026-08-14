@@ -100,10 +100,7 @@ pub fn commit_url(base: &str, token: &str) -> String {
 
 /// Read the `X-Total-Chunks` header from a request.
 pub fn total_chunks_header(headers: &HeaderMap) -> Option<u64> {
-    headers
-        .get(TOTAL_CHUNKS_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
+    headers.get(TOTAL_CHUNKS_HEADER).and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<u64>().ok())
 }
 
 /// Sort a chunk-index set into a stable ascending Vec for JSON responses.
@@ -232,11 +229,7 @@ impl UploadStore {
     pub fn new<P: Into<PathBuf>>(staging_root: P, chunk_size: usize) -> std::io::Result<Self> {
         let staging_root = staging_root.into();
         std::fs::create_dir_all(&staging_root)?;
-        Ok(Self {
-            sessions: Arc::new(DashMap::new()),
-            staging_root,
-            chunk_size: chunk_size as u64,
-        })
+        Ok(Self { sessions: Arc::new(DashMap::new()), staging_root, chunk_size: chunk_size as u64 })
     }
 
     pub fn chunk_size(&self) -> u64 {
@@ -329,7 +322,9 @@ impl UploadStore {
     /// (the caller does, after a successful load/stream).
     pub fn prepare_commit(&self, token: &str) -> Result<PreparedCommit, UploadError> {
         let s = self.live(token)?.clone();
-        let total = s.total.ok_or_else(|| UploadError::Other(anyhow::anyhow!("total chunk count unknown; send X-Total-Chunks")))?;
+        let total = s
+            .total
+            .ok_or_else(|| UploadError::Other(anyhow::anyhow!("total chunk count unknown; send X-Total-Chunks")))?;
         let missing: Vec<u64> = (0..total).filter(|i| !s.received.contains(i)).collect();
         if !missing.is_empty() {
             return Err(UploadError::MissingChunks(format!("{:?}", missing)));
@@ -362,12 +357,8 @@ impl UploadStore {
     /// periodically from a background task.
     pub fn gc(&self) {
         let now = chrono::Utc::now().timestamp();
-        let expired: Vec<String> = self
-            .sessions
-            .iter()
-            .filter(|s| s.is_expired(now))
-            .map(|s| s.token.clone())
-            .collect();
+        let expired: Vec<String> =
+            self.sessions.iter().filter(|s| s.is_expired(now)).map(|s| s.token.clone()).collect();
         for token in expired {
             self.purge(&token);
         }
@@ -391,7 +382,8 @@ impl UploadStore {
 
 /// Deterministic per-(project, image) dir name so re-mints resume the same staging.
 fn session_dir_name(project_id: &str, image_id: &str) -> String {
-    let slug = |s: &str| s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect::<String>();
+    let slug =
+        |s: &str| s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect::<String>();
     format!("{}-{}", slug(project_id), slug(image_id))
 }
 
@@ -450,12 +442,7 @@ pub fn chunk_stream(
 
 /// Load concatenated chunks `0..total` from staging into local Docker and resolve
 /// the resulting image id. Used for local-node and direct-to-agent commits.
-pub async fn load_staged(
-    docker: &DockerManager,
-    dir: PathBuf,
-    total: u64,
-    image_id: &str,
-) -> anyhow::Result<String> {
+pub async fn load_staged(docker: &DockerManager, dir: PathBuf, total: u64, image_id: &str) -> anyhow::Result<String> {
     let stream = chunk_stream(dir, total);
     docker.load_image(stream).await?;
     docker.inspect_image_id(image_id).await

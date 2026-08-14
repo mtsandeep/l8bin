@@ -1,15 +1,11 @@
 use std::sync::Arc;
 use tokio::task::JoinSet;
 
-use hmac::{Hmac, Mac};
 use serde_json::json;
-use sha2::Sha256;
 
 use crate::AgentState;
 
 use super::caddy::rebuild_local_caddy;
-
-type HmacSha256 = Hmac<Sha256>;
 
 async fn rollback_wake_containers(
     docker: &litebin_common::docker::DockerManager,
@@ -35,7 +31,8 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 
     let extra_env = crate::routes::containers::read_project_env(project_id);
 
-    let mut plan = litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None, true)?;
+    let mut plan =
+        litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None, true)?;
     let requests_host_network = plan.configs.iter().any(|config| config.host_network);
     if requests_host_network {
         let meta = state.project_meta.read().unwrap().get(project_id).cloned();
@@ -104,7 +101,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     }
 
     // Connect the AGENT's Caddy to the project network so it can proxy to containers.
-    let caddy_container = std::env::var("AGENT_CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent-caddy".into());
+    let caddy_container = litebin_common::types::agent_caddy_container_name();
     let project_network = litebin_common::types::project_network_name(project_id, None);
     let _ = state.docker.connect_container_to_network(&caddy_container, &project_network).await;
 
@@ -347,18 +344,15 @@ pub(super) async fn report_wake_to_master(state: &AgentState, project_id: &str, 
     let secret = &reg.secret;
 
     let timestamp = chrono::Utc::now().timestamp();
-    let message = format!("{}\n{}", timestamp, node_id);
 
     // Compute HMAC-SHA256(secret, "{timestamp}\n{node_id}")
-    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to create HMAC");
+    let signature = match litebin_common::agent_auth::sign_agent_request(secret, node_id, timestamp) {
+        Some(s) => s,
+        None => {
+            tracing::warn!("failed to create HMAC");
             return;
         }
     };
-    mac.update(message.as_bytes());
-    let signature = hex::encode(mac.finalize().into_bytes());
 
     let body = json!({
         "project_id": project_id,

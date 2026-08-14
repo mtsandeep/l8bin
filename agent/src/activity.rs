@@ -1,20 +1,17 @@
 use std::collections::HashSet;
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use tracing::{debug, warn};
 
+use litebin_common::agent_auth;
 use litebin_common::heartbeat;
 
 use litebin_agent::AgentState;
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Background task that tails agent-caddy container logs via Docker,
 /// collects unique hosts from access logs,
 /// and periodically reports them to the orchestrator.
 pub async fn run_activity_reporter(state: AgentState, shutdown_rx: tokio::sync::watch::Receiver<bool>) {
-    let caddy_container = std::env::var("AGENT_CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent-caddy".into());
+    let caddy_container = litebin_common::types::agent_caddy_container_name();
 
     heartbeat::run_docker_log_tailer(
         state.docker.as_ref().clone(),
@@ -45,9 +42,8 @@ async fn report_hosts_to_master(state: &AgentState, hosts: HashSet<String>) {
     let node_id = reg.node_id.clone();
     let secret = reg.secret.clone();
     let timestamp = chrono::Utc::now().timestamp();
-    let message = format!("{}\n{}", timestamp, node_id);
 
-    let signature = match compute_hmac(&secret, &message) {
+    let signature = match agent_auth::sign_agent_request(&secret, &node_id, timestamp) {
         Some(s) => s,
         None => return,
     };
@@ -86,10 +82,4 @@ async fn report_hosts_to_master(state: &AgentState, hosts: HashSet<String>) {
             debug!(error = %e, "activity reporter: failed to reach orchestrator (fire-and-forget)");
         }
     }
-}
-
-fn compute_hmac(secret: &str, message: &str) -> Option<String> {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).ok()?;
-    mac.update(message.as_bytes());
-    Some(hex::encode(mac.finalize().into_bytes()))
 }
