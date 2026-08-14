@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Refactor: split `litebin-common/src/docker/container.rs` and `compose-bollard/src/compat.rs` into submodules** — no behavior change; public paths unchanged via re-exports.
+
 ## [0.3.21] - 2026-08-08
 
 ### Fixed
