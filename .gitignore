@@ -38,8 +38,8 @@ target/
 # pnpm
 .pnpm-store/
 
-# projects
-projects/
+# Runtime project data dir (created by running orchestrator/agent locally).
+/projects/
 
 # Load test binaries
 test-apps/load-tests/k6.exe
