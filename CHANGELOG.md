@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **CI quality gate** — new pull-request/push workflow running `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, and `cargo test --workspace`, with the Rust toolchain pinned via `rust-toolchain.toml`. The workspace is now clippy-clean; live Docker tests remain `#[ignore]`d and local-only (documented in `docs/development.md`).
+- **Release gate** — the release workflow now runs the same fmt/clippy/test checks on the tagged commit before any build, gates all build jobs on them, and builds with `--locked` from the committed lockfile.
 
 ## [0.3.21] - 2026-08-08
 

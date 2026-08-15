@@ -14,13 +14,40 @@ permissions:
   contents: write
 
 jobs:
-  build-linux:
+  # Same gates as CI (ci.yml), run on the exact ref being released.
+  # Build jobs below need this, so a release can never publish from a commit
+  # that fails fmt/clippy/tests.
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust (pinned by rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+  build-linux:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
 
       - name: Install cross-compile toolchain
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
@@ -29,22 +56,22 @@ jobs:
         run: rustup target add aarch64-unknown-linux-gnu
 
       - name: Build CLI (linux x86_64)
-        run: cargo build --release -p l8b --target x86_64-unknown-linux-gnu
+        run: cargo build --release --locked -p l8b --target x86_64-unknown-linux-gnu
 
       - name: Build CLI (linux aarch64)
-        run: cargo build --release -p l8b --target aarch64-unknown-linux-gnu
+        run: cargo build --release --locked -p l8b --target aarch64-unknown-linux-gnu
 
       - name: Build Orchestrator (linux x86_64)
-        run: cargo build --release -p litebin-orchestrator --target x86_64-unknown-linux-gnu
+        run: cargo build --release --locked -p litebin-orchestrator --target x86_64-unknown-linux-gnu
 
       - name: Build Orchestrator (linux aarch64)
-        run: cargo build --release -p litebin-orchestrator --target aarch64-unknown-linux-gnu
+        run: cargo build --release --locked -p litebin-orchestrator --target aarch64-unknown-linux-gnu
 
       - name: Build Agent (linux x86_64)
-        run: cargo build --release --bin litebin-agent --target x86_64-unknown-linux-gnu
+        run: cargo build --release --locked --bin litebin-agent --target x86_64-unknown-linux-gnu
 
       - name: Build Agent (linux aarch64)
-        run: cargo build --release --bin litebin-agent --target aarch64-unknown-linux-gnu
+        run: cargo build --release --locked --bin litebin-agent --target aarch64-unknown-linux-gnu
 
       - name: Generate docs
         run: |
@@ -121,21 +148,25 @@ jobs:
             llms-full.txt
 
   build-macos:
+    needs: check
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust (pinned by rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
 
       - name: Add targets
         run: rustup target add x86_64-apple-darwin
 
       - name: Build CLI (macOS aarch64)
-        run: cargo build --release -p l8b
+        run: cargo build --release --locked -p l8b
 
       - name: Build CLI (macOS x86_64)
-        run: cargo build --release -p l8b --target x86_64-apple-darwin
+        run: cargo build --release --locked -p l8b --target x86_64-apple-darwin
 
       - name: Stage artifacts
         run: |
@@ -150,15 +181,19 @@ jobs:
           path: staging/*
 
   build-windows:
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust (pinned by rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
       - name: Build CLI (windows x86_64)
-        run: cargo build --release -p l8b
+        run: cargo build --release --locked -p l8b
 
       - name: Stage artifact
         run: |
