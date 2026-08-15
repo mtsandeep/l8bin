@@ -83,10 +83,9 @@ impl CloudflareDnsRouter {
             if let Some(cd) = &p.custom_domain {
                 if let Some(ref rewrite) = p.host_rewrite {
                     // Sleeping custom domain: proxy to orchestrator waker with Host rewrite
-                    let (www_host, _canonical) = if cd.starts_with("www.") {
-                        (cd[4..].to_string(), cd.clone())
-                    } else {
-                        (format!("www.{}", cd), cd.clone())
+                    let (www_host, _canonical) = match cd.strip_prefix("www.") {
+                        Some(rest) => (rest.to_string(), cd.clone()),
+                        None => (format!("www.{}", cd), cd.clone()),
                     };
 
                     routes.push(json!({
@@ -127,10 +126,9 @@ impl CloudflareDnsRouter {
                         }]
                     }));
 
-                    let (redirect_from, canonical) = if cd.starts_with("www.") {
-                        (cd[4..].to_string(), cd.clone())
-                    } else {
-                        (format!("www.{}", cd), cd.clone())
+                    let (redirect_from, canonical) = match cd.strip_prefix("www.") {
+                        Some(rest) => (rest.to_string(), cd.clone()),
+                        None => (format!("www.{}", cd), cd.clone()),
                     };
                     routes.push(json!({
                         "match": [{ "host": [redirect_from] }],
@@ -268,10 +266,9 @@ impl CloudflareDnsRouter {
                 if let Some(ref rewrite) = p.host_rewrite {
                     // Sleeping custom domain: proxy to agent internal wake server with Host rewrite
                     let agent_wake = "litebin-agent:8444".to_string();
-                    let (www_host, _canonical) = if cd.starts_with("www.") {
-                        (cd[4..].to_string(), cd.clone())
-                    } else {
-                        (format!("www.{}", cd), cd.clone())
+                    let (www_host, _canonical) = match cd.strip_prefix("www.") {
+                        Some(rest) => (rest.to_string(), cd.clone()),
+                        None => (format!("www.{}", cd), cd.clone()),
                     };
 
                     routes.push(json!({
@@ -311,10 +308,9 @@ impl CloudflareDnsRouter {
                         }]
                     }));
 
-                    let (redirect_from, canonical) = if cd.starts_with("www.") {
-                        (cd[4..].to_string(), cd.clone())
-                    } else {
-                        (format!("www.{}", cd), cd.clone())
+                    let (redirect_from, canonical) = match cd.strip_prefix("www.") {
+                        Some(rest) => (rest.to_string(), cd.clone()),
+                        None => (format!("www.{}", cd), cd.clone()),
                     };
                     routes.push(json!({
                         "match": [{ "host": [redirect_from] }],

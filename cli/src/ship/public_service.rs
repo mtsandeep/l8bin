@@ -35,14 +35,14 @@ fn public_service_candidates(compose: &serde_yaml::Value) -> (Vec<(String, u16)>
         }
         if let Some(port_list) = svc.get("ports").and_then(|p| p.as_sequence()) {
             for port_val in port_list {
-                if let Some(port_str) = port_val.as_str() {
-                    if let Some(p) = parse_container_port(port_str) {
-                        if p == 80 || p == 443 {
-                            has_well_known = true;
-                        }
-                        if !candidates.iter().any(|(_, ep)| *ep == p) {
-                            candidates.push((svc_name.as_str().unwrap_or_default().to_string(), p));
-                        }
+                if let Some(port_str) = port_val.as_str()
+                    && let Some(p) = parse_container_port(port_str)
+                {
+                    if p == 80 || p == 443 {
+                        has_well_known = true;
+                    }
+                    if !candidates.iter().any(|(_, ep)| *ep == p) {
+                        candidates.push((svc_name.as_str().unwrap_or_default().to_string(), p));
                     }
                 }
             }
@@ -89,19 +89,18 @@ pub(super) fn inject_public_label(yaml: &str, service_name: &str) -> Result<Stri
     let mut doc: serde_yaml::Value =
         serde_yaml::from_str(yaml).with_context(|| "failed to parse compose YAML for label injection")?;
 
-    if let Some(services) = doc.get_mut("services").and_then(|s| s.as_mapping_mut()) {
-        if let Some(svc) = services.get_mut(&serde_yaml::Value::String(service_name.to_string())) {
-            if let Some(svc_map) = svc.as_mapping_mut() {
-                let labels = svc_map
-                    .entry(serde_yaml::Value::String("labels".to_string()))
-                    .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-                if let Some(labels_map) = labels.as_mapping_mut() {
-                    labels_map.insert(
-                        serde_yaml::Value::String("litebin.public".to_string()),
-                        serde_yaml::Value::String("true".to_string()),
-                    );
-                }
-            }
+    if let Some(services) = doc.get_mut("services").and_then(|s| s.as_mapping_mut())
+        && let Some(svc) = services.get_mut(serde_yaml::Value::String(service_name.to_string()))
+        && let Some(svc_map) = svc.as_mapping_mut()
+    {
+        let labels = svc_map
+            .entry(serde_yaml::Value::String("labels".to_string()))
+            .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        if let Some(labels_map) = labels.as_mapping_mut() {
+            labels_map.insert(
+                serde_yaml::Value::String("litebin.public".to_string()),
+                serde_yaml::Value::String("true".to_string()),
+            );
         }
     }
 

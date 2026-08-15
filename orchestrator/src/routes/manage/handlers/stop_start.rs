@@ -94,7 +94,7 @@ pub async fn stop_project(
                 };
                 let base_url = agent_base_url(&state.config, &node);
                 let response = client
-                    .post(&format!("{}/containers/stop-project", base_url))
+                    .post(format!("{}/containers/stop-project", base_url))
                     .json(&json!({"project_id": &project_id}))
                     .send()
                     .await
@@ -214,8 +214,7 @@ pub async fn start_project(
                 rollback_on_failure: false,
             },
         )
-        .await
-        .map_err(|(s, e)| (s, e))?;
+        .await?;
     } else if is_compose {
         // Remote multi-service: use agent batch-run (same as deploy/recreate)
         let node_id = project.node_id.as_deref().unwrap();
@@ -494,7 +493,7 @@ pub async fn start_project(
 
             // Fast path: try starting existing container
             let resp = client
-                .post(&format!("{}/containers/start", base_url))
+                .post(format!("{}/containers/start", base_url))
                 .json(&json!({ "container_id": container_id }))
                 .send()
                 .await;

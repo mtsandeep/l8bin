@@ -51,20 +51,21 @@ pub(super) fn rewrite_compose_images(
     if let Some(services_map) = resolved_compose.get_mut("services").and_then(|s| s.as_mapping_mut()) {
         for entry in services_map.iter_mut() {
             let svc_name = entry.0.as_str().unwrap_or_default().to_string();
-            if let Some(image_id) = resolved_images.get(&svc_name) {
-                if let Some(svc_map) = entry.1.as_mapping_mut() {
-                    svc_map.remove("build");
-                    svc_map.insert(
-                        serde_yaml::Value::String("image".to_string()),
-                        serde_yaml::Value::String(image_id.clone()),
-                    );
-                }
+            if let Some(image_id) = resolved_images.get(&svc_name)
+                && let Some(svc_map) = entry.1.as_mapping_mut()
+            {
+                svc_map.remove("build");
+                svc_map.insert(
+                    serde_yaml::Value::String("image".to_string()),
+                    serde_yaml::Value::String(image_id.clone()),
+                );
             }
         }
     }
     Ok(serde_yaml::to_string(&resolved_compose)?)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn build_and_upload_services(
     client: &reqwest::Client,
     server: &str,
@@ -139,6 +140,7 @@ fn group_build_infos(build_infos: &[BuildInfo]) -> Vec<Vec<&BuildInfo>> {
     groups
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn submit_compose(
     client: &reqwest::Client,
     server: &str,
@@ -178,6 +180,7 @@ pub(super) async fn submit_compose(
     auth::session_post_multipart(client, server, "/deploy/compose", form).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_compose_deployment(
     client: &reqwest::Client,
     server: &str,

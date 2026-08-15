@@ -72,13 +72,13 @@ async fn new_project_flow(
 
     let is_background = select_background_project()?;
 
-    println!("  {} Creating project {}...", "::", name.cyan());
+    println!("  :: Creating project {}...", name.cyan());
     auth::session_post(client, server, "/projects", &json!({"id": &name, "is_background": is_background}))
         .await
         .with_context(|| format!("failed to create project '{}'", name))?;
     println!("  {} Project created", "✔".green());
 
-    println!("  {} Generating deploy token for {}...", "::", name.cyan());
+    println!("  :: Generating deploy token for {}...", name.cyan());
     let token_resp =
         auth::session_post(client, server, "/deploy-tokens", &json!({"project_id": &name, "name": "cli-generated"}))
             .await?;
@@ -223,19 +223,19 @@ async fn existing_project_flow(
             }
         }
         "Recreate" => {
-            println!("  {} Recreating {}...", "::", project_id.cyan());
+            println!("  :: Recreating {}...", project_id.cyan());
             auth::session_post(client, server, &format!("/projects/{}/recreate", project_id), &json!({})).await?;
             println!("  {} Recreated", "✔".green());
             println!();
         }
         "Start" => {
-            println!("  {} Starting {}...", "::", project_id.cyan());
+            println!("  :: Starting {}...", project_id.cyan());
             auth::session_post(client, server, &format!("/projects/{}/start", project_id), &json!({})).await?;
             println!("  {} Started", "✔".green());
             println!();
         }
         "Stop" => {
-            println!("  {} Stopping {}...", "::", project_id.cyan());
+            println!("  :: Stopping {}...", project_id.cyan());
             auth::session_post(client, server, &format!("/projects/{}/stop", project_id), &json!({})).await?;
             println!("  {} Stopped", "✔".green());
             println!();
@@ -249,7 +249,7 @@ async fn existing_project_flow(
                 println!("  Cancelled.");
                 return Ok(());
             }
-            println!("  {} Deleting {}...", "::", project_id.cyan());
+            println!("  :: Deleting {}...", project_id.cyan());
             auth::session_delete(client, server, &format!("/projects/{}", project_id)).await?;
             println!("  {} Deleted", "✔".green());
             println!();
@@ -413,14 +413,13 @@ pub(super) fn resolve_upload_mode(
     if ci_mode {
         return UploadMode::Auto;
     }
-    if let Some(id) = node_id {
-        if let Some(n) = nodes.iter().find(|n| n.id == id) {
-            if n.public_ip.as_deref().filter(|s| !s.is_empty()).is_some() {
-                let items = ["Direct to agent (recommended)", "Relay via master"];
-                let idx = Select::new().with_prompt("Upload path").items(&items).default(0).interact().unwrap_or(0);
-                return if idx == 0 { UploadMode::Direct } else { UploadMode::Relay };
-            }
-        }
+    if let Some(id) = node_id
+        && let Some(n) = nodes.iter().find(|n| n.id == id)
+        && n.public_ip.as_deref().filter(|s| !s.is_empty()).is_some()
+    {
+        let items = ["Direct to agent (recommended)", "Relay via master"];
+        let idx = Select::new().with_prompt("Upload path").items(&items).default(0).interact().unwrap_or(0);
+        return if idx == 0 { UploadMode::Direct } else { UploadMode::Relay };
     }
     UploadMode::Auto
 }

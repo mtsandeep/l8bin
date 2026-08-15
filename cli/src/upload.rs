@@ -41,6 +41,7 @@ impl UploadMode {
 
 /// High-level entry: ask the master where to upload, build the right client for
 /// that target, and run the chunked upload. Returns the resolved image id.
+#[allow(clippy::too_many_arguments)]
 pub async fn upload_image(
     client: &reqwest::Client,
     server: &str,
@@ -127,7 +128,7 @@ async fn chunked_upload(
 
     loop {
         // Seed the bar from the server-confirmed received set (never falsely 0).
-        let received = fetch_status(client, &base, &target.token).await.unwrap_or_default();
+        let received = fetch_status(client, base, &target.token).await.unwrap_or_default();
         let mut received_bytes: u64 = received.iter().map(|&i| chunk_bytes(i, chunk_size, file_size)).sum();
         if let Some(pb) = &pb {
             pb.set_position(received_bytes);
@@ -139,7 +140,7 @@ async fn chunked_upload(
             if received.contains(&index) {
                 continue;
             }
-            match post_chunk_with_retry(client, &base, &target.token, index, total_chunks, tar_path, chunk_size).await {
+            match post_chunk_with_retry(client, base, &target.token, index, total_chunks, tar_path, chunk_size).await {
                 Ok(n) => {
                     received_bytes = received_bytes.saturating_add(n).min(file_size);
                     if let Some(pb) = &pb {
@@ -157,7 +158,7 @@ async fn chunked_upload(
         }
 
         if last_err.is_none() {
-            match commit(client, &base, &target.token).await {
+            match commit(client, base, &target.token).await {
                 Ok(image_id) => {
                     if let Some(pb) = &pb {
                         pb.finish_and_clear();

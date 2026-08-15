@@ -135,15 +135,15 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
                     }
                 }
             }
-        } else if let Some((_svc_name, cid)) = containers.first() {
+        } else if let Some((_svc_name, container_id)) = containers.first()
+            && let Some(container_id) = container_id
+        {
             // Single-service: stop the one container
-            if let Some(container_id) = cid {
-                if is_local {
-                    stop_local_container(state, &project.id, container_id).await;
-                } else {
-                    let node_id = project.node_id.as_deref().unwrap();
-                    stop_remote_container(state, &project.id, node_id, container_id, false).await;
-                }
+            if is_local {
+                stop_local_container(state, &project.id, container_id).await;
+            } else {
+                let node_id = project.node_id.as_deref().unwrap();
+                stop_remote_container(state, &project.id, node_id, container_id, false).await;
             }
         }
 
@@ -179,13 +179,13 @@ async fn stop_local_container_by_name(state: &AppState, project_id: &str, contai
     let prefix = format!("litebin-{}.", project_id);
     if let Ok(containers) = state.docker.list_containers_by_prefix(&prefix).await {
         for cid in &containers {
-            if let Ok(inspect) = state.docker.inspect_container(cid).await {
-                if inspect.name.as_deref().map(|n| n.trim_start_matches('/')) == Some(container_name) {
-                    let _ = state.docker.stop_container(cid).await;
-                    let _ = state.docker.remove_container(cid).await;
-                    tracing::info!(project = %project_id, "janitor: Docker observation proxy removed (idle)");
-                    return;
-                }
+            if let Ok(inspect) = state.docker.inspect_container(cid).await
+                && inspect.name.as_deref().map(|n| n.trim_start_matches('/')) == Some(container_name)
+            {
+                let _ = state.docker.stop_container(cid).await;
+                let _ = state.docker.remove_container(cid).await;
+                tracing::info!(project = %project_id, "janitor: Docker observation proxy removed (idle)");
+                return;
             }
         }
     }
@@ -215,7 +215,7 @@ async fn stop_remote_container(state: &AppState, project_id: &str, node_id: &str
     let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
 
     match client
-        .post(&format!("{}/containers/{}", base_url, if remove { "remove" } else { "stop" }))
+        .post(format!("{}/containers/{}", base_url, if remove { "remove" } else { "stop" }))
         .json(&serde_json::json!({"container_id": container_id}))
         .send()
         .await

@@ -18,6 +18,7 @@ pub struct DeployResponse {
 }
 
 /// POST /deploy to the orchestrator (create-only)
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy(
     client: &reqwest::Client,
     server: &str,
@@ -54,6 +55,7 @@ pub async fn deploy(
 }
 
 /// Try POST /deploy (create); on 409 Conflict fall back to PUT /deploy (redeploy).
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy_or_redeploy(
     client: &reqwest::Client,
     server: &str,
@@ -112,6 +114,7 @@ pub async fn deploy_or_redeploy(
 }
 
 /// PUT /deploy to the orchestrator (redeploy)
+#[allow(clippy::too_many_arguments)]
 pub async fn redeploy(
     client: &reqwest::Client,
     server: &str,
@@ -148,6 +151,7 @@ pub async fn redeploy(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_deploy(
     client: &reqwest::Client,
     server: &str,

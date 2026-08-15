@@ -158,7 +158,7 @@ pub fn build_router(state: AgentState) -> Router {
 /// Loopback/Docker-network-only router for direct uploads, reached by the agent
 /// Caddy on `:443` via the `/__l8b_upload/*` reverse-proxy route. Token-gated.
 pub fn build_upload_router(state: AgentState) -> Router {
-    use litebin_common::upload::{MAX_UPLOAD_BODY, agent_commit_route, agent_chunk_route, agent_status_route};
+    use litebin_common::upload::{MAX_UPLOAD_BODY, agent_chunk_route, agent_commit_route, agent_status_route};
     Router::new()
         .route(&agent_status_route(), get(routes::upload::upload_status))
         .route(&agent_chunk_route(), post(routes::upload::upload_chunk))

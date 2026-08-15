@@ -11,6 +11,7 @@ use super::types::DeployRequest;
 /// The background deploy task: pull, start the container, sync routes, and
 /// clean up old images/volumes. On failure the project is transitioned to Error
 /// (handled by the caller).
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_deploy_task(
     state_clone: AppState,
     payload_clone: DeployRequest,
@@ -93,7 +94,7 @@ pub(super) async fn run_deploy_task(
         let base_url = agent_base_url(&state_clone.config, &node);
 
         let run_resp = client
-            .post(&format!("{}/containers/run", base_url))
+            .post(format!("{}/containers/run", base_url))
             .json(&json!({
                 "image": payload_clone.image,
                 "internal_port": payload_clone.port,
@@ -194,17 +195,16 @@ pub(super) async fn run_deploy_task(
                 .await
                 .ok()
                 .flatten()
+                && let Ok(client) = nodes::client::get_node_client(&state_clone.node_clients, &node_id_clone)
             {
-                if let Ok(client) = nodes::client::get_node_client(&state_clone.node_clients, &node_id_clone) {
-                    let url = agent_base_url(&state_clone.config, &node);
-                    if let Err(e) = client
-                        .post(format!("{}/containers/stop", url))
-                        .json(&json!({"container_id": &container_id}))
-                        .send()
-                        .await
-                    {
-                        tracing::warn!(project_id = %payload_clone.project_id, container_id = %container_id, error = %e, "deploy: failed to stop container on agent");
-                    }
+                let url = agent_base_url(&state_clone.config, &node);
+                if let Err(e) = client
+                    .post(format!("{}/containers/stop", url))
+                    .json(&json!({"container_id": &container_id}))
+                    .send()
+                    .await
+                {
+                    tracing::warn!(project_id = %payload_clone.project_id, container_id = %container_id, error = %e, "deploy: failed to stop container on agent");
                 }
             }
         }
@@ -227,10 +227,11 @@ pub(super) async fn run_deploy_task(
         crate::routes::manage::cleanup_unused_image(&state_clone, old_node_id_clone.as_deref(), digest).await;
     }
     // Fallback: clean up by old tag if it changed (in case digest lookup failed)
-    if let Some(ref old) = old_image_clone {
-        if old != &payload_clone.image && old_digest.is_none() {
-            crate::routes::manage::cleanup_unused_image(&state_clone, old_node_id_clone.as_deref(), old).await;
-        }
+    if let Some(ref old) = old_image_clone
+        && old != &payload_clone.image
+        && old_digest.is_none()
+    {
+        crate::routes::manage::cleanup_unused_image(&state_clone, old_node_id_clone.as_deref(), old).await;
     }
 
     // 9. Detect orphaned volumes and optionally clean up
@@ -246,9 +247,10 @@ pub(super) async fn run_deploy_task(
             let name = vm.name.as_deref().unwrap_or(&payload_clone.project_id);
             if !new_names.contains(name) {
                 let scoped = litebin_common::types::scope_volume_source(name, &payload_clone.project_id);
-                match litebin_common::types::classify_volume(&scoped) {
-                    litebin_common::types::VolumeKind::AbsoluteBindMount => continue,
-                    _ => {}
+                if litebin_common::types::classify_volume(&scoped)
+                    == litebin_common::types::VolumeKind::AbsoluteBindMount
+                {
+                    continue;
                 }
                 if payload_clone.cleanup_volumes == Some(true) {
                     let _ = state_clone.docker.remove_volume_by_name(&scoped).await;

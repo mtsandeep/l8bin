@@ -44,10 +44,8 @@ impl ComposeService {
         }
 
         // shm_size (parse "256m" etc.)
-        if let Some(shm) = &self.shm_size {
-            if let Some(bytes) = parse_size(shm) {
-                host_config.shm_size = Some(bytes as i64);
-            }
+        if let Some(bytes) = self.shm_size.as_deref().and_then(parse_size) {
+            host_config.shm_size = Some(bytes as i64);
         }
 
         // tmpfs
@@ -61,22 +59,22 @@ impl ComposeService {
         }
 
         // extra_hosts
-        if let Some(hosts) = &self.extra_hosts {
-            if !hosts.is_empty() {
-                host_config.extra_hosts = Some(hosts.clone());
-            }
+        if let Some(hosts) = &self.extra_hosts
+            && !hosts.is_empty()
+        {
+            host_config.extra_hosts = Some(hosts.clone());
         }
 
         // cap_add / cap_drop
-        if let Some(caps) = &self.cap_add {
-            if !caps.is_empty() {
-                host_config.cap_add = Some(caps.clone());
-            }
+        if let Some(caps) = &self.cap_add
+            && !caps.is_empty()
+        {
+            host_config.cap_add = Some(caps.clone());
         }
-        if let Some(caps) = &self.cap_drop {
-            if !caps.is_empty() {
-                host_config.cap_drop = Some(caps.clone());
-            }
+        if let Some(caps) = &self.cap_drop
+            && !caps.is_empty()
+        {
+            host_config.cap_drop = Some(caps.clone());
         }
 
         // Restart policy
@@ -111,7 +109,7 @@ impl ComposeService {
         let has_command = cmd.is_some() || entrypoint.is_some();
 
         // Healthcheck
-        let healthcheck = self.healthcheck.as_ref().and_then(|hc| parse_healthcheck(hc));
+        let healthcheck = self.healthcheck.as_ref().and_then(parse_healthcheck);
 
         let create_body = ContainerCreateBody {
             image: self.image.clone(),
@@ -156,9 +154,9 @@ fn parse_healthcheck(hc: &serde_yaml::Value) -> Option<HealthConfig> {
         return Some(HealthConfig { test: Some(test_vec), ..Default::default() });
     }
 
-    let interval = hc.get("interval").and_then(|v| parse_duration(v));
-    let timeout = hc.get("timeout").and_then(|v| parse_duration(v));
-    let start_period = hc.get("start_period").and_then(|v| parse_duration(v));
+    let interval = hc.get("interval").and_then(parse_duration);
+    let timeout = hc.get("timeout").and_then(parse_duration);
+    let start_period = hc.get("start_period").and_then(parse_duration);
     let retries = hc.get("retries").and_then(|v| v.as_u64()).map(|r| r as i64);
 
     Some(HealthConfig { test: Some(test_vec), interval, timeout, start_period, start_interval: None, retries })

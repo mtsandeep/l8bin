@@ -219,27 +219,25 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                     ids.push(container_id.clone());
                 }
 
-                if svc == litebin_common::types::DOCKER_PROXY_SERVICE {
-                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
-                        let _ = docker.stop_container(&container_id).await;
-                        let _ = docker.remove_container(&container_id).await;
-                        return Err(format!("Docker observation proxy failed health check: {e}"));
-                    }
+                if svc == litebin_common::types::DOCKER_PROXY_SERVICE
+                    && let Err(e) = docker.wait_for_healthy(&container_id, true).await
+                {
+                    let _ = docker.stop_container(&container_id).await;
+                    let _ = docker.remove_container(&container_id).await;
+                    return Err(format!("Docker observation proxy failed health check: {e}"));
                 }
 
                 if !is_host_network && docker.is_container_running(&container_id).await.unwrap_or(false) {
                     let _ = docker.wait_for_network_ready(&container_id).await;
                 }
 
-                if needs_healthy {
-                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
-                        tracing::warn!(
-                            project_id = %pid,
-                            service = %svc,
-                            error = %e,
-                            "wake_multi_service: healthcheck failed, continuing"
-                        );
-                    }
+                if needs_healthy && let Err(e) = docker.wait_for_healthy(&container_id, true).await {
+                    tracing::warn!(
+                        project_id = %pid,
+                        service = %svc,
+                        error = %e,
+                        "wake_multi_service: healthcheck failed, continuing"
+                    );
                 }
 
                 if needs_completed {

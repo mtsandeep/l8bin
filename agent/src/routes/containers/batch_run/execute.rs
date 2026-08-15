@@ -31,10 +31,10 @@ pub(super) async fn execute_levels(
 
         for svc_name in level {
             // Apply target filter for partial redeploy
-            if let Some(targets) = target_set {
-                if !targets.contains(svc_name) {
-                    continue;
-                }
+            if let Some(targets) = target_set
+                && !targets.contains(svc_name)
+            {
+                continue;
             }
 
             let run_config = configs_map[svc_name].clone();

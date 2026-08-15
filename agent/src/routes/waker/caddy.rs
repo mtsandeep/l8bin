@@ -127,7 +127,8 @@ fn get_domain(state: &AgentState) -> Option<String> {
 pub(super) fn find_public_service_upstream(project_id: &str) -> Option<String> {
     let compose_yaml = DockerManager::read_compose(project_id)?;
     let extra_env = crate::routes::containers::read_project_env(project_id);
-    let plan = litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None, false).ok()?;
+    let plan =
+        litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None, false).ok()?;
 
     let public = plan.configs.iter().find(|c| c.is_public)?;
     let port = public.port.unwrap_or(80) as u16;
@@ -213,10 +214,10 @@ fn merge_routes_with_persisted(
     for route in &existing_routes {
         if let Some(hosts) = route["match"][0]["host"].as_array() {
             for host in hosts {
-                if let Some(h) = host.as_str() {
-                    if !h.contains('*') {
-                        route_map.insert(h.to_string(), route.clone());
-                    }
+                if let Some(h) = host.as_str()
+                    && !h.contains('*')
+                {
+                    route_map.insert(h.to_string(), route.clone());
                 }
             }
         }
@@ -270,10 +271,9 @@ fn merge_routes_with_persisted(
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|v| v.as_str())
+                && set_host == subdomain_host
             {
-                if set_host == subdomain_host {
-                    hosts_to_upgrade.push(host.clone());
-                }
+                hosts_to_upgrade.push(host.clone());
             }
         }
 
@@ -493,16 +493,16 @@ pub async fn caddy_ask(
     }
 
     // Check 2: domain has a route in the current Caddy config (custom domains)
-    if let Some(config) = state.last_caddy_config.read().unwrap().as_ref() {
-        if let Some(routes) = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array() {
-            for route in routes {
-                if let Some(hosts) = route["match"][0]["host"].as_array() {
-                    for host in hosts {
-                        if let Some(h) = host.as_str() {
-                            if h == requested {
-                                return StatusCode::OK;
-                            }
-                        }
+    if let Some(config) = state.last_caddy_config.read().unwrap().as_ref()
+        && let Some(routes) = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array()
+    {
+        for route in routes {
+            if let Some(hosts) = route["match"][0]["host"].as_array() {
+                for host in hosts {
+                    if let Some(h) = host.as_str()
+                        && h == requested
+                    {
+                        return StatusCode::OK;
                     }
                 }
             }

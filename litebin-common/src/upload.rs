@@ -396,10 +396,10 @@ fn scan_received(dir: &Path) -> Result<HashSet<u64>, UploadError> {
     let mut set = HashSet::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if let Ok(index) = name.parse::<u64>() {
-                    set.insert(index);
-                }
+            if let Some(name) = entry.file_name().to_str()
+                && let Ok(index) = name.parse::<u64>()
+            {
+                set.insert(index);
             }
         }
     }

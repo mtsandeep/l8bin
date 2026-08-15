@@ -81,10 +81,8 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
         }
     });
 
-    for resp in futures_util::future::join_all(fetches).await {
-        if let Some(r) = resp {
-            results.push(r);
-        }
+    for r in futures_util::future::join_all(fetches).await.into_iter().flatten() {
+        results.push(r);
     }
 
     (StatusCode::OK, Json(results)).into_response()
@@ -150,7 +148,7 @@ pub async fn prune_node_images(State(state): State<AppState>, Path(id): Path<Str
         };
 
         let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
-        match client.post(&format!("{}/images/prune", base_url)).send().await {
+        match client.post(format!("{}/images/prune", base_url)).send().await {
             Ok(resp) => {
                 let body = resp.text().await.unwrap_or_default();
                 (StatusCode::OK, body).into_response()

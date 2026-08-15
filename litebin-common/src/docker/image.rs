@@ -13,6 +13,9 @@ use super::{ContainerStats, CpuSample, DiskUsage, DockerErrorKind, DockerManager
 
 /// Networks the agent/orchestrator should join for app proxying.
 /// Excludes the shared default network and private Docker observation networks.
+/// Callback receiving Docker's native pull output lines.
+pub type ProgressCallback = Box<dyn Fn(&str) + Send + Sync>;
+
 pub(crate) fn is_app_project_network(name: &str) -> bool {
     name.starts_with("litebin-") && name != crate::types::DEFAULT_DOCKER_NETWORK && !name.ends_with("-docker-observe")
 }
@@ -53,12 +56,11 @@ impl DockerManager {
         match self.docker.list_networks(None).await {
             Ok(networks) => {
                 for net in networks {
-                    if let Some(name) = net.name.as_deref() {
-                        if is_app_project_network(name) {
-                            if let Err(e) = self.connect_container_to_network(container_name, name).await {
-                                tracing::warn!(network = name, error = %e, "failed to connect to project network");
-                            }
-                        }
+                    if let Some(name) = net.name.as_deref()
+                        && is_app_project_network(name)
+                        && let Err(e) = self.connect_container_to_network(container_name, name).await
+                    {
+                        tracing::warn!(network = name, error = %e, "failed to connect to project network");
                     }
                 }
             }
@@ -72,16 +74,16 @@ impl DockerManager {
     /// Falls back to ~/.docker/config.json for inline auth entries.
     fn read_docker_credentials() -> Option<DockerCredentials> {
         // 1. Check env vars (base64 user:password)
-        if let Ok(auth_b64) = std::env::var("LITEBIN_REGISTRY_AUTH") {
-            if !auth_b64.is_empty() {
-                let serveraddress =
-                    std::env::var("LITEBIN_REGISTRY_URL").unwrap_or_else(|_| "https://index.docker.io/v1/".to_string());
-                return Some(DockerCredentials {
-                    auth: Some(auth_b64),
-                    serveraddress: Some(serveraddress),
-                    ..Default::default()
-                });
-            }
+        if let Ok(auth_b64) = std::env::var("LITEBIN_REGISTRY_AUTH")
+            && !auth_b64.is_empty()
+        {
+            let serveraddress =
+                std::env::var("LITEBIN_REGISTRY_URL").unwrap_or_else(|_| "https://index.docker.io/v1/".to_string());
+            return Some(DockerCredentials {
+                auth: Some(auth_b64),
+                serveraddress: Some(serveraddress),
+                ..Default::default()
+            });
         }
 
         // 2. Read ~/.docker/config.json for inline auth
@@ -134,7 +136,7 @@ impl DockerManager {
         &self,
         image: &str,
         force: bool,
-        on_progress: Option<Box<dyn Fn(&str) + Send + Sync>>,
+        on_progress: Option<ProgressCallback>,
     ) -> anyhow::Result<()> {
         // Docker Engine API pulls ALL tags when no tag is specified — always default to :latest
         let image_ref = if image.contains(':') && !image.starts_with("sha256:") {
@@ -298,11 +300,11 @@ impl DockerManager {
     /// Disconnect every remaining endpoint, then remove the network (idempotent).
     /// Needed because agent/orchestrator/caddy stay attached for proxying.
     pub async fn remove_named_network(&self, network_name: &str) -> anyhow::Result<()> {
-        if let Ok(inspect) = self.docker.inspect_network(network_name, None).await {
-            if let Some(containers) = inspect.containers {
-                for container_id in containers.keys() {
-                    let _ = self.disconnect_container_from_network(container_id, network_name).await;
-                }
+        if let Ok(inspect) = self.docker.inspect_network(network_name, None).await
+            && let Some(containers) = inspect.containers
+        {
+            for container_id in containers.keys() {
+                let _ = self.disconnect_container_from_network(container_id, network_name).await;
             }
         }
 
@@ -424,7 +426,7 @@ impl DockerManager {
         // Read and update cached sample
         let cpu_percent = {
             let mut samples = self.cpu_samples.lock().unwrap();
-            let prev = samples.get(container_id).map(|s| s.clone());
+            let prev = samples.get(container_id).cloned();
             samples.insert(
                 container_id.to_string(),
                 CpuSample { total_usage: current_total, system_cpu_usage: current_system },

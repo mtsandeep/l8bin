@@ -88,7 +88,7 @@ pub async fn upload_image(
                     .into_response();
             }
         };
-        return (StatusCode::OK, Json(UploadResponse { image_id: resolved_id })).into_response();
+        (StatusCode::OK, Json(UploadResponse { image_id: resolved_id })).into_response()
     } else {
         // Remote path: stream body to agent via channel bridge
         let resolved_id = match stream_to_agent(&state, node_id, body, &image_id).await {
@@ -97,7 +97,7 @@ pub async fn upload_image(
                 return (status, Json(serde_json::json!({"error": error}))).into_response();
             }
         };
-        return (StatusCode::OK, Json(UploadResponse { image_id: resolved_id })).into_response();
+        (StatusCode::OK, Json(UploadResponse { image_id: resolved_id })).into_response()
     }
 }
 
@@ -131,7 +131,7 @@ async fn stream_to_agent(
         use futures_util::StreamExt;
         let mut stream = body.into_data_stream();
         while let Some(chunk) = stream.next().await {
-            let _ = tx.send(chunk.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))).await;
+            let _ = tx.send(chunk.map_err(std::io::Error::other)).await;
         }
     });
 
@@ -257,12 +257,7 @@ pub async fn upload_target(
             node_id: node_id.clone(),
             ttl_secs: Some(DEFAULT_TTL_SECS),
         };
-        let resp = match client
-            .post(format!("{base_url}{MINT_PATH}"))
-            .json(&mint_req)
-            .send()
-            .await
-        {
+        let resp = match client.post(format!("{base_url}{MINT_PATH}")).json(&mint_req).send().await {
             Ok(r) => r,
             Err(e) => {
                 return (
@@ -341,11 +336,9 @@ pub async fn chunk_upload(
 ) -> Response {
     let total = upload::total_chunks_header(&headers);
     match state.upload_store.write_chunk(&token, index, total, body) {
-        Ok((received, total)) => Json(UploadChunkResponse {
-            received: upload::sorted_indices(received),
-            total,
-        })
-        .into_response(),
+        Ok((received, total)) => {
+            Json(UploadChunkResponse { received: upload::sorted_indices(received), total }).into_response()
+        }
         Err(e) => err_response(e),
     }
 }

@@ -128,7 +128,7 @@ impl DockerManager {
             // 2. compose sets `com.docker.compose.dockerfile` label when `build:` was used
             // 3. image name matches the compose default "<project>-<service>" naming convention
             let has_build_label = labels.contains_key("com.docker.compose.dockerfile");
-            let matches_build_pattern = compose_project.as_ref().map_or(false, |proj| {
+            let matches_build_pattern = compose_project.as_ref().is_some_and(|proj| {
                 // docker-compose names built images as "<project>-<service>" or "<project>_<service>"
                 let pat1 = format!("{}-{}", proj, service_name);
                 let pat2 = format!("{}_{}", proj, service_name);

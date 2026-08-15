@@ -89,16 +89,13 @@ pub(super) async fn refresh_oneshot_flags(db: &SqlitePool, project_id: &str) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
             continue;
         };
-        match value {
-            serde_json::Value::Object(map) => {
-                for (dep, spec) in map {
-                    let cond = spec.get("condition").and_then(|c| c.as_str()).unwrap_or("service_started");
-                    if cond == "service_completed_successfully" {
-                        oneshots.insert(dep);
-                    }
+        if let serde_json::Value::Object(map) = value {
+            for (dep, spec) in map {
+                let cond = spec.get("condition").and_then(|c| c.as_str()).unwrap_or("service_started");
+                if cond == "service_completed_successfully" {
+                    oneshots.insert(dep);
                 }
             }
-            _ => {}
         }
     }
 

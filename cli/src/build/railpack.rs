@@ -36,6 +36,7 @@ fn ensure_railpack_image(railpack_tag: &str, mise_version: &str, quiet: bool, ci
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp)?;
 
+    let label = format!("rp={railpack_tag} mise={mise_version}");
     let dockerfile = format!(
         r#"FROM alpine:3.23
 LABEL version="{label}"
@@ -58,7 +59,7 @@ ENTRYPOINT ["railpack"]
 "#,
         rp = railpack_tag,
         mise = mise_version,
-        label = format!("rp={} mise={}", railpack_tag, mise_version),
+        label = label,
         rp_base = crate::config::RAILPACK_RELEASE_BASE,
         mise_base = crate::config::MISE_RELEASE_BASE,
     );
@@ -164,7 +165,7 @@ pub(super) async fn build_with_railpack_docker(
 
         cmd.arg(RAILPACK_IMAGE);
 
-        let args = vec!["build", "--name", image_tag];
+        let args = ["build", "--name", image_tag];
         let mut rp_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
 
         if let Some(p) = platform {
@@ -212,11 +213,11 @@ pub(super) async fn build_with_railpack_docker(
     if let Some(s) = &spinner {
         s.finish_and_clear();
     }
-    if let Some((stderr, stdout)) = last_output {
-        if !ci_mode {
-            eprintln!("{}", stdout);
-            eprintln!("{}", stderr);
-        }
+    if let Some((stderr, stdout)) = last_output
+        && !ci_mode
+    {
+        eprintln!("{}", stdout);
+        eprintln!("{}", stderr);
     }
     anyhow::bail!("railpack build failed after {} attempts", max_retries);
 }
@@ -303,11 +304,11 @@ pub(super) async fn build_with_railpack_native(
     if let Some(s) = &spinner {
         s.finish_and_clear();
     }
-    if let Some((stderr, stdout)) = last_output {
-        if !ci_mode {
-            eprintln!("{}", stdout);
-            eprintln!("{}", stderr);
-        }
+    if let Some((stderr, stdout)) = last_output
+        && !ci_mode
+    {
+        eprintln!("{}", stdout);
+        eprintln!("{}", stderr);
     }
     anyhow::bail!("railpack build failed after {} attempts", max_retries)
 }

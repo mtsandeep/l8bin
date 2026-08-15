@@ -54,7 +54,7 @@ pub async fn project_stats(
 
     // Load services for this project (after sync so services are fresh)
     let services_raw =
-        batch_load_services(&state.db, &[project_id.clone()]).await.remove(&project_id).unwrap_or_default();
+        batch_load_services(&state.db, std::slice::from_ref(&project_id)).await.remove(&project_id).unwrap_or_default();
 
     if project.status != ProjectStatus::Running {
         return Ok(Json(make_stats_response(
@@ -175,7 +175,7 @@ pub async fn project_disk_usage(
 
         for container_id in &container_ids {
             let resp = client
-                .get(&format!("{}/containers/{}/disk-usage", base_url, container_id))
+                .get(format!("{}/containers/{}/disk-usage", base_url, container_id))
                 .send()
                 .await
                 .map_err(|e| {

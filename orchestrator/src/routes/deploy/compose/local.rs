@@ -7,6 +7,7 @@ use litebin_common::types::ProjectStatus;
 /// The background local deploy task: remove existing containers (full or
 /// targeted), pull images with progress logs, start services, sync routes,
 /// and clean up old per-service images.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_local_compose_deploy(
     state_clone: AppState,
     project_id_clone: String,
@@ -28,20 +29,19 @@ pub(super) async fn run_local_compose_deploy(
         let prefix = format!("litebin-{}.", project_id_clone);
         if let Ok(all_containers) = state_clone.docker.list_containers_by_prefix(&prefix).await {
             for cid in &all_containers {
-                if let Ok(inspect) = state_clone.docker.inspect_container(cid).await {
-                    if let Some(ref name) = inspect.name {
-                        let trimmed = name.trim_start_matches('/');
-                        if let Some(svc_name) = trimmed.strip_prefix(&prefix) {
-                            if target_set.contains(svc_name) {
-                                let _ = state_clone.docker.stop_container(cid).await;
-                                if state_clone.docker.remove_container(cid).await.is_ok() {
-                                    if let Err(e) =
-                                        status::set_service_removed(&state_clone.db, &project_id_clone, svc_name).await
-                                    {
-                                        tracing::warn!(project_id = %project_id_clone, service = %svc_name, error = %e, "compose partial redeploy: failed to clear removed service metadata");
-                                    }
-                                }
-                            }
+                if let Ok(inspect) = state_clone.docker.inspect_container(cid).await
+                    && let Some(ref name) = inspect.name
+                {
+                    let trimmed = name.trim_start_matches('/');
+                    if let Some(svc_name) = trimmed.strip_prefix(&prefix)
+                        && target_set.contains(svc_name)
+                    {
+                        let _ = state_clone.docker.stop_container(cid).await;
+                        if state_clone.docker.remove_container(cid).await.is_ok()
+                            && let Err(e) =
+                                status::set_service_removed(&state_clone.db, &project_id_clone, svc_name).await
+                        {
+                            tracing::warn!(project_id = %project_id_clone, service = %svc_name, error = %e, "compose partial redeploy: failed to clear removed service metadata");
                         }
                     }
                 }
@@ -78,13 +78,11 @@ pub(super) async fn run_local_compose_deploy(
                     .and_then(|inspect| inspect.name)
                     .and_then(|name| name.trim_start_matches('/').strip_prefix(&prefix).map(str::to_owned));
                 let _ = state_clone.docker.stop_container(cid).await;
-                if state_clone.docker.remove_container(cid).await.is_ok() {
-                    if let Some(service_name) = service_name {
-                        if service_name != litebin_common::types::DOCKER_PROXY_SERVICE {
-                            let _ =
-                                status::set_service_removed(&state_clone.db, &project_id_clone, &service_name).await;
-                        }
-                    }
+                if state_clone.docker.remove_container(cid).await.is_ok()
+                    && let Some(service_name) = service_name
+                    && service_name != litebin_common::types::DOCKER_PROXY_SERVICE
+                {
+                    let _ = status::set_service_removed(&state_clone.db, &project_id_clone, &service_name).await;
                 }
             }
         }
@@ -178,7 +176,7 @@ pub(super) async fn run_local_compose_deploy(
 
     // Clean up old per-service images by digest
     for (svc_name, digest) in &old_service_digests_clone {
-        let should_cleanup = target_services_clone.as_ref().map_or(true, |targets| targets.contains(svc_name));
+        let should_cleanup = target_services_clone.as_ref().is_none_or(|targets| targets.contains(svc_name));
         if should_cleanup {
             crate::routes::manage::cleanup_unused_image(&state_clone, existing_node_id_clone.as_deref(), digest).await;
         }

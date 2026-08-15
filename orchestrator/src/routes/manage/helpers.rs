@@ -77,54 +77,6 @@ pub fn project_is_staged(project: &crate::db::models::Project) -> bool {
     has_compose || has_image
 }
 
-#[cfg(test)]
-mod tests {
-    use super::project_is_staged;
-    use litebin_common::types::ProjectStatus;
-
-    fn sample_project(id: &str, image: Option<&str>) -> crate::db::models::Project {
-        crate::db::models::Project {
-            id: id.to_string(),
-            user_id: "u1".into(),
-            name: None,
-            description: None,
-            is_background: false,
-            image: image.map(|s| s.to_string()),
-            internal_port: Some(80),
-            mapped_port: None,
-            container_id: None,
-            node_id: Some("local".into()),
-            status: ProjectStatus::Unconfigured,
-            cmd: None,
-            memory_limit_mb: None,
-            cpu_limit: None,
-            custom_domain: None,
-            volumes: None,
-            auto_stop_enabled: true,
-            auto_stop_timeout_mins: 15,
-            auto_start_enabled: true,
-            allow_raw_ports: false,
-            allow_docker_access: false,
-            last_active_at: None,
-            service_count: None,
-            service_summary: None,
-            deploy_type: None,
-            created_at: 0,
-            updated_at: 0,
-        }
-    }
-
-    #[test]
-    fn staged_when_image_present() {
-        assert!(project_is_staged(&sample_project("p1", Some("nginx:alpine"))));
-    }
-
-    #[test]
-    fn not_staged_without_image_or_compose() {
-        assert!(!project_is_staged(&sample_project("p-missing-stage", None)));
-    }
-}
-
 /// Read env vars from the local project .env file.
 pub fn read_local_project_env(project_id: &str) -> Vec<String> {
     // Ensure the directory and placeholder exist
@@ -320,15 +272,15 @@ pub async fn capture_service_digests(
 
     let mut digests = std::collections::HashMap::new();
     for (svc_name, image) in &services {
-        if let Some(ref filter) = target_services {
-            if !filter.contains(svc_name) {
-                continue;
-            }
+        if let Some(filter) = target_services
+            && !filter.contains(svc_name)
+        {
+            continue;
         }
-        if !image.starts_with("sha256:") {
-            if let Some(d) = get_image_digest(state, node_id, image).await {
-                digests.insert(svc_name.clone(), d);
-            }
+        if !image.starts_with("sha256:")
+            && let Some(d) = get_image_digest(state, node_id, image).await
+        {
+            digests.insert(svc_name.clone(), d);
         }
     }
     digests
@@ -365,5 +317,53 @@ pub async fn sync_caddy(state: &AppState) {
         .await
     {
         tracing::error!(error = %e, "failed to sync routes");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::project_is_staged;
+    use litebin_common::types::ProjectStatus;
+
+    fn sample_project(id: &str, image: Option<&str>) -> crate::db::models::Project {
+        crate::db::models::Project {
+            id: id.to_string(),
+            user_id: "u1".into(),
+            name: None,
+            description: None,
+            is_background: false,
+            image: image.map(|s| s.to_string()),
+            internal_port: Some(80),
+            mapped_port: None,
+            container_id: None,
+            node_id: Some("local".into()),
+            status: ProjectStatus::Unconfigured,
+            cmd: None,
+            memory_limit_mb: None,
+            cpu_limit: None,
+            custom_domain: None,
+            volumes: None,
+            auto_stop_enabled: true,
+            auto_stop_timeout_mins: 15,
+            auto_start_enabled: true,
+            allow_raw_ports: false,
+            allow_docker_access: false,
+            last_active_at: None,
+            service_count: None,
+            service_summary: None,
+            deploy_type: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn staged_when_image_present() {
+        assert!(project_is_staged(&sample_project("p1", Some("nginx:alpine"))));
+    }
+
+    #[test]
+    fn not_staged_without_image_or_compose() {
+        assert!(!project_is_staged(&sample_project("p-missing-stage", None)));
     }
 }

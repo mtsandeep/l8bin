@@ -52,10 +52,10 @@ pub async fn recreate_services(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
     for svc in &services {
-        if let Some(ref filter) = target_set {
-            if !filter.contains(&svc.service_name) {
-                continue;
-            }
+        if let Some(ref filter) = target_set
+            && !filter.contains(&svc.service_name)
+        {
+            continue;
         }
         if let Some(ref cid) = svc.container_id {
             let _ = state.docker.stop_container(cid).await;
@@ -90,7 +90,7 @@ pub async fn recreate_services(
     // Clean up old images by digest after successful recreate with pull
     if !old_digests.is_empty() {
         let node_id = project.node_id.as_deref().unwrap_or("local");
-        for (_svc_name, digest) in &old_digests {
+        for digest in old_digests.values() {
             cleanup_unused_image(state, Some(node_id), digest).await;
         }
     }

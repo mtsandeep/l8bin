@@ -108,14 +108,14 @@ pub async fn run_container(State(state): State<AgentState>, Json(req): Json<RunR
     let _ = state.docker.remove_by_name(&req.project_id).await;
 
     // Pull image before running (skip sha256: — pre-loaded via /images/upload, not from a registry)
-    if !req.image.starts_with("sha256:") {
-        if let Err(e) = state.docker.pull_image(&req.image).await {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: format!("failed to pull image: {e}") }),
-            )
-                .into_response();
-        }
+    if !req.image.starts_with("sha256:")
+        && let Err(e) = state.docker.pull_image(&req.image).await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: format!("failed to pull image: {e}") }),
+        )
+            .into_response();
     }
 
     ensure_project_dir_and_env(&req.project_id);
@@ -278,92 +278,90 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
     }
 
     // Check if .env changed — if so, recreate to pick up new vars
-    if let Some(ref project_id) = req.project_id {
-        if env_has_changed(project_id) {
-            tracing::info!(project = project_id, "env changed since last start, recreating container");
+    if let Some(ref project_id) = req.project_id
+        && env_has_changed(project_id)
+    {
+        tracing::info!(project = project_id, "env changed since last start, recreating container");
 
-            let image = match &req.image {
-                Some(i) => i.clone(),
-                None => {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(ErrorResponse {
-                            error: "image is required when env has changed and recreate is needed".to_string(),
-                        }),
-                    )
-                        .into_response();
-                }
-            };
-            let internal_port = match req.internal_port {
-                Some(p) => p,
-                None => {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(ErrorResponse {
-                            error: "internal_port is required when env has changed and recreate is needed".to_string(),
-                        }),
-                    )
-                        .into_response();
-                }
-            };
+        let image = match &req.image {
+            Some(i) => i.clone(),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "image is required when env has changed and recreate is needed".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+        let internal_port = match req.internal_port {
+            Some(p) => p,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "internal_port is required when env has changed and recreate is needed".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
 
-            let _ = state.docker.remove_by_name(project_id).await;
-            ensure_project_dir_and_env(project_id);
-            let extra_env = read_project_env(project_id);
+        let _ = state.docker.remove_by_name(project_id).await;
+        ensure_project_dir_and_env(project_id);
+        let extra_env = read_project_env(project_id);
 
-            let project = litebin_common::types::Project {
-                id: project_id.clone(),
-                user_id: String::new(),
-                name: None,
-                description: None,
-                is_background: false,
-                image: Some(image.clone()),
-                internal_port: Some(internal_port),
-                mapped_port: None,
-                container_id: None,
-                node_id: None,
-                status: ProjectStatus::Running,
-                cmd: req.cmd.clone(),
-                memory_limit_mb: req.memory_limit_mb,
-                cpu_limit: req.cpu_limit,
-                custom_domain: None,
-                volumes: None, // start uses existing container, volumes unchanged
-                auto_stop_enabled: false,
-                auto_stop_timeout_mins: 0,
-                auto_start_enabled: false,
-                allow_raw_ports: false,
-                allow_docker_access: false,
-                last_active_at: None,
-                service_count: None,
-                service_summary: None,
-                deploy_type: None,
-                created_at: 0,
-                updated_at: 0,
-            };
+        let project = litebin_common::types::Project {
+            id: project_id.clone(),
+            user_id: String::new(),
+            name: None,
+            description: None,
+            is_background: false,
+            image: Some(image.clone()),
+            internal_port: Some(internal_port),
+            mapped_port: None,
+            container_id: None,
+            node_id: None,
+            status: ProjectStatus::Running,
+            cmd: req.cmd.clone(),
+            memory_limit_mb: req.memory_limit_mb,
+            cpu_limit: req.cpu_limit,
+            custom_domain: None,
+            volumes: None, // start uses existing container, volumes unchanged
+            auto_stop_enabled: false,
+            auto_stop_timeout_mins: 0,
+            auto_start_enabled: false,
+            allow_raw_ports: false,
+            allow_docker_access: false,
+            last_active_at: None,
+            service_count: None,
+            service_summary: None,
+            deploy_type: None,
+            created_at: 0,
+            updated_at: 0,
+        };
 
-            let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
-            return match state.docker.run_service_container(&config).await {
-                Ok((_container_id, mapped_port)) => {
-                    if let Err(e) = super::super::waker::rebuild_local_caddy(&state).await {
-                        tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
-                    }
-                    write_env_snapshot(project_id);
-                    write_project_metadata(
-                        project_id,
-                        &image,
-                        Some(internal_port),
-                        req.cmd.as_deref(),
-                        req.memory_limit_mb,
-                        req.cpu_limit,
-                        None,
-                    );
-                    (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
+        let config = litebin_common::types::RunServiceConfig::from_project(&project, extra_env);
+        return match state.docker.run_service_container(&config).await {
+            Ok((_container_id, mapped_port)) => {
+                if let Err(e) = super::super::waker::rebuild_local_caddy(&state).await {
+                    tracing::error!(error = %e, "failed to rebuild local Caddy config -- traffic may 502");
                 }
-                Err(e) => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response()
-                }
-            };
-        }
+                write_env_snapshot(project_id);
+                write_project_metadata(
+                    project_id,
+                    &image,
+                    Some(internal_port),
+                    req.cmd.as_deref(),
+                    req.memory_limit_mb,
+                    req.cpu_limit,
+                    None,
+                );
+                (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
+            }
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response(),
+        };
     }
 
     // Fast path: env unchanged, just start the existing container

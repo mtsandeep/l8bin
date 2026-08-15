@@ -125,10 +125,10 @@ fn detect_exposed_ports(project_dir: &Path) -> Vec<u16> {
             if trimmed.to_uppercase().starts_with("EXPOSE") {
                 for part in trimmed.split_whitespace().skip(1) {
                     let port_part = part.split('/').next().unwrap_or(part);
-                    if let Ok(p) = port_part.parse::<u16>() {
-                        if !ports.contains(&p) {
-                            ports.push(p);
-                        }
+                    if let Ok(p) = port_part.parse::<u16>()
+                        && !ports.contains(&p)
+                    {
+                        ports.push(p);
                     }
                 }
             }

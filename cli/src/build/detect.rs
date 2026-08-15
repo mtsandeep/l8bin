@@ -63,7 +63,7 @@ pub fn detect_project(project_dir: &Path) -> Result<ProjectInfo> {
 }
 
 fn parse_info_output(json: &str) -> Result<ProjectInfo> {
-    let info: serde_json::Value = serde_json::from_str(json).unwrap_or_else(|_| serde_json::Value::Null);
+    let info: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
 
     // detectedProviders: e.g. ["staticfile"], ["node"], ["python"]
     let project_type = info["detectedProviders"]

@@ -22,11 +22,11 @@ pub(super) async fn remote_deploy_path(
     let project_id = &form.project_id;
     let target_node_id = &p.target_node_id;
 
-    let node = match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
+    let node = match crate::routes::manage::get_node_from_db(&state.db, target_node_id).await {
         Ok(n) => n,
         Err(e) => {
             if let Err(e) =
-                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+                status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
                     .await
             {
                 tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
@@ -35,11 +35,11 @@ pub(super) async fn remote_deploy_path(
         }
     };
 
-    let client = match nodes::client::get_node_client(&state.node_clients, &target_node_id) {
+    let client = match nodes::client::get_node_client(&state.node_clients, target_node_id) {
         Ok(c) => c,
         Err(e) => {
             if let Err(e) =
-                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+                status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
                     .await
             {
                 tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
@@ -58,7 +58,7 @@ pub(super) async fn remote_deploy_path(
         match sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
             "SELECT service_name, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ?",
         )
-        .bind(&project_id)
+        .bind(project_id)
         .fetch_all(&state.db)
         .await
         {
@@ -91,7 +91,7 @@ pub(super) async fn remote_deploy_path(
         .and_then(|v: String| v.parse().ok())
         .unwrap_or(0.5);
     let batch_resp = match client
-        .post(&format!("{}/containers/batch-run", base_url))
+        .post(format!("{}/containers/batch-run", base_url))
         .json(&json!({
             "project_id": project_id,
             "compose_yaml": form.compose_yaml,
@@ -113,9 +113,9 @@ pub(super) async fn remote_deploy_path(
         Err(e) => {
             tracing::error!(error = %e, "remote batch-run request failed");
             let project_error = if v.target_services.is_some() {
-                status::set_project_error_only(&state.db, &project_id).await
+                status::set_project_error_only(&state.db, project_id).await
             } else {
-                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+                status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
                     .await
             };
             if let Err(e) = project_error {
@@ -132,11 +132,11 @@ pub(super) async fn remote_deploy_path(
             Ok(body) => body,
             Err(error) => {
                 let project_error = if v.target_services.is_some() {
-                    status::set_project_error_only(&state.db, &project_id).await
+                    status::set_project_error_only(&state.db, project_id).await
                 } else {
                     status::transition(
                         &state.db,
-                        &project_id,
+                        project_id,
                         ProjectStatus::Error,
                         &ProjectUpdateFields::default(),
                         None,
@@ -154,12 +154,11 @@ pub(super) async fn remote_deploy_path(
             }
         };
         tracing::error!(status = %status_code, body = %body, "remote batch-run failed");
-        crate::routes::manage::multi_service::apply_remote_batch_failure_metadata(&state, &project_id, &body).await;
+        crate::routes::manage::multi_service::apply_remote_batch_failure_metadata(state, project_id, &body).await;
         let project_error = if v.target_services.is_some() {
-            status::set_project_error_only(&state.db, &project_id).await
+            status::set_project_error_only(&state.db, project_id).await
         } else {
-            status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
-                .await
+            status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await
         };
         if let Err(e) = project_error {
             tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
@@ -172,9 +171,9 @@ pub(super) async fn remote_deploy_path(
         Ok(v) => v,
         Err(e) => {
             let project_error = if v.target_services.is_some() {
-                status::set_project_error_only(&state.db, &project_id).await
+                status::set_project_error_only(&state.db, project_id).await
             } else {
-                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+                status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
                     .await
             };
             if let Err(status_error) = project_error {
@@ -207,11 +206,11 @@ pub(super) async fn remote_deploy_path(
             let mapped_port = svc["mapped_port"].as_u64().map(|p| p as i64);
 
             if let Some(cid) = container_id {
-                if let Err(e) = status::set_service_running(&state.db, &project_id, svc_name, cid, mapped_port).await {
+                if let Err(e) = status::set_service_running(&state.db, project_id, svc_name, cid, mapped_port).await {
                     tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "compose deploy: failed to set service running");
                 }
             } else {
-                if let Err(e) = status::set_service_stopped(&state.db, &project_id, svc_name).await {
+                if let Err(e) = status::set_service_stopped(&state.db, project_id, svc_name).await {
                     tracing::warn!(project_id = %project_id, service = %svc_name, error = %e, "compose deploy: failed to set service stopped");
                 }
             }
@@ -228,7 +227,7 @@ pub(super) async fn remote_deploy_path(
             let port = pub_svc["mapped_port"].as_u64().map(|p| p as i64);
             if let Err(e) = status::transition(
                 &state.db,
-                &project_id,
+                project_id,
                 ProjectStatus::Running,
                 &ProjectUpdateFields {
                     container_id: Some(Some(cid)),
@@ -245,7 +244,7 @@ pub(super) async fn remote_deploy_path(
         }
     }
     if !service_errors.is_empty() {
-        let _ = status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+        let _ = status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
             .await;
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -253,14 +252,14 @@ pub(super) async fn remote_deploy_path(
         )
             .into_response();
     }
-    status::derive_and_set_project_status(&state.db, &project_id).await;
+    status::derive_and_set_project_status(&state.db, project_id).await;
 
     // Trigger route sync
     let _ = state.route_sync_tx.send(());
 
     // Clean up old per-service images by digest
     for (svc_name, digest) in &p.old_service_digests {
-        let should_cleanup = v.target_services.as_ref().map_or(true, |targets| targets.contains(svc_name));
+        let should_cleanup = v.target_services.as_ref().is_none_or(|targets| targets.contains(svc_name));
         if should_cleanup {
             crate::routes::manage::cleanup_unused_image(state, p.existing_node_id.as_deref(), digest).await;
         }

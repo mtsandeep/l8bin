@@ -339,7 +339,7 @@ pub struct User {
 }
 
 /// Docker image statistics for a node
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Default)]
 pub struct ImageStats {
     pub dangling_count: u64,
     pub dangling_size: u64,
@@ -347,12 +347,6 @@ pub struct ImageStats {
     pub in_use_size: u64,
     pub total_count: u64,
     pub total_size: u64,
-}
-
-impl Default for ImageStats {
-    fn default() -> Self {
-        Self { dangling_count: 0, dangling_size: 0, in_use_count: 0, in_use_size: 0, total_count: 0, total_size: 0 }
-    }
 }
 
 /// Agent health response
@@ -483,9 +477,9 @@ impl RunServiceConfig {
             };
             let built: Vec<String> = mounts
                 .into_iter()
-                .filter_map(|v| {
+                .map(|v| {
                     let name = v.name.as_deref().unwrap_or(&project.id);
-                    Some(format!("{}:{}", scope_volume_source(name, &project.id), v.path))
+                    format!("{}:{}", scope_volume_source(name, &project.id), v.path)
                 })
                 .collect();
             if built.is_empty() { None } else { Some(built) }
@@ -612,19 +606,21 @@ pub fn parse_container_name(name: &str) -> Option<(String, String, Option<String
     let rest = stripped.strip_prefix("litebin-")?;
 
     // Try 3-segment: project.service.instance (dot-delimited)
-    if let Some((first, rest2)) = rest.split_once('.') {
-        if let Some((second, third)) = rest2.split_once('.') {
-            if !first.is_empty() && !second.is_empty() && !third.is_empty() {
-                return Some((first.to_string(), second.to_string(), Some(third.to_string())));
-            }
-        }
+    if let Some((first, rest2)) = rest.split_once('.')
+        && let Some((second, third)) = rest2.split_once('.')
+        && !first.is_empty()
+        && !second.is_empty()
+        && !third.is_empty()
+    {
+        return Some((first.to_string(), second.to_string(), Some(third.to_string())));
     }
 
     // Try 2-segment: project.service
-    if let Some((first, second)) = rest.split_once('.') {
-        if !first.is_empty() && !second.is_empty() {
-            return Some((first.to_string(), second.to_string(), None));
-        }
+    if let Some((first, second)) = rest.split_once('.')
+        && !first.is_empty()
+        && !second.is_empty()
+    {
+        return Some((first.to_string(), second.to_string(), None));
     }
 
     // Single segment: just project_id (single-service with service "web")

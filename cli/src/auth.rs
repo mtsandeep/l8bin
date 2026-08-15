@@ -230,12 +230,12 @@ pub async fn session_delete(client: &reqwest::Client, server: &str, path: &str) 
 /// Fetch the Platform Domain from GET /settings (same value the dashboard shows).
 /// Falls back to deriving from the server URL if settings are unavailable (e.g. CI token auth).
 pub async fn fetch_platform_domain(client: &reqwest::Client, server: &str) -> String {
-    if let Ok(settings) = session_get(client, server, "/settings").await {
-        if let Some(domain) = settings["domain"].as_str() {
-            let domain = domain.trim();
-            if !domain.is_empty() {
-                return domain.to_string();
-            }
+    if let Ok(settings) = session_get(client, server, "/settings").await
+        && let Some(domain) = settings["domain"].as_str()
+    {
+        let domain = domain.trim();
+        if !domain.is_empty() {
+            return domain.to_string();
         }
     }
     derive_domain_from_server(server)

@@ -220,7 +220,7 @@ impl CloudflareClient {
 
             if !cf_resp.success {
                 let is_duplicate =
-                    cf_resp.errors.as_ref().map_or(false, |errs| errs.iter().any(|e| e.code == Some(81057)));
+                    cf_resp.errors.as_ref().is_some_and(|errs| errs.iter().any(|e| e.code == Some(81057)));
                 if is_duplicate {
                     tracing::info!(name, record_type, content, "DNS record already exists");
                     return Ok(false);

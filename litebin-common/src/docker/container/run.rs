@@ -49,18 +49,16 @@ impl DockerManager {
         }
 
         // Only bind a host port for public services that have a port defined
-        if config.is_public && !config.host_network {
-            if let Some(port) = config.port {
-                let port_str = format!("{}/tcp", port);
-                port_bindings.insert(
-                    port_str.clone(),
-                    Some(vec![PortBinding {
-                        host_ip: Some("127.0.0.1".to_string()),
-                        host_port: Some("0".to_string()),
-                    }]),
-                );
-                exposed_ports.push(port_str);
-            }
+        if config.is_public
+            && !config.host_network
+            && let Some(port) = config.port
+        {
+            let port_str = format!("{}/tcp", port);
+            port_bindings.insert(
+                port_str.clone(),
+                Some(vec![PortBinding { host_ip: Some("127.0.0.1".to_string()), host_port: Some("0".to_string()) }]),
+            );
+            exposed_ports.push(port_str);
         }
 
         // A managed observation proxy remains private/bridged. Host-network
@@ -74,38 +72,37 @@ impl DockerManager {
         // (e.g., UDP for game servers, TCP for databases). LiteBin-reserved ports are
         // always refused to avoid conflicts with Caddy/orchestrator/agent.
         let reserved_ports = litebin_reserved_host_ports();
-        if config.allow_raw_ports {
-            if let Some(ref bollard_body) = config.bollard_create_body {
-                if let Some(ref compose_exposed) = bollard_body.exposed_ports {
-                    for port_spec in compose_exposed {
-                        // Skip ports already bound (e.g. public HTTP port)
-                        if port_bindings.contains_key(port_spec) {
-                            continue;
-                        }
-                        // Honor an explicit compose host-port remap; else bind host = container port.
-                        let host_port = config
-                            .raw_port_host_overrides
-                            .get(port_spec)
-                            .map(|p| p.to_string())
-                            .unwrap_or_else(|| port_spec.split('/').next().unwrap_or("0").to_string());
-                        if reserved_ports.iter().any(|p| *p == host_port) {
-                            tracing::warn!(
-                                service = %config.service_name,
-                                project_id = %config.project_id,
-                                port = %host_port,
-                                "skipping host bind for litebin-reserved port even with allow_raw_ports"
-                            );
-                            continue;
-                        }
-                        port_bindings.insert(
-                            port_spec.clone(),
-                            Some(vec![PortBinding {
-                                host_ip: Some("0.0.0.0".to_string()),
-                                host_port: Some(host_port.to_string()),
-                            }]),
-                        );
-                    }
+        if config.allow_raw_ports
+            && let Some(ref bollard_body) = config.bollard_create_body
+            && let Some(ref compose_exposed) = bollard_body.exposed_ports
+        {
+            for port_spec in compose_exposed {
+                // Skip ports already bound (e.g. public HTTP port)
+                if port_bindings.contains_key(port_spec) {
+                    continue;
                 }
+                // Honor an explicit compose host-port remap; else bind host = container port.
+                let host_port = config
+                    .raw_port_host_overrides
+                    .get(port_spec)
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| port_spec.split('/').next().unwrap_or("0").to_string());
+                if reserved_ports.contains(&host_port) {
+                    tracing::warn!(
+                        service = %config.service_name,
+                        project_id = %config.project_id,
+                        port = %host_port,
+                        "skipping host bind for litebin-reserved port even with allow_raw_ports"
+                    );
+                    continue;
+                }
+                port_bindings.insert(
+                    port_spec.clone(),
+                    Some(vec![PortBinding {
+                        host_ip: Some("0.0.0.0".to_string()),
+                        host_port: Some(host_port.to_string()),
+                    }]),
+                );
             }
         }
 
@@ -189,17 +186,15 @@ impl DockerManager {
             lb_host_overrides(&mut host);
 
             // The raw Docker socket is reserved exclusively for the managed proxy.
-            if !is_docker_proxy {
-                if let Some(ref binds) = host.binds {
-                    let filtered = sanitize_docker_socket_binds(binds, false);
-                    if filtered.len() != binds.len() {
-                        tracing::warn!(
-                            service = %config.service_name,
-                            project_id = %config.project_id,
-                            "stripped raw Docker socket mount from compose workload"
-                        );
-                        host.binds = Some(filtered);
-                    }
+            if !is_docker_proxy && let Some(ref binds) = host.binds {
+                let filtered = sanitize_docker_socket_binds(binds, false);
+                if filtered.len() != binds.len() {
+                    tracing::warn!(
+                        service = %config.service_name,
+                        project_id = %config.project_id,
+                        "stripped raw Docker socket mount from compose workload"
+                    );
+                    host.binds = Some(filtered);
                 }
             }
 
@@ -302,7 +297,7 @@ impl DockerManager {
             }
 
             let networking_config =
-                (!config.host_network).then(|| config.networks.as_ref()).flatten().map(|networks| NetworkingConfig {
+                (!config.host_network).then_some(config.networks.as_ref()).flatten().map(|networks| NetworkingConfig {
                     endpoints_config: Some(
                         networks
                             .iter()
@@ -321,7 +316,7 @@ impl DockerManager {
                 exposed_ports: if exposed_ports.is_empty() { None } else { Some(exposed_ports) },
                 host_config: Some(host_config),
                 env: if env.is_empty() { None } else { Some(env) },
-                cmd: config.cmd.as_deref().and_then(|c| shlex::split(c)),
+                cmd: config.cmd.as_deref().and_then(shlex::split),
                 hostname: (!config.host_network).then(|| config.service_name.clone()),
                 networking_config,
                 labels: if config.is_managed_docker_proxy {

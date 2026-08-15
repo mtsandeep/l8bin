@@ -1,5 +1,6 @@
-# Force LF line endings for SQL migration files to prevent checksum mismatches between Windows and Docker
-orchestrator/src/db/migrations/*.sql text eol=lf
-agent/src/db/migrations/*.sql text eol=lf
-common/src/db/migrations/*.sql text eol=lf
+# Normalize all text files to LF in the repo and on checkout (binaries are
+# auto-detected and left untouched).
+* text=auto eol=lf
+
+# SQL migrations were LF-normalized before the blanket rule; keep explicit.
 **/*.sql text eol=lf

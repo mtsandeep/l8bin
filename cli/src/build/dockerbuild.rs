@@ -103,13 +103,14 @@ pub(super) fn check_docker_available() -> Result<()> {
 
 fn parse_docker_summary(output: &str) -> Option<String> {
     for line in output.lines() {
-        if line.contains("Building") && line.contains("FINISHED") {
-            if let Some(start) = line.find("Building ") {
-                let rest = &line[start + 9..];
-                if let Some(end) = rest.find(')') {
-                    let duration = rest[..end].trim();
-                    return Some(format!("Built in {}", duration));
-                }
+        if line.contains("Building")
+            && line.contains("FINISHED")
+            && let Some(start) = line.find("Building ")
+        {
+            let rest = &line[start + 9..];
+            if let Some(end) = rest.find(')') {
+                let duration = rest[..end].trim();
+                return Some(format!("Built in {}", duration));
             }
         }
     }
@@ -157,10 +158,10 @@ pub(super) fn ensure_buildkit(quiet: bool, ci_mode: bool) -> Result<String> {
     const BUILDKIT_CONTAINER: &str = "buildkit";
     const BUILDKIT_HOST_DEFAULT: &str = "docker-container://buildkit";
 
-    if let Ok(host) = std::env::var("BUILDKIT_HOST") {
-        if !host.is_empty() {
-            return Ok(host);
-        }
+    if let Ok(host) = std::env::var("BUILDKIT_HOST")
+        && !host.is_empty()
+    {
+        return Ok(host);
     }
 
     let output = Command::new("docker")

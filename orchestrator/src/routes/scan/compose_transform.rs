@@ -54,19 +54,20 @@ pub(super) fn resolve_compose_yaml(raw: String, containers: &[litebin_common::sc
         };
 
         // ── Replace build: → image: ────────────────────────────────────────
-        let has_build = svc_map.contains_key(&serde_yaml::Value::String("build".into()));
-        let has_image = svc_map.contains_key(&serde_yaml::Value::String("image".into()));
+        let has_build = svc_map.contains_key(serde_yaml::Value::String("build".into()));
+        let has_image = svc_map.contains_key(serde_yaml::Value::String("image".into()));
 
-        if has_build && !has_image {
-            if let Some(&image) = image_map.get(svc_name) {
-                svc_map.remove(&serde_yaml::Value::String("build".into()));
-                svc_map.insert(serde_yaml::Value::String("image".into()), serde_yaml::Value::String(image.to_string()));
-                tracing::info!(
-                    service = svc_name,
-                    image = image,
-                    "resolve: replaced build: with image: from running container"
-                );
-            }
+        if has_build
+            && !has_image
+            && let Some(&image) = image_map.get(svc_name)
+        {
+            svc_map.remove(serde_yaml::Value::String("build".into()));
+            svc_map.insert(serde_yaml::Value::String("image".into()), serde_yaml::Value::String(image.to_string()));
+            tracing::info!(
+                service = svc_name,
+                image = image,
+                "resolve: replaced build: with image: from running container"
+            );
         }
 
         // ── Rewrite relative bind mounts → absolute paths ──────────────────
@@ -74,64 +75,60 @@ pub(super) fn resolve_compose_yaml(raw: String, containers: &[litebin_common::sc
         // own working dir.  When stored under projects/<id>/, those relatives
         // would point to the wrong place.  Docker inspect gives us the resolved
         // absolute host path, so we substitute it in.
-        if let Some(volumes_val) = svc_map.get_mut(&serde_yaml::Value::String("volumes".into())) {
-            if let Some(vols) = volumes_val.as_sequence_mut() {
-                for vol_entry in vols.iter_mut() {
-                    // Handle both string form ("src:dst") and mapping form
-                    let source_key = serde_yaml::Value::String("source".into());
-                    let is_bind = vol_entry
-                        .as_mapping()
-                        .map(|m| {
-                            m.get(&serde_yaml::Value::String("type".into())).and_then(|t| t.as_str()) == Some("bind")
-                        })
-                        .unwrap_or(false);
+        if let Some(volumes_val) = svc_map.get_mut(serde_yaml::Value::String("volumes".into()))
+            && let Some(vols) = volumes_val.as_sequence_mut()
+        {
+            for vol_entry in vols.iter_mut() {
+                // Handle both string form ("src:dst") and mapping form
+                let source_key = serde_yaml::Value::String("source".into());
+                let is_bind = vol_entry
+                    .as_mapping()
+                    .map(|m| m.get(serde_yaml::Value::String("type".into())).and_then(|t| t.as_str()) == Some("bind"))
+                    .unwrap_or(false);
 
-                    if is_bind {
-                        // Long-form: { type: bind, source: "./data", target: "/var/lib/data" }
-                        if let Some(m) = vol_entry.as_mapping_mut() {
-                            let src = m.get(&source_key).and_then(|v| v.as_str()).map(|s| s.to_string());
-                            let target = m
-                                .get(&serde_yaml::Value::String("target".into()))
-                                .and_then(|t| t.as_str())
-                                .map(|s| s.to_string());
-                            if let Some(ref src_str) = src {
-                                if (src_str.starts_with('.') || src_str.starts_with(".."))
-                                    && let Some(ref dest_str) = target
-                                {
-                                    if let Some(&abs_source) = bind_mount_map.get(&(svc_name, dest_str.as_str())) {
-                                        let normalized = abs_source.replace('\\', "/");
-                                        m.insert(source_key.clone(), serde_yaml::Value::String(normalized));
-                                        tracing::debug!(
-                                            service = svc_name,
-                                            old = src_str,
-                                            new = abs_source,
-                                            "resolve: rewrote relative bind mount to absolute"
-                                        );
-                                    }
-                                }
-                            }
+                if is_bind {
+                    // Long-form: { type: bind, source: "./data", target: "/var/lib/data" }
+                    if let Some(m) = vol_entry.as_mapping_mut() {
+                        let src = m.get(&source_key).and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let target = m
+                            .get(serde_yaml::Value::String("target".into()))
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string());
+                        if let Some(ref src_str) = src
+                            && (src_str.starts_with('.') || src_str.starts_with(".."))
+                            && let Some(ref dest_str) = target
+                            && let Some(&abs_source) = bind_mount_map.get(&(svc_name, dest_str.as_str()))
+                        {
+                            let normalized = abs_source.replace('\\', "/");
+                            m.insert(source_key.clone(), serde_yaml::Value::String(normalized));
+                            tracing::debug!(
+                                service = svc_name,
+                                old = src_str,
+                                new = abs_source,
+                                "resolve: rewrote relative bind mount to absolute"
+                            );
                         }
-                    } else {
-                        // Short-form: "./data:/var/lib/data" or "./data:/var/lib/data:rw"
-                        let vol_str = vol_entry.as_str().map(|s| s.to_string());
-                        if let Some(ref vol_s) = vol_str {
-                            let parts: Vec<&str> = vol_s.splitn(2, ':').collect();
-                            if parts.len() == 2 {
-                                let src = parts[0];
-                                if src.starts_with('.') || src.starts_with("..") {
-                                    let dest_parts: Vec<&str> = parts[1].split(':').collect();
-                                    let dest = dest_parts[0];
-                                    if let Some(&abs_source) = bind_mount_map.get(&(svc_name, dest)) {
-                                        let normalized = abs_source.replace('\\', "/");
-                                        let new_vol = format!("{}:{}", normalized, parts[1]);
-                                        *vol_entry = serde_yaml::Value::String(new_vol);
-                                        tracing::debug!(
-                                            service = svc_name,
-                                            old = src,
-                                            new = abs_source,
-                                            "resolve: rewrote relative bind mount to absolute"
-                                        );
-                                    }
+                    }
+                } else {
+                    // Short-form: "./data:/var/lib/data" or "./data:/var/lib/data:rw"
+                    let vol_str = vol_entry.as_str().map(|s| s.to_string());
+                    if let Some(ref vol_s) = vol_str {
+                        let parts: Vec<&str> = vol_s.splitn(2, ':').collect();
+                        if parts.len() == 2 {
+                            let src = parts[0];
+                            if src.starts_with('.') || src.starts_with("..") {
+                                let dest_parts: Vec<&str> = parts[1].split(':').collect();
+                                let dest = dest_parts[0];
+                                if let Some(&abs_source) = bind_mount_map.get(&(svc_name, dest)) {
+                                    let normalized = abs_source.replace('\\', "/");
+                                    let new_vol = format!("{}:{}", normalized, parts[1]);
+                                    *vol_entry = serde_yaml::Value::String(new_vol);
+                                    tracing::debug!(
+                                        service = svc_name,
+                                        old = src,
+                                        new = abs_source,
+                                        "resolve: rewrote relative bind mount to absolute"
+                                    );
                                 }
                             }
                         }

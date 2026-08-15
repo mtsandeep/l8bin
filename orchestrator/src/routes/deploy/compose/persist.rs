@@ -277,7 +277,7 @@ pub(super) async fn persist_compose_deploy(
         // On partial redeploy, only mark targeted services as 'deploying'
         let svc_status = if v.stage_only {
             ProjectStatus::Pending
-        } else if target_set.as_ref().map_or(true, |ts| ts.contains(svc_name)) {
+        } else if target_set.as_ref().is_none_or(|ts| ts.contains(svc_name)) {
             ProjectStatus::Deploying
         } else {
             // Preserve current status for non-targeted services

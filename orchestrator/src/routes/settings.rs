@@ -49,10 +49,10 @@ pub async fn update_project_settings(
     Json(payload): Json<UpdateSettingsRequest>,
 ) -> Result<Json<Project>, (StatusCode, String)> {
     // Validate auto_stop_timeout_mins >= 1
-    if let Some(mins) = payload.auto_stop_timeout_mins {
-        if mins < 1 {
-            return Err((StatusCode::BAD_REQUEST, "auto_stop_timeout_mins must be at least 1".to_string()));
-        }
+    if let Some(mins) = payload.auto_stop_timeout_mins
+        && mins < 1
+    {
+        return Err((StatusCode::BAD_REQUEST, "auto_stop_timeout_mins must be at least 1".to_string()));
     }
 
     // Normalize and validate custom_domain if provided
@@ -271,18 +271,12 @@ pub async fn update_project_settings(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;
 
     // Push project meta to agent if lifecycle or raw-port settings changed.
-    if has_auto_start_enabled || has_allow_raw_ports {
-        if let Some(ref node_id) = updated.node_id {
-            if node_id != "local" {
-                crate::cloudflare_router::push_project_meta_to_agent(
-                    node_id,
-                    &state.db,
-                    &state.node_clients,
-                    &state.config,
-                )
-                .await;
-            }
-        }
+    if (has_auto_start_enabled || has_allow_raw_ports)
+        && let Some(ref node_id) = updated.node_id
+        && node_id != "local"
+    {
+        crate::cloudflare_router::push_project_meta_to_agent(node_id, &state.db, &state.node_clients, &state.config)
+            .await;
     }
 
     Ok(Json(updated))

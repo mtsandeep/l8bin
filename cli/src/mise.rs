@@ -145,10 +145,10 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
             if path.is_file() && path.file_name().map(|n| n == name).unwrap_or(false) {
                 return Some(path);
             }
-            if path.is_dir() {
-                if let Some(found) = find_file(&path, name) {
-                    return Some(found);
-                }
+            if path.is_dir()
+                && let Some(found) = find_file(&path, name)
+            {
+                return Some(found);
             }
         }
     }

@@ -35,10 +35,10 @@ pub async fn stop_services(
 
     for (svc_name, cid) in rows.iter().rev() {
         // Apply service filter
-        if let Some(filter) = services {
-            if !filter.contains(svc_name) {
-                continue;
-            }
+        if let Some(filter) = services
+            && !filter.contains(svc_name)
+        {
+            continue;
         }
         if let Some(container_id) = cid {
             state.docker.stop_container(container_id).await.map_err(|e| {

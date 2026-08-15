@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 /// Options that control how `start_services` behaves.
+#[derive(Default)]
 pub struct StartServicesOpts {
     /// Always remove and recreate containers (skip fast-path docker start).
     pub force_recreate: bool,
@@ -20,17 +21,4 @@ pub struct StartServicesOpts {
 
     /// On failure, stop and remove all containers started in this call.
     pub rollback_on_failure: bool,
-}
-
-impl Default for StartServicesOpts {
-    fn default() -> Self {
-        Self {
-            force_recreate: false,
-            pull_images: false,
-            force_pull: false,
-            services: None,
-            connect_orchestrator: false,
-            rollback_on_failure: false,
-        }
-    }
 }

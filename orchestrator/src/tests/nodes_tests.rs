@@ -57,5 +57,5 @@ async fn create_node_returns_pending_setup() {
     assert_eq!(body["status"], "pending_setup");
     assert_eq!(body["name"], "test-worker");
     // agent_secret is shown only at creation
-    assert!(body["agent_secret"].as_str().unwrap().len() > 0);
+    assert!(!body["agent_secret"].as_str().unwrap().is_empty());
 }

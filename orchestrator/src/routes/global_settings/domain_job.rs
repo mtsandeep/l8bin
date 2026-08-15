@@ -284,7 +284,7 @@ async fn run_domain_job(state: &AppState, job_id: &str, start_from: usize) {
     }
 
     // Step 0: Persist
-    if start_from <= 0 {
+    if start_from == 0 {
         update_job_step(state, job_id, 0, DomainStepStatus::Running, None);
         if let Err(e) = upsert_setting(&state.db, "domain", &new_domain).await {
             update_job_step(state, job_id, 0, DomainStepStatus::Failed, Some(e.1));

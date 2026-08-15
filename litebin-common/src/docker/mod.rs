@@ -98,7 +98,7 @@ pub fn security_options_are_rootless(options: Option<&[String]>) -> Option<bool>
 }
 
 pub fn require_host_network_eligible(rootless: Option<bool>, protocol_version: Option<i64>) -> anyhow::Result<()> {
-    if !protocol_version.is_some_and(|version| version >= 3) {
+    if protocol_version.is_none_or(|version| version < 3) {
         anyhow::bail!("host networking requires agent protocol version 3 or newer");
     }
     if rootless != Some(false) {
@@ -198,8 +198,8 @@ impl DockerManager {
             for bind in binds.iter_mut() {
                 if let Some(colon_pos) = bind.find(':') {
                     let source = &bind[..colon_pos];
-                    if source.starts_with("projects/") {
-                        let new_source = format!("{}/{}", host_dir, &source["projects/".len()..]);
+                    if let Some(rest) = source.strip_prefix("projects/") {
+                        let new_source = format!("{}/{}", host_dir, rest);
                         *bind = format!("{}{}", new_source, &bind[colon_pos..]);
                     }
                 }

@@ -1,11 +1,8 @@
 /// Shared HTML templates for waker pages (loading, error, not-found, offline, pending, not-ready).
 /// Both the orchestrator and agent wakers use these — the HTML/CSS is identical,
 /// only the response wrapping differs per framework.
-
 pub fn footer_html() -> String {
-    format!(
-        r#"<footer style="position:fixed;bottom:16px;left:0;right:0;text-align:center;color:#94a3b8;font-size:1rem;">Powered by <a href="https://l8bin.com" style="color:#7c3aed;text-decoration:none;">l8bin</a></footer>"#
-    )
+    r#"<footer style="position:fixed;bottom:16px;left:0;right:0;text-align:center;color:#94a3b8;font-size:1rem;">Powered by <a href="https://l8bin.com" style="color:#7c3aed;text-decoration:none;">l8bin</a></footer>"#.to_string()
 }
 
 /// "Starting {name}..." page with spinner, auto-refreshes every 1 second.

@@ -301,7 +301,7 @@ pub async fn recreate_project(
 
             // Clean up old images by digest after successful recreate with pull
             if !old_digests.is_empty() {
-                for (_svc_name, digest) in &old_digests {
+                for digest in old_digests.values() {
                     cleanup_unused_image(&state, Some(node_id), digest).await;
                 }
             }

@@ -6,10 +6,10 @@ use std::time::Duration;
 
 pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     // Ensure the data directory exists
-    if let Some(path) = database_url.strip_prefix("sqlite:") {
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(path) = database_url.strip_prefix("sqlite:")
+        && let Some(parent) = std::path::Path::new(path).parent()
+    {
+        std::fs::create_dir_all(parent)?;
     }
 
     let options =

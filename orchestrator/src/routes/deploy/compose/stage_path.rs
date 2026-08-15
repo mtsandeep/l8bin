@@ -23,12 +23,12 @@ pub(super) async fn stage_only_path(
     let target_node_id = &p.target_node_id;
 
     if target_node_id != "local" {
-        let node = match crate::routes::manage::get_node_from_db(&state.db, &target_node_id).await {
+        let node = match crate::routes::manage::get_node_from_db(&state.db, target_node_id).await {
             Ok(n) => n,
             Err(e) => {
                 if let Err(e) = status::transition(
                     &state.db,
-                    &project_id,
+                    project_id,
                     ProjectStatus::Error,
                     &ProjectUpdateFields::default(),
                     None,
@@ -41,12 +41,12 @@ pub(super) async fn stage_only_path(
             }
         };
 
-        let client = match nodes::client::get_node_client(&state.node_clients, &target_node_id) {
+        let client = match nodes::client::get_node_client(&state.node_clients, target_node_id) {
             Ok(c) => c,
             Err(e) => {
                 if let Err(e) = status::transition(
                     &state.db,
-                    &project_id,
+                    project_id,
                     ProjectStatus::Error,
                     &ProjectUpdateFields::default(),
                     None,
@@ -65,7 +65,7 @@ pub(super) async fn stage_only_path(
 
         let base_url = agent_base_url(&state.config, &node);
         let stage_resp = match client
-            .post(&format!("{}/containers/batch-run", base_url))
+            .post(format!("{}/containers/batch-run", base_url))
             .json(&json!({
                 "project_id": project_id,
                 "compose_yaml": form.compose_yaml,
@@ -83,7 +83,7 @@ pub(super) async fn stage_only_path(
                 tracing::error!(error = %e, "remote compose stage request failed");
                 if let Err(e) = status::transition(
                     &state.db,
-                    &project_id,
+                    project_id,
                     ProjectStatus::Error,
                     &ProjectUpdateFields::default(),
                     None,
@@ -101,7 +101,7 @@ pub(super) async fn stage_only_path(
             let body = stage_resp.text().await.unwrap_or_default();
             tracing::error!(body = %body, "remote compose stage failed");
             if let Err(e) =
-                status::transition(&state.db, &project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+                status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
                     .await
             {
                 tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
@@ -112,7 +112,7 @@ pub(super) async fn stage_only_path(
     }
 
     if let Err(e) =
-        status::transition(&state.db, &project_id, ProjectStatus::Unconfigured, &ProjectUpdateFields::default(), None)
+        status::transition(&state.db, project_id, ProjectStatus::Unconfigured, &ProjectUpdateFields::default(), None)
             .await
     {
         tracing::error!(project_id = %project_id, error = %e, "compose stage: failed to mark project unconfigured");

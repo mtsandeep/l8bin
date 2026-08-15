@@ -110,12 +110,7 @@ pub async fn load_platform_settings(db: &SqlitePool, config: &Config) -> anyhow:
         "platform settings loaded"
     );
 
-    Ok(PlatformHandle::new(PlatformSettings {
-        domain,
-        dashboard_subdomain,
-        poke_subdomain,
-        dns_target,
-    }))
+    Ok(PlatformHandle::new(PlatformSettings { domain, dashboard_subdomain, poke_subdomain, dns_target }))
 }
 
 async fn setting_or(db: &SqlitePool, key: &str, fallback: &str) -> anyhow::Result<String> {

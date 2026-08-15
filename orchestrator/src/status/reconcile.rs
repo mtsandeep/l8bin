@@ -126,16 +126,17 @@ pub async fn sync_project_from_docker(db: &SqlitePool, docker: &DockerManager, p
             .ok()
             .flatten();
 
-        if let Some(ref cid) = projects_cid {
-            if !cid.is_empty() && docker.is_container_running(cid).await.unwrap_or(false) {
-                let port: Option<i64> = sqlx::query_scalar("SELECT mapped_port FROM projects WHERE id = ?")
-                    .bind(project_id)
-                    .fetch_one(db)
-                    .await
-                    .unwrap_or(None);
+        if let Some(ref cid) = projects_cid
+            && !cid.is_empty()
+            && docker.is_container_running(cid).await.unwrap_or(false)
+        {
+            let port: Option<i64> = sqlx::query_scalar("SELECT mapped_port FROM projects WHERE id = ?")
+                .bind(project_id)
+                .fetch_one(db)
+                .await
+                .unwrap_or(None);
 
-                sync_single_service_row(db, project_id, cid, port.unwrap_or(0)).await;
-            }
+            sync_single_service_row(db, project_id, cid, port.unwrap_or(0)).await;
         }
     }
 

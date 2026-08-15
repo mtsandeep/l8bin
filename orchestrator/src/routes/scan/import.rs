@@ -312,8 +312,8 @@ async fn fetch_compose_file_from_agent(
         if !dir.is_absolute() || !dir.is_dir() {
             anyhow::bail!("working dir '{}' is not an absolute path or does not exist", working_dir);
         }
-        let compose_yaml = litebin_common::types::find_compose_file(dir)
-            .and_then(|name| std::fs::read_to_string(dir.join(name)).ok());
+        let compose_yaml =
+            litebin_common::types::find_compose_file(dir).and_then(|name| std::fs::read_to_string(dir.join(name)).ok());
         let env_content = std::fs::read_to_string(dir.join(".env")).ok();
         return Ok((compose_yaml, env_content));
     }

@@ -21,6 +21,7 @@ use super::validate::validate_compose_for_deploy;
 
 // ── Build & deploy ───────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn build_and_deploy(
     client: &reqwest::Client,
     server: &str,
@@ -147,6 +148,7 @@ pub(super) async fn build_and_deploy(
     Ok(url)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn finish_deploy_response(
     client: &reqwest::Client,
     server: &str,
@@ -202,6 +204,7 @@ pub(super) async fn finish_deploy_response(
     Ok(Some(resolve_live_url(client, server, project_id, api_url).await))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn deploy_compose(
     client: &reqwest::Client,
     server: &str,
@@ -220,37 +223,35 @@ async fn deploy_compose(
     print_compose_build_summary(&compose, &build_infos);
 
     let mut is_partial_build = false;
-    if !build_infos.is_empty() {
-        if !is_new_project && build_infos.len() >= 2 {
-            let svc_names: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
-            loop {
-                let choices = vec!["Build all", "Pick specific..."];
-                let selection =
-                    Select::new().with_prompt("  🔨 Which services to build?").items(&choices).default(0).interact()?;
+    if !build_infos.is_empty() && !is_new_project && build_infos.len() >= 2 {
+        let svc_names: Vec<&str> = build_infos.iter().map(|b| b.svc_name.as_str()).collect();
+        loop {
+            let choices = vec!["Build all", "Pick specific..."];
+            let selection =
+                Select::new().with_prompt("  🔨 Which services to build?").items(&choices).default(0).interact()?;
 
-                match selection {
-                    0 => break,
-                    1 => {
-                        let chosen = MultiSelect::new()
-                            .with_prompt("  🔨 Select services to build [Space to select, Enter to confirm]")
-                            .items(&svc_names)
-                            .interact()?;
-                        if chosen.is_empty() {
-                            println!(
-                                "  {} {}",
-                                "!".red(),
-                                "No services selected. Pick at least one, or choose 'Build all'.".yellow()
-                            );
-                            continue;
-                        }
-                        let selected_names: Vec<&str> = chosen.iter().map(|&i| svc_names[i]).collect();
-                        println!("  {} Building: {}", "::".dimmed(), selected_names.join(", ").dimmed());
-                        build_infos = chosen.into_iter().map(|i| build_infos[i].clone()).collect();
-                        is_partial_build = true;
-                        break;
+            match selection {
+                0 => break,
+                1 => {
+                    let chosen = MultiSelect::new()
+                        .with_prompt("  🔨 Select services to build [Space to select, Enter to confirm]")
+                        .items(&svc_names)
+                        .interact()?;
+                    if chosen.is_empty() {
+                        println!(
+                            "  {} {}",
+                            "!".red(),
+                            "No services selected. Pick at least one, or choose 'Build all'.".yellow()
+                        );
+                        continue;
                     }
-                    _ => unreachable!(),
+                    let selected_names: Vec<&str> = chosen.iter().map(|&i| svc_names[i]).collect();
+                    println!("  {} Building: {}", "::".dimmed(), selected_names.join(", ").dimmed());
+                    build_infos = chosen.into_iter().map(|i| build_infos[i].clone()).collect();
+                    is_partial_build = true;
+                    break;
                 }
+                _ => unreachable!(),
             }
         }
     }
@@ -331,6 +332,7 @@ async fn deploy_compose(
 }
 
 /// Non-interactive compose deploy for CI/`deploy` command usage.
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy_compose_noninteractive(
     client: &reqwest::Client,
     server: &str,

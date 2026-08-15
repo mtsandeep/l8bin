@@ -222,7 +222,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
     let base_url = crate::routes::manage::agent_base_url(&state.config, node);
 
     // Health check
-    let health = match client.get(&format!("{}/health", base_url)).send().await {
+    let health = match client.get(format!("{}/health", base_url)).send().await {
         Ok(resp) if resp.status().is_success() => match resp.json::<litebin_common::types::HealthReport>().await {
             Ok(h) => h,
             Err(e) => {
@@ -250,7 +250,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
     });
 
     match client
-        .post(&format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
+        .post(format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
         .json(&register_body)
         .send()
         .await

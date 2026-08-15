@@ -59,7 +59,7 @@ pub async fn batch_run(State(state): State<AgentState>, Json(req): Json<BatchRun
     let mut warnings: Vec<String> = Vec::new();
     if !mutations.docker_observe {
         let has_sock = plan.configs.iter().any(|c| {
-            c.binds.as_ref().map_or(false, |binds| {
+            c.binds.as_ref().is_some_and(|binds| {
                 binds.iter().any(|b| {
                     let source = b.split(':').next().unwrap_or("");
                     source.ends_with("/docker.sock")

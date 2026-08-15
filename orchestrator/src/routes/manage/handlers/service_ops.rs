@@ -67,8 +67,7 @@ pub async fn start_service(
             rollback_on_failure: false,
         },
     )
-    .await
-    .map_err(|(s, e)| (s, e))?;
+    .await?;
 
     tracing::info!(project = %project_id, service = %service_name, "service started");
 
@@ -228,8 +227,7 @@ pub async fn restart_service(
             rollback_on_failure: false,
         },
     )
-    .await
-    .map_err(|(s, e)| (s, e))?;
+    .await?;
 
     tracing::info!(project = %project_id, service = %service_name, "service restarted");
 

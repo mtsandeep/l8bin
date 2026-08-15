@@ -68,8 +68,11 @@ pub(crate) async fn run(
     let existing_project = auth::session_get(&client, &server, &format!("/projects/{}", project)).await.ok();
     let effective_node = if let Some(proj_json) = existing_project.as_ref() {
         let existing_node = proj_json.get("node_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-        if existing_node.is_some() && node.is_some() && existing_node != node.as_deref() {
-            eprintln!("  Note: --node ignored, project is pinned to node '{}'", existing_node.unwrap());
+        if let Some(pinned) = existing_node
+            && node.is_some()
+            && Some(pinned) != node.as_deref()
+        {
+            eprintln!("  Note: --node ignored, project is pinned to node '{}'", pinned);
         }
         existing_node.or(node.as_deref()).map(|s| s.to_string())
     } else {
@@ -94,10 +97,8 @@ pub(crate) async fn run(
             }
         });
 
-        if compose {
-            if compose_file.is_none() {
-                bail!("--compose flag specified but no compose file found in {}", path.display());
-            }
+        if compose && compose_file.is_none() {
+            bail!("--compose flag specified but no compose file found in {}", path.display());
         }
 
         let target_services = if service.is_empty() { None } else { Some(service) };

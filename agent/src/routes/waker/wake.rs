@@ -439,7 +439,8 @@ fn completed_oneshot_container_names(project_id: &str) -> std::collections::Hash
         return std::collections::HashSet::new();
     };
     let extra_env = crate::routes::containers::read_project_env(project_id);
-    let Ok(plan) = litebin_common::compose_run::build_compose_run_plan(&yaml, project_id, &extra_env, None, false) else {
+    let Ok(plan) = litebin_common::compose_run::build_compose_run_plan(&yaml, project_id, &extra_env, None, false)
+    else {
         return std::collections::HashSet::new();
     };
     plan.configs

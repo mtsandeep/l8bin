@@ -154,16 +154,16 @@ pub async fn grant_project_capabilities(
             .fetch_one(&state.db)
             .await
             .map_err(capabilities::db_err)?;
-        if let Some(node_id) = node_id {
-            if node_id != "local" {
-                crate::cloudflare_router::push_project_meta_to_agent(
-                    &node_id,
-                    &state.db,
-                    &state.node_clients,
-                    &state.config,
-                )
-                .await;
-            }
+        if let Some(node_id) = node_id
+            && node_id != "local"
+        {
+            crate::cloudflare_router::push_project_meta_to_agent(
+                &node_id,
+                &state.db,
+                &state.node_clients,
+                &state.config,
+            )
+            .await;
         }
     }
     let list = capabilities::status_list_for_project(&state.db, &id).await.map_err(capabilities::db_err)?;
@@ -206,15 +206,14 @@ pub async fn revoke_project_capability(
         .map_err(capabilities::db_err)?;
         if node_id.as_deref().unwrap_or("local") == "local" {
             for container_id in &container_ids {
-                if let Err(error) = state.docker.stop_container(container_id).await {
-                    if litebin_common::docker::DockerErrorKind::from_anyhow(&error)
+                if let Err(error) = state.docker.stop_container(container_id).await
+                    && litebin_common::docker::DockerErrorKind::from_anyhow(&error)
                         != litebin_common::docker::DockerErrorKind::NotFound
-                    {
-                        return Err((
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            format!("failed to stop host-network workload before revocation: {error}"),
-                        ));
-                    }
+                {
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("failed to stop host-network workload before revocation: {error}"),
+                    ));
                 }
             }
         } else if let Some(node_id) = node_id.as_deref() {
@@ -287,27 +286,17 @@ pub async fn revoke_project_capability(
         }
     }
     capabilities::revoke(&state.db, &id, cap).await.map_err(capabilities::db_err)?;
-    if let Some(node_id) = docker_observe_node_id {
-        if node_id != "local" {
-            crate::cloudflare_router::push_project_meta_to_agent(
-                &node_id,
-                &state.db,
-                &state.node_clients,
-                &state.config,
-            )
+    if let Some(node_id) = docker_observe_node_id
+        && node_id != "local"
+    {
+        crate::cloudflare_router::push_project_meta_to_agent(&node_id, &state.db, &state.node_clients, &state.config)
             .await;
-        }
     }
-    if let Some(node_id) = host_network_node_id {
-        if node_id != "local" {
-            crate::cloudflare_router::push_project_meta_to_agent(
-                &node_id,
-                &state.db,
-                &state.node_clients,
-                &state.config,
-            )
+    if let Some(node_id) = host_network_node_id
+        && node_id != "local"
+    {
+        crate::cloudflare_router::push_project_meta_to_agent(&node_id, &state.db, &state.node_clients, &state.config)
             .await;
-        }
     }
     let list = capabilities::status_list_for_project(&state.db, &id).await.map_err(capabilities::db_err)?;
     Ok(Json(list))

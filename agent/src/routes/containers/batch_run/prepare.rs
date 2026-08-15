@@ -189,18 +189,17 @@ pub(super) async fn mutate_plan(
         if let Some(ref mut targets) = target_set {
             plan.expand_for_docker_proxy_replacement(targets);
         }
-    } else if target_set.is_none() {
-        if let Err(e) = state
+    } else if target_set.is_none()
+        && let Err(e) = state
             .docker
             .remove_by_service_name(&req.project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None)
             .await
-        {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: format!("failed to clean up previous Docker observation proxy: {e}") }),
-            )
-                .into_response());
-        }
+    {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: format!("failed to clean up previous Docker observation proxy: {e}") }),
+        )
+            .into_response());
     }
     let proxy_created = proxy_injected && !reusable_proxy;
     if proxy_created {
@@ -356,10 +355,10 @@ pub(super) async fn cleanup_and_prepare(
         .collect();
 
     for handle in pull_handles {
-        if let Ok((image, result)) = handle.await {
-            if let Err(e) = result {
-                tracing::error!(image = %image, error = %e, "batch-run: failed to pull image");
-            }
+        if let Ok((image, result)) = handle.await
+            && let Err(e) = result
+        {
+            tracing::error!(image = %image, error = %e, "batch-run: failed to pull image");
         }
     }
 

@@ -205,10 +205,9 @@ impl MasterProxyRouter {
             if let Some(cd) = &p.custom_domain {
                 if let Some(ref rewrite) = p.host_rewrite {
                     // Sleeping custom domain: proxy to orchestrator waker with Host rewrite
-                    let (www_host, _canonical) = if cd.starts_with("www.") {
-                        (cd[4..].to_string(), cd.clone())
-                    } else {
-                        (format!("www.{}", cd), cd.clone())
+                    let (www_host, _canonical) = match cd.strip_prefix("www.") {
+                        Some(rest) => (rest.to_string(), cd.clone()),
+                        None => (format!("www.{}", cd), cd.clone()),
                     };
 
                     routes.push(json!({
@@ -270,8 +269,7 @@ impl MasterProxyRouter {
                     // redirect "www.app.example.com" → "https://app.example.com{uri}"
                     // If custom_domain is "www.app.example.com",
                     // redirect "app.example.com" → "https://www.app.example.com{uri}"
-                    let (redirect_from, canonical) = if cd.starts_with("www.") {
-                        let bare = &cd[4..];
+                    let (redirect_from, canonical) = if let Some(bare) = cd.strip_prefix("www.") {
                         (bare.to_string(), cd.clone())
                     } else {
                         (format!("www.{}", cd), cd.clone())

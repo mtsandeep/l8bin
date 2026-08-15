@@ -94,11 +94,11 @@ pub async fn create_token(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, "failed to create deploy token");
-        return (
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("failed to create token: {e}")})),
         )
-            .into_response();
+            .into_response()
     });
 
     let token_info = DeployTokenResponse {

@@ -62,18 +62,16 @@ async fn fetch_and_print_new_logs(
     let resp: Result<reqwest::Response, reqwest::Error> =
         client.get(format!("{}/projects/{}/deploy-logs", server.trim_end_matches('/'), project_id)).send().await;
 
-    if let Ok(r) = resp {
-        if r.status().is_success() {
-            if let Ok(json) = r.json::<serde_json::Value>().await {
-                if let Some(lines) = json["lines"].as_array() {
-                    for line in lines {
-                        if let Some(text) = line.as_str() {
-                            if seen.insert(text.to_string()) {
-                                println!("    {}", text.dimmed());
-                            }
-                        }
-                    }
-                }
+    if let Ok(r) = resp
+        && r.status().is_success()
+        && let Ok(json) = r.json::<serde_json::Value>().await
+        && let Some(lines) = json["lines"].as_array()
+    {
+        for line in lines {
+            if let Some(text) = line.as_str()
+                && seen.insert(text.to_string())
+            {
+                println!("    {}", text.dimmed());
             }
         }
     }
@@ -167,35 +165,35 @@ pub async fn show_project_status(client: &reqwest::Client, server: &str, project
     }
 
     // Show services
-    if let Some(services) = services {
-        if !services.is_empty() {
-            println!();
-            for svc in services {
-                let svc_name = svc["service_name"].as_str().unwrap_or("?");
-                let svc_status: ProjectStatus = svc["status"]
-                    .as_str()
-                    .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
-                    .unwrap_or(ProjectStatus::Stopped);
-                let is_public = svc["is_public"].as_bool().unwrap_or(false);
-                let cpu = svc["cpu_percent"].as_f64();
-                let mem_mb = svc["memory_mb"].as_u64();
+    if let Some(services) = services
+        && !services.is_empty()
+    {
+        println!();
+        for svc in services {
+            let svc_name = svc["service_name"].as_str().unwrap_or("?");
+            let svc_status: ProjectStatus = svc["status"]
+                .as_str()
+                .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
+                .unwrap_or(ProjectStatus::Stopped);
+            let is_public = svc["is_public"].as_bool().unwrap_or(false);
+            let cpu = svc["cpu_percent"].as_f64();
+            let mem_mb = svc["memory_mb"].as_u64();
 
-                let svc_status_colored = match &svc_status {
-                    ProjectStatus::Running => "running".green(),
-                    ProjectStatus::Stopped => "stopped".dimmed(),
-                    _ => svc_status.to_string().yellow(),
-                };
+            let svc_status_colored = match &svc_status {
+                ProjectStatus::Running => "running".green(),
+                ProjectStatus::Stopped => "stopped".dimmed(),
+                _ => svc_status.to_string().yellow(),
+            };
 
-                let pub_tag = if is_public && !is_background { " (public)".dimmed() } else { "".dimmed() };
-                let stats = match (cpu, mem_mb) {
-                    (Some(c), Some(m)) => format!("  {} cpu, {}MB mem", format!("{:.1}%", c), m),
-                    (Some(c), None) => format!("  {} cpu", format!("{:.1}%", c)),
-                    (None, Some(m)) => format!("  {}MB mem", m),
-                    _ => String::new(),
-                };
+            let pub_tag = if is_public && !is_background { " (public)".dimmed() } else { "".dimmed() };
+            let stats = match (cpu, mem_mb) {
+                (Some(c), Some(m)) => format!("  {:.1}% cpu, {}MB mem", c, m),
+                (Some(c), None) => format!("  {:.1}% cpu", c),
+                (None, Some(m)) => format!("  {}MB mem", m),
+                _ => String::new(),
+            };
 
-                println!("    {} {}{}{}", svc_name.cyan(), svc_status_colored, pub_tag, stats.dimmed());
-            }
+            println!("    {} {}{}{}", svc_name.cyan(), svc_status_colored, pub_tag, stats.dimmed());
         }
     }
 

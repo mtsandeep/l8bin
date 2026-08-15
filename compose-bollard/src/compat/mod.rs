@@ -194,10 +194,10 @@ fn finalize_report(findings: Vec<CompatibilityFinding>) -> Result<CompatibilityR
 
     let mut caps: BTreeSet<String> = BTreeSet::new();
     for f in &findings {
-        if f.disposition == FindingDisposition::PermissionRequired {
-            if let Some(ref c) = f.capability {
-                caps.insert(c.clone());
-            }
+        if f.disposition == FindingDisposition::PermissionRequired
+            && let Some(ref c) = f.capability
+        {
+            caps.insert(c.clone());
         }
     }
 

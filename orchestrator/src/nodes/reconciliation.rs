@@ -109,11 +109,11 @@ pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
                 corrections += 1;
             }
             Ok(resp) if resp.status().is_success() => {
-                if let Ok(status) = resp.json::<ContainerStatus>().await {
-                    if status.state != "running" {
-                        set_project_error(&state, &project.id).await;
-                        corrections += 1;
-                    }
+                if let Ok(status) = resp.json::<ContainerStatus>().await
+                    && status.state != "running"
+                {
+                    set_project_error(&state, &project.id).await;
+                    corrections += 1;
                 }
             }
             _ => {} // agent unreachable — don't change status, heartbeat will handle offline
@@ -231,7 +231,8 @@ async fn set_project_running(state: &AppState, project: &Project) {
     // Sync routes
     let orchestrator_upstream = format!("litebin-orchestrator:{}", state.config.port);
     let routes =
-        match crate::routing_helpers::resolve_all_routes(&state.db, &state.platform.domain(), &orchestrator_upstream).await
+        match crate::routing_helpers::resolve_all_routes(&state.db, &state.platform.domain(), &orchestrator_upstream)
+            .await
         {
             Ok(r) => r,
             Err(e) => {

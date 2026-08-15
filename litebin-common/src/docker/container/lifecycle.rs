@@ -189,10 +189,10 @@ impl DockerManager {
             Ok(single_ids) => {
                 for cid in &single_ids {
                     let _ = self.stop_container(cid).await;
-                    if let Err(e) = self.remove_container(cid).await {
-                        if DockerErrorKind::from_anyhow(&e) != DockerErrorKind::NotFound {
-                            cleanup_errors.push(format!("remove container {cid}: {e}"));
-                        }
+                    if let Err(e) = self.remove_container(cid).await
+                        && DockerErrorKind::from_anyhow(&e) != DockerErrorKind::NotFound
+                    {
+                        cleanup_errors.push(format!("remove container {cid}: {e}"));
                     }
                 }
             }
@@ -218,11 +218,11 @@ impl DockerManager {
 
         // 5. Remove project directory if it exists
         let project_dir = crate::types::projects_dir().join(project_id);
-        if project_dir.is_dir() {
-            if let Err(e) = std::fs::remove_dir_all(&project_dir) {
-                tracing::warn!(project = %project_id, error = %e, "cleanup: failed to remove project directory");
-                cleanup_errors.push(format!("remove project directory: {e}"));
-            }
+        if project_dir.is_dir()
+            && let Err(e) = std::fs::remove_dir_all(&project_dir)
+        {
+            tracing::warn!(project = %project_id, error = %e, "cleanup: failed to remove project directory");
+            cleanup_errors.push(format!("remove project directory: {e}"));
         }
 
         if cleanup_errors.is_empty() { Ok(()) } else { anyhow::bail!(cleanup_errors.join("; ")) }

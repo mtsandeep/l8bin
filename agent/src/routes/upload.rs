@@ -58,11 +58,10 @@ pub async fn upload_chunk(
 ) -> Response {
     let total = litebin_common::upload::total_chunks_header(&headers);
     match state.upload_store.write_chunk(&token, index, total, body) {
-        Ok((received, total)) => Json(UploadChunkResponse {
-            received: litebin_common::upload::sorted_indices(received),
-            total,
-        })
-        .into_response(),
+        Ok((received, total)) => {
+            Json(UploadChunkResponse { received: litebin_common::upload::sorted_indices(received), total })
+                .into_response()
+        }
         Err(e) => err_response(e),
     }
 }

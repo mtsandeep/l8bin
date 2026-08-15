@@ -103,10 +103,10 @@ impl AuthnBackend for PasswordBackend {
             .fetch_optional(&self.db)
             .await?;
 
-        if let Some(user) = user {
-            if verify(creds.password.as_bytes(), &user.password_hash)? {
-                return Ok(Some(user));
-            }
+        if let Some(user) = user
+            && verify(creds.password.as_bytes(), &user.password_hash)?
+        {
+            return Ok(Some(user));
         }
 
         Ok(None)

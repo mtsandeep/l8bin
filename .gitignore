@@ -23,7 +23,8 @@ Thumbs.db
 # Rust
 target/
 **/*.rs.bk
-Cargo.lock
+# Note: Cargo.lock is committed — this workspace ships binaries, so the
+# lockfile is tracked for reproducible CI and release builds.
 
 # SQLite
 *.db

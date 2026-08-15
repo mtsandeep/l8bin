@@ -131,13 +131,7 @@ fn resolve_expression(expr: &str, env: &HashMap<String, String>, strict: bool) -
 
 /// Look up a plain variable name in env, falling back to system env.
 fn resolve_var(name: &str, env: &HashMap<String, String>) -> String {
-    if let Some(val) = env.get(name) {
-        val.clone()
-    } else if let Ok(val) = std::env::var(name) {
-        val
-    } else {
-        String::new()
-    }
+    if let Some(val) = env.get(name) { val.clone() } else { std::env::var(name).unwrap_or_default() }
 }
 
 /// Build an environment map from extra_env KEY=VALUE strings and system env vars.
@@ -164,10 +158,10 @@ pub fn extract_compose_env(compose_value: &serde_yaml::Value) -> HashMap<String,
     for (_, svc) in services {
         if let Some(env_val) = svc.get("environment").and_then(|e| e.as_mapping()) {
             for (k, v) in env_val {
-                if let (Some(key), Some(val)) = (k.as_str(), v.as_str()) {
-                    if !val.contains('$') {
-                        env.insert(key.to_string(), val.to_string());
-                    }
+                if let (Some(key), Some(val)) = (k.as_str(), v.as_str())
+                    && !val.contains('$')
+                {
+                    env.insert(key.to_string(), val.to_string());
                 }
             }
         }
@@ -201,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_default_value() {
-        let mut env = HashMap::new();
+        let env = HashMap::new();
         // MISSING_VAR is not set
 
         let mut val = serde_yaml::Value::String("${MISSING_VAR:-3306}".to_string());

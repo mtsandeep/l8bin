@@ -99,7 +99,10 @@ impl CloudflareDnsRouter {
 
                     // Also add the www variant as a redirect handled by Caddy,
                     // but we still need a DNS record pointing to the same IP
-                    let www = if cd.starts_with("www.") { cd[4..].to_string() } else { format!("www.{}", cd) };
+                    let www = match cd.strip_prefix("www.") {
+                        Some(rest) => rest.to_string(),
+                        None => format!("www.{}", cd),
+                    };
                     desired.insert(www, ip.clone());
                 }
 

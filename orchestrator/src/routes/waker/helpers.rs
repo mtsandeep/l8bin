@@ -294,7 +294,7 @@ pub(super) async fn start_stopped_container(
         // recreate only if env has changed since last injection.
         let container_id = project.container_id.as_deref().unwrap_or("");
         let resp = match client
-            .post(&format!("{}/containers/start", base_url))
+            .post(format!("{}/containers/start", base_url))
             .json(&json!({
                 "container_id": container_id,
                 "project_id": subdomain,
@@ -327,7 +327,7 @@ pub(super) async fn start_stopped_container(
             let now = chrono::Utc::now().timestamp();
             if let Err(e) = status::transition(
                 &state.db,
-                &subdomain,
+                subdomain,
                 ProjectStatus::Running,
                 &ProjectUpdateFields {
                     mapped_port: Some(mapped_port.map(|p| p as i64)),

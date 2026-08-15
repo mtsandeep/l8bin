@@ -11,7 +11,7 @@ use crate::types::{NetworkConfig, RunServiceConfig, is_windows_drive_path};
 /// (Same logic the first-port extraction used inline — now shared.)
 pub fn container_port(spec: &str) -> Option<u16> {
     let core = spec.rsplit_once('/').map(|(c, _)| c).unwrap_or(spec);
-    core.split(':').last()?.parse().ok()
+    core.split(':').next_back()?.parse().ok()
 }
 
 /// All container ports a service exposes, deduped and sorted.

@@ -108,18 +108,17 @@ pub async fn wake_report(
 
     let now = chrono::Utc::now().timestamp();
 
-    if let Some(ref svc_name) = svc_name {
-        if let Err(e) = status::set_service_running(
+    if let Some(ref svc_name) = svc_name
+        && let Err(e) = status::set_service_running(
             &state.db,
             &report.project_id,
-            &svc_name,
+            svc_name,
             &report.container_id,
             Some(report.mapped_port as i64),
         )
         .await
-        {
-            tracing::warn!(project_id = %report.project_id, service = %svc_name, error = %e, "wake report: failed to set service running");
-        }
+    {
+        tracing::warn!(project_id = %report.project_id, service = %svc_name, error = %e, "wake report: failed to set service running");
     }
 
     // Update projects table with container info
@@ -133,7 +132,7 @@ pub async fn wake_report(
             last_active_at: Some(now),
             ..Default::default()
         },
-        svc_name.as_ref().map(|s| std::slice::from_ref(s)),
+        svc_name.as_ref().map(std::slice::from_ref),
     )
     .await
     {

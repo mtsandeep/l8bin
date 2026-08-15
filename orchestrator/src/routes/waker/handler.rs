@@ -210,10 +210,10 @@ pub async fn wake_for_host(
 
                 let mut crashed_services = Vec::new();
                 for (service_name, container_id) in &services {
-                    if let Some(cid) = container_id {
-                        if !state.docker.is_container_running(cid).await.unwrap_or(false) {
-                            crashed_services.push(service_name.clone());
-                        }
+                    if let Some(cid) = container_id
+                        && !state.docker.is_container_running(cid).await.unwrap_or(false)
+                    {
+                        crashed_services.push(service_name.clone());
                     }
                 }
 
@@ -233,41 +233,39 @@ pub async fn wake_for_host(
 
         if public_service_up {
             // Single-service: fix port drift on projects table, return loading page
-            if !is_multi {
-                if let Some(ref container_id) = project.container_id {
-                    if state.docker.is_container_running(container_id).await.unwrap_or(true) {
-                        if let Ok(Some(actual_port)) = state.docker.inspect_mapped_port(container_id).await {
-                            let db_port = project.mapped_port.unwrap_or(0) as u16;
-                            if actual_port != db_port {
-                                let now = chrono::Utc::now().timestamp();
-                                if let Err(e) =
-                                    sqlx::query("UPDATE projects SET mapped_port = ?, updated_at = ? WHERE id = ?")
-                                        .bind(actual_port as i64)
-                                        .bind(now)
-                                        .bind(&project_id)
-                                        .execute(&state.db)
-                                        .await
-                                {
-                                    tracing::warn!(project_id = %project_id, error = %e, "waker: failed to update mapped_port");
-                                }
-                                crate::status::sync_single_service_row(
-                                    &state.db,
-                                    &project_id,
-                                    container_id,
-                                    actual_port as i64,
-                                )
-                                .await;
-                                tracing::info!(project = %project_id, old = %db_port, new = %actual_port, "waker: port drifted, updated DB");
-                            }
+            if !is_multi
+                && let Some(ref container_id) = project.container_id
+                && state.docker.is_container_running(container_id).await.unwrap_or(true)
+            {
+                if let Ok(Some(actual_port)) = state.docker.inspect_mapped_port(container_id).await {
+                    let db_port = project.mapped_port.unwrap_or(0) as u16;
+                    if actual_port != db_port {
+                        let now = chrono::Utc::now().timestamp();
+                        if let Err(e) = sqlx::query("UPDATE projects SET mapped_port = ?, updated_at = ? WHERE id = ?")
+                            .bind(actual_port as i64)
+                            .bind(now)
+                            .bind(&project_id)
+                            .execute(&state.db)
+                            .await
+                        {
+                            tracing::warn!(project_id = %project_id, error = %e, "waker: failed to update mapped_port");
                         }
-                        let _ = state.route_sync_tx.send(());
-                        return if wants_json {
-                            starting_json_response()
-                        } else {
-                            loading_page_html(&project_id).into_response()
-                        };
+                        crate::status::sync_single_service_row(
+                            &state.db,
+                            &project_id,
+                            container_id,
+                            actual_port as i64,
+                        )
+                        .await;
+                        tracing::info!(project = %project_id, old = %db_port, new = %actual_port, "waker: port drifted, updated DB");
                     }
                 }
+                let _ = state.route_sync_tx.send(());
+                return if wants_json {
+                    starting_json_response()
+                } else {
+                    loading_page_html(&project_id).into_response()
+                };
             }
 
             // Multi-service: proxy to public service container
@@ -325,35 +323,34 @@ pub async fn wake_for_host(
             .await
             .unwrap_or(None);
 
-            if let Some((svc_name, port, container_id)) = public_svc_any {
-                if let Some(ref cid) = container_id {
-                    if state.docker.is_container_running(cid).await.unwrap_or(false) {
-                        tracing::info!(project = %project_id, service = %svc_name, "waker: public service running but DB stale, syncing status");
-                        if let Err(e) = crate::status::transition(
-                            &state.db,
-                            &project_id,
-                            ProjectStatus::Running,
-                            &crate::status::ProjectUpdateFields::default(),
-                            Some(&[svc_name.clone()]),
-                        )
-                        .await
-                        {
-                            tracing::warn!(project_id = %project_id, error = %e, "waker: failed to sync stale Running status");
-                        }
-                        let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
-                        let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
-                        let resp = proxy_request(
-                            &state.proxy_client,
-                            method.clone(),
-                            &upstream,
-                            uri.path_and_query().map(|pq| pq.as_str()),
-                            headers,
-                            body.clone(),
-                        )
-                        .await;
-                        return resp;
-                    }
+            if let Some((svc_name, port, container_id)) = public_svc_any
+                && let Some(ref cid) = container_id
+                && state.docker.is_container_running(cid).await.unwrap_or(false)
+            {
+                tracing::info!(project = %project_id, service = %svc_name, "waker: public service running but DB stale, syncing status");
+                if let Err(e) = crate::status::transition(
+                    &state.db,
+                    &project_id,
+                    ProjectStatus::Running,
+                    &crate::status::ProjectUpdateFields::default(),
+                    Some(std::slice::from_ref(&svc_name)),
+                )
+                .await
+                {
+                    tracing::warn!(project_id = %project_id, error = %e, "waker: failed to sync stale Running status");
                 }
+                let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
+                let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
+                let resp = proxy_request(
+                    &state.proxy_client,
+                    method.clone(),
+                    &upstream,
+                    uri.path_and_query().map(|pq| pq.as_str()),
+                    headers,
+                    body.clone(),
+                )
+                .await;
+                return resp;
             }
 
             // Public service truly not running — fall through to wake lock

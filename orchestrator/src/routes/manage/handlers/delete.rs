@@ -104,7 +104,7 @@ pub async fn delete_project(
             let node = get_node_from_db(&state.db, node_id).await?;
             let base_url = agent_base_url(&state.config, &node);
             let response = client
-                .post(&format!("{}/containers/cleanup", base_url))
+                .post(format!("{}/containers/cleanup", base_url))
                 .json(&json!({
                     "project_id": project_id,
                     "volumes": volumes,

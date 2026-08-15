@@ -148,11 +148,11 @@ pub fn cleanup_build_artifacts(dir: &Path) -> Result<()> {
             } else if env_exists && env_has_values && backup_has_values {
                 // Both have values — confirm
                 println!("    {} {} — both backup and current .env have content", "!".yellow(), name);
-                let confirm = dialoguer::Confirm::new()
+
+                dialoguer::Confirm::new()
                     .with_prompt("       Replace current .env with backup?")
                     .default(false)
-                    .interact()?;
-                confirm
+                    .interact()?
             } else {
                 // Safe to restore (no current .env, or current is empty/placeholder)
                 true
@@ -249,10 +249,9 @@ pub(crate) fn gitignored_dirs(project_dir: &Path) -> Vec<String> {
 
             // 1. If it's a simple directory name (e.g. "node_modules" or ".next/")
             let clean_pattern = pattern.trim_end_matches('/');
-            if !clean_pattern.contains('/') && !clean_pattern.contains('*') {
-                if project_dir.join(clean_pattern).is_dir() {
-                    dirs.insert(clean_pattern.to_string());
-                }
+            if !clean_pattern.contains('/') && !clean_pattern.contains('*') && project_dir.join(clean_pattern).is_dir()
+            {
+                dirs.insert(clean_pattern.to_string());
             }
         }
     }

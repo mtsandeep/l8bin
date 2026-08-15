@@ -103,7 +103,7 @@ pub async fn project_logs(
         let base_url = agent_base_url(&state.config, &node);
 
         let resp = client
-            .get(&format!("{}/containers/{}/logs?tail={}", base_url, container_id, tail))
+            .get(format!("{}/containers/{}/logs?tail={}", base_url, container_id, tail))
             .send()
             .await
             .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;

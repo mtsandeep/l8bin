@@ -48,7 +48,43 @@ cargo build --release -p litebin-agent
 cargo build --release -p l8b
 ```
 
-### 2. Build & Stage for Installer Testing
+### 2. Lint (must pass in CI)
+
+CI runs these on every push/PR — run them locally before pushing:
+
+```bash
+# Formatting (rustfmt config is in rustfmt.toml; zero drift allowed)
+cargo fmt --all -- --check
+
+# Clippy with warnings denied — the workspace is warning-free, keep it that way
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Fix formatting with `cargo fmt --all`. If clippy reports a new warning, fix it
+or, for intentionally verbose API signatures, add a targeted
+`#[allow(clippy::too_many_arguments)]` on the function.
+
+### 3. Tests
+
+```bash
+# Fast suite (what CI runs) — unit tests + in-memory-SQLite integration tests
+cargo test --workspace
+
+# Tests for one crate
+cargo test -p litebin-orchestrator
+
+# Live agent tests — require a local Docker daemon with registry access.
+# These are #[ignore]d and never run in CI; run them on demand:
+cargo test -p litebin-agent -- --ignored
+```
+
+Test organization: unit tests live inline (`#[cfg(test)] mod tests` at the
+bottom of the file or a sibling `tests.rs`), and the orchestrator's HTTP
+integration suite lives in `orchestrator/src/tests/` using in-memory SQLite
+with real migrations. Tests that need a real Docker daemon are `#[ignore]`d
+and documented with their requirements.
+
+### 4. Build & Stage for Installer Testing
 
 These scripts build everything and copy binaries into a `release/` folder with the naming convention the installer expects.
 

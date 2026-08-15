@@ -140,6 +140,7 @@ struct PreviousDeployment {
 }
 
 /// Insert or upsert the projects row, grant capabilities, and read the row back.
+#[allow(clippy::too_many_arguments)]
 async fn upsert_project(
     state: &AppState,
     payload: &DeployRequest,
@@ -306,7 +307,7 @@ async fn stage_only_path(
         crate::routes::manage::ensure_project_dir_and_env(&payload.project_id);
     } else {
         let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-            .bind(&node_id)
+            .bind(node_id)
             .fetch_optional(&state.db)
             .await
         {
@@ -324,7 +325,7 @@ async fn stage_only_path(
             }
         };
 
-        let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
+        let client = match nodes::client::get_node_client(&state.node_clients, node_id) {
             Ok(c) => c,
             Err(e) => {
                 return (
@@ -336,7 +337,7 @@ async fn stage_only_path(
         };
         let base_url = agent_base_url(&state.config, &node);
         let stage_resp = match client
-            .post(&format!("{}/containers/run", base_url))
+            .post(format!("{}/containers/run", base_url))
             .json(&json!({
                 "image": payload.image,
                 "internal_port": payload.port,

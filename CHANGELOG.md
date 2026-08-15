@@ -11,6 +11,9 @@ All notable changes to this project will be documented in this file.
 - **Refactor (phase 4): deduplicated cross-crate code into shared modules** — shared HMAC agent request signing/verification, container/network naming and Docker-socket path helpers (the documented mirror copies are gone), service-stats wire types moved to litebin-common (the CLI now uses the real type instead of a local mirror), and shared internal-path/compose-file/caddy-name helpers replacing copy-pasted literals.
 - **Refactor (phase 5): split the remaining oversized orchestrator and agent route files into smaller modules** — the largest handlers' inline phase-blocks (validate, persist, stage, remote/local deploy, plan mutation, execution) were extracted into named functions with the same statements in the same order. No behavior change; public handler/type paths unchanged via re-exports.
 
+### Added
+- **CI quality gate** — new pull-request/push workflow running `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, and `cargo test --workspace`, with the Rust toolchain pinned via `rust-toolchain.toml`. The workspace is now clippy-clean; live Docker tests remain `#[ignore]`d and local-only (documented in `docs/development.md`).
+
 ## [0.3.21] - 2026-08-08
 
 ### Fixed

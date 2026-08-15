@@ -65,7 +65,7 @@ pub async fn all_project_stats(
     let mut remote_by_node: std::collections::HashMap<String, Vec<(String, Vec<String>)>> =
         std::collections::HashMap::new();
     // Stopped local projects that need per-service disk lookups: (project_id, services_raw)
-    let mut disk_lookups: Vec<(String, Vec<(ServiceInfo, Option<String>)>)> = Vec::new();
+    let mut disk_lookups: Vec<(String, ServicesRaw)> = Vec::new();
 
     for project in &projects {
         if project.status != ProjectStatus::Running && project.status != ProjectStatus::Degraded {
@@ -129,15 +129,11 @@ pub async fn all_project_stats(
                 // when container isn't running. Only call Docker if we have no cached value.
                 if let Some(bytes) = state.disk_cache.get(container_id) {
                     svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
-                } else {
-                    match state.docker.disk_usage(container_id).await {
-                        Ok(d) => {
-                            let disk_gb = d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0);
-                            svc.disk_gb = Some(disk_gb);
-                            state.disk_cache.insert(container_id.clone(), d.size_root_fs as i64);
-                        }
-                        Err(_) => {} // Container gone, no cache to fall back to
-                    }
+                } else if let Ok(d) = state.docker.disk_usage(container_id).await {
+                    // Container gone, no cache to fall back to — leave disk unset on error
+                    let disk_gb = d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0);
+                    svc.disk_gb = Some(disk_gb);
+                    state.disk_cache.insert(container_id.clone(), d.size_root_fs as i64);
                 }
             }
             services.push(svc);
@@ -158,6 +154,11 @@ pub async fn all_project_stats(
     // Fetch local stats — parallelize all Docker API calls across all containers
     let t2 = std::time::Instant::now();
 
+    /// Per-service row with its container_id, as loaded by batch_load_services.
+    type ServicesRaw = Vec<(ServiceInfo, Option<String>)>;
+    /// (container_id, live cpu/mem triple) — None when stats collection failed.
+    type ContainerStatsEntry = (String, Option<(f64, u64, u64)>);
+
     // Flatten all container IDs with their project context
     let mut all_local_containers: Vec<(String, String)> = Vec::new(); // (project_id, container_id)
     for (project_id, container_ids) in &local_projects {
@@ -176,7 +177,7 @@ pub async fn all_project_stats(
             (cid, stats_res)
         });
     }
-    let mut container_results: Vec<(String, Option<(f64, u64, u64)>)> = Vec::with_capacity(handles.len());
+    let mut container_results: Vec<ContainerStatsEntry> = Vec::with_capacity(handles.len());
     for handle in handles {
         let (cid, stats_res) = handle.await;
         match stats_res {
@@ -218,10 +219,10 @@ pub async fn all_project_stats(
             } else {
                 stopped_cids.insert(cid.clone());
                 // Cache disk for stopped containers
-                if !state.disk_cache.contains_key(cid) {
-                    if let Ok(d) = state.docker.disk_usage(cid).await {
-                        state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
-                    }
+                if !state.disk_cache.contains_key(cid)
+                    && let Ok(d) = state.docker.disk_usage(cid).await
+                {
+                    state.disk_cache.insert(cid.clone(), d.size_root_fs as i64);
                 }
             }
         }
@@ -230,10 +231,10 @@ pub async fn all_project_stats(
             let services: Vec<ServiceInfo> = services_raw
                 .into_iter()
                 .map(|(mut svc, cid)| {
-                    if let Some(container_id) = cid {
-                        if let Some(bytes) = state.disk_cache.get(&container_id) {
-                            svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
-                        }
+                    if let Some(container_id) = cid
+                        && let Some(bytes) = state.disk_cache.get(&container_id)
+                    {
+                        svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
                     }
                     svc
                 })
@@ -420,10 +421,10 @@ pub async fn all_project_stats(
                 let services: Vec<ServiceInfo> = services_raw
                     .into_iter()
                     .map(|(mut svc, cid)| {
-                        if let Some(container_id) = cid {
-                            if let Some(bytes) = state.disk_cache.get(&container_id) {
-                                svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
-                            }
+                        if let Some(container_id) = cid
+                            && let Some(bytes) = state.disk_cache.get(&container_id)
+                        {
+                            svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
                         }
                         svc
                     })

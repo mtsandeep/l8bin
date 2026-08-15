@@ -6,6 +6,7 @@ use indicatif::ProgressBar;
 use crate::auth;
 
 /// Validate compose YAML via orchestrator and return approved capability grants.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn validate_compose_for_deploy(
     client: &reqwest::Client,
     server: &str,

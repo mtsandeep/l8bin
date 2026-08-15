@@ -5,8 +5,8 @@ use anyhow::Result;
 use axum::{Router, routing::get};
 use dashmap::DashMap;
 use litebin_agent::{
-    AgentState, Config, build_router, build_upload_router, load_caddy_config_from_file,
-    load_project_meta_from_file, load_registration_from_file, routes,
+    AgentState, Config, build_router, build_upload_router, load_caddy_config_from_file, load_project_meta_from_file,
+    load_registration_from_file, routes,
 };
 use litebin_common::caddy::CaddyClient;
 use litebin_common::docker::DockerManager;

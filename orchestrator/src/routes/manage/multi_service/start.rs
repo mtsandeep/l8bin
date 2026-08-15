@@ -267,10 +267,9 @@ async fn pull_missing_images(
                 && (opts.force_recreate
                     || force_recreate_services.contains(&config.service_name)
                     || !existing_containers.contains_key(&config.service_name))
+                && let Err(e) = state.docker.pull_image_with_opts(&config.image, opts.force_pull).await
             {
-                if let Err(e) = state.docker.pull_image_with_opts(&config.image, opts.force_pull).await {
-                    tracing::warn!(service = %config.service_name, image = %config.image, error = %e, "pull failed, continuing");
-                }
+                tracing::warn!(service = %config.service_name, image = %config.image, error = %e, "pull failed, continuing");
             }
         }
     }
@@ -343,10 +342,10 @@ pub async fn start_services(
 
         for svc_name in level {
             // Apply service filter
-            if let Some(ref filter) = opts.services {
-                if !filter.contains(svc_name) {
-                    continue;
-                }
+            if let Some(ref filter) = opts.services
+                && !filter.contains(svc_name)
+            {
+                continue;
             }
 
             let run_config = configs_map[svc_name].clone();
@@ -366,10 +365,10 @@ pub async fn start_services(
 
             tasks.spawn(async move {
                 // One-shot already exited 0: treat as done (Compose behavior)
-                if is_oneshot && !force_recreate {
-                    if let Some((ref existing_cid, _)) = existing {
-                        if !docker.is_container_running(existing_cid).await.unwrap_or(false) {
-                            if matches!(docker.container_exit_code(existing_cid).await.ok().flatten(), Some(0)) {
+                if is_oneshot && !force_recreate
+                    && let Some((ref existing_cid, _)) = existing
+                        && !docker.is_container_running(existing_cid).await.unwrap_or(false)
+                            && matches!(docker.container_exit_code(existing_cid).await.ok().flatten(), Some(0)) {
                                 if let Err(e) = status::set_service_completed(
                                     &db,
                                     &run_config.project_id,
@@ -387,19 +386,15 @@ pub async fn start_services(
                                     is_public,
                                 });
                             }
-                        }
-                    }
-                }
 
                 let (container_id, mapped_port) = if force_recreate {
                     // Force recreate: always remove + create new
                     if let Some((ref existing_cid, _)) = existing {
                         let _ = docker.stop_container(existing_cid).await;
-                        if docker.remove_container(existing_cid).await.is_ok() {
-                            if let Ok(mut removed) = removed_services.lock() {
+                        if docker.remove_container(existing_cid).await.is_ok()
+                            && let Ok(mut removed) = removed_services.lock() {
                                 removed.insert(svc.clone());
                             }
-                        }
                     }
                     if let Ok(mut attempted) = create_attempted_services.lock() {
                         attempted.insert(svc.clone());
@@ -415,11 +410,10 @@ pub async fn start_services(
                         let env_changed = local_env_has_changed(&run_config.project_id);
                         if env_changed {
                             tracing::info!(service = %svc, "env changed, recreating container");
-                            if docker.remove_container(existing_cid).await.is_ok() {
-                                if let Ok(mut removed) = removed_services.lock() {
+                            if docker.remove_container(existing_cid).await.is_ok()
+                                && let Ok(mut removed) = removed_services.lock() {
                                     removed.insert(svc.clone());
                                 }
-                            }
                             // fall through to run_service_container below
                         } else if docker.is_container_running(existing_cid).await.unwrap_or(false) {
                             // Already running — fix stale DB status (e.g. stats polling
@@ -435,11 +429,10 @@ pub async fn start_services(
                             });
                         } else if is_oneshot {
                             // Exited one-shot that did not succeed — recreate below
-                            if docker.remove_container(existing_cid).await.is_ok() {
-                                if let Ok(mut removed) = removed_services.lock() {
+                            if docker.remove_container(existing_cid).await.is_ok()
+                                && let Ok(mut removed) = removed_services.lock() {
                                     removed.insert(svc.clone());
                                 }
-                            }
                         } else {
                             // Stopped — try docker start (fast path)
                             match docker
@@ -472,11 +465,10 @@ pub async fn start_services(
                                 Err(e) => {
                                     tracing::warn!(service = %svc, error = %e, "docker start failed (stale?), recreating");
                                     // Container is gone or broken — remove stale reference and fall through
-                                    if docker.remove_container(existing_cid).await.is_ok() {
-                                        if let Ok(mut removed) = removed_services.lock() {
+                                    if docker.remove_container(existing_cid).await.is_ok()
+                                        && let Ok(mut removed) = removed_services.lock() {
                                             removed.insert(svc.clone());
                                         }
-                                    }
                                 }
                             }
                         }
@@ -496,27 +488,24 @@ pub async fn start_services(
                     started.push((svc.clone(), container_id.clone()));
                 }
 
-                if svc == litebin_common::types::DOCKER_PROXY_SERVICE {
-                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
+                if svc == litebin_common::types::DOCKER_PROXY_SERVICE
+                    && let Err(e) = docker.wait_for_healthy(&container_id, true).await {
                         let _ = docker.stop_container(&container_id).await;
                         let _ = docker.remove_container(&container_id).await;
                         return Err(format!("Docker observation proxy failed health check: {}", e));
                     }
-                }
 
                 // Wait for Docker network to assign a valid IP (skip if container exited)
-                if !run_config.host_network && docker.is_container_running(&container_id).await.unwrap_or(false) {
-                    if let Err(e) = docker.wait_for_network_ready(&container_id).await {
+                if !run_config.host_network && docker.is_container_running(&container_id).await.unwrap_or(false)
+                    && let Err(e) = docker.wait_for_network_ready(&container_id).await {
                         tracing::warn!(service = %svc, error = %e, "network readiness timeout, continuing");
                     }
-                }
 
                 // Wait for healthcheck if a downstream service depends on it
-                if needs_healthy {
-                    if let Err(e) = docker.wait_for_healthy(&container_id, true).await {
+                if needs_healthy
+                    && let Err(e) = docker.wait_for_healthy(&container_id, true).await {
                         tracing::warn!(service = %svc, error = %e, "healthcheck failed, continuing");
                     }
-                }
 
                 if needs_completed {
                     docker

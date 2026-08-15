@@ -85,7 +85,7 @@ pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>)
 
     // 3. Health check via mTLS
     let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
-    let health: HealthReport = match client.get(&format!("{}/health", base_url)).send().await {
+    let health: HealthReport = match client.get(format!("{}/health", base_url)).send().await {
         Ok(resp) if resp.status().is_success() => match resp.json::<HealthReport>().await {
             Ok(h) => h,
             Err(e) => {
@@ -123,7 +123,7 @@ pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>)
     });
 
     match client
-        .post(&format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
+        .post(format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
         .json(&register_body)
         .send()
         .await
@@ -258,7 +258,7 @@ pub async fn reregister_online_agents(state: &AppState) -> (usize, Vec<String>) 
         });
 
         match client
-            .post(&format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
+            .post(format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
             .json(&register_body)
             .send()
             .await

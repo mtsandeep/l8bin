@@ -50,15 +50,13 @@ async fn build_project_inner(
     // Context guard manages .dockerignore always, and .env injection when secrets are provided
     let _ctx_guard = BuildContextGuard::new(project_dir, dockerfile.unwrap_or("Dockerfile"), secret)?;
 
-    let result = if has_dockerfile {
+    // Temp .dockerignore and .env are cleaned up when _ctx_guard drops
+    if has_dockerfile {
         build_with_docker(project_dir, dockerfile, image_tag, Some(&_ctx_guard), quiet, ci_mode, platform).await
     } else if cfg!(target_os = "windows") {
         dockerbuild::check_docker_available()?;
         build_with_railpack_docker(project_dir, image_tag, Some(&_ctx_guard), quiet, ci_mode, platform).await
     } else {
         build_with_railpack_native(project_dir, image_tag, Some(&_ctx_guard), quiet, ci_mode, platform).await
-    };
-
-    // Temp .dockerignore and .env are cleaned up when _ctx_guard drops
-    result
+    }
 }
