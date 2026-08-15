@@ -435,19 +435,18 @@ impl DockerManager {
         // - config.binds: single-service path and litebin-scoped volumes
         // - bollard_host_config.binds: compose-mapped volumes (e.g., ./data:/app/data)
         let mut all_binds: Vec<&str> = Vec::new();
-        if let Some(ref binds) = filtered_binds {
+        if let Some(binds) = filtered_binds {
             all_binds.extend(binds.iter().map(|s| s.as_str()));
         }
-        if let Some(ref hc) = config.bollard_host_config {
-            if let Some(ref binds) = hc.binds {
-                all_binds.extend(binds.iter().map(|s| s.as_str()));
-            }
+        if let Some(hc) = config.bollard_host_config.as_ref()
+            && let Some(binds) = hc.binds.as_ref()
+        {
+            all_binds.extend(binds.iter().map(|s| s.as_str()));
         }
 
         let host_dir = self.host_projects_dir.as_deref();
         let project_base = host_dir
-            .map(|hd| std::path::Path::new(hd).canonicalize().ok())
-            .flatten()
+            .and_then(|hd| std::path::Path::new(hd).canonicalize().ok())
             .or_else(|| std::path::Path::new("projects").canonicalize().ok());
 
         for bind in &all_binds {
@@ -468,13 +467,12 @@ impl DockerManager {
             }
 
             // Verify the resolved path stays within the project directory
-            if let Some(ref base) = project_base {
-                if let Ok(resolved) = std::path::Path::new(&host_path).canonicalize() {
-                    if !resolved.starts_with(base) {
-                        tracing::warn!(path = %host_path, resolved = %resolved.display(), base = %base.display(), "bind mount path escapes project directory, skipping chown");
-                        continue;
-                    }
-                }
+            if let Some(base) = project_base.as_ref()
+                && let Ok(resolved) = std::path::Path::new(&host_path).canonicalize()
+                && !resolved.starts_with(base)
+            {
+                tracing::warn!(path = %host_path, resolved = %resolved.display(), base = %base.display(), "bind mount path escapes project directory, skipping chown");
+                continue;
             }
 
             // Try chown first (works for numeric UIDs and usernames that exist on host).

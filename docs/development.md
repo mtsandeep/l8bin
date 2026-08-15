@@ -64,6 +64,22 @@ Fix formatting with `cargo fmt --all`. If clippy reports a new warning, fix it
 or, for intentionally verbose API signatures, add a targeted
 `#[allow(clippy::too_many_arguments)]` on the function.
 
+**Platform-gated code caveat:** clippy only lints code compiled for the host
+platform — `#[cfg(unix)]` functions (e.g. `chown_bind_mounts`) are invisible to
+clippy on Windows and only get linted by the Linux CI runner. When editing
+unix-gated code on Windows, run clippy in a Linux container instead (uses the
+toolchain pinned by `rust-toolchain.toml`; the named volume caches the dependency
+build between runs):
+
+```bash
+docker run --rm -v "$(pwd):/workspace" -v l8bin-lint-cache:/tmp/lint-target \
+  -w /workspace -e CARGO_TARGET_DIR=/tmp/lint-target \
+  rust:1.94.1 cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+(The image tag must match the `rust-toolchain.toml` pin. On git-bash, prefix the
+command with `MSYS_NO_PATHCONV=1` if path translation mangles the mounts.)
+
 ### 3. Tests
 
 ```bash
