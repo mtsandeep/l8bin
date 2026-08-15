@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **Refactor (phase 2): split the orchestrator's oversized route/status/routing files into smaller modules** — also extracted the route-registration block out of `main.rs` and relocated the routing-provider factory. No behavior change; handler/type paths unchanged via re-exports.
 - **Refactor (phase 3): split the CLI's `ship` and `build` modules and moved the deploy/status command handlers out of `main.rs`** — no behavior change; `ship::`/`build::` paths unchanged via re-exports.
 - **Refactor (phase 4): deduplicated cross-crate code into shared modules** — shared HMAC agent request signing/verification, container/network naming and Docker-socket path helpers (the documented mirror copies are gone), service-stats wire types moved to litebin-common (the CLI now uses the real type instead of a local mirror), and shared internal-path/compose-file/caddy-name helpers replacing copy-pasted literals.
+- **Refactor (phase 5): split the remaining oversized orchestrator and agent route files into smaller modules** — the largest handlers' inline phase-blocks (validate, persist, stage, remote/local deploy, plan mutation, execution) were extracted into named functions with the same statements in the same order. No behavior change; public handler/type paths unchanged via re-exports.
 
 ## [0.3.21] - 2026-08-08
 
