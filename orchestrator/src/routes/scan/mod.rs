@@ -16,12 +16,7 @@ use litebin_common::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    AppState,
-    auth::backend::PasswordBackend,
-    nodes,
-    routes::manage::{agent_base_url, get_node_from_db},
-};
+use crate::{AppState, auth::backend::PasswordBackend, nodes, routes::manage::get_node_from_db};
 use import::import_single_group;
 
 // ── Scan ──────────────────────────────────────────────────────────────────────
@@ -83,7 +78,6 @@ pub async fn scan_containers(State(state): State<AppState>, Query(q): Query<Scan
     // Fan-out to all agent nodes in parallel
     let mut agent_futures = Vec::new();
     for node in &agent_nodes {
-        let base_url = agent_base_url(&state.config, node);
         let node_id_owned = node.id.clone();
         let client = match nodes::client::get_node_client(&state.node_clients, &node.id) {
             Ok(c) => c,
@@ -92,20 +86,10 @@ pub async fn scan_containers(State(state): State<AppState>, Query(q): Query<Scan
                 continue;
             }
         };
+        let agent = nodes::client::AgentClient::new(client, node, &state.config);
         let fut = async move {
-            let url = format!("{}/containers/scan", base_url);
-            match client.get(&url).send().await {
-                Ok(resp) if resp.status().is_success() => match resp.json::<Vec<ScanGroup>>().await {
-                    Ok(groups) => (node_id_owned, groups),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "scan: failed to parse agent scan response");
-                        (node_id_owned, Vec::new())
-                    }
-                },
-                Ok(resp) => {
-                    tracing::warn!(status = %resp.status(), "scan: agent returned error");
-                    (node_id_owned, Vec::new())
-                }
+            match agent.scan().await {
+                Ok(groups) => (node_id_owned, groups),
                 Err(e) => {
                     tracing::warn!(error = %e, "scan: agent request failed");
                     (node_id_owned, Vec::new())

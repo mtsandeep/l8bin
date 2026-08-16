@@ -1,7 +1,5 @@
 use axum::http::StatusCode;
-use serde::Deserialize;
 use serde::Serialize;
-use serde_json::json;
 use std::hash::Hasher;
 
 use crate::AppState;
@@ -13,15 +11,6 @@ pub struct MessageResponse {
     pub message: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
-}
-
-/// Build the base URL for an agent node.
-pub fn agent_base_url(config: &crate::config::Config, node: &Node) -> String {
-    if config.ca_cert_path.is_empty() {
-        format!("http://{}:{}", node.host, node.agent_port)
-    } else {
-        format!("https://{}:{}", node.host, node.agent_port)
-    }
 }
 
 /// Fetch a Node record from the DB by node_id.
@@ -188,13 +177,16 @@ pub async fn cleanup_unused_image(state: &AppState, node_id: Option<&str>, image
                 return;
             }
         };
-        let base_url = agent_base_url(&state.config, &node);
-        match client.post(format!("{}/images/remove-unused", base_url)).json(&json!({ "image": image })).send().await {
-            Ok(resp) if resp.status().is_success() => {
+        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
+        match agent
+            .remove_unused_image(&litebin_common::agent_api::RemoveImageRequest { image: image.to_string() })
+            .await
+        {
+            Ok(_) => {
                 tracing::info!(image = %image, node_id = %node_id, "cleaned up unused remote image");
             }
-            Ok(resp) => {
-                tracing::warn!(image = %image, node_id = %node_id, status = %resp.status(), "cleanup: agent returned non-success");
+            Err(nodes::client::AgentClientError::Status { code, .. }) => {
+                tracing::warn!(image = %image, node_id = %node_id, status = %code, "cleanup: agent returned non-success");
             }
             Err(e) => {
                 tracing::warn!(image = %image, node_id = %node_id, error = %e, "cleanup: agent unreachable");
@@ -230,25 +222,11 @@ pub async fn get_image_digest(state: &AppState, node_id: Option<&str>, image: &s
                 return None;
             }
         };
-        let base_url = agent_base_url(&state.config, &node);
-        #[derive(Deserialize)]
-        struct InspectResponse {
-            image_id: String,
-        }
-        match client.get(format!("{}/images/inspect?image={}", base_url, image)).send().await {
-            Ok(resp) if resp.status().is_success() => match resp.json::<InspectResponse>().await {
-                Ok(body) => Some(body.image_id),
-                Err(e) => {
-                    tracing::debug!(image = %image, error = %e, "inspect: failed to parse agent response");
-                    None
-                }
-            },
-            Ok(resp) => {
-                tracing::debug!(image = %image, status = %resp.status(), "inspect: agent returned non-success");
-                None
-            }
+        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
+        match agent.inspect_image(image).await {
+            Ok(body) => Some(body.image_id),
             Err(e) => {
-                tracing::debug!(image = %image, error = %e, "inspect: agent unreachable");
+                tracing::debug!(image = %image, error = %e, "inspect: agent lookup failed");
                 None
             }
         }

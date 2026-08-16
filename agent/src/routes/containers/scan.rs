@@ -1,42 +1,11 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use serde::{Deserialize, Serialize};
+use litebin_common::agent_api::{ComposeFileResponse, ContainerImportResult, ImportRequest, ImportResponse};
 
 use litebin_common::types::find_compose_file;
 
 use crate::AgentState;
 
 use super::env::projects_dir;
-
-// ── Import types ─────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct ContainerImportSpec {
-    pub container_id: String,
-    pub new_name: String,
-}
-
-#[derive(Deserialize)]
-pub struct ImportRequest {
-    pub project_id: String,
-    pub network_name: String,
-    pub containers: Vec<ContainerImportSpec>,
-    pub compose_yaml: Option<String>,
-    pub env_content: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct ContainerImportResult {
-    pub container_id: String,
-    pub new_name: String,
-    pub ok: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct ImportResponse {
-    pub results: Vec<ContainerImportResult>,
-    pub errors: Vec<String>,
-}
 
 // ── Scan & Import Handlers ───────────────────────────────────────────────────
 
@@ -196,12 +165,5 @@ pub async fn get_compose_file(
 
     let env_content: Option<String> = std::fs::read_to_string(dir.join(".env")).ok();
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "compose_yaml": compose_yaml,
-            "env_content": env_content,
-        })),
-    )
-        .into_response()
+    (StatusCode::OK, Json(ComposeFileResponse { compose_yaml, env_content })).into_response()
 }

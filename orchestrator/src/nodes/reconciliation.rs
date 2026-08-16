@@ -4,7 +4,7 @@ use tracing::{info, warn};
 use crate::AppState;
 use crate::nodes::client::get_node_client;
 use crate::status::{self, ProjectUpdateFields};
-use litebin_common::types::{ContainerStatus, Project, ProjectStatus};
+use litebin_common::types::{Project, ProjectStatus};
 
 pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
     let start = Instant::now();
@@ -97,24 +97,18 @@ pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
             None => continue,
         };
 
-        let status_url = if state.config.ca_cert_path.is_empty() {
-            format!("http://{}:{}/containers/{}/status", node.host, node.agent_port, container_id)
-        } else {
-            format!("https://{}:{}/containers/{}/status", node.host, node.agent_port, container_id)
-        };
+        let agent = crate::nodes::client::AgentClient::new(client, &node, &state.config);
 
-        match client.get(&status_url).send().await {
-            Ok(resp) if resp.status().as_u16() == 404 => {
+        match agent.container_status(container_id).await {
+            Err(crate::nodes::client::AgentClientError::Status { code, .. })
+                if code == axum::http::StatusCode::NOT_FOUND =>
+            {
                 set_project_error(&state, &project.id).await;
                 corrections += 1;
             }
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(status) = resp.json::<ContainerStatus>().await
-                    && status.state != "running"
-                {
-                    set_project_error(&state, &project.id).await;
-                    corrections += 1;
-                }
+            Ok(status) if status.state != "running" => {
+                set_project_error(&state, &project.id).await;
+                corrections += 1;
             }
             _ => {} // agent unreachable — don't change status, heartbeat will handle offline
         }
@@ -182,30 +176,20 @@ async fn reconcile_project(state: &AppState, project: &Project, corrections: &mu
         return;
     };
 
-    let status_url = if state.config.ca_cert_path.is_empty() {
-        format!("http://{}:{}/containers/{}/status", node.host, node.agent_port, container_id)
-    } else {
-        format!("https://{}:{}/containers/{}/status", node.host, node.agent_port, container_id)
-    };
+    let agent = crate::nodes::client::AgentClient::new(client, &node, &state.config);
 
-    match client.get(&status_url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            if let Ok(status) = resp.json::<ContainerStatus>().await {
-                if status.state == "running" {
-                    set_project_running(state, project).await;
-                } else {
-                    set_project_error(state, &project.id).await;
-                }
+    match agent.container_status(&container_id).await {
+        Ok(status) => {
+            if status.state == "running" {
+                set_project_running(state, project).await;
             } else {
                 set_project_error(state, &project.id).await;
             }
             *corrections += 1;
         }
-        Ok(resp) if resp.status().as_u16() == 404 => {
-            set_project_error(state, &project.id).await;
-            *corrections += 1;
-        }
-        _ => {
+        // Any failure (404, non-success, unreachable, bad payload) marks the
+        // project errored — this pass only runs for suspected-stuck projects.
+        Err(_) => {
             set_project_error(state, &project.id).await;
             *corrections += 1;
         }

@@ -1,6 +1,6 @@
 use axum::{Json, extract::Path, extract::State, http::StatusCode};
 
-use super::super::manage::{agent_base_url, get_node_from_db, sync_caddy};
+use super::super::manage::{get_node_from_db, sync_caddy};
 use super::helpers::{
     aggregate_root_fs_bytes, batch_load_services, enrich_services, load_project_container_ids, make_stats_response,
     project_container_ids,
@@ -171,31 +171,24 @@ pub async fn project_disk_usage(
         let client = nodes::client::get_node_client(&state.node_clients, node_id)
             .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
         let node = get_node_from_db(&state.db, node_id).await?;
-        let base_url = agent_base_url(&state.config, &node);
+        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
 
         for container_id in &container_ids {
-            let resp = client
-                .get(format!("{}/containers/{}/disk-usage", base_url, container_id))
-                .send()
-                .await
-                .map_err(|e| {
-                    (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable for container '{container_id}': {e}"))
-                })?;
-
-            if !resp.status().is_success() {
-                let body = resp.text().await.unwrap_or_default();
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("agent disk-usage failed for container '{container_id}': {body}"),
-                ));
-            }
-
-            let usage: litebin_common::docker::DiskUsage = resp.json().await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to parse disk-usage response for container '{container_id}': {e}"),
-                )
-            })?;
+            let usage = match agent.disk_usage(container_id).await {
+                Ok(usage) => usage,
+                Err(nodes::client::AgentClientError::Status { body, .. }) => {
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("agent disk-usage failed for container '{container_id}': {body}"),
+                    ));
+                }
+                Err(e) => {
+                    return Err((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        format!("agent unreachable for container '{container_id}': {e}"),
+                    ));
+                }
+            };
             root_fs_sizes.push(usage.size_root_fs);
         }
     } else {

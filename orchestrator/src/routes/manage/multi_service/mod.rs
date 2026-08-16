@@ -7,6 +7,7 @@ mod stop;
 
 pub use delete::delete_all_services;
 pub(crate) use helpers::apply_remote_batch_failure_metadata;
+pub(crate) use helpers::{BatchRunInputs, build_batch_run_payload};
 pub(in crate::routes::manage) use helpers::{approved_docker_observe_requesters, proxy_needed_after_stop};
 pub use opts::StartServicesOpts;
 pub use recreate::recreate_services;

@@ -1,15 +1,13 @@
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use litebin_common::proxy::is_hop_by_hop;
-use litebin_common::types::{Node, ProjectStatus};
+use litebin_common::types::ProjectStatus;
 
 use crate::AppState;
 use crate::nodes;
-use crate::routes::manage::agent_base_url;
 use crate::status::{self, ProjectUpdateFields};
 
 /// Try to acquire the per-project lock. Returns None if another operation is in progress.
@@ -69,8 +67,7 @@ pub(super) async fn proxy_request(
 pub(super) async fn remote_recreate(
     state: &AppState,
     project: &crate::db::models::Project,
-    client: &reqwest::Client,
-    base_url: &str,
+    agent: &nodes::client::AgentClient,
 ) -> Result<(), Response> {
     let image =
         project.image.as_deref().ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "no image").into_response())?;
@@ -86,45 +83,38 @@ pub(super) async fn remote_recreate(
         (StatusCode::INTERNAL_SERVER_ERROR, "capability lookup failed").into_response()
     })?;
 
-    let resp = client
-        .post(format!("{}/containers/recreate", base_url))
-        .json(&json!({
-            "image": image,
-            "internal_port": internal_port,
-            "project_id": project.id,
-            "cmd": project.cmd,
-            "memory_limit_mb": project.memory_limit_mb,
-            "cpu_limit": project.cpu_limit,
-            "volumes": project.volumes.as_ref().and_then(|v| {
-                match serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(v) {
-                    Ok(mounts) => Some(mounts),
-                    Err(e) => {
-                        tracing::error!(project = %project.id, error = %e, "waker: failed to parse volumes JSON");
-                        None
-                    }
+    let run_request = litebin_common::agent_api::RunRequest {
+        image: image.to_string(),
+        internal_port,
+        project_id: project.id.clone(),
+        cmd: project.cmd.clone(),
+        memory_limit_mb: project.memory_limit_mb,
+        cpu_limit: project.cpu_limit,
+        volumes: project.volumes.as_ref().and_then(|v| {
+            match serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(v) {
+                Ok(mounts) => Some(mounts),
+                Err(e) => {
+                    tracing::error!(project = %project.id, error = %e, "waker: failed to parse volumes JSON");
+                    None
                 }
-            }),
-            "docker_observe": docker_observe,
-        }))
-        .send()
-        .await
-        .map_err(|e| {
+            }
+        }),
+        docker_observe,
+        stage_only: false,
+    };
+    let result = match agent.recreate(&run_request).await {
+        Ok(result) => result,
+        Err(nodes::client::AgentClientError::Status { body, .. }) => {
+            tracing::error!(project = %project.id, "waker: recreate failed: {}", body);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to recreate container").into_response());
+        }
+        Err(e) => {
             tracing::error!(error = %e, project = %project.id, "waker: recreate failed to reach agent");
-            (StatusCode::SERVICE_UNAVAILABLE, "agent unreachable").into_response()
-        })?;
-
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        tracing::error!(project = %project.id, "waker: recreate failed: {}", body);
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to recreate container").into_response());
-    }
-
-    let result: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("bad response: {e}")).into_response())?;
-    let new_container_id = result["container_id"].as_str().unwrap_or("").to_string();
-    let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
+            return Err(e.into_response_parts().into_response());
+        }
+    };
+    let new_container_id = result.container_id;
+    let mapped_port = result.mapped_port;
 
     let now = chrono::Utc::now().timestamp();
     if let Err(e) = status::transition(
@@ -257,28 +247,14 @@ pub(super) async fn start_stopped_container(
     if is_remote {
         let node_id = project.node_id.as_deref().unwrap().to_string();
 
-        let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
-            Ok(c) => c,
+        let agent = match nodes::client::AgentClient::resolve(state, &node_id).await {
+            Ok(a) => a,
             Err(e) => {
                 tracing::error!(error = %e, node_id = %node_id, "waker: node client unavailable");
                 return Err((StatusCode::SERVICE_UNAVAILABLE, "node unavailable").into_response());
             }
         };
 
-        let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-            .bind(&node_id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(Some(n)) => n,
-            Ok(None) => return Err((StatusCode::SERVICE_UNAVAILABLE, "node not found").into_response()),
-            Err(e) => {
-                tracing::error!(error = %e, "waker: db error fetching node");
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response());
-            }
-        };
-
-        let base_url = agent_base_url(&state.config, &node);
         let docker_observe = crate::capabilities::has_capability(
             &state.db,
             subdomain,
@@ -287,66 +263,56 @@ pub(super) async fn start_stopped_container(
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "capability lookup failed").into_response())?;
         if docker_observe {
-            return remote_recreate(state, project, &client, &base_url).await;
+            return remote_recreate(state, project, &agent).await;
         }
 
         // Use the smart start endpoint — agent will compare .env hashes and
         // recreate only if env has changed since last injection.
         let container_id = project.container_id.as_deref().unwrap_or("");
-        let resp = match client
-            .post(format!("{}/containers/start", base_url))
-            .json(&json!({
-                "container_id": container_id,
-                "project_id": subdomain,
-                "image": project.image,
-                "internal_port": project.internal_port,
-                "cmd": project.cmd,
-                "memory_limit_mb": project.memory_limit_mb,
-                "cpu_limit": project.cpu_limit,
-            }))
-            .send()
-            .await
-        {
-            Ok(r) => r,
+        let start_request = litebin_common::agent_api::StartRequest {
+            container_id: container_id.to_string(),
+            project_id: Some(subdomain.clone()),
+            image: project.image.clone(),
+            internal_port: project.internal_port,
+            cmd: project.cmd.clone(),
+            memory_limit_mb: project.memory_limit_mb,
+            cpu_limit: project.cpu_limit,
+            host_network: false,
+            is_background: false,
+        };
+        match agent.start(&start_request).await {
+            Ok(started) => {
+                let mapped_port = started.mapped_port;
+
+                let now = chrono::Utc::now().timestamp();
+                if let Err(e) = status::transition(
+                    &state.db,
+                    subdomain,
+                    ProjectStatus::Running,
+                    &ProjectUpdateFields {
+                        mapped_port: Some(Some(i64::from(mapped_port))),
+                        last_active_at: Some(now),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!(project_id = %subdomain, error = %e, "waker: failed to transition to Running after start");
+                }
+                return Ok(());
+            }
+            Err(nodes::client::AgentClientError::Status { body, .. }) => {
+                // Start failed — container may have been pruned. Fall back to recreate.
+                tracing::warn!(project = %subdomain, body = %body, "waker: agent start failed, trying recreate");
+                return remote_recreate(state, project, &agent).await;
+            }
             Err(e) => {
                 tracing::error!(error = %e, project = %subdomain, "waker: failed to call agent start");
-                return Err((StatusCode::SERVICE_UNAVAILABLE, "agent unreachable").into_response());
+                let (status_code, message) = e.into_response_parts();
+                return Err((status_code, message).into_response());
             }
-        };
-
-        if resp.status().is_success() {
-            let result: serde_json::Value = match resp.json().await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(project = %subdomain, error = %e, "waker: failed to parse agent start response");
-                    return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to parse agent response").into_response());
-                }
-            };
-            let mapped_port = result["mapped_port"].as_u64().map(|p| p as u16);
-
-            let now = chrono::Utc::now().timestamp();
-            if let Err(e) = status::transition(
-                &state.db,
-                subdomain,
-                ProjectStatus::Running,
-                &ProjectUpdateFields {
-                    mapped_port: Some(mapped_port.map(|p| p as i64)),
-                    last_active_at: Some(now),
-                    ..Default::default()
-                },
-                None,
-            )
-            .await
-            {
-                tracing::warn!(project_id = %subdomain, error = %e, "waker: failed to transition to Running after start");
-            }
-            return Ok(());
         }
-
-        // Start failed — container may have been pruned. Fall back to recreate.
-        let body = resp.text().await.unwrap_or_default();
-        tracing::warn!(project = %subdomain, body = %body, "waker: agent start failed, trying recreate");
-        return remote_recreate(state, project, &client, &base_url).await;
     }
 
     // Local: use unified start_services
@@ -375,30 +341,16 @@ pub(super) async fn restart_crashed_container(
     if is_remote {
         let node_id = project.node_id.as_deref().unwrap().to_string();
 
-        let client = match nodes::client::get_node_client(&state.node_clients, &node_id) {
-            Ok(c) => c,
+        let agent = match nodes::client::AgentClient::resolve(state, &node_id).await {
+            Ok(a) => a,
             Err(e) => {
                 tracing::error!(error = %e, node_id = %node_id, "waker: node client unavailable");
                 return Err((StatusCode::SERVICE_UNAVAILABLE, "node unavailable").into_response());
             }
         };
 
-        let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-            .bind(&node_id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(Some(n)) => n,
-            Ok(None) => return Err((StatusCode::SERVICE_UNAVAILABLE, "node not found").into_response()),
-            Err(e) => {
-                tracing::error!(error = %e, "waker: db error fetching node");
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response());
-            }
-        };
-
-        let base_url = agent_base_url(&state.config, &node);
         tracing::info!(project = %project.id, "waker: remote container down despite DB=running, recreating");
-        return remote_recreate(state, project, &client, &base_url).await;
+        return remote_recreate(state, project, &agent).await;
     }
 
     // Local: use unified start_services (force_recreate since container is dead)

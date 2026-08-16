@@ -2,7 +2,7 @@ use litebin_common::types::{ProjectStatus, container_name, project_network_name}
 
 use crate::{
     AppState, nodes,
-    routes::manage::{agent_base_url, ensure_project_dir_and_env, get_node_from_db},
+    routes::manage::{ensure_project_dir_and_env, get_node_from_db},
     status,
 };
 
@@ -145,27 +145,16 @@ pub(super) async fn import_single_group(
         }
     }
 
-    // ── 3. Build agent import payload ───────────────────────────────────────
+    // ── 3. Build agent import inputs ────────────────────────────────────────
     let network_name = project_network_name(project_id, None);
-    let container_specs: Vec<serde_json::Value> = group
+    let container_specs: Vec<litebin_common::agent_api::ContainerImportSpec> = group
         .containers
         .iter()
-        .map(|c| {
-            let new_name = container_name(project_id, &c.service_name, None);
-            serde_json::json!({
-                "container_id": c.container_id,
-                "new_name": new_name,
-            })
+        .map(|c| litebin_common::agent_api::ContainerImportSpec {
+            container_id: c.container_id.clone(),
+            new_name: container_name(project_id, &c.service_name, None),
         })
         .collect();
-
-    let import_payload = serde_json::json!({
-        "project_id": project_id,
-        "network_name": network_name,
-        "containers": container_specs,
-        "compose_yaml": compose_yaml,
-        "env_content": env_content,
-    });
 
     let mut migrated_ids: Vec<String> = Vec::new();
 
@@ -184,32 +173,26 @@ pub(super) async fn import_single_group(
     } else {
         // Remote agent
         let node = get_node_from_db(&state.db, &group.node_id).await.map_err(|(_, msg)| msg)?;
-        let base_url = agent_base_url(&state.config, &node);
         let client = nodes::client::get_node_client(&state.node_clients, &group.node_id)
             .map_err(|e| format!("no client for node {}: {e}", group.node_id))?;
+        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
 
-        let url = format!("{}/containers/import", base_url);
-        match client.post(&url).json(&import_payload).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(body) = resp.json::<serde_json::Value>().await {
-                    migrated_ids = body["results"]
-                        .as_array()
-                        .unwrap_or(&vec![])
-                        .iter()
-                        .filter(|r| r["ok"].as_bool().unwrap_or(false))
-                        .filter_map(|r| r["container_id"].as_str().map(|s| s.to_string()))
-                        .collect();
-                    if let Some(errs) = body["errors"].as_array() {
-                        for err in errs {
-                            if let Some(s) = err.as_str() {
-                                warnings.push(s.to_string());
-                            }
-                        }
-                    }
+        let import_request = litebin_common::agent_api::ImportRequest {
+            project_id: project_id.to_string(),
+            network_name,
+            containers: container_specs,
+            compose_yaml,
+            env_content,
+        };
+        match agent.import(&import_request).await {
+            Ok(body) => {
+                migrated_ids = body.results.iter().filter(|r| r.ok).map(|r| r.container_id.clone()).collect();
+                for err in body.errors {
+                    warnings.push(err);
                 }
             }
-            Ok(resp) => {
-                warnings.push(format!("agent import returned status {}", resp.status()));
+            Err(nodes::client::AgentClientError::Status { code, .. }) => {
+                warnings.push(format!("agent import returned status {code}"));
             }
             Err(e) => {
                 warnings.push(format!("agent import request failed: {e}"));
@@ -325,35 +308,12 @@ async fn fetch_compose_file_from_agent(
         .await?
         .ok_or_else(|| anyhow::anyhow!("node '{}' not found", node_id))?;
 
-    let base_url = agent_base_url(&state.config, &node);
     let client = nodes::client::get_node_client(&state.node_clients, node_id)
         .map_err(|e| anyhow::anyhow!("no client for node {}: {}", node_id, e))?;
+    let agent = nodes::client::AgentClient::new(client, &node, &state.config);
 
-    // URL-encode the directory path (percent-encode UTF-8 bytes)
-    let encoded_dir: String = working_dir
-        .bytes()
-        .flat_map(|b| {
-            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/' | b':' | b'\\') {
-                vec![b as char]
-            } else {
-                format!("%{:02X}", b).chars().collect()
-            }
-        })
-        .collect();
+    let body =
+        agent.compose_file(working_dir).await.map_err(|e| anyhow::anyhow!("compose-file request failed: {e}"))?;
 
-    let url = format!("{}/containers/compose-file?dir={}", base_url, encoded_dir);
-
-    let resp = client.get(&url).send().await.map_err(|e| anyhow::anyhow!("compose-file request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        anyhow::bail!("agent returned {} for compose-file", resp.status());
-    }
-
-    let body: serde_json::Value =
-        resp.json::<serde_json::Value>().await.map_err(|e| anyhow::anyhow!("compose-file parse failed: {e}"))?;
-
-    let compose_yaml = body["compose_yaml"].as_str().map(|s: &str| s.to_string());
-    let env_content = body["env_content"].as_str().map(|s: &str| s.to_string());
-
-    Ok((compose_yaml, env_content))
+    Ok((body.compose_yaml, body.env_content))
 }

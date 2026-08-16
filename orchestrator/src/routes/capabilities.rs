@@ -217,26 +217,19 @@ pub async fn revoke_project_capability(
                 }
             }
         } else if let Some(node_id) = node_id.as_deref() {
-            let node = crate::routes::manage::get_node_from_db(&state.db, node_id)
+            let agent = crate::nodes::client::AgentClient::resolve(&state, node_id)
                 .await
                 .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("{e:?}")))?;
-            let client = crate::nodes::client::get_node_client(&state.node_clients, node_id)
-                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("{e:?}")))?;
-            let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
             for container_id in &container_ids {
-                let response = client
-                    .post(format!("{base_url}/containers/stop"))
-                    .json(&json!({"container_id": container_id}))
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        (StatusCode::SERVICE_UNAVAILABLE, format!("failed to stop host-network workload: {e}"))
-                    })?;
-                if !response.status().is_success() {
-                    return Err((
-                        StatusCode::BAD_GATEWAY,
-                        "failed to stop host-network workload before revocation".into(),
-                    ));
+                if let Err(e) =
+                    agent.stop(&litebin_common::agent_api::StopRequest { container_id: container_id.clone() }).await
+                {
+                    return Err(match e {
+                        crate::nodes::client::AgentClientError::Status { .. } => {
+                            (StatusCode::BAD_GATEWAY, "failed to stop host-network workload before revocation".into())
+                        }
+                        e => (StatusCode::SERVICE_UNAVAILABLE, format!("failed to stop host-network workload: {e}")),
+                    });
                 }
             }
         }
@@ -267,21 +260,16 @@ pub async fn revoke_project_capability(
             )?;
         } else {
             let node_id = node_id.as_deref().unwrap();
-            let node = crate::routes::manage::get_node_from_db(&state.db, node_id)
+            let agent = crate::nodes::client::AgentClient::resolve(&state, node_id)
                 .await
                 .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("{e:?}")))?;
-            let client = crate::nodes::client::get_node_client(&state.node_clients, node_id)
-                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("{e:?}")))?;
-            let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
-            let response = client
-                .post(format!("{base_url}/containers/remove"))
-                .json(&json!({"container_id": proxy_name}))
-                .send()
-                .await
-                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("failed to contact agent: {e}")))?;
-            if !response.status().is_success() {
-                let body = response.text().await.unwrap_or_default();
-                return Err((StatusCode::BAD_GATEWAY, format!("failed to remove Docker observation proxy: {body}")));
+            if let Err(e) = agent.remove(&litebin_common::agent_api::RemoveRequest { container_id: proxy_name }).await {
+                return Err(match e {
+                    crate::nodes::client::AgentClientError::Status { body, .. } => {
+                        (StatusCode::BAD_GATEWAY, format!("failed to remove Docker observation proxy: {body}"))
+                    }
+                    e => (StatusCode::SERVICE_UNAVAILABLE, format!("failed to contact agent: {e}")),
+                });
             }
         }
     }

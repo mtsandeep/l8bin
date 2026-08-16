@@ -59,10 +59,10 @@ match docker.stop_container(id).await {
 - `DockerManager` methods are called from axum handlers that return `impl IntoResponse` — these already use `match` for error mapping, so the change is mostly mechanical.
 - `DbError` would replace `is_unique_constraint()` helper in `validation.rs` with `DbError::UniqueConstraint` variant.
 - `CloudflareError` would replace the `code == Some(81057)` check with `CloudflareError::DuplicateRecord`.
-- The `orchestrator` → `agent` HTTP calls use `reqwest` — these get a `ClientError` type via `docs/planning/agent-wire-contract.md`, which depends on this effort.
+- The `orchestrator` → `agent` HTTP calls use `reqwest` — these already have a minimal typed error (`AgentClientError` in `orchestrator/src/nodes/client.rs`, see [agent-api.md](../agent-api.md)). This effort should fold it into the fuller `ClientError` design.
 - Callers outside the workspace (none currently) would need the error types re-exported from `litebin-common`.
 - Scope note (2026-08 maintainability review): beyond the internal errors above, 41 orchestrator handler signatures return `(StatusCode, String)` — the same effort should introduce one `ApiError` enum with a central `IntoResponse` impl so error response shapes are consistent for the dashboard.
 
 ## Priority
 
-Medium — still code quality / ergonomics only (no behavioral changes), but it is a prerequisite for `agent-wire-contract.md` and unlocks consistent dashboard error handling across the 41 `(StatusCode, String)` handler signatures.
+Medium — still code quality / ergonomics only (no behavioral changes), but it unlocks consistent dashboard error handling across the 41 `(StatusCode, String)` handler signatures. The wire-contract dependency is resolved (see [agent-api.md](../agent-api.md)).

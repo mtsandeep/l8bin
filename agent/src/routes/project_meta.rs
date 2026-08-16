@@ -1,21 +1,9 @@
 use std::collections::HashMap;
 
 use axum::{Json, extract::State, http::StatusCode};
+use litebin_common::agent_api::ProjectMetaRequest;
 
 use crate::{AgentState, ProjectMetaEntry};
-
-#[derive(serde::Deserialize)]
-pub struct ProjectMetaRequest {
-    pub projects: HashMap<String, bool>,
-    pub background_projects: Option<HashMap<String, bool>>,
-    pub allow_raw_ports: Option<HashMap<String, bool>>,
-    pub docker_observe: Option<HashMap<String, bool>>,
-    pub host_network: Option<HashMap<String, bool>>,
-    /// Global default memory limit (MB) from orchestrator settings.
-    pub default_memory_limit_mb: Option<i64>,
-    /// Global default CPU limit from orchestrator settings.
-    pub default_cpu_limit: Option<f64>,
-}
 
 /// POST /internal/project-meta — called by orchestrator to push lifecycle and capability flags.
 /// Replaces the full project meta map, persists to disk + memory.

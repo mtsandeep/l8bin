@@ -1,3 +1,4 @@
+pub mod agent_api;
 pub mod agent_auth;
 pub mod caddy;
 pub mod capabilities;

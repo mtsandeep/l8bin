@@ -1,6 +1,5 @@
 use crate::AppState;
 use crate::nodes;
-use crate::routes::manage::agent_base_url;
 
 #[derive(Debug)]
 pub(super) enum TargetPreflightError {
@@ -42,18 +41,11 @@ pub(super) async fn require_live_host_network_target(state: &AppState, target_no
         .map_err(|error| anyhow::anyhow!("failed to load selected node: {error:?}"))?;
     let client = nodes::client::get_node_client(&state.node_clients, target_node_id)
         .map_err(|error| anyhow::anyhow!("selected agent client is unavailable: {error:?}"))?;
-    let health_url = format!("{}/health", agent_base_url(&state.config, &node));
-    let response =
-        client.get(health_url).send().await.map_err(|error| {
-            anyhow::anyhow!("failed to contact selected agent for host-network eligibility: {error}")
-        })?;
-    if !response.status().is_success() {
-        anyhow::bail!("selected agent health check returned {}", response.status());
-    }
-    let health = response
-        .json::<litebin_common::types::HealthReport>()
+    let agent = nodes::client::AgentClient::new(client, &node, &state.config);
+    let health = agent
+        .health()
         .await
-        .map_err(|error| anyhow::anyhow!("failed to read selected agent health: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("failed to contact selected agent for host-network eligibility: {error}"))?;
     litebin_common::docker::require_host_network_eligible(health.docker_rootless, Some(health.protocol_version as i64))
 }
 

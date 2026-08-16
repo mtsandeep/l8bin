@@ -3,7 +3,6 @@ use serde_json::json;
 
 use crate::AppState;
 use crate::nodes;
-use crate::routes::manage::agent_base_url;
 use crate::status::{self, ProjectUpdateFields};
 use litebin_common::types::ProjectStatus;
 
@@ -23,26 +22,8 @@ pub(super) async fn stage_only_path(
     let target_node_id = &p.target_node_id;
 
     if target_node_id != "local" {
-        let node = match crate::routes::manage::get_node_from_db(&state.db, target_node_id).await {
-            Ok(n) => n,
-            Err(e) => {
-                if let Err(e) = status::transition(
-                    &state.db,
-                    project_id,
-                    ProjectStatus::Error,
-                    &ProjectUpdateFields::default(),
-                    None,
-                )
-                .await
-                {
-                    tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
-                }
-                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("{:?}", e)}))).into_response();
-            }
-        };
-
-        let client = match nodes::client::get_node_client(&state.node_clients, target_node_id) {
-            Ok(c) => c,
+        let agent = match nodes::client::AgentClient::resolve(state, target_node_id).await {
+            Ok(a) => a,
             Err(e) => {
                 if let Err(e) = status::transition(
                     &state.db,
@@ -57,31 +38,32 @@ pub(super) async fn stage_only_path(
                 }
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": format!("node client unavailable: {:?}", e)})),
+                    Json(json!({"error": format!("node client unavailable: {e}")})),
                 )
                     .into_response();
             }
         };
 
-        let base_url = agent_base_url(&state.config, &node);
-        let stage_resp = match client
-            .post(format!("{}/containers/batch-run", base_url))
-            .json(&json!({
-                "project_id": project_id,
-                "compose_yaml": form.compose_yaml,
-                "service_order": v.start_order,
-                "is_background": v.is_background,
-                "docker_observe": p.docker_observe,
-                "host_network": p.host_network,
-                "stage_only": true,
-            }))
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!(error = %e, "remote compose stage request failed");
-                if let Err(e) = status::transition(
+        let payload = crate::routes::manage::multi_service::build_batch_run_payload(
+            &state.db,
+            crate::routes::manage::multi_service::BatchRunInputs {
+                project_id: project_id.clone(),
+                compose_yaml: form.compose_yaml.clone(),
+                service_order: v.start_order.clone(),
+                target_services: None,
+                allow_raw_ports: None,
+                docker_observe: Some(p.docker_observe),
+                host_network: Some(p.host_network),
+                is_background: v.is_background,
+                force_pull: false,
+                stage_only: true,
+            },
+        )
+        .await;
+        if let Err(e) = agent.batch_run(&payload).await {
+            if let nodes::client::AgentClientError::Status { body, .. } = &e {
+                tracing::error!(body = %body, "remote compose stage failed");
+                if let Err(transition_error) = status::transition(
                     &state.db,
                     project_id,
                     ProjectStatus::Error,
@@ -90,24 +72,23 @@ pub(super) async fn stage_only_path(
                 )
                 .await
                 {
-                    tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
+                    tracing::warn!(project_id = %project_id, error = %transition_error, "compose stage: failed to transition to Error");
                 }
-                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("agent unreachable: {e}")})))
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error": format!("remote stage failed: {body}")})),
+                )
                     .into_response();
             }
-        };
-
-        if !stage_resp.status().is_success() {
-            let body = stage_resp.text().await.unwrap_or_default();
-            tracing::error!(body = %body, "remote compose stage failed");
-            if let Err(e) =
+            tracing::error!(error = %e, "remote compose stage request failed");
+            if let Err(transition_error) =
                 status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
                     .await
             {
-                tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
+                tracing::warn!(project_id = %project_id, error = %transition_error, "compose stage: failed to transition to Error");
             }
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("remote stage failed: {body}")})))
-                .into_response();
+            let (status_code, message) = e.into_response_parts();
+            return (status_code, Json(json!({"error": message}))).into_response();
         }
     }
 

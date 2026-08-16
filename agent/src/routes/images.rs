@@ -5,49 +5,12 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
+use litebin_common::agent_api::{
+    ErrorResponse, InspectQueryParams, InspectResponse, LoadImageQueryParams, LoadImageResponse, PruneResponse,
+    RemoveImageRequest, RemoveImageResponse,
+};
 
 use crate::AgentState;
-
-#[derive(Serialize)]
-pub struct LoadImageResponse {
-    pub image_id: String,
-}
-
-#[derive(Deserialize)]
-pub struct RemoveImageRequest {
-    pub image: String,
-}
-
-#[derive(Serialize)]
-pub struct RemoveImageResponse {
-    pub removed: bool,
-}
-
-#[derive(Serialize)]
-pub struct PruneResponse {
-    pub bytes_reclaimed: u64,
-}
-
-#[derive(Serialize)]
-pub struct ErrorResponse {
-    pub error: String,
-}
-
-#[derive(Deserialize)]
-pub struct LoadImageQueryParams {
-    pub image_id: String,
-}
-
-#[derive(Deserialize)]
-pub struct InspectQueryParams {
-    pub image: String,
-}
-
-#[derive(Serialize)]
-pub struct InspectResponse {
-    pub image_id: String,
-}
 
 /// POST /images/load
 /// Accepts a raw tar body (docker save output) and loads it into Docker.

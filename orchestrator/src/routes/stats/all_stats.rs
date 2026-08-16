@@ -1,7 +1,6 @@
 use axum::{Json, extract::State, http::StatusCode};
-use serde_json::json;
 
-use super::super::manage::{agent_base_url, get_node_from_db, sync_caddy};
+use super::super::manage::{get_node_from_db, sync_caddy};
 use super::helpers::{
     batch_load_services, compose_service_ports, enrich_services, inactive_project_status, make_stats_response,
     project_container_ids,
@@ -306,44 +305,45 @@ pub async fn all_project_stats(
             }
         };
 
-        let base_url = agent_base_url(&state.config, &node);
+        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
 
-        let resp = match client
-            .post(format!("{}/containers/stats", base_url))
-            .json(&json!({ "container_ids": all_container_ids }))
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(node_id = %node_id, error = %e, "batch stats: agent unreachable");
-                for (project_id, _) in projects_containers {
-                    let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                    results.push(make_stats_response(
-                        project_id.clone(),
-                        ProjectStatus::Running,
-                        last_active_map.get(project_id).copied().flatten(),
-                        services_raw.into_iter().map(|(s, _)| s).collect(),
-                    ));
+        let items =
+            match agent.stats(&litebin_common::agent_api::BatchStatsRequest { container_ids: all_container_ids }).await
+            {
+                Ok(items) => items,
+                Err(nodes::client::AgentClientError::Parse(e)) => {
+                    // Unparseable body: keep going with no live samples — projects on
+                    // this node fall back to Stopped below.
+                    tracing::warn!(node_id = %node_id, error = %e, "batch stats: failed to parse response");
+                    Vec::new()
                 }
-                continue;
-            }
-        };
-
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            tracing::warn!(node_id = %node_id, body = %body, "batch stats: agent returned error");
-            for (project_id, _) in projects_containers {
-                let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                results.push(make_stats_response(
-                    project_id.clone(),
-                    ProjectStatus::Running,
-                    last_active_map.get(project_id).copied().flatten(),
-                    services_raw.into_iter().map(|(s, _)| s).collect(),
-                ));
-            }
-            continue;
-        }
+                Err(nodes::client::AgentClientError::Status { body, .. }) => {
+                    tracing::warn!(node_id = %node_id, body = %body, "batch stats: agent returned error");
+                    for (project_id, _) in projects_containers {
+                        let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+                        results.push(make_stats_response(
+                            project_id.clone(),
+                            ProjectStatus::Running,
+                            last_active_map.get(project_id).copied().flatten(),
+                            services_raw.into_iter().map(|(s, _)| s).collect(),
+                        ));
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(node_id = %node_id, error = %e, "batch stats: agent unreachable");
+                    for (project_id, _) in projects_containers {
+                        let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+                        results.push(make_stats_response(
+                            project_id.clone(),
+                            ProjectStatus::Running,
+                            last_active_map.get(project_id).copied().flatten(),
+                            services_raw.into_iter().map(|(s, _)| s).collect(),
+                        ));
+                    }
+                    continue;
+                }
+            };
 
         // Collect per-container stats and group by project
         let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
@@ -351,58 +351,49 @@ pub async fn all_project_stats(
             std::collections::HashMap::new();
         let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        match resp.json::<Vec<serde_json::Value>>().await {
-            Ok(items) => {
-                // Collect container states per project for DB sync
-                let mut container_states_by_project: std::collections::HashMap<String, Vec<(String, bool)>> =
-                    std::collections::HashMap::new();
+        {
+            // Collect container states per project for DB sync
+            let mut container_states_by_project: std::collections::HashMap<String, Vec<(String, bool)>> =
+                std::collections::HashMap::new();
 
-                for item in &items {
-                    let cid = item["container_id"].as_str().unwrap_or("");
-                    let project_id = cid_to_pid.get(cid).cloned().unwrap_or_default();
-                    let state_str = item["state"].as_str().unwrap_or("running");
-                    let is_running = state_str != "stopped";
-                    let disk_gb = item["disk_gb"].as_f64().unwrap_or(0.0);
+            for item in &items {
+                let cid = item.container_id.as_str();
+                let project_id = cid_to_pid.get(cid).cloned().unwrap_or_default();
+                let is_running = item.state != "stopped";
+                let disk_gb = item.disk_gb;
 
-                    container_states_by_project
-                        .entry(project_id.clone())
-                        .or_default()
-                        .push((cid.to_string(), is_running));
+                container_states_by_project.entry(project_id.clone()).or_default().push((cid.to_string(), is_running));
 
-                    if disk_gb > 0.0 {
-                        state.disk_cache.insert(cid.to_string(), (disk_gb * 1024.0 * 1024.0 * 1024.0) as i64);
-                    }
-
-                    if !is_running {
-                        stopped_cids.insert(cid.to_string());
-                        caddy_dirty = true;
-                        continue;
-                    }
-
-                    let cpu = item["cpu_percent"].as_f64().unwrap_or(0.0);
-                    let mem_usage = item["memory_usage"].as_u64().unwrap_or(0);
-                    let mem_limit = item["memory_limit"].as_u64().unwrap_or(0);
-                    let cpu_limit = item["cpu_limit"].as_f64();
-
-                    per_container.insert(cid.to_string(), (cpu, mem_usage, mem_limit, disk_gb, cpu_limit));
-
-                    let entry = project_stats.entry(project_id.clone()).or_insert((0.0, 0, 0, 0.0));
-                    entry.0 += cpu;
-                    entry.1 += mem_usage;
-                    entry.2 += mem_limit;
-                    entry.3 += disk_gb;
+                if disk_gb > 0.0 {
+                    state.disk_cache.insert(cid.to_string(), (disk_gb * 1024.0 * 1024.0 * 1024.0) as i64);
                 }
 
-                // Sync remote project statuses from agent-reported container states
-                for (pid, states) in &container_states_by_project {
-                    let result = status::update_status_from_container_states(&state.db, pid, states).await;
-                    if result.caddy_dirty {
-                        caddy_dirty = true;
-                    }
+                if !is_running {
+                    stopped_cids.insert(cid.to_string());
+                    caddy_dirty = true;
+                    continue;
                 }
+
+                let cpu = item.cpu_percent;
+                let mem_usage = item.memory_usage;
+                let mem_limit = item.memory_limit;
+                let cpu_limit = item.cpu_limit;
+
+                per_container.insert(cid.to_string(), (cpu, mem_usage, mem_limit, disk_gb, cpu_limit));
+
+                let entry = project_stats.entry(project_id.clone()).or_insert((0.0, 0, 0, 0.0));
+                entry.0 += cpu;
+                entry.1 += mem_usage;
+                entry.2 += mem_limit;
+                entry.3 += disk_gb;
             }
-            Err(e) => {
-                tracing::warn!(node_id = %node_id, error = %e, "batch stats: failed to parse response");
+
+            // Sync remote project statuses from agent-reported container states
+            for (pid, states) in &container_states_by_project {
+                let result = status::update_status_from_container_states(&state.db, pid, states).await;
+                if result.caddy_dirty {
+                    caddy_dirty = true;
+                }
             }
         }
 

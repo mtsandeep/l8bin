@@ -15,7 +15,7 @@ Small code-level items left over from the maintainability review — each too sm
 | 5 | Release builds with `--locked` | `.github/workflows/release.yml` | Release currently builds with whatever transitive deps resolve at tag time, not what CI tested |
 | 6 | Dependabot/Renovate config | `.github/dependabot.yml` | Lockfile is committed now; automated bump PRs run the full CI gate (cargo + pnpm for dashboard) |
 | 7 | `ProjectStatus` SQL literal purge | covered in `query-safety.md` step 1 | Listed here only as a cross-reference |
-| 8 | CLI `PublicStats`-style drift check | none remaining — keep it that way via `agent-wire-contract.md` | Cross-reference |
+| 8 | CLI `PublicStats`-style drift check | none remaining — kept that way via the typed agent API ([agent-api.md](../agent-api.md)) | Cross-reference |
 
 ## Considerations
 

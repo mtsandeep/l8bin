@@ -1,12 +1,8 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use dashmap::DashMap;
-use serde_json::json;
-use sqlx::SqlitePool;
+use litebin_common::types::Node;
 
-use crate::config::Config;
-use crate::nodes::client::get_node_client;
+use crate::nodes::client::{AgentClient, get_node_client};
 
 use super::CloudflareDnsRouter;
 
@@ -16,35 +12,19 @@ impl CloudflareDnsRouter {
         let client = get_node_client(&self.node_clients, node_id)?;
 
         // Look up agent connection info
-        let node: Option<(String, i64)> = sqlx::query_as("SELECT host, agent_port FROM nodes WHERE id = ?")
-            .bind(node_id)
-            .fetch_optional(&self.db)
-            .await?;
+        let node: Option<Node> =
+            sqlx::query_as("SELECT * FROM nodes WHERE id = ?").bind(node_id).fetch_optional(&self.db).await?;
 
-        let (host, agent_port) = match node {
-            Some(h) => h,
+        let node = match node {
+            Some(n) => n,
             None => {
                 tracing::warn!(node_id, "node not found in DB, skipping agent caddy push");
                 return Ok(());
             }
         };
 
-        let base_url = if self.config.ca_cert_path.is_empty() {
-            format!("http://{}:{}", host, agent_port)
-        } else {
-            format!("https://{}:{}", host, agent_port)
-        };
-
-        let url = format!("{}/caddy/sync", base_url);
-        let resp = client.post(&url).header("Content-Type", "application/json").json(config).send().await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("agent /caddy/sync failed ({}): {}", status, body);
-        }
-
-        Ok(())
+        let agent = AgentClient::new(client, &node, &self.config);
+        agent.caddy_sync(config).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 }
 
@@ -52,9 +32,9 @@ impl CloudflareDnsRouter {
 /// Called during route sync and on settings toggle.
 pub async fn push_project_meta_to_agent(
     node_id: &str,
-    db: &SqlitePool,
-    node_clients: &DashMap<String, Arc<reqwest::Client>>,
-    config: &Config,
+    db: &sqlx::SqlitePool,
+    node_clients: &dashmap::DashMap<String, std::sync::Arc<reqwest::Client>>,
+    config: &crate::config::Config,
 ) {
     // Query all projects for this node
     let rows: Vec<(String, bool, bool, bool)> = match sqlx::query_as(
@@ -109,30 +89,18 @@ pub async fn push_project_meta_to_agent(
         }
     };
 
-    let node: Option<(String, i64)> = match sqlx::query_as("SELECT host, agent_port FROM nodes WHERE id = ?")
-        .bind(node_id)
-        .fetch_optional(db)
-        .await
-    {
-        Ok(n) => n,
-        Err(e) => {
-            tracing::warn!(node_id, error = %e, "failed to look up node for meta push");
-            return;
-        }
-    };
+    let node: Option<Node> =
+        match sqlx::query_as("SELECT * FROM nodes WHERE id = ?").bind(node_id).fetch_optional(db).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(node_id, error = %e, "failed to look up node for meta push");
+                return;
+            }
+        };
 
-    let (host, agent_port) = match node {
-        Some(h) => h,
-        None => return,
-    };
+    let Some(node) = node else { return };
 
-    let base_url = if config.ca_cert_path.is_empty() {
-        format!("http://{}:{}", host, agent_port)
-    } else {
-        format!("https://{}:{}", host, agent_port)
-    };
-
-    let url = format!("{}/internal/project-meta", base_url);
+    let agent = AgentClient::new(client, &node, config);
 
     // Read global defaults to push to agent
     let default_mem: i64 = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'default_memory_limit_mb'")
@@ -148,24 +116,24 @@ pub async fn push_project_meta_to_agent(
         .and_then(|v: String| v.parse().ok())
         .unwrap_or(0.5);
 
-    let body = json!({
-        "projects": projects,
-        "background_projects": background_projects,
-        "allow_raw_ports": allow_raw_ports,
-        "docker_observe": docker_observe,
-        "host_network": host_network,
-        "default_memory_limit_mb": default_mem,
-        "default_cpu_limit": default_cpu,
-    });
+    let body = litebin_common::agent_api::ProjectMetaRequest {
+        projects,
+        background_projects: Some(background_projects),
+        allow_raw_ports: Some(allow_raw_ports),
+        docker_observe: Some(docker_observe),
+        host_network: Some(host_network),
+        default_memory_limit_mb: Some(default_mem),
+        default_cpu_limit: Some(default_cpu),
+    };
 
-    match client.post(&url).header("Content-Type", "application/json").json(&body).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            tracing::info!(node_id, count = projects.len(), "pushed project meta to agent");
+    match agent.push_project_meta(&body).await {
+        Ok(()) => {
+            tracing::info!(node_id, count = body.projects.len(), "pushed project meta to agent");
         }
-        Ok(resp) => {
+        Err(crate::nodes::client::AgentClientError::Status { code, .. }) => {
             tracing::warn!(
                 node_id,
-                status = %resp.status(),
+                status = %code,
                 "failed to push project meta to agent"
             );
         }

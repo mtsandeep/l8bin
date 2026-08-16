@@ -1,15 +1,7 @@
 use axum::{Json, extract::State, http::StatusCode};
+use litebin_common::agent_api::RegisterRequest;
 
 use crate::config::AgentRegistration;
-
-#[derive(serde::Deserialize)]
-pub struct RegisterRequest {
-    pub node_id: String,
-    pub secret: String,
-    pub domain: String,
-    pub wake_report_url: String,
-    pub heartbeat_url: String,
-}
 
 /// POST /internal/register — called by orchestrator over mTLS to push config.
 pub async fn register(State(state): State<crate::AgentState>, Json(req): Json<RegisterRequest>) -> StatusCode {

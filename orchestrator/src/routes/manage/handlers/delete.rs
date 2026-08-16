@@ -1,13 +1,10 @@
 use axum::{Json, extract::Path, extract::State, http::StatusCode};
-use serde_json::json;
 
 use crate::AppState;
 use crate::nodes;
 use litebin_common::types::NodeStatus;
 
-use crate::routes::manage::helpers::{
-    MessageResponse, agent_base_url, cleanup_unused_image, get_node_from_db, sync_caddy,
-};
+use crate::routes::manage::helpers::{MessageResponse, cleanup_unused_image, get_node_from_db, sync_caddy};
 use crate::routes::manage::multi_service::delete_all_services;
 
 use super::shared::uses_compose_lifecycle;
@@ -99,23 +96,19 @@ pub async fn delete_project(
         };
 
         if reachable {
-            let client = nodes::client::get_node_client(&state.node_clients, node_id)
-                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
-            let node = get_node_from_db(&state.db, node_id).await?;
-            let base_url = agent_base_url(&state.config, &node);
-            let response = client
-                .post(format!("{}/containers/cleanup", base_url))
-                .json(&json!({
-                    "project_id": project_id,
-                    "volumes": volumes,
-                }))
-                .send()
+            let agent = nodes::client::AgentClient::resolve(&state, node_id)
                 .await
-                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent cleanup failed: {e}")))?;
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                return Err((StatusCode::BAD_GATEWAY, format!("agent cleanup returned {status}: {body}")));
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
+            if let Err(e) = agent
+                .cleanup(&litebin_common::agent_api::CleanupRequest { project_id: project_id.clone(), volumes })
+                .await
+            {
+                return Err(match e {
+                    nodes::client::AgentClientError::Status { code, body } => {
+                        (StatusCode::BAD_GATEWAY, format!("agent cleanup returned {code}: {body}"))
+                    }
+                    e => (StatusCode::SERVICE_UNAVAILABLE, format!("agent cleanup failed: {e}")),
+                });
             }
         } else {
             tracing::warn!(project = %project_id, node_id = node_id, "node unavailable; skipping remote container cleanup and deleting project record");

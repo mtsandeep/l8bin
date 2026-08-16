@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::nodes;
-use crate::routes::manage::{agent_base_url, get_node_from_db};
+use crate::routes::manage::get_node_from_db;
 use litebin_common::upload::{
-    self, AGENT_UPLOAD_PREFIX, DEFAULT_TTL_SECS, MINT_PATH, MintRequest, MintResponse, UploadChunkResponse,
-    UploadCommitResponse, UploadError, UploadStatusResponse,
+    self, AGENT_UPLOAD_PREFIX, DEFAULT_TTL_SECS, MintRequest, UploadChunkResponse, UploadCommitResponse, UploadError,
+    UploadStatusResponse,
 };
 
 #[derive(Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
@@ -119,7 +119,7 @@ async fn stream_to_agent(
     let client = nodes::client::get_node_client(&state.node_clients, node_id)
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client not available: {e}")))?;
 
-    let base_url = agent_base_url(&state.config, &node);
+    let agent = nodes::client::AgentClient::new(client, &node, &state.config);
 
     // Stream the body through a channel to avoid buffering the entire image in RAM.
     // axum::Body is !Sync, so we can't wrap it directly in reqwest::Body.
@@ -137,25 +137,15 @@ async fn stream_to_agent(
 
     let streaming_body = reqwest::Body::wrap_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
 
-    let resp = client
-        .post(format!("{}/images/load?image_id={}", base_url, image_id))
-        .header("Content-Type", "application/x-tar")
-        .body(streaming_body)
-        .send()
-        .await
-        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
-
-    if !resp.status().is_success() {
-        let body_text = resp.text().await.unwrap_or_default();
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent image load failed: {body_text}")));
-    }
-
     // Agent returns the resolved image ID (tag → actual Docker-assigned sha256)
-    let agent_resp: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse agent response: {e}")))?;
-    let resolved_id = agent_resp["image_id"].as_str().unwrap_or(image_id).to_string();
+    let agent_resp = match agent.load_image_stream(image_id, streaming_body).await {
+        Ok(resp) => resp,
+        Err(nodes::client::AgentClientError::Status { body, .. }) => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent image load failed: {body}")));
+        }
+        Err(e) => return Err(e.into_response_parts()),
+    };
+    let resolved_id = if agent_resp.image_id.is_empty() { image_id.to_string() } else { agent_resp.image_id };
 
     Ok(resolved_id)
 }
@@ -250,39 +240,25 @@ pub async fn upload_target(
                     .into_response();
             }
         };
-        let base_url = agent_base_url(&state.config, &node);
+        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
         let mint_req = MintRequest {
             project_id: req.project_id.clone(),
             image_id: req.image_id.clone(),
             node_id: node_id.clone(),
             ttl_secs: Some(DEFAULT_TTL_SECS),
         };
-        let resp = match client.post(format!("{base_url}{MINT_PATH}")).json(&mint_req).send().await {
-            Ok(r) => r,
-            Err(e) => {
+        let mint_resp = match agent.mint_upload_token(&mint_req).await {
+            Ok(v) => v,
+            Err(nodes::client::AgentClientError::Status { body, .. }) => {
                 return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(serde_json::json!({"error": format!("agent unreachable: {e}")})),
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"error": format!("agent mint failed: {body}")})),
                 )
                     .into_response();
             }
-        };
-        if !resp.status().is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({"error": format!("agent mint failed: {body_text}")})),
-            )
-                .into_response();
-        }
-        let mint_resp: MintResponse = match resp.json().await {
-            Ok(v) => v,
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": format!("failed to parse agent mint response: {e}")})),
-                )
-                    .into_response();
+                let (status_code, message) = e.into_response_parts();
+                return (status_code, Json(serde_json::json!({"error": message}))).into_response();
             }
         };
         let ca_pem = std::fs::read_to_string(&state.config.ca_cert_path).ok();
@@ -394,30 +370,20 @@ async fn relay_load_to_agent(
     let client = nodes::client::get_node_client(&state.node_clients, node_id)
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client not available: {e}")))?;
 
-    let base_url = agent_base_url(&state.config, &node);
+    let agent = nodes::client::AgentClient::new(client, &node, &state.config);
 
     // Stream assembled chunks straight to the agent (no extra full-file buffering).
     let stream = upload::chunk_stream(dir, total);
     let body = reqwest::Body::wrap_stream(stream);
 
-    let resp = client
-        .post(format!("{base_url}/images/load?image_id={image_id}"))
-        .header("Content-Type", "application/x-tar")
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
-
-    if !resp.status().is_success() {
-        let body_text = resp.text().await.unwrap_or_default();
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent image load failed: {body_text}")));
-    }
-
-    let agent_resp: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse agent response: {e}")))?;
-    Ok(agent_resp["image_id"].as_str().unwrap_or(image_id).to_string())
+    let agent_resp = match agent.load_image_stream(image_id, body).await {
+        Ok(resp) => resp,
+        Err(nodes::client::AgentClientError::Status { body, .. }) => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent image load failed: {body}")));
+        }
+        Err(e) => return Err(e.into_response_parts()),
+    };
+    Ok(if agent_resp.image_id.is_empty() { image_id.to_string() } else { agent_resp.image_id })
 }
 
 fn err_response(e: UploadError) -> Response {

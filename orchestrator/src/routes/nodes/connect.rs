@@ -84,25 +84,9 @@ pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>)
     };
 
     // 3. Health check via mTLS
-    let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
-    let health: HealthReport = match client.get(format!("{}/health", base_url)).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.json::<HealthReport>().await {
-            Ok(h) => h,
-            Err(e) => {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(ErrorResponse { error: format!("failed to parse health response: {e}") }),
-                )
-                    .into_response();
-            }
-        },
-        Ok(resp) => {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse { error: format!("agent returned non-success: {}", resp.status()) }),
-            )
-                .into_response();
-        }
+    let agent = crate::nodes::client::AgentClient::new(client, &node, &state.config);
+    let health: HealthReport = match agent.health().await {
+        Ok(h) => h,
         Err(e) => {
             return (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -114,38 +98,20 @@ pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>)
 
     // 4. Push config to agent via POST /internal/register
     let secret = node.agent_secret.clone().unwrap_or_default();
-    let register_body = serde_json::json!({
-        "node_id": node.id,
-        "secret": secret,
-        "domain": state.platform.domain(),
-        "wake_report_url": format_wake_report_url(&state),
-        "heartbeat_url": format_heartbeat_url(&state),
-    });
+    let register_request = litebin_common::agent_api::RegisterRequest {
+        node_id: node.id.clone(),
+        secret,
+        domain: state.platform.domain(),
+        wake_report_url: format_wake_report_url(&state),
+        heartbeat_url: format_heartbeat_url(&state),
+    };
 
-    match client
-        .post(format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
-        .json(&register_body)
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            tracing::info!(node_id = %id, "config pushed to agent");
-        }
-        Ok(resp) => {
-            let body = resp.text().await.unwrap_or_default();
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse { error: format!("agent rejected registration: {body}") }),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse { error: format!("failed to push config to agent: {e}") }),
-            )
-                .into_response();
-        }
+    if let Err(e) = agent.register(&register_request).await {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse { error: format!("agent rejected registration: {e}") }),
+        )
+            .into_response();
     }
 
     // 5. Update node status to online
@@ -247,29 +213,20 @@ pub async fn reregister_online_agents(state: &AppState) -> (usize, Vec<String>) 
             }
         };
 
-        let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
+        let agent = crate::nodes::client::AgentClient::new(client, &node, &state.config);
         let secret = node.agent_secret.clone().unwrap_or_default();
-        let register_body = serde_json::json!({
-            "node_id": node.id,
-            "secret": secret,
-            "domain": state.platform.domain(),
-            "wake_report_url": format_wake_report_url(state),
-            "heartbeat_url": format_heartbeat_url(state),
-        });
+        let register_request = litebin_common::agent_api::RegisterRequest {
+            node_id: node.id.clone(),
+            secret,
+            domain: state.platform.domain(),
+            wake_report_url: format_wake_report_url(state),
+            heartbeat_url: format_heartbeat_url(state),
+        };
 
-        match client
-            .post(format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
-            .json(&register_body)
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
+        match agent.register(&register_request).await {
+            Ok(()) => {
                 ok += 1;
                 tracing::info!(node_id = %node.id, "re-registered agent with new platform domain");
-            }
-            Ok(resp) => {
-                let body = resp.text().await.unwrap_or_default();
-                errs.push(format!("node {}: agent rejected registration: {body}", node.id));
             }
             Err(e) => {
                 errs.push(format!("node {}: failed to register: {e}", node.id));

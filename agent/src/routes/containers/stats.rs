@@ -4,32 +4,13 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use litebin_common::agent_api::{BatchStatsRequest, ContainerStatsResponse};
 use litebin_common::docker::DockerErrorKind;
 use litebin_common::types::ContainerStatus;
-use serde::{Deserialize, Serialize};
 
 use crate::AgentState;
 
 use super::types::{ErrorResponse, LogsQuery};
-
-// ── Stats types ──────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct BatchStatsRequest {
-    pub container_ids: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub struct ContainerStatsResponse {
-    pub container_id: String,
-    pub state: String,
-    pub cpu_percent: f64,
-    pub memory_usage: u64,
-    pub memory_limit: u64,
-    pub disk_gb: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cpu_limit: Option<f64>,
-}
 
 // ── Container Inspection / Stats Handlers ────────────────────────────────────
 

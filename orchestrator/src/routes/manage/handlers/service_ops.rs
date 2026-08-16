@@ -1,15 +1,12 @@
 use std::collections::HashSet;
 
 use axum::{Json, extract::Path, extract::State, http::StatusCode};
-use serde_json::json;
 
 use crate::AppState;
 use crate::nodes;
 use crate::status;
 
-use crate::routes::manage::helpers::{
-    MessageResponse, agent_base_url, ensure_node_reachable, get_node_from_db, sync_caddy,
-};
+use crate::routes::manage::helpers::{MessageResponse, ensure_node_reachable, sync_caddy};
 use crate::routes::manage::multi_service::{
     StartServicesOpts, approved_docker_observe_requesters, proxy_needed_after_stop, start_services, stop_services,
 };
@@ -104,23 +101,22 @@ pub async fn stop_service(
     if let Some(node_id) = project.node_id.as_deref().filter(|node| *node != "local") {
         ensure_node_reachable(&state, node_id).await?;
         let requesters = approved_docker_observe_requesters(&state, &project).await?;
-        let client = nodes::client::get_node_client(&state.node_clients, node_id)
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
-        let node = get_node_from_db(&state.db, node_id).await?;
-        let response = client
-            .post(format!("{}/containers/stop-service", agent_base_url(&state.config, &node)))
-            .json(&json!({
-                "project_id": &project_id,
-                "service_name": &service_name,
-            }))
-            .send()
+        let agent = nodes::client::AgentClient::resolve(&state, node_id)
             .await
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
-        if !response.status().is_success() {
-            return Err((
-                StatusCode::BAD_GATEWAY,
-                format!("remote service stop failed: {}", response.text().await.unwrap_or_default()),
-            ));
+            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
+        if let Err(e) = agent
+            .stop_service(&litebin_common::agent_api::StopServiceRequest {
+                project_id: project_id.clone(),
+                service_name: service_name.clone(),
+            })
+            .await
+        {
+            return Err(match e {
+                nodes::client::AgentClientError::Status { body, .. } => {
+                    (StatusCode::BAD_GATEWAY, format!("remote service stop failed: {body}"))
+                }
+                e => e.into_response_parts(),
+            });
         }
         status::set_service_stopped(&state.db, &project_id, &service_name)
             .await
@@ -137,27 +133,15 @@ pub async fn stop_service(
         .collect();
         let no_additional_stops = HashSet::new();
         if !proxy_needed_after_stop(&requesters, &running_services, Some(&no_additional_stops)) {
-            let client = nodes::client::get_node_client(&state.node_clients, node_id)
-                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
-            let node = get_node_from_db(&state.db, node_id).await?;
             let proxy_name =
                 litebin_common::types::container_name(&project_id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
-            let response = client
-                .post(format!("{}/containers/remove", agent_base_url(&state.config, &node)))
-                .json(&json!({ "container_id": proxy_name }))
-                .send()
-                .await
-                .map_err(|e| {
-                    (StatusCode::SERVICE_UNAVAILABLE, format!("failed to remove Docker observation proxy: {e}"))
-                })?;
-            if !response.status().is_success() {
-                return Err((
-                    StatusCode::BAD_GATEWAY,
-                    format!(
-                        "remote Docker observation proxy cleanup failed: {}",
-                        response.text().await.unwrap_or_default()
-                    ),
-                ));
+            if let Err(e) = agent.remove(&litebin_common::agent_api::RemoveRequest { container_id: proxy_name }).await {
+                return Err(match e {
+                    nodes::client::AgentClientError::Status { body, .. } => {
+                        (StatusCode::BAD_GATEWAY, format!("remote Docker observation proxy cleanup failed: {body}"))
+                    }
+                    e => (StatusCode::SERVICE_UNAVAILABLE, format!("failed to remove Docker observation proxy: {e}")),
+                });
             }
         }
     } else {

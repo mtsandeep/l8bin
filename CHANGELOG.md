@@ -17,8 +17,12 @@ All notable changes to this project will be documented in this file.
 - **Release gate** — the release workflow now runs the same fmt/clippy/test checks on the tagged commit before any build, gates all build jobs on them, and builds with `--locked` from the committed lockfile.
 
 ### Fixed
+- **Agent re-registration after reconnect failed with 422** — register body was missing `heartbeat_url`; now sent.
 - **Deploy token creation returned `201` with an unpersisted token when the DB insert failed** — insert and project-lookup failures now return `500`; deploy-token endpoints are now tested.
 - **`l8b deploy --compose` panicked when no compose file was present** — now prints the intended error message.
+
+### Changed
+- **Typed orchestrator ↔ agent wire contract** — internal agent endpoints now share request/response structs used by both sides; no wire-format change. See [docs/agent-api.md](docs/agent-api.md).
 
 ## [0.3.21] - 2026-08-08
 

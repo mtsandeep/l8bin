@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use litebin_common::docker::DockerErrorKind;
-use litebin_common::types::{DeployType, Node, ProjectStatus};
+use litebin_common::types::{DeployType, ProjectStatus};
 
 use crate::AppState;
 use crate::status::{self, ProjectUpdateFields};
@@ -192,39 +192,25 @@ async fn stop_local_container_by_name(state: &AppState, project_id: &str, contai
 }
 
 async fn stop_remote_container(state: &AppState, project_id: &str, node_id: &str, container_id: &str, remove: bool) {
-    let client = match crate::nodes::client::get_node_client(&state.node_clients, node_id) {
-        Ok(c) => c,
+    let agent = match crate::nodes::client::AgentClient::resolve(state, node_id).await {
+        Ok(a) => a,
         Err(e) => {
             tracing::error!(project = %project_id, error = %e, "janitor: node client unavailable");
             return;
         }
     };
 
-    let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-        .bind(node_id)
-        .fetch_optional(&state.db)
-        .await
-    {
-        Ok(Some(n)) => n,
-        _ => {
-            tracing::error!(project = %project_id, "janitor: node not found");
-            return;
-        }
+    let result = if remove {
+        agent.remove(&litebin_common::agent_api::RemoveRequest { container_id: container_id.to_string() }).await
+    } else {
+        agent.stop(&litebin_common::agent_api::StopRequest { container_id: container_id.to_string() }).await
     };
 
-    let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
-
-    match client
-        .post(format!("{}/containers/{}", base_url, if remove { "remove" } else { "stop" }))
-        .json(&serde_json::json!({"container_id": container_id}))
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
+    match result {
+        Ok(()) => {
             tracing::info!(project = %project_id, "janitor: remote container stopped (idle)");
         }
-        Ok(resp) => {
-            let body = resp.text().await.unwrap_or_default();
+        Err(crate::nodes::client::AgentClientError::Status { body, .. }) => {
             tracing::warn!(project = %project_id, body = %body, "janitor: remote stop returned non-success");
         }
         Err(e) => {

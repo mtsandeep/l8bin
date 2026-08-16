@@ -7,7 +7,7 @@ use axum::{
 use serde::Serialize;
 
 use crate::AppState;
-use litebin_common::types::{HealthReport, ImageStats, Node};
+use litebin_common::types::{ImageStats, Node};
 
 use super::ErrorResponse;
 
@@ -65,18 +65,15 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
         let config = state.config.clone();
         async move {
             let client = crate::nodes::client::get_node_client(&node_clients, &node_id).ok()?;
-            let base_url = crate::routes::manage::agent_base_url(&config, node);
-            let resp = client
-                .get(format!("{}/health", base_url))
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-                .ok()?;
-            if !resp.status().is_success() {
-                tracing::warn!(node_id = %node_id, status = %resp.status(), "agent returned non-success for image stats");
-                return None;
-            }
-            let health = resp.json::<HealthReport>().await.ok()?;
+            let agent = crate::nodes::client::AgentClient::new(client, node, &config);
+            let health = match agent.health_within(std::time::Duration::from_secs(5)).await {
+                Ok(h) => h,
+                Err(crate::nodes::client::AgentClientError::Status { code, .. }) => {
+                    tracing::warn!(node_id = %node_id, status = %code, "agent returned non-success for image stats");
+                    return None;
+                }
+                Err(_) => return None,
+            };
             Some(NodeImageStatsResponse { node_id, node_name, image_stats: health.image_stats })
         }
     });
@@ -147,12 +144,9 @@ pub async fn prune_node_images(State(state): State<AppState>, Path(id): Path<Str
             }
         };
 
-        let base_url = crate::routes::manage::agent_base_url(&state.config, &node);
-        match client.post(format!("{}/images/prune", base_url)).send().await {
-            Ok(resp) => {
-                let body = resp.text().await.unwrap_or_default();
-                (StatusCode::OK, body).into_response()
-            }
+        let agent = crate::nodes::client::AgentClient::new(client, &node, &state.config);
+        match agent.prune_images().await {
+            Ok(body) => (StatusCode::OK, body).into_response(),
             Err(e) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ErrorResponse { error: format!("failed to prune images on agent: {e}") }),

@@ -1,7 +1,7 @@
 use axum::{Json, extract::Path, extract::Query, extract::State, http::StatusCode};
 use serde_json::json;
 
-use super::super::manage::{agent_base_url, get_node_from_db};
+use super::super::manage::get_node_from_db;
 use super::helpers::logs_use_service_selection;
 use super::types::{LogsQuery, LogsResponse};
 use crate::AppState;
@@ -100,23 +100,17 @@ pub async fn project_logs(
         let client = nodes::client::get_node_client(&state.node_clients, node_id)
             .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
         let node = get_node_from_db(&state.db, node_id).await?;
-        let base_url = agent_base_url(&state.config, &node);
+        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
 
-        let resp = client
-            .get(format!("{}/containers/{}/logs?tail={}", base_url, container_id, tail))
-            .send()
-            .await
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")))?;
-
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent logs failed: {body}")));
-        }
-
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to read log body: {e}")))?;
+        let body = match agent.container_logs(&container_id, Some(tail)).await {
+            Ok(body) => body,
+            Err(nodes::client::AgentClientError::Status { body, .. }) => {
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("agent logs failed: {body}")));
+            }
+            Err(e) => {
+                return Err((StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")));
+            }
+        };
 
         body.lines().map(|l| l.to_string()).collect()
     } else {

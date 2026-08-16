@@ -101,21 +101,11 @@ async fn poll_node(state: &AppState, node: &litebin_common::types::Node) {
         }
     };
 
-    let health_url = if state.config.ca_cert_path.is_empty() {
-        format!("http://{}:{}/health", node.host, node.agent_port)
-    } else {
-        format!("https://{}:{}/health", node.host, node.agent_port)
-    };
+    let agent = crate::nodes::client::AgentClient::new(client, node, &state.config);
 
-    match client.get(&health_url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            if let Ok(health) = resp.json::<HealthReport>().await {
-                handle_success(state, node, &health).await;
-            } else {
-                handle_failure(state, node).await;
-            }
-        }
-        _ => handle_failure(state, node).await,
+    match agent.health().await {
+        Ok(health) => handle_success(state, node, &health).await,
+        Err(_) => handle_failure(state, node).await,
     }
 }
 
@@ -208,8 +198,9 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
                 &state.config.client_key_path,
             ) {
                 Ok(c) => {
-                    state.node_clients.insert(node.id.clone(), Arc::new(c));
-                    state.node_clients.get(&node.id).unwrap().value().clone()
+                    let client = Arc::new(c);
+                    state.node_clients.insert(node.id.clone(), client.clone());
+                    client
                 }
                 Err(e) => {
                     warn!(node_id = %node.id, error = %e, "heartbeat: cannot build mTLS client");
@@ -219,55 +210,32 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
         }
     };
 
-    let base_url = crate::routes::manage::agent_base_url(&state.config, node);
+    let agent = crate::nodes::client::AgentClient::new(client, node, &state.config);
 
     // Health check
-    let health = match client.get(format!("{}/health", base_url)).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.json::<litebin_common::types::HealthReport>().await {
-            Ok(h) => h,
-            Err(e) => {
-                warn!(node_id = %node.id, error = %e, "heartbeat: failed to parse health response");
-                return;
-            }
-        },
-        Ok(resp) => {
-            warn!(node_id = %node.id, status = %resp.status(), "heartbeat: agent non-success");
-            return;
-        }
+    let health = match agent.health().await {
+        Ok(h) => h,
         Err(e) => {
-            warn!(node_id = %node.id, error = %e, "heartbeat: agent unreachable");
+            warn!(node_id = %node.id, error = %e, "heartbeat: agent health check failed");
             return;
         }
     };
 
     // Push config via POST /internal/register
     let secret = node.agent_secret.clone().unwrap_or_default();
-    let register_body = serde_json::json!({
-        "node_id": node.id,
-        "secret": secret,
-        "domain": state.platform.domain(),
-        "wake_report_url": crate::routes::nodes::format_wake_report_url(state),
-    });
+    let register_request = litebin_common::agent_api::RegisterRequest {
+        node_id: node.id.clone(),
+        secret,
+        domain: state.platform.domain(),
+        wake_report_url: crate::routes::nodes::format_wake_report_url(state),
+        heartbeat_url: crate::routes::nodes::format_heartbeat_url(state),
+    };
 
-    match client
-        .post(format!("{}{}", base_url, litebin_common::types::AGENT_REGISTER_PATH))
-        .json(&register_body)
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            info!(node_id = %node.id, "heartbeat: config pushed to agent");
-        }
-        Ok(resp) => {
-            let body = resp.text().await.unwrap_or_default();
-            warn!(node_id = %node.id, body, "heartbeat: agent rejected registration");
-            return;
-        }
-        Err(e) => {
-            warn!(node_id = %node.id, error = %e, "heartbeat: failed to push config");
-            return;
-        }
+    if let Err(e) = agent.register(&register_request).await {
+        warn!(node_id = %node.id, error = %e, "heartbeat: failed to push config");
+        return;
     }
+    info!(node_id = %node.id, "heartbeat: config pushed to agent");
 
     // Update node status to online
     let now = chrono::Utc::now().timestamp();

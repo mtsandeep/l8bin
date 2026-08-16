@@ -1,10 +1,7 @@
-use serde_json::json;
-
 use crate::AppState;
 use crate::nodes;
-use crate::routes::manage::agent_base_url;
 use crate::status::{self, ProjectUpdateFields};
-use litebin_common::types::{Node, ProjectStatus, VolumeMount};
+use litebin_common::types::{ProjectStatus, VolumeMount};
 
 use super::types::DeployRequest;
 
@@ -84,47 +81,32 @@ pub(super) async fn run_deploy_task(
             &payload_clone.project_id,
             &format!("Deploying to remote node {}...", &node_id_clone),
         );
-        let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-            .bind(&node_id_clone)
-            .fetch_optional(&state_clone.db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("node '{}' not found", node_id_clone))?;
+        let agent = nodes::client::AgentClient::resolve(&state_clone, &node_id_clone).await?;
 
-        let client = nodes::client::get_node_client(&state_clone.node_clients, &node_id_clone)?;
-        let base_url = agent_base_url(&state_clone.config, &node);
+        let run_request = litebin_common::agent_api::RunRequest {
+            image: payload_clone.image.clone(),
+            internal_port: payload_clone.port,
+            project_id: payload_clone.project_id.clone(),
+            cmd: project_clone.cmd.clone(),
+            memory_limit_mb: project_clone.memory_limit_mb,
+            cpu_limit: project_clone.cpu_limit,
+            volumes: project_clone
+                .volumes
+                .as_deref()
+                .and_then(|volumes| serde_json::from_str::<Vec<VolumeMount>>(volumes).ok()),
+            docker_observe: granted_capabilities
+                .contains(&litebin_common::capabilities::ProjectCapability::DockerObserve),
+            stage_only: false,
+        };
 
-        let run_resp = client
-            .post(format!("{}/containers/run", base_url))
-            .json(&json!({
-                "image": payload_clone.image,
-                "internal_port": payload_clone.port,
-                "project_id": payload_clone.project_id,
-                "cmd": project_clone.cmd,
-                "memory_limit_mb": project_clone.memory_limit_mb,
-                "cpu_limit": project_clone.cpu_limit,
-                "volumes": project_clone
-                    .volumes
-                    .as_deref()
-                    .and_then(|volumes| serde_json::from_str::<Vec<VolumeMount>>(volumes).ok()),
-                "docker_observe": granted_capabilities.contains(
-                    &litebin_common::capabilities::ProjectCapability::DockerObserve
-                ),
-            }))
-            .send()
-            .await?;
-
-        if !run_resp.status().is_success() {
-            let body = run_resp.text().await.unwrap_or_default();
-            anyhow::bail!("agent container run failed: {}", body);
-        }
-
-        let run_json: serde_json::Value = run_resp.json().await?;
-        let cid = run_json["container_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing container_id in run response"))?
-            .to_string();
-        let port = run_json["mapped_port"].as_u64().unwrap_or(0) as u16;
-        (cid, port)
+        let run_resp = match agent.run(&run_request).await {
+            Ok(resp) => resp,
+            Err(nodes::client::AgentClientError::Status { body, .. }) => {
+                anyhow::bail!("agent container run failed: {body}");
+            }
+            Err(e) => return Err(e.into()),
+        };
+        (run_resp.container_id, run_resp.mapped_port.unwrap_or(0))
     };
 
     // 6. Update DB with container info
@@ -189,23 +171,11 @@ pub(super) async fn run_deploy_task(
             let _ = state_clone.docker.stop_container(&container_id).await;
             let _ = state_clone.docker.remove_container(&container_id).await;
         } else {
-            if let Some(node) = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-                .bind(&node_id_clone)
-                .fetch_optional(&state_clone.db)
-                .await
-                .ok()
-                .flatten()
-                && let Ok(client) = nodes::client::get_node_client(&state_clone.node_clients, &node_id_clone)
+            if let Ok(agent) = nodes::client::AgentClient::resolve(&state_clone, &node_id_clone).await
+                && let Err(e) =
+                    agent.stop(&litebin_common::agent_api::StopRequest { container_id: container_id.clone() }).await
             {
-                let url = agent_base_url(&state_clone.config, &node);
-                if let Err(e) = client
-                    .post(format!("{}/containers/stop", url))
-                    .json(&json!({"container_id": &container_id}))
-                    .send()
-                    .await
-                {
-                    tracing::warn!(project_id = %payload_clone.project_id, container_id = %container_id, error = %e, "deploy: failed to stop container on agent");
-                }
+                tracing::warn!(project_id = %payload_clone.project_id, container_id = %container_id, error = %e, "deploy: failed to stop container on agent");
             }
         }
         if let Err(e) = status::transition(

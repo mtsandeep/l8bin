@@ -6,9 +6,8 @@ use tokio::sync::Semaphore;
 
 use crate::AppState;
 use crate::nodes;
-use crate::routes::manage::agent_base_url;
 use crate::status::{self, ProjectUpdateFields};
-use litebin_common::types::{Node, ProjectStatus, VolumeMount};
+use litebin_common::types::{ProjectStatus, VolumeMount};
 
 use super::types::DeployRequest;
 
@@ -306,27 +305,8 @@ async fn stage_only_path(
     if node_id == "local" {
         crate::routes::manage::ensure_project_dir_and_env(&payload.project_id);
     } else {
-        let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")
-            .bind(node_id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(Some(n)) => n,
-            Ok(None) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": format!("node '{}' not found", node_id)})),
-                )
-                    .into_response();
-            }
-            Err(e) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("database error: {e}")})))
-                    .into_response();
-            }
-        };
-
-        let client = match nodes::client::get_node_client(&state.node_clients, node_id) {
-            Ok(c) => c,
+        let agent = match nodes::client::AgentClient::resolve(state, node_id).await {
+            Ok(a) => a,
             Err(e) => {
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -335,36 +315,28 @@ async fn stage_only_path(
                     .into_response();
             }
         };
-        let base_url = agent_base_url(&state.config, &node);
-        let stage_resp = match client
-            .post(format!("{}/containers/run", base_url))
-            .json(&json!({
-                "image": payload.image,
-                "internal_port": payload.port,
-                "project_id": payload.project_id,
-                "cmd": project.cmd,
-                "memory_limit_mb": project.memory_limit_mb,
-                "cpu_limit": project.cpu_limit,
-                "volumes": payload.volumes,
-                "docker_observe": granted_capabilities.contains(
-                    &litebin_common::capabilities::ProjectCapability::DockerObserve
-                ),
-                "stage_only": true,
-            }))
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("agent unreachable: {e}")})))
+        let stage_request = litebin_common::agent_api::RunRequest {
+            image: payload.image.clone(),
+            internal_port: payload.port,
+            project_id: payload.project_id.clone(),
+            cmd: project.cmd.clone(),
+            memory_limit_mb: project.memory_limit_mb,
+            cpu_limit: project.cpu_limit,
+            volumes: payload.volumes.clone(),
+            docker_observe: granted_capabilities
+                .contains(&litebin_common::capabilities::ProjectCapability::DockerObserve),
+            stage_only: true,
+        };
+        if let Err(e) = agent.run(&stage_request).await {
+            if let nodes::client::AgentClientError::Status { body, .. } = &e {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error": format!("remote stage failed: {body}")})),
+                )
                     .into_response();
             }
-        };
-
-        if !stage_resp.status().is_success() {
-            let body = stage_resp.text().await.unwrap_or_default();
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": format!("remote stage failed: {body}")})))
-                .into_response();
+            let (status_code, message) = e.into_response_parts();
+            return (status_code, Json(json!({"error": message}))).into_response();
         }
     }
 
