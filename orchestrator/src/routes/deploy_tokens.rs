@@ -58,12 +58,19 @@ pub async fn create_token(
 
     // If project-scoped, verify project belongs to user
     if let Some(ref pid) = payload.project_id {
-        let project: Option<(String,)> = sqlx::query_as("SELECT id FROM projects WHERE id = ? AND user_id = ?")
+        let project: Option<(String,)> = match sqlx::query_as("SELECT id FROM projects WHERE id = ? AND user_id = ?")
             .bind(pid)
             .bind(&user_id)
             .fetch_optional(&state.db)
             .await
-            .unwrap_or(None);
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, project_id = %pid, "failed to look up project for deploy token");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database error"})))
+                    .into_response();
+            }
+        };
 
         if project.is_none() {
             return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Project not found"}))).into_response();
@@ -80,7 +87,7 @@ pub async fn create_token(
     let now = chrono::Utc::now().timestamp();
     let token_id = uuid::Uuid::new_v4().to_string();
 
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO deploy_tokens (id, user_id, project_id, token_hash, name, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&token_id)
@@ -92,14 +99,14 @@ pub async fn create_token(
     .bind(payload.expires_at)
     .execute(&state.db)
     .await
-    .map_err(|e| {
+    {
         tracing::error!(error = %e, "failed to create deploy token");
-        (
+        return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("failed to create token: {e}")})),
         )
-            .into_response()
-    });
+            .into_response();
+    }
 
     let token_info = DeployTokenResponse {
         id: token_id,

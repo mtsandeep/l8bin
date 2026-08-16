@@ -88,18 +88,11 @@ pub(crate) async fn run(
     // Check for compose file (auto-detect or forced via --compose)
     let compose_file = ship::detect_compose_file(&path);
     if compose || compose_file.is_some() {
-        let compose_name = compose_file.unwrap_or_else(|| {
-            if compose {
-                // Find it now
-                ship::detect_compose_file(&path).expect("no compose file found")
-            } else {
-                unreachable!()
-            }
-        });
-
-        if compose && compose_file.is_none() {
+        // Reached only when --compose was passed and no compose file was
+        // found; with compose == false the outer condition guarantees Some.
+        let Some(compose_name) = compose_file else {
             bail!("--compose flag specified but no compose file found in {}", path.display());
-        }
+        };
 
         let target_services = if service.is_empty() { None } else { Some(service) };
 
