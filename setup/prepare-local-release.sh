@@ -18,6 +18,11 @@ RELEASE_DIR="${PROJECT_DIR}/local-release"
 echo "==> Building orchestrator..."
 cargo build --release -p litebin-orchestrator
 
+# Artifacts may land in a shared target dir (build.target-dir / CARGO_TARGET_DIR)
+TARGET_DIR="$(cd "${PROJECT_DIR}" && cargo metadata --format-version 1 --no-deps \
+    | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p' \
+    | sed 's/\\\\/\\/g')"
+
 echo "==> Building dashboard..."
 (cd "${PROJECT_DIR}/dashboard" && corepack enable && pnpm install --frozen-lockfile && pnpm build)
 
@@ -26,9 +31,9 @@ rm -rf "$RELEASE_DIR"
 mkdir -p "${RELEASE_DIR}/l8b-dashboard-dist/dist"
 
 # Copy orchestrator binary with release naming
-cp "${PROJECT_DIR}/target/release/litebin-orchestrator" \
+cp "${TARGET_DIR}/release/litebin-orchestrator" \
    "${RELEASE_DIR}/litebin-orchestrator-x86_64-linux" 2>/dev/null || \
-cp "${PROJECT_DIR}/target/release/litebin-orchestrator.exe" \
+cp "${TARGET_DIR}/release/litebin-orchestrator.exe" \
    "${RELEASE_DIR}/litebin-orchestrator-x86_64-linux"
 
 # Same layout as l8b-dashboard.tar.gz: dist/ + nginx.conf + Dockerfile

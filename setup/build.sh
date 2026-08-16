@@ -34,6 +34,11 @@ fi
 echo -e "\033[0;36mBuilding LiteBin components in release mode...\033[0m"
 cargo build --release
 
+# Artifacts may land in a shared target dir (build.target-dir / CARGO_TARGET_DIR)
+TARGET_DIR="$(cargo metadata --format-version 1 --no-deps \
+    | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p' \
+    | sed 's/\\\\/\\/g')"
+
 RELEASE_DIR="${ROOT_DIR}/release"
 mkdir -p "$RELEASE_DIR"
 
@@ -48,7 +53,7 @@ declare -A BINARIES=(
 echo -e "\n\033[0;36mPreparing 'release' folder for installer...\033[0m"
 
 for bin in "${!BINARIES[@]}"; do
-    SRC="${ROOT_DIR}/target/release/${bin}"
+    SRC="${TARGET_DIR}/release/${bin}"
     PREFIX="${BINARIES[$bin]}"
     
     # Check for .exe on Windows (though this script is for bash, good to be safe)
