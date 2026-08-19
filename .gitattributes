@@ -1,6 +1,4 @@
-# Normalize all text files to LF in the repo and on checkout (binaries are
-# auto-detected and left untouched).
-* text=auto eol=lf
+* text=auto
 
-# SQL migrations were LF-normalized before the blanket rule; keep explicit.
-**/*.sql text eol=lf
+# sqlx checksums migration bytes at compile time — must stay LF on all platforms
+orchestrator/src/db/migrations/*.sql text eol=lf
