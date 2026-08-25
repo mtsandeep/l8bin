@@ -152,7 +152,7 @@ Risky workload features require explicit grants stored in `project_capabilities`
 
 Deployments may *request* capabilities; only the user can *grant* them (dashboard validation step, Settings → Capabilities, or `l8b deploy --grant-capability`). `network_mode: host` requires `host-network`; privileged mode remains unsupported.
 
-Docker socket declarations are always removed, including mounts marked `:ro`; filesystem read-only mode does not restrict Docker API operations. With `docker-observe`, HAProxy forwards only `GET`/`HEAD` requests for daemon info, version, events, container listing, container inspect, container stats, and container logs. The requesting service receives `DOCKER_HOST`; other project services do not.
+Docker socket declarations are always removed, including mounts marked `:ro`; filesystem read-only mode does not restrict Docker API operations. With `docker-observe`, HAProxy forwards only `GET`/`HEAD` requests for daemon info, version, events, container listing, container inspect, container stats, and container logs. The requesting service receives `DOCKER_HOST`; other project services do not. The proxy pools its backend socket connections (`http-reuse always`, at most 16 idle) so observer clients that open a fresh connection per request do not churn a new daemon socket connection for every API call.
 
 Observation is host-wide. Responses can include container metadata, environment values, and logs from other projects on the node. LiteBin does not expose mutating Docker API access.
 

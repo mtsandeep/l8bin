@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **docker-observe proxy now pools its backend socket connections** — the managed HAProxy config sets `http-reuse always` with `pool-max-conn 16`, so observer clients that open a fresh connection per Docker API request no longer cause a new daemon socket connection per call. Existing proxies are recreated with the new config on their project's next start/wake/redeploy.
 - **Setup scripts no longer assume build artifacts are in `<project>/target`** — `setup/build.sh` and `setup/prepare-local-release.sh` now resolve the target directory via `cargo metadata`, so they work on machines that use a shared target dir (`CARGO_TARGET_DIR` or `build.target-dir` in `.cargo/config.toml`). Default per-project `target/` is unchanged.
 - **Refactor (phase 1): split `litebin-common`'s docker container module and `compose-bollard`'s compat module into smaller files** — no behavior change; public paths unchanged via re-exports.
 - **Refactor (phase 2): split the orchestrator's oversized route/status/routing files into smaller modules** — also extracted the route-registration block out of `main.rs` and relocated the routing-provider factory. No behavior change; handler/type paths unchanged via re-exports.

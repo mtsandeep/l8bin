@@ -475,6 +475,8 @@ services:
         assert!(!generated.contains("/archive"));
         assert!(generated.contains("deny_status 403 unless read_method"));
         assert!(generated.contains("deny_status 403 unless observe_endpoint"));
+        assert!(generated.contains("http-reuse always"));
+        assert!(generated.contains("server docker /var/run/docker.sock pool-max-conn 16"));
 
         let _ = std::fs::remove_dir_all(crate::types::projects_dir().join(project_id));
     }

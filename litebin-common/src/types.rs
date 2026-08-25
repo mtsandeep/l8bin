@@ -556,6 +556,10 @@ pub fn docker_observe_network_name(project_id: &str, instance_id: Option<&str>) 
 }
 
 /// Managed image used for the endpoint-allowlisted Docker observation proxy.
+///
+/// The backend pools its socket connections (`http-reuse always`, capped at 16
+/// idle) so observer clients that open a fresh connection per request do not
+/// churn a new socket connection to the daemon for every API call.
 pub const DOCKER_OBSERVE_PROXY_IMAGE: &str = "haproxy:3.0-alpine";
 pub const DOCKER_OBSERVE_HAPROXY_CONFIG: &str = r#"global
     log stdout format raw local0
@@ -576,7 +580,8 @@ frontend docker_observe
     default_backend docker_socket
 
 backend docker_socket
-    server docker /var/run/docker.sock
+    http-reuse always
+    server docker /var/run/docker.sock pool-max-conn 16
 "#;
 
 /// On-disk projects root.
