@@ -413,6 +413,11 @@ pub(super) fn resolve_upload_mode(
     if ci_mode {
         return UploadMode::Auto;
     }
+    // The local node runs on the master itself — every upload path goes to the
+    // master, so asking "direct or relay?" is meaningless there.
+    if node_id == Some("local") {
+        return UploadMode::Auto;
+    }
     if let Some(id) = node_id
         && let Some(n) = nodes.iter().find(|n| n.id == id)
         && n.public_ip.as_deref().filter(|s| !s.is_empty()).is_some()
