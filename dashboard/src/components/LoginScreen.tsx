@@ -1,4 +1,4 @@
-import { Container, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { useAuth } from './AuthContext';
 
@@ -37,9 +37,7 @@ export default function LoginScreen() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-violet-600 flex items-center justify-center shadow-lg shadow-violet-500/20">
-            <Container size={20} className="text-white" />
-          </div>
+          <img src="/logo.svg" alt="" className="h-10 w-auto" style={{ height: 40 }} />
           <div>
             <h1 className="text-lg font-semibold text-slate-100">LiteBin</h1>
             <p className="text-xs text-slate-500">Container Dashboard</p>

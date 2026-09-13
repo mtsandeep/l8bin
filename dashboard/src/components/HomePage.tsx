@@ -89,9 +89,7 @@ export default function HomePage() {
           {/* Mobile: logo left, user right. Desktop: logo left. */}
           <div className="flex items-center justify-between sm:justify-start sm:gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
-                <Container size={16} className="text-white" />
-              </div>
+              <img src="/logo.svg" alt="" className="h-8 w-auto" style={{ height: 32 }} />
               <div>
                 <h1 className="text-base font-semibold text-slate-100 leading-none">LiteBin</h1>
                 <p className="text-[11px] text-slate-500 mt-0.5">Container Dashboard</p>
