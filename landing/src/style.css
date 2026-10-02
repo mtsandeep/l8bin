@@ -116,6 +116,17 @@ html {
   }
 }
 
+/* Terminal cursor blink — hard steps, deliberately not a smooth fade. */
+.cursor-blink {
+  animation: blink-hard 1.1s steps(1) infinite;
+}
+
+@keyframes blink-hard {
+  50% {
+    opacity: 0;
+  }
+}
+
 .tl {
   font-size: 0.78rem;
   font-family: "JetBrains Mono", monospace;

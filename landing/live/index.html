@@ -159,9 +159,9 @@
         </div>
         
         <div class="flex flex-col gap-3 flex-1">
-          <div class="flex gap-4">
+          <div class="flex flex-col sm:flex-row gap-4">
             <!-- Memory Box -->
-            <div class="flex flex-col gap-2 justify-center flex-1 min-w-0">
+            <div class="flex flex-col gap-2 justify-center sm:flex-1 min-w-0">
               <div class="flex items-center gap-2 text-slate-400 mb-1">
                 <svg class="w-4 h-4 text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" /></svg>
                 <span class="text-[0.65rem] font-bold uppercase tracking-widest text-slate-400">Memory</span>
@@ -174,7 +174,7 @@
             </div>
 
             <!-- Swap Box (hidden by default, shown if > 64MB) -->
-            <div class="hidden flex-col gap-2 justify-center w-[40%] min-w-0" id="swap-box">
+            <div class="hidden flex-col gap-2 justify-center w-full sm:w-[40%] min-w-0" id="swap-box">
               <div class="flex items-center gap-2 text-slate-400 mb-1">
                 <svg class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
                 <span class="text-[0.65rem] font-bold uppercase tracking-widest text-slate-400">Swap</span>
