@@ -350,6 +350,9 @@ run_agent_container() {
   docker run -d \
     --name litebin-agent \
     --restart unless-stopped \
+    --log-driver json-file \
+    --log-opt max-size=10m \
+    --log-opt max-file=3 \
     --network litebin-network \
     --env-file "${install_dir}/agent/.env" \
     -v /var/run/docker.sock:/var/run/docker.sock \
@@ -374,12 +377,59 @@ run_agent_caddy() {
   docker run -d \
     --name litebin-agent-caddy \
     --restart unless-stopped \
+    --log-driver json-file \
+    --log-opt max-size=25m \
+    --log-opt max-file=3 \
     --network litebin-network \
     -p 80:80 \
     -p 443:443 \
     -p 443:443/udp \
     "${mounts[@]}" \
     caddy:2.11.2-alpine
+}
+
+# Run compose up in the install dir; die loudly if it fails.
+compose_up() {
+  local install_dir="$1"
+  shift
+  local out
+  if ! out=$(cd "$install_dir" && docker compose up -d --build "$@" 2>&1); then
+    echo "$out" | tail -20 >&2
+    die "docker compose up failed (output above). Check 'df -h' — a full disk fails the build. Then re-run: cd ${install_dir} && docker compose up -d --build"
+  fi
+  echo "$out" | grep -E 'Container|Started|Stopped|Recreated|Creating|Removing|Warning|Error' || true
+}
+
+# True if the container was created at/after the given epoch.
+container_created_since() {
+  local name="$1" epoch="$2" created
+  created=$(docker inspect -f '{{.Created}}' "$name" 2>/dev/null) || return 1
+  [ -n "$created" ] || return 1
+  [ "$(date -d "$created" +%s 2>/dev/null || echo 0)" -ge "$epoch" ]
+}
+
+# True when the installed binary is newer than the running container —
+# an update was downloaded but is not running yet.
+update_pending() {
+  local bin="$1" name="$2" bin_ts created
+  bin_ts=$(stat -c %Y "$bin" 2>/dev/null) || return 1
+  created=$(docker inspect -f '{{.Created}}' "$name" 2>/dev/null) || return 1
+  [ -n "$created" ] || return 1
+  [ "$bin_ts" -gt "$(date -d "$created" +%s 2>/dev/null || echo 0)" ]
+}
+
+# Restart and confirm the installed version is actually running.
+apply_pending_update() {
+  local install_dir="$1" name="$2" restart_epoch
+  restart_epoch=$(date +%s)
+  compose_up "$install_dir"
+  sleep 3
+  if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = "true" ] \
+    && container_created_since "$name" "$restart_epoch"; then
+    info "Applied — ${name} is now running the installed version."
+  else
+    die "Restart failed — update still not applied. Check: docker compose logs ${name}"
+  fi
 }
 
 generate_compose() {
@@ -399,12 +449,27 @@ generate_compose() {
   [ -n "$certs_dir" ] && caddy_volumes="${caddy_volumes}
       - ${certs_dir}:/certs:ro"
 
+  # Cap Caddy's Go heap on hosts with under 2GB RAM.
+  local caddy_mem_env=""
+  local total_mem_kb
+  total_mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  if [ "${total_mem_kb:-0}" -gt 0 ] && [ "$total_mem_kb" -lt 2097152 ]; then
+    caddy_mem_env="    environment:
+      - GOMEMLIMIT=35MiB
+"
+  fi
+
   cat > "$dest" <<COMPOSE_EOF
 services:
   orchestrator:
     build: ./orchestrator
     container_name: litebin-orchestrator
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
 ${orch_volumes}
     env_file:
@@ -418,6 +483,11 @@ ${orch_volumes}
     build: ./dashboard
     container_name: litebin-dashboard
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
     networks:
       - litebin-network
 
@@ -425,7 +495,12 @@ ${orch_volumes}
     image: caddy:2.11.2-alpine
     container_name: litebin-caddy
     restart: unless-stopped
-    env_file:
+    logging:
+      driver: json-file
+      options:
+        max-size: "25m"
+        max-file: "3"
+${caddy_mem_env}    env_file:
       - .env
     ports:
       - "80:80"
@@ -791,7 +866,14 @@ CADDYFILE
   # -- Start ------------------------------------------------------------
   echo ""
   info "Starting LiteBin..."
-  (cd "$install_dir" && docker compose up -d --build 2>&1 | grep -E 'Container|Started|Stopped|Recreated|Creating|Removing|Warning|Error')
+  local start_epoch
+  start_epoch=$(date +%s)
+  compose_up "$install_dir"
+  sleep 3
+  if [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" != "true" ] \
+    || ! container_created_since litebin-orchestrator "$start_epoch"; then
+    die "Orchestrator did not start. Check: cd ${install_dir} && docker compose logs orchestrator"
+  fi
   echo ""
 
   # -- Done -------------------------------------------------------------
@@ -1042,9 +1124,9 @@ EOF
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "litebin-orchestrator"; then
     info "Restarting orchestrator to load certificates..."
     if [ "$certs_mount_added" = true ]; then
-      (cd "$install_dir" && docker compose up -d --build --force-recreate orchestrator 2>&1 | tail -5)
+      compose_up "$install_dir" --force-recreate orchestrator
     else
-      (cd "$install_dir" && docker compose up -d --build 2>&1 | tail -3)
+      compose_up "$install_dir"
     fi
   fi
 
@@ -1315,14 +1397,28 @@ update_master() {
   local latest_release
   latest_release=$(get_latest_release)
 
+  # A previously declined restart leaves newer bits on disk than the container runs
+  local pending_restart=""
+  update_pending "${install_dir}/orchestrator/litebin-orchestrator" litebin-orchestrator && pending_restart=" (pending restart)"
+
   echo ""
   echo -e "${BOLD}LiteBin Update${NC}"
   echo ""
-  echo -e "  Current version:  ${CYAN}${current_version}${NC}"
-  echo -e "  Latest version:   ${CYAN}${latest_release}${NC}"
+  echo -e "  Installed version: ${CYAN}${current_version}${pending_restart}${NC}"
+  echo -e "  Latest version:    ${CYAN}${latest_release}${NC}"
   echo ""
   echo -e "  Changelog: ${DIM}${CHANGELOG_URL}${NC}"
   echo ""
+
+  if [ -n "$pending_restart" ]; then
+    warn "A downloaded update is not running yet."
+    if prompt_yes "Restart now to apply it?"; then
+      apply_pending_update "$install_dir" litebin-orchestrator
+    else
+      info "Apply later with: cd ${install_dir} && docker compose up -d --build"
+    fi
+    exit 0
+  fi
 
   local target_release
 
@@ -1356,6 +1452,9 @@ update_master() {
         ;;
     esac
   fi
+
+  local is_reinstall=false
+  [ "$current_version" = "$target_release" ] && is_reinstall=true
 
   # Confirm
   echo ""
@@ -1425,34 +1524,41 @@ update_master() {
   # Download new dashboard
   install_dashboard_package "$install_dir" "$target_release"
 
-  # Save installed version
-  echo "$target_release" > "${install_dir}/.version"
-
   # Confirm restart
   echo ""
   if ! prompt_yes "Restart LiteBin now?"; then
-    info "Update ready. Restart manually when ready:"
+    # Staged, not applied.
+    echo "$target_release" > "${install_dir}/.version"
+    info "Update staged — the running version is unchanged until you restart:"
     echo -e "  ${DIM}cd ${install_dir} && docker compose up -d --build${NC}"
     exit 0
   fi
 
   # Restart
   info "Restarting LiteBin..."
-  (cd "$install_dir" && docker compose up -d --build 2>&1 | grep -E 'Container|Started|Stopped|Recreated|Creating|Removing|Warning|Error')
+  local restart_epoch
+  restart_epoch=$(date +%s)
+  compose_up "$install_dir"
 
   # Verify
   echo ""
   info "Waiting for services to start..."
   sleep 3
 
-  if [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" = "true" ]; then
+  if [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" = "true" ] \
+    && container_created_since litebin-orchestrator "$restart_epoch"; then
+    echo "$target_release" > "${install_dir}/.version"
     echo ""
     echo -e "${GREEN}${BOLD}  LiteBin ${target_release} is running!${NC}"
     echo ""
     echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
+  elif [ "$is_reinstall" = true ] \
+    && [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" = "true" ]; then
+    # Reinstall with unchanged bits — nothing to recreate is fine.
+    echo "$target_release" > "${install_dir}/.version"
+    info "No changes to apply — orchestrator already running ${target_release}."
   else
-    warn "Orchestrator may not have started successfully."
-    echo -e "  Check logs: ${DIM}cd ${install_dir} && docker compose logs -f orchestrator${NC}"
+    die "Orchestrator was not recreated — the update did not apply. Re-run: cd ${install_dir} && docker compose up -d --build (logs: docker compose logs orchestrator)"
   fi
 }
 
@@ -1523,11 +1629,14 @@ update_agent() {
   local latest_release
   latest_release=$(get_latest_release)
 
+  local pending_restart=""
+  update_pending "${install_dir}/agent/litebin-agent" litebin-agent && pending_restart=" (pending restart)"
+
   echo ""
   echo -e "${BOLD}LiteBin Agent Update${NC}"
   echo ""
-  echo -e "  Current version:  ${CYAN}${current_version}${NC}"
-  echo -e "  Latest version:   ${CYAN}${latest_release}${NC}"
+  echo -e "  Installed version: ${CYAN}${current_version}${pending_restart}${NC}"
+  echo -e "  Latest version:    ${CYAN}${latest_release}${NC}"
   echo ""
   echo -e "  Changelog: ${DIM}${CHANGELOG_URL}${NC}"
   echo ""
@@ -1590,20 +1699,25 @@ update_agent() {
     "agent ${target_release} (${arch})"
   chmod +x "${install_dir}/agent/litebin-agent"
 
-  # Save installed version
-  echo "$target_release" > "${install_dir}/.version"
-
   # Confirm restart
   echo ""
   if ! prompt_yes "Restart agent now?"; then
-    info "Update ready. Restart manually when ready:"
+    # Staged, not applied.
+    echo "$target_release" > "${install_dir}/.version"
+    info "Update staged — the running version is unchanged until you restart."
+    info "Apply it by re-running this update when ready:"
     echo -e "  ${DIM}curl -fsSL ${L8B_IN} | bash -s update${NC}"
     exit 0
   fi
 
   # Rebuild and restart
   info "Rebuilding agent image..."
-  (cd "${install_dir}/agent" && docker build -t litebin-agent . 2>&1 | grep -E 'Successfully|Warning|Error|naming to')
+  local build_out
+  if ! build_out=$(cd "${install_dir}/agent" && docker build -t litebin-agent . 2>&1); then
+    echo "$build_out" | tail -20 >&2
+    die "agent image build failed (output above). Check 'df -h' — a full disk fails the build."
+  fi
+  echo "$build_out" | grep -E 'Successfully|Warning|Error|naming to' || true
 
   local certs_dir
   certs_dir=$(find_certs_dir "$install_dir")
@@ -1623,13 +1737,13 @@ update_agent() {
   sleep 3
 
   if [ "$(docker inspect -f '{{.State.Running}}' litebin-agent 2>/dev/null)" = "true" ]; then
+    echo "$target_release" > "${install_dir}/.version"
     echo ""
     echo -e "${GREEN}${BOLD}  Agent ${target_release} is running!${NC}"
     echo ""
     echo -e "  View logs: ${DIM}docker logs -f litebin-agent${NC}"
   else
-    warn "Agent may not have started successfully."
-    echo -e "  Check logs: ${DIM}docker logs -f litebin-agent${NC}"
+    die "Agent did not start — the update did not apply. Check: docker logs -f litebin-agent"
   fi
 }
 

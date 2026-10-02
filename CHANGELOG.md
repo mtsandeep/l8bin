@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **A failed update reported success** — compose and build output was piped through `grep` without checking its exit code, so a failed build (e.g. from a full disk) was invisible, and the "is running" check passed because the *old* container was still up. The installer now dies loudly on failure and verifies the orchestrator was actually recreated before claiming the new version is running.
+- **`.version` was written before the restart** — a failed or skipped restart left the file claiming the new version while the old one still ran. It is now recorded only after the new version is confirmed running; a declined restart records it as staged, and the next update run detects a staged-but-unapplied update (installed binary newer than the running container) and offers to apply it — no matter how the restart eventually happens.
+
+### Added
+- **Built-in container log rotation** — the generated compose (orchestrator 10m×3, dashboard 5m×2, caddy 25m×3) and the `docker run` agent containers (agent 10m×3, agent-caddy 25m×3) now cap json-file logs, so an active Caddy can no longer fill the host disk (a 659MB access log was observed on a 9GB VPS).
+- **Caddy gets a soft Go heap cap on small servers** — when the host has under 2GB RAM, the generated compose sets `GOMEMLIMIT=35MiB` to keep the proxy's heap bounded where memory is scarce; boxes with 2GB+ run Go defaults with no extra GC cost.
+
 ## [0.3.23] - 2026-10-02
 
 ### Fixed
