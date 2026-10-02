@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.24] - 2026-10-02
+
 ### Fixed
 - **A failed update reported success** — compose and build output was piped through `grep` without checking its exit code, so a failed build (e.g. from a full disk) was invisible, and the "is running" check passed because the *old* container was still up. The installer now dies loudly on failure and verifies the orchestrator was actually recreated before claiming the new version is running.
 - **`.version` was written before the restart** — a failed or skipped restart left the file claiming the new version while the old one still ran. It is now recorded only after the new version is confirmed running; a declined restart records it as staged, and the next update run detects a staged-but-unapplied update (installed binary newer than the running container) and offers to apply it — no matter how the restart eventually happens.
