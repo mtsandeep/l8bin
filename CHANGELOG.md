@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Update prompts now show compose changes as a unified diff** (`+ added, - removed`) instead of raw `5a6,10` notation.
+
 ## [0.3.24] - 2026-10-02
 
 ### Fixed

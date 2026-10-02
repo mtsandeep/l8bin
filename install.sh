@@ -1485,7 +1485,8 @@ update_master() {
     echo ""
     warn "docker-compose.yml needs to be updated in this version:"
     echo ""
-    diff "${install_dir}/docker-compose.yml" "$tmp_compose" || true
+    echo -e "  ${DIM}+ added, - removed:${NC}"
+    diff -u --label "installed" --label "new" "${install_dir}/docker-compose.yml" "$tmp_compose" || true
     echo ""
     echo -e "  Review the changelog for details: ${DIM}${CHANGELOG_URL}${NC}"
     echo ""
