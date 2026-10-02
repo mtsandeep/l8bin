@@ -1,6 +1,12 @@
 mod activity;
 mod tls;
 
+// jemalloc decays and unmaps freed pages, so RSS tracks live usage instead of
+// the historical peak (glibc retains freed chunks in per-thread arenas).
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL_ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use anyhow::Result;
 use axum::{Router, routing::get};
 use dashmap::DashMap;

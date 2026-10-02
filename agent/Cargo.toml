@@ -54,5 +54,9 @@ chrono = "0.4"
 # Node client pool (for wake locks)
 dashmap = "6"
 
+# Global allocator (see main.rs) — eager return of freed memory to the OS. Not on MSVC.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"
+
 [dev-dependencies]
 proptest = "1.0"

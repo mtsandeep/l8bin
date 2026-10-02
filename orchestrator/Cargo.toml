@@ -66,6 +66,10 @@ sha2 = "0.10"
 hmac = "0.12"
 rpassword = "7"
 
+# Global allocator (see main.rs) — eager return of freed memory to the OS. Not on MSVC.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"
+
 [dev-dependencies]
 litebin-agent = { path = "../agent" }
 proptest = "1"

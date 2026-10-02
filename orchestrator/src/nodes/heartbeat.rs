@@ -56,11 +56,13 @@ async fn run_heartbeat_pass(state: &AppState) {
 }
 
 async fn refresh_local_node(state: &AppState) {
-    let mut sys = sysinfo::System::new_all();
-    sys.refresh_all();
+    // Only refresh what we read — new_all()/refresh_all() would rebuild the
+    // process, disk, network and component tables on every heartbeat tick.
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
     let total = sys.total_memory() as i64;
     let available = sys.available_memory() as i64;
-    let cpu = sys.cpus().len() as f64;
+    let cpu = std::thread::available_parallelism().map(|n| n.get() as f64).unwrap_or(1.0);
     let (df, dt) = litebin_common::sys::disk_space();
     let disk_free = df as i64;
     let disk_total = dt as i64;

@@ -2,7 +2,7 @@ FROM rust:slim-trixie AS builder
 
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y pkg-config libssl-dev make && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace manifests for dependency caching
 COPY Cargo.toml Cargo.lock ./

@@ -29,16 +29,46 @@ pub fn caddy_logging_config() -> serde_json::Value {
     })
 }
 
+/// Minimal view of a Caddy JSON access log line — only `request.host` is
+/// materialized; every other field is skipped by serde without allocating.
+/// The borrowed lifetimes keep the host as a `&str` slice of the input line.
+#[derive(serde::Deserialize)]
+struct CaddyAccessLine<'a> {
+    #[serde(borrow)]
+    request: Option<CaddyRequestLine<'a>>,
+}
+
+#[derive(serde::Deserialize)]
+struct CaddyRequestLine<'a> {
+    host: Option<&'a str>,
+}
+
 /// Extract the host from a Caddy JSON access log line.
 /// Caddy's JSON encoder nests the host under `request.host`.
-fn extract_host_from_line(line: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(line).ok()?;
-    let host = v.get("request")?.get("host")?.as_str()?;
+fn extract_host_from_line(line: &str) -> Option<&str> {
+    let parsed: CaddyAccessLine = serde_json::from_str(line).ok()?;
+    let host = parsed.request?.host?;
     if host.is_empty() {
         return None;
     }
     // Strip port if present
-    Some(host.split(':').next().unwrap_or(host).to_string())
+    Some(host.split(':').next().unwrap_or(host))
+}
+
+/// Append raw log bytes to `buffer` and harvest hosts from any lines the
+/// bytes complete. Lines are processed as slices of `buffer` and drained in
+/// place; the only steady-state allocation is one `String` per unique host.
+fn harvest_hosts(buffer: &mut String, bytes: &[u8], hosts: &mut HashSet<String>) {
+    buffer.push_str(&String::from_utf8_lossy(bytes));
+    while let Some(newline_pos) = buffer.find('\n') {
+        let line = buffer[..newline_pos].trim();
+        if let Some(host) = extract_host_from_line(line)
+            && !hosts.contains(host)
+        {
+            hosts.insert(host.to_string());
+        }
+        buffer.drain(..newline_pos + 1);
+    }
 }
 
 /// Run an activity tracker that tails Docker container logs,
@@ -122,15 +152,7 @@ where
                             LogOutput::StdErr { message } => message,
                             _ => continue,
                         };
-                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                        // Process complete lines
-                        while let Some(newline_pos) = buffer.find('\n') {
-                            let line = buffer[..newline_pos].trim().to_string();
-                            buffer = buffer[newline_pos + 1..].to_string();
-                            if let Some(host) = extract_host_from_line(&line) {
-                                hosts.insert(host);
-                            }
-                        }
+                        harvest_hosts(&mut buffer, &bytes, &mut hosts);
                     }
                     Some(Err(e)) => {
                         return Err(e.into());
@@ -158,5 +180,66 @@ where
                 return Err(anyhow::anyhow!("shutdown"));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn access_line(host: &str) -> String {
+        format!(
+            r#"{{"level":"info","ts":1755000000.0,"logger":"http.log.access","request":{{"remote_ip":"10.0.0.1","method":"GET","host":"{host}","uri":"/"}},"duration":0.001}}"#
+        )
+    }
+
+    #[test]
+    fn extracts_host_from_access_line() {
+        assert_eq!(extract_host_from_line(&access_line("app.example.com")), Some("app.example.com"));
+    }
+
+    #[test]
+    fn strips_port_from_host() {
+        assert_eq!(extract_host_from_line(&access_line("app.example.com:8443")), Some("app.example.com"));
+    }
+
+    #[test]
+    fn rejects_non_access_lines() {
+        assert_eq!(extract_host_from_line(r#"{"level":"info","msg":"serving initial configuration"}"#), None);
+        assert_eq!(extract_host_from_line("not json at all"), None);
+        assert_eq!(extract_host_from_line(r#"{"request":{}}"#), None);
+        assert_eq!(extract_host_from_line(r#"{"request":{"host":""}}"#), None);
+    }
+
+    #[test]
+    fn harvests_only_complete_lines_and_dedupes() {
+        let mut buffer = String::new();
+        let mut hosts = HashSet::new();
+
+        // Two complete lines (same host — second must not re-allocate an entry)
+        // plus a trailing partial line that must stay buffered.
+        let chunk = format!("{}\n{}\n{{\"req", access_line("a.example.com"), access_line("a.example.com"));
+        harvest_hosts(&mut buffer, chunk.as_bytes(), &mut hosts);
+        assert_eq!(hosts, HashSet::from(["a.example.com".to_string()]));
+        assert_eq!(buffer, "{\"req");
+
+        // Completing the partial line via a later chunk harvests its host.
+        let rest = "uest\":{\"host\":\"b.example.com\"}}\n";
+        harvest_hosts(&mut buffer, rest.as_bytes(), &mut hosts);
+        assert_eq!(hosts, HashSet::from(["a.example.com".to_string(), "b.example.com".to_string()]));
+        assert_eq!(buffer, "");
+    }
+
+    #[test]
+    fn repeated_traffic_grows_nothing() {
+        // Per-request processing must not allocate: only unique hosts ever
+        // allocate an entry.
+        let mut buffer = String::new();
+        let mut hosts = HashSet::new();
+        for _ in 0..1000 {
+            harvest_hosts(&mut buffer, format!("{}\n", access_line("same.example.com")).as_bytes(), &mut hosts);
+        }
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(buffer, "");
     }
 }
