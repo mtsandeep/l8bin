@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.23] - 2026-10-02
+
 ### Fixed
 - **Orchestrator memory grew ~400 bytes per proxied request** — the activity tracker's Caddy log tailer parsed every access line into a full `serde_json::Value` DOM plus per-line `String` copies just to read `request.host`; it now borrows a two-field struct and processes lines in place, so steady-state allocation per request is zero.
 - **Heartbeat rebuilt all sysinfo tables (processes, disks, networks) every tick** — now refreshes memory only.
