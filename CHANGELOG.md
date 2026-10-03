@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - **Unauthenticated calls on the scoped route groups now return `401` JSON instead of a 307 redirect** — matches what the dashboard and API clients already expect.
+- **Docs synced with the scoped-token model** — `api-reference.md` documents the scope ladder and per-endpoint auth (fixing wrong "Public" claims on `GET /projects`), `llms.txt` instructions are task-oriented for agents ("is it up?", write-only env, `/meta`), `env-secrets.md`/`faq.md` lead with `l8b env push` instead of SSH, and `cli-reference.md`, `openapi.json`, and `llms-full.txt` are regenerated from source.
 
 ### Fixed
 - **Every env looked perpetually "pending"** — the `.env` vs `.env.l8bin` snapshot comparison hashed raw bytes on one side and line-joined content on the other, so any `.env` ending with a newline always reported as changed (visible as a permanently stale "env changed" indicator). Both hashes are now line-normalized (orchestrator + agent), with regression tests.

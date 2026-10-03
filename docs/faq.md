@@ -252,21 +252,32 @@ nc -zv AGENT_IP 5083 -w 5
 
 ### Where do I put runtime environment variables?
 
-Runtime env vars go in `projects/<project_id>/.env` on the machine that runs your container. On a single-node setup, that's the master. On multi-node, it's on the agent where the project is deployed.
+Runtime env vars live in `projects/<project_id>/.env` on the machine that runs your container. There are two ways to edit them — both write the same file:
+
+**Option 1 — remotely via the CLI / env API (no SSH):**
 
 ```bash
-# SSH into your server, then:
-echo "DATABASE_URL=postgres://user:pass@db:5432/mydb" >> litebin/projects/myapp/.env
-echo "SESSION_SECRET=abc123" >> litebin/projects/myapp/.env
+l8b env push myapp --file .env.production            # merge into existing
+l8b env push myapp --file .env.production --apply    # + recreate now
+l8b env list myapp                                    # keys with masked previews only
 ```
 
-LiteBin auto-detects changes to `.env` and recreates the container on the next wake-up with the new values. See [env-secrets.md](env-secrets.md) for the full guide.
+Values are write-only through the API (never readable back); changes apply on the next container start.
+
+**Option 2 — edit the file directly on the node:**
+
+```bash
+# on the machine running the container:
+echo "DATABASE_URL=postgres://user:pass@db:5432/mydb" >> litebin/projects/myapp/.env
+```
+
+LiteBin auto-detects file changes and recreates the container with the new values on the next start. See [env-secrets.md](env-secrets.md) for the full guide.
 
 ### My app doesn't see the env vars I set
 
-1. Make sure you edited `.env` on the correct machine (the one running the container, not the orchestrator for multi-node setups).
-2. Check that the file is at `litebin/projects/<project_id>/.env` (not inside the Docker container).
-3. The container is recreated automatically on the next wake-up. If it's currently running, trigger a recreate from the dashboard or stop/start the project.
+1. If you pushed via `l8b env push` without `--apply`, the changes apply on the next container start — run `l8b restart myapp` or push with `--apply`.
+2. If you edited the file directly, make sure it's on the correct machine (the one running the container) at `litebin/projects/<project_id>/.env`.
+3. `l8b env list myapp` shows `pending: true` while changes are not yet applied.
 4. Build-time env vars (from `l8b ship --secret .env`) are baked into the image and separate from runtime vars.
 
 ### Can I use `${VAR}` in my docker-compose.yml?

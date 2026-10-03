@@ -8,11 +8,14 @@ When helping users deploy to LiteBin, follow these patterns:
 
 1. **Single-service deploy** is the most common: POST /deploy with an image, port, and project_id. Use PUT /deploy for redeploy/update.
 2. **Multi-service deploy** uses POST /deploy/compose with a docker-compose.yaml file.
-3. **Authentication**: Most endpoints require a session cookie (obtained via POST /auth/login). For CI/CD, use deploy tokens (POST /deploy-tokens) passed as `Authorization: Bearer <token>`.
-4. **Project lifecycle**: Projects go through: pending (no staged artifacts) → unconfigured (staged; awaiting runtime configuration) → deploying → running → stopped. Check GET /projects/{id}/stats for live status.
-5. **Custom domains**: Set via PATCH /projects/{id}/settings with `custom_domain`. LiteBin auto-configures TLS via Caddy.
-6. **Volumes**: Specify in the deploy request. Named volumes are scoped per-project. Bind mounts use `./` prefix for relative paths.
-7. **Multi-server**: LiteBin supports remote nodes via mTLS-connected agents. POST /nodes to register, POST /nodes/{id}/connect to onboard.
+3. **Authentication**: Session cookie (POST /auth/login) or deploy tokens passed as `Authorization: Bearer <token>`. Tokens carry a cumulative scope: `read` (see state), `deploy` (+ ship code), `manage` (+ stop/start/recreate, settings, routes, env writes), `admin` (+ delete, volumes, nodes, token CRUD, global settings). Project-bound tokens only access their own project's paths.
+4. **Is it up?**: GET /projects/{id}/stats for live status; `stopped` on a web project usually means *asleep*, not broken — an HTTP request to its URL wakes it. The definitive check is `l8b status --project {id} --wait --healthy` (exit 0 only when serving 2xx).
+5. **Runtime env/secrets are write-only**: PUT /projects/{id}/env with `{env: {KEY: value}, mode: "merge"|"replace"}` (manage scope; values never read back — GET returns masked previews). Changes apply on the next container start/recreate. Prefer pushing from a file: `l8b env push <project> --file .env.production --apply`.
+6. **Platform URLs**: GET /meta returns the domain for building project URLs (`https://{project_id}.{domain}`) — do not use GET /settings (admin-only, contains Cloudflare secrets).
+7. **Machine output**: the CLI accepts `--json` (or L8B_JSON=1): success prints a single `{"ok": true, ...}` object, failures print `{"ok": false, "error": {"message", "hint"}}` with exit 1.
+8. **Custom domains**: Set via PATCH /projects/{id}/settings with `custom_domain`. LiteBin auto-configures TLS via Caddy.
+9. **Volumes**: Specify in the deploy request. Named volumes are scoped per-project. Bind mounts use `./` prefix for relative paths.
+10. **Multi-server**: LiteBin supports remote nodes via mTLS-connected agents. POST /nodes to register, POST /nodes/{id}/connect to onboard.
 
 ## API
 
@@ -21,14 +24,21 @@ When helping users deploy to LiteBin, follow these patterns:
 
 ## CLI
 
-Install via: `curl -fsSL https://l8b.in | bash -s cli` or build from source.
+Install via: `curl -fsSL https://l8b.in | bash -s cli` or build from source. Auth: `l8b login --server <url>` (session) or `L8B_TOKEN` env / `--token` (deploy token).
 
 Commands:
-- `l8b deploy` — Deploy a Docker image
-- `l8b ship` — Package and deploy a compose project
-- `l8b login` — Authenticate CLI session
-- `l8b status` — Show project status
-- `l8b cleanup` — Clean unused images
+- `l8b deploy --project <id>` — Build and deploy the current directory (Dockerfile auto-detected, Railpack fallback)
+- `l8b ship` — Interactive guided deploy (humans only)
+- `l8b list` — All projects with live status and URLs
+- `l8b status --project <id> [--wait] [--healthy]` — Project status; --wait polls (exit 0 only when running), --healthy probes the URL
+- `l8b logs <project> [--tail N] [--service S] [--deploy]` — Container or deploy logs
+- `l8b url <project>` — The project's managed URL (background projects have none)
+- `l8b env list <project>` / `l8b env push <project> --file|--stdin [--replace] [--apply]` — Runtime env (write-only values)
+- `l8b stop | start | restart <project>` — Lifecycle (restart applies pending .env changes; stop is idempotent)
+- `l8b delete <project> --yes` — Delete project + containers + volumes (admin scope)
+- `l8b login` / `l8b logout` / `l8b config` / `l8b cleanup` — Session and config management
+
+All commands accept `--json` for machine-readable output.
 
 ## Architecture
 

@@ -50,7 +50,7 @@ l8b config set --server https://l8bin.example.com --token your-token-here
 l8b deploy --project myapp --port 3000
 ```
 
-Tokens are created from the dashboard under **Settings > Deploy Tokens**, or auto-generated when using `l8b ship`.
+Tokens are created from the dashboard under **Settings > Deploy Tokens**, or auto-generated when using `l8b ship`. Each token carries a cumulative scope: `read` (see state), `deploy` (default — also grants read), `manage` (+ lifecycle, settings, env writes), or `admin` (+ delete, nodes, global settings). Tokens can also be bound to a single project.
 
 ## Commands
 
@@ -293,6 +293,33 @@ Clean up leftover build artifacts (.env backups, temp dockerignore files).
 l8b cleanup
 l8b cleanup --path ./services/frontend
 ```
+
+## Managing running projects
+
+```bash
+l8b list                       # all projects, running-first, with URLs
+l8b status --project myapp     # detailed status
+l8b status --project myapp --wait --healthy   # exit 0 only when serving 2xx
+l8b logs myapp                 # container logs (--tail N, --service S, --deploy)
+l8b url myapp                  # the project's managed URL
+l8b stop myapp                 # idempotent
+l8b start myapp                # polls until running
+l8b restart myapp              # recreates containers (applies pending .env changes)
+l8b env list myapp             # env keys, masked previews only
+l8b env push myapp --file .env.production --apply   # push secrets + apply
+l8b delete myapp --yes         # removes project, containers, and volumes (admin)
+```
+
+### Machine-readable output
+
+Add `--json` (or set `L8B_JSON=1`) to any command for a single JSON object on
+stdout with progress suppressed:
+
+```json
+{"ok": true, "project_id": "myapp", "status": "running", "url": "https://myapp.example.com"}
+```
+
+Failures print `{"ok": false, "error": {"message": "...", "hint": "<recovery command>"}}` and exit 1. `status --wait` and `--healthy` exit non-zero when the project isn't up — designed for scripts and coding agents.
 
 ## Configuration priority
 

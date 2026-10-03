@@ -34,6 +34,27 @@ When you run `l8b ship`, the CLI automatically scans your project root for envir
 
 For variables that change between environments (like database passwords or internal salts) or that you want to manage manually on the server, LiteBin provides a **Runtime Secret** system.
 
+### 0. Env API & CLI (recommended)
+
+Runtime env is managed remotely with write-only values — plaintext is never
+returned by the API:
+
+```bash
+# list keys (masked previews only)
+l8b env list myapp
+
+# push from a file (merge by default; --replace syncs exactly the file)
+l8b env push myapp --file .env.production
+
+# push decrypted secrets and apply immediately (recreates the container)
+sops -d env.prod | l8b env push myapp --stdin --apply
+```
+
+API: `GET /projects/{id}/env` (read scope, masked + `pending_apply` flag) and
+`PUT /projects/{id}/env` (manage scope) — see [api-reference.md](api-reference.md).
+Storage stays the node-local `projects/<id>/.env` described below; changes
+apply on the next container start (recreate).
+
 ### 1. Automatic Folder Creation
 Upon the **first** deployment of any project, LiteBin stages the project and creates the runtime directory **before containers start**:
 ```text
@@ -54,10 +75,10 @@ Runtime secrets are stored on the machine that actually runs the container — *
 
 | Setup | Container runs on | `.env` location | How to edit |
 | :--- | :--- | :--- | :--- |
-| **Single-node (master only)** | Orchestrator machine | `litebin/projects/<id>/.env` on the master | SSH into master, or edit locally |
-| **Multi-node (with agents)** | Agent machine | `litebin/projects/<id>/.env` on the agent | SSH into the agent node |
+| **Any setup** | Any node | `litebin/projects/<id>/.env` on the node running the container | `l8b env push` / the env API (proxied over mTLS for agent nodes) |
+| **Direct file edit** | Any node | same | Edit the file directly on the node (SSH or local) — same file, same effect |
 
-> **Important:** The orchestrator never directly accesses an agent's filesystem. All env management on agent nodes happens through the agent's own API. If your project is running on an agent node, you must edit the `.env` file on that agent machine.
+> **Note:** The orchestrator never directly accesses an agent's filesystem — env writes to agent nodes go through the agent's own mTLS API. `l8b env push` works the same regardless of which node runs the container.
 
 ### 3. Manual Management & Injection
 You can manually edit the `.env` file inside the project directory on the machine running your container.
