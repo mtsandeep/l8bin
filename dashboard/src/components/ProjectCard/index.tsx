@@ -3,6 +3,7 @@ import {
   Clock,
   Copy,
   ExternalLink,
+  FileKey2,
   Info,
   Layers,
   Loader2,
@@ -38,6 +39,7 @@ import StatusBadge from '../StatusBadge';
 import { useToast } from '../ToastContext';
 import AppSettingsPopover from './AppSettingsPopover';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import EnvModal from './EnvModal';
 import ProjectDetailsModal from './ProjectDetailsModal';
 import StatsGrid from './ProjectStats';
 import RedeployModal from './RedeployModal';
@@ -74,6 +76,7 @@ export default function ProjectCard({
   const [loading, setLoading] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
+  const [showEnv, setShowEnv] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [envCopied, setEnvCopied] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -547,6 +550,20 @@ export default function ProjectCard({
                       type="button"
                       onClick={() => {
                         setShowActions(false);
+                        setShowEnv(true);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/50 transition-colors cursor-pointer"
+                    >
+                      <FileKey2 size={13} className="text-amber-400" />
+                      <div className="text-left">
+                        <div>Environment</div>
+                        <div className="text-[10px] text-slate-500">Runtime variables (write-only values)</div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowActions(false);
                         if (isMultiService) {
                           setServiceSelectAction('recreate');
                           setShowServiceSelectModal(true);
@@ -685,6 +702,15 @@ export default function ProjectCard({
             </button>
           </div>
         </div>
+      )}
+
+      {showEnv && (
+        <EnvModal
+          projectId={project.id}
+          status={project.status}
+          onRefresh={onRefresh}
+          onClose={() => setShowEnv(false)}
+        />
       )}
 
       {showLogs && (

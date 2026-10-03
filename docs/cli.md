@@ -50,7 +50,7 @@ l8b config set --server https://l8bin.example.com --token your-token-here
 l8b deploy --project myapp --port 3000
 ```
 
-Tokens are created from the dashboard under **Settings > Deploy Tokens**, or auto-generated when using `l8b ship`. Each token carries a cumulative scope: `read` (see state), `deploy` (default — also grants read), `manage` (+ lifecycle, settings, env writes), or `admin` (+ delete, nodes, global settings). Tokens can also be bound to a single project.
+Tokens are created from the dashboard under **Settings > Access Tokens**, or auto-generated when using `l8b ship`. Each token carries a cumulative scope: `read` (see state), `deploy` (default — also grants read), `manage` (+ lifecycle, settings, env writes), or `admin` (+ delete, nodes, global settings). Tokens can also be bound to a single project.
 
 ## Commands
 

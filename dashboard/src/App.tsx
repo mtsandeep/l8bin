@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './components/AuthContext';
+import ConnectPage from './components/ConnectPage';
 import Footer from './components/Footer';
 import HomePage from './components/HomePage';
 import LoginScreen from './components/LoginScreen';
@@ -37,6 +38,7 @@ function AppContent() {
             />
           }
         />
+        <Route path="/connect" element={<ConnectPage />} />
         <Route path="/" element={<HomePage />} />
       </Routes>
       <Footer />

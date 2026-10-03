@@ -601,12 +601,7 @@ export async function deleteNode(nodeId: string): Promise<void> {
 
 // --- Compose compatibility & capabilities ---
 
-export type FindingDisposition =
-  | 'supported'
-  | 'translated'
-  | 'overridden'
-  | 'permission_required'
-  | 'unsupported';
+export type FindingDisposition = 'supported' | 'translated' | 'overridden' | 'permission_required' | 'unsupported';
 
 export interface CompatibilityFinding {
   path: string;
@@ -784,12 +779,15 @@ export async function pruneNodeImages(nodeId: string): Promise<{ bytes_reclaimed
   return res.json();
 }
 
-// --- Deploy Tokens ---
+// --- Access Tokens (deploy-tokens API) ---
+
+export type TokenScopeId = 'read' | 'deploy' | 'manage' | 'admin';
 
 export interface DeployTokenInfo {
   id: string;
   name: string | null;
   project_id: string | null;
+  scope: TokenScopeId;
   last_used_at: number | null;
   expires_at: number | null;
   created_at: number;
@@ -804,16 +802,20 @@ export async function fetchDeployTokens(projectId: string): Promise<DeployTokenI
   const res = await fetch(`${API_BASE}/deploy-tokens?project_id=${encodeURIComponent(projectId)}`, {
     credentials: 'include',
   });
-  if (!res.ok) throw new Error('Failed to fetch deploy tokens');
+  if (!res.ok) throw new Error('Failed to fetch access tokens');
   return res.json();
 }
 
-export async function createDeployToken(projectId: string | null, name?: string): Promise<CreateTokenResponse> {
+export async function createDeployToken(
+  projectId: string | null,
+  name?: string,
+  scope: TokenScopeId = 'deploy',
+): Promise<CreateTokenResponse> {
   const res = await fetch(`${API_BASE}/deploy-tokens`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ project_id: projectId || undefined, name: name || undefined }),
+    body: JSON.stringify({ project_id: projectId || undefined, name: name || undefined, scope }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -975,6 +977,84 @@ export async function importContainers(groups: ImportGroupPayload[]): Promise<Im
   if (!res.ok) {
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Import failed'));
+  }
+  return res.json();
+}
+
+// ── Device pairing (l8b login) ────────────────────────────────────────────────
+
+export interface DeviceRequestInfo {
+  user_code: string;
+  client_name?: string | null;
+  suggested_scope: 'read' | 'deploy' | 'manage' | 'admin';
+  expires_at: number;
+}
+
+export async function lookupDeviceRequest(userCode: string): Promise<DeviceRequestInfo> {
+  const res = await fetch(`/auth/device?user_code=${encodeURIComponent(userCode)}`, {
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'No pending request for that code');
+  }
+  return res.json();
+}
+
+export async function approveDeviceRequest(payload: {
+  user_code: string;
+  approve: boolean;
+  scope: 'read' | 'deploy' | 'manage' | 'admin';
+  project_id?: string;
+}): Promise<void> {
+  const res = await fetch('/auth/device/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Approval failed');
+  }
+}
+
+// ── Runtime env (write-only values) ───────────────────────────────────────────
+
+export interface EnvVarInfo {
+  key: string;
+  masked: string;
+  length: number;
+}
+
+export interface ProjectEnv {
+  project_id: string;
+  vars: EnvVarInfo[];
+  pending_apply: boolean;
+}
+
+export async function fetchProjectEnv(projectId: string): Promise<ProjectEnv> {
+  const res = await fetch(`/projects/${projectId}/env`, { credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load env');
+  }
+  return res.json();
+}
+
+export async function updateProjectEnv(
+  projectId: string,
+  payload: { env: Record<string, string>; mode?: 'merge' | 'replace' },
+): Promise<ProjectEnv> {
+  const res = await fetch(`/projects/${projectId}/env`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to update env');
   }
   return res.json();
 }

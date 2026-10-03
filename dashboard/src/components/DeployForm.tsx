@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  FileKey2,
   Loader2,
   Moon,
   Rocket,
@@ -12,16 +13,18 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  type CapabilityInfo,
+  type CompatibilityFinding,
   DeployType,
   deployComposeProject,
   deployProject,
   fetchGlobalSettings,
   fetchNodes,
-  type CapabilityInfo,
-  type CompatibilityFinding,
   type Node,
-  type ValidateComposeResponse,
   NodeStatus,
+  recreateProject,
+  updateProjectEnv,
+  type ValidateComposeResponse,
   validateCompose,
 } from '../api';
 import DeployProgressModal from './DeployProgressModal';
@@ -75,9 +78,7 @@ function findingsByService(findings: CompatibilityFinding[]): ServiceFindings[] 
   for (const finding of findings) {
     if (finding.disposition === 'permission_required') continue;
 
-    const sections = finding.service
-      ? (services.get(finding.service) ?? emptyFindingSections())
-      : project;
+    const sections = finding.service ? (services.get(finding.service) ?? emptyFindingSections()) : project;
     if (finding.service) services.set(finding.service, sections);
 
     if (finding.disposition === 'supported') {
@@ -91,9 +92,10 @@ function findingsByService(findings: CompatibilityFinding[]): ServiceFindings[] 
       sections.supported.push(finding.message);
     } else if (finding.disposition === 'unsupported') {
       const servicePrefix = finding.service ? `services.${finding.service}.` : '';
-      const path = servicePrefix && finding.path.startsWith(servicePrefix)
-        ? finding.path.slice(servicePrefix.length)
-        : finding.path;
+      const path =
+        servicePrefix && finding.path.startsWith(servicePrefix)
+          ? finding.path.slice(servicePrefix.length)
+          : finding.path;
       sections.unsupported.push(`${path} — ${finding.message}`);
     } else {
       sections[finding.disposition].push(finding.message);
@@ -134,9 +136,7 @@ const sectionStyles = {
 function ServiceFindingCard({ card }: { card: ServiceFindings }) {
   return (
     <div className="rounded-md border border-slate-700/50 bg-slate-900/40 px-3 py-2.5">
-      <div className="text-xs font-semibold text-slate-200 mb-2">
-        {card.service ?? 'Project-wide'}
-      </div>
+      <div className="text-xs font-semibold text-slate-200 mb-2">{card.service ?? 'Project-wide'}</div>
       <div className="space-y-2.5">
         {(Object.keys(sectionStyles) as Array<keyof FindingSections>).map((key) => {
           const lines = card.sections[key];
@@ -150,10 +150,7 @@ function ServiceFindingCard({ card }: { card: ServiceFindings }) {
               </div>
               <ul className="mt-1 space-y-1">
                 {lines.map((line, index) => (
-                  <li
-                    key={index}
-                    className={`text-[11px] leading-relaxed pl-2 border-l ${style.line}`}
-                  >
+                  <li key={index} className={`text-[11px] leading-relaxed pl-2 border-l ${style.line}`}>
                     {line}
                   </li>
                 ))}
@@ -192,6 +189,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [timeoutMins, setTimeoutMins] = useState(15);
   const [autoStart, setAutoStart] = useState(true);
   const [cmd, setCmd] = useState('');
+  const [runtimeEnv, setRuntimeEnv] = useState('');
   const [memMb, setMemMb] = useState<number | null>(null); // null = use global default
   const [cpuLimit, setCpuLimit] = useState<number | null>(null);
   const [globalMemMb, setGlobalMemMb] = useState(256);
@@ -242,10 +240,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
 
   const missingCaps = validateResult?.missing_capabilities ?? [];
   const hasUnsupported = (findingGroups?.unsupported.length ?? 0) > 0;
-  const allMissingApproved =
-    missingCaps.length === 0 || missingCaps.every((id) => approvedCapabilityIds.includes(id));
-  const canProceedFromValidate =
-    !!validateResult && validateResult.report.ok && !hasUnsupported && allMissingApproved;
+  const allMissingApproved = missingCaps.length === 0 || missingCaps.every((id) => approvedCapabilityIds.includes(id));
+  const canProceedFromValidate = !!validateResult && validateResult.report.ok && !hasUnsupported && allMissingApproved;
 
   const runValidate = async () => {
     setError(null);
@@ -318,6 +314,25 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           cpu_limit: cpuLimit,
         });
       }
+      // Optional runtime env from the deploy dialog: push and apply immediately.
+      const envLines = runtimeEnv
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('#'));
+      if (envLines.length > 0) {
+        const vars: Record<string, string> = {};
+        for (const line of envLines) {
+          const eq = line.indexOf('=');
+          if (eq > 0)
+            vars[line.slice(0, eq).trim()] = line
+              .slice(eq + 1)
+              .trim()
+              .replace(/^["']|["']$/g, '');
+        }
+        await updateProjectEnv(projectId.trim(), { env: vars, mode: 'merge' });
+        await recreateProject(projectId.trim());
+      }
+
       onDeploy();
       setDeployProjectId(projectId.trim());
       setShowProgress(true);
@@ -528,25 +543,27 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                   />
                 </div>
 
-                {!isBackground && <div>
-                  <label htmlFor="deploy-app-port" className="block text-xs font-medium text-slate-400 mb-1.5">
-                    App Port
-                  </label>
-                  <input
-                    id="deploy-app-port"
-                    type="number"
-                    value={port}
-                    onChange={(e) => setPort(e.target.value)}
-                    placeholder="80"
-                    required
-                    min={1}
-                    max={65535}
-                    className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
-                  />
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Port your app listens on inside the container (e.g. 80 for nginx, 3000 for Node)
-                  </p>
-                </div>}
+                {!isBackground && (
+                  <div>
+                    <label htmlFor="deploy-app-port" className="block text-xs font-medium text-slate-400 mb-1.5">
+                      App Port
+                    </label>
+                    <input
+                      id="deploy-app-port"
+                      type="number"
+                      value={port}
+                      onChange={(e) => setPort(e.target.value)}
+                      placeholder="80"
+                      required
+                      min={1}
+                      max={65535}
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/25 transition-colors"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Port your app listens on inside the container (e.g. 80 for nginx, 3000 for Node)
+                    </p>
+                  </div>
+                )}
               </>
             )}
 
@@ -662,9 +679,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                                 {reasonBuckets.map((bucket) => (
                                   <div key={bucket.service ?? 'project'}>
                                     {bucket.service && (
-                                      <div className="text-[10px] font-medium text-amber-200/80">
-                                        {bucket.service}
-                                      </div>
+                                      <div className="text-[10px] font-medium text-amber-200/80">{bucket.service}</div>
                                     )}
                                     <ul className="space-y-0.5">
                                       {bucket.lines.map((r, i) => (
@@ -754,6 +769,29 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
         {step === 'settings' && (
           <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
             <StepIndicator label={stepLabels.settings} />
+
+            {/* Runtime env (optional) */}
+            <div>
+              <label
+                htmlFor="deploy-runtime-env"
+                className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1.5"
+              >
+                <FileKey2 size={12} />
+                Runtime environment (optional)
+              </label>
+              <textarea
+                id="deploy-runtime-env"
+                value={runtimeEnv}
+                onChange={(e) => setRuntimeEnv(e.target.value)}
+                placeholder={'DATABASE_URL=postgres://...\nSESSION_SECRET=...'}
+                rows={3}
+                spellCheck={false}
+                className="w-full px-3 py-2 rounded-lg bg-slate-800/50 border border-slate-700/50 text-xs text-slate-200 placeholder-slate-600 font-mono focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20 transition-colors"
+              />
+              <p className="text-[10px] text-slate-500 mt-1">
+                One KEY=VALUE per line. Applied when the container first starts; values are write-only.
+              </p>
+            </div>
 
             {isBackground ? (
               <div className="rounded-md border border-slate-700/50 bg-slate-900/40 px-3 py-3">

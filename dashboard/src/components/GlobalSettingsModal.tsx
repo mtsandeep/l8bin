@@ -5,19 +5,20 @@ import {
   createDeployToken,
   createProject,
   type DeployTokenInfo,
-  domainApply,
-  domainPreflight,
   type DomainJob,
   type DomainPreflightResult,
+  domainApply,
+  domainPreflight,
   fetchDomainJob,
   fetchGlobalSettings,
   fetchProjects,
   type GlobalSettings,
   type Project,
-  retryDomainJob,
   RoutingMode,
+  retryDomainJob,
   revokeDeployToken,
   syncDnsRecords,
+  type TokenScopeId,
   timeAgo,
   updateGlobalSettings,
 } from '../api';
@@ -74,7 +75,7 @@ export default function GlobalSettingsModal({ onClose }: Props) {
             }`}
           >
             <Key size={12} />
-            Deploy Tokens
+            Access Tokens
           </button>
         </div>
 
@@ -247,7 +248,7 @@ function GeneralTab() {
     domainDirty &&
     domainConfirmTyped.trim().toLowerCase() === domainDraft.trim().toLowerCase() &&
     (!domainPreflightResult || domainPreflightResult.ok) &&
-    (!(domainPreflightResult?.warnings.length) || domainAck);
+    (!domainPreflightResult?.warnings.length || domainAck);
 
   return (
     <div className="space-y-5">
@@ -257,8 +258,8 @@ function GeneralTab() {
 
       {settings.tryout && (
         <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-3 py-2">
-          Tryout DNS ({settings.domain}) — fine for exploring; Let&apos;s Encrypt may fail. Switch to a real domain
-          when ready.
+          Tryout DNS ({settings.domain}) — fine for exploring; Let&apos;s Encrypt may fail. Switch to a real domain when
+          ready.
         </div>
       )}
 
@@ -787,6 +788,32 @@ function GeneralTab() {
   );
 }
 
+function scopeBadgeClass(scope: TokenScopeId | undefined): string {
+  switch (scope) {
+    case 'admin':
+      return 'bg-red-500/15 text-red-400';
+    case 'manage':
+      return 'bg-amber-500/15 text-amber-400';
+    case 'deploy':
+      return 'bg-violet-500/15 text-violet-400';
+    default:
+      return 'bg-sky-500/15 text-sky-400';
+  }
+}
+
+function scopeHint(level: TokenScopeId): string {
+  switch (level) {
+    case 'read':
+      return 'View projects, status, and logs only';
+    case 'deploy':
+      return 'Read + build and deploy code (CI default)';
+    case 'manage':
+      return 'Deploy + restart, settings, env';
+    case 'admin':
+      return 'Everything, including delete and nodes';
+  }
+}
+
 function TokensTab() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [tokens, setTokens] = useState<DeployTokenInfo[]>([]);
@@ -796,6 +823,7 @@ function TokensTab() {
 
   // Create token form state
   const [tokenScope, setTokenScope] = useState<'global' | 'project'>('global');
+  const [tokenLevel, setTokenLevel] = useState<TokenScopeId>('deploy');
   const [projectSource, setProjectSource] = useState<'existing' | 'new'>('existing');
   const [selectedProject, setSelectedProject] = useState('');
   const [newProjectId, setNewProjectId] = useState('');
@@ -858,7 +886,7 @@ function TokensTab() {
     setError(null);
     setCreatedToken(null);
     try {
-      const resp = await createDeployToken(projectId, newTokenName || undefined);
+      const resp = await createDeployToken(projectId, newTokenName || undefined, tokenLevel);
       setCreatedToken(resp.token);
       setNewTokenName('');
       setTokens((prev) => [resp.token_info, ...prev]);
@@ -907,7 +935,7 @@ function TokensTab() {
             <div className="w-4 h-4 border-2 border-slate-700 border-t-violet-500 rounded-full animate-spin" />
           </div>
         ) : tokens.length === 0 ? (
-          <p className="text-xs text-slate-500 py-3 text-center">No deploy tokens yet</p>
+          <p className="text-xs text-slate-500 py-3 text-center">No access tokens yet</p>
         ) : (
           <div className="space-y-1.5">
             {tokens.map((token) => (
@@ -924,6 +952,12 @@ function TokensTab() {
                       }`}
                     >
                       {token.project_id ? token.project_id : 'Global'}
+                    </span>
+                    <span
+                      className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-medium ${scopeBadgeClass(token.scope)}`}
+                      title={`Access level: ${token.scope}`}
+                    >
+                      {token.scope}
                     </span>
                   </div>
                   <div className="text-[10px] text-slate-500">
@@ -959,6 +993,28 @@ function TokensTab() {
           onChange={(e) => setNewTokenName(e.target.value)}
           className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
         />
+
+        {/* Access level */}
+        <div>
+          <span className="block text-[10px] text-slate-500 mb-1.5">Access level</span>
+          <div className="grid grid-cols-4 gap-1.5">
+            {(['read', 'deploy', 'manage', 'admin'] as const).map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => setTokenLevel(level)}
+                className={`px-1 py-1.5 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
+                  tokenLevel === level
+                    ? 'bg-violet-600 text-white'
+                    : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
+                }`}
+              >
+                {level}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">{scopeHint(tokenLevel)}</p>
+        </div>
 
         {/* Scope selector */}
         <div className="flex gap-2">
