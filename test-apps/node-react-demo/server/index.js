@@ -12,7 +12,8 @@ let visitCount = 0;
 app.use(compression());
 app.use(express.json());
 
-// Track visitors
+// Track visitors — one count per page load (extensionless, non-API paths).
+// Keep-awake pings go to /api and are never counted.
 app.use((req, _res, next) => {
   if (!req.path.startsWith("/api") && !path.extname(req.path)) {
     visitCount++;
@@ -22,11 +23,7 @@ app.use((req, _res, next) => {
 
 // --- API Routes ---
 
-app.get("/api/health", (req, res) => {
-  // Count initial page-load health check as a visit
-  if (req.query.visit !== undefined) {
-    visitCount++;
-  }
+app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
     uptime: Math.floor((Date.now() - startTime) / 1000),
