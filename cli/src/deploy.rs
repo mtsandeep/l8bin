@@ -30,7 +30,7 @@ pub async fn deploy(
     cmd: Option<&str>,
     memory: Option<i64>,
     cpu: Option<f64>,
-    auto_stop_enabled: bool,
+    auto_stop_enabled: Option<bool>,
     grant_capabilities: &[String],
 ) -> Result<DeployResponse> {
     send_deploy(
@@ -67,7 +67,7 @@ pub async fn deploy_or_redeploy(
     cmd: Option<&str>,
     memory: Option<i64>,
     cpu: Option<f64>,
-    auto_stop_enabled: bool,
+    auto_stop_enabled: Option<bool>,
     grant_capabilities: &[String],
 ) -> Result<DeployResponse> {
     match deploy(
@@ -126,7 +126,7 @@ pub async fn redeploy(
     cmd: Option<&str>,
     memory: Option<i64>,
     cpu: Option<f64>,
-    auto_stop_enabled: bool,
+    auto_stop_enabled: Option<bool>,
     grant_capabilities: &[String],
     stage_only: bool,
 ) -> Result<DeployResponse> {
@@ -163,7 +163,7 @@ async fn send_deploy(
     cmd: Option<&str>,
     memory: Option<i64>,
     cpu: Option<f64>,
-    auto_stop_enabled: bool,
+    auto_stop_enabled: Option<bool>,
     grant_capabilities: &[String],
     stage_only: bool,
     method: reqwest::Method,
@@ -177,13 +177,15 @@ async fn send_deploy(
         "image": image,
         "port": port,
         "is_background": is_background,
-        "auto_stop_enabled": auto_stop_enabled,
         "grant_capabilities": grant_capabilities,
         "stage_only": stage_only,
     });
 
     if let Some(node) = node_id {
         body["node_id"] = serde_json::json!(node);
+    }
+    if let Some(auto_stop) = auto_stop_enabled {
+        body["auto_stop_enabled"] = serde_json::json!(auto_stop);
     }
     if let Some(c) = cmd {
         body["cmd"] = serde_json::json!(c);

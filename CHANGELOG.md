@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Staged single-container deploys stuck at "deploying"** — staging never created the `project_services` row, so the container ran but the project status never reached Running. Staging now seeds the row like compose does; the start path self-heals projects staged before the fix.
+- **Redeploys reset stored sleep settings to defaults** — the CLI always sent `auto_stop_enabled: true`, wiping the saved auto-stop/auto-start flags and timeout on every `l8b ship`/`l8b deploy`. Sleep fields are now sent only when explicitly chosen (`l8b deploy --no-auto-stop`); first deploys get platform defaults, redeploys keep stored values, and the orchestrator resolves each field independently (explicit values win).
+
 ### Added
 - **Update prompts now show compose changes as a unified diff** (`+ added, - removed`) instead of raw `5a6,10` notation.
 

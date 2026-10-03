@@ -215,11 +215,10 @@ pub(super) async fn validate_compose_request(
         "required host-network capability was checked above"
     );
 
-    let auto_stop = if is_background { false } else { form.auto_stop_enabled.unwrap_or(true) };
-    let auto_stop_mins = form.auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
-    let auto_start = if is_background { false } else { form.auto_start_enabled.unwrap_or(true) };
+    let requested_stop = if is_background { false } else { form.auto_stop_enabled.unwrap_or(true) };
+    let requested_mins = form.auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
+    let requested_start = if is_background { false } else { form.auto_start_enabled.unwrap_or(true) };
 
-    // On redeploy, preserve existing sleep settings unless explicitly provided
     let existing_status: Option<ProjectStatus> = match sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
         .bind(project_id)
         .fetch_optional(&state.db)
@@ -236,23 +235,30 @@ pub(super) async fn validate_compose_request(
     let stage_only = form.stage_only_requested
         && matches!(existing_status, None | Some(ProjectStatus::Pending | ProjectStatus::Unconfigured));
 
-    let (auto_stop, auto_stop_mins, auto_start) = if is_background {
-        (false, auto_stop_mins, false)
-    } else if is_update && form.auto_stop_enabled.is_none() && form.auto_start_enabled.is_none() {
-        let existing = sqlx::query_as::<_, (bool, i64, bool)>(
+    // Sleep settings: fields omitted from the form keep their stored values on
+    // redeploy; first deploys fall back to the form value or platform default.
+    let (stored_stop, stored_mins, stored_start) = if is_update {
+        sqlx::query_as::<_, (bool, i64, bool)>(
             "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?",
         )
         .bind(project_id)
         .fetch_optional(&state.db)
         .await
         .ok()
-        .flatten();
-        match existing {
-            Some((s, t, a)) => (s, t, a),
-            None => (auto_stop, auto_stop_mins, auto_start),
-        }
+        .flatten()
+        .unwrap_or((requested_stop, requested_mins, requested_start))
     } else {
-        (auto_stop, auto_stop_mins, auto_start)
+        (requested_stop, requested_mins, requested_start)
+    };
+
+    let (auto_stop, auto_stop_mins, auto_start) = if is_background {
+        (false, form.auto_stop_timeout_mins.unwrap_or(stored_mins), false)
+    } else {
+        (
+            form.auto_stop_enabled.unwrap_or(stored_stop),
+            form.auto_stop_timeout_mins.unwrap_or(stored_mins),
+            form.auto_start_enabled.unwrap_or(stored_start),
+        )
     };
 
     // Parse target_services from comma-separated string (sent by CLI on partial redeploy)

@@ -153,6 +153,41 @@ async fn single_stage_only_keeps_project_unconfigured() {
 }
 
 #[tokio::test]
+async fn single_stage_only_seeds_service_row() {
+    let (server, db) = logged_in_server_with_db().await;
+    let project_id = "stage-svc-row-1";
+    cleanup_project_dir(project_id);
+
+    server.post("/projects").json(&json!({"id": project_id})).await.assert_status(StatusCode::CREATED);
+
+    let resp = server
+        .put("/deploy")
+        .json(&json!({
+            "project_id": project_id,
+            "image": "nginx:alpine",
+            "port": 80,
+            "stage_only": true
+        }))
+        .await;
+
+    resp.assert_status(StatusCode::OK);
+
+    // The staged project must have its 'web' service row so the first start
+    // can mark it running and status derivation sees the service. Its status
+    // tracks the project lifecycle (transition cascades onto service rows).
+    let (service, status): (String, String) =
+        sqlx::query_as("SELECT service_name, status FROM project_services WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(service, "web");
+    assert_eq!(status, "unconfigured");
+
+    cleanup_project_dir(project_id);
+}
+
+#[tokio::test]
 async fn stage_only_ignored_for_already_configured_project() {
     let (server, db) = logged_in_server_with_db().await;
     let project_id = "stage-redeploy-1";

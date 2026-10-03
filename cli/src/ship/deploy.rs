@@ -122,7 +122,7 @@ pub(super) async fn build_and_deploy(
         None,
         None,
         None,
-        true,
+        None,
         &[],
         is_new_project,
     )

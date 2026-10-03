@@ -181,7 +181,7 @@ pub(crate) async fn run(
             cmd.as_deref(),
             memory,
             cpu,
-            !no_auto_stop,
+            if no_auto_stop { Some(false) } else { None },
             &grant_capability,
         )
         .await?;

@@ -8,4 +8,5 @@ mod janitor_tests;
 mod nodes_tests;
 mod orchestrator_path_tests;
 mod projects_tests;
+mod sleep_settings_tests;
 mod waker_tests;

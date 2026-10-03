@@ -97,37 +97,46 @@ struct SleepSettings {
     auto_start_enabled: bool,
 }
 
-/// Compute sleep settings: background projects disable both; redeploys that
-/// omit the flags preserve the stored values.
+/// Compute sleep settings: background projects disable both switches. For web
+/// projects, each field omitted from the payload keeps its stored value on
+/// redeploy and falls back to the payload-or-platform default on first deploy.
 async fn resolve_sleep_settings(
     state: &AppState,
     payload: &DeployRequest,
     is_update: bool,
     is_background: bool,
 ) -> SleepSettings {
-    let auto_stop_enabled = if is_background { false } else { payload.auto_stop_enabled.unwrap_or(true) };
-    let auto_stop_timeout_mins = payload.auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins);
-    let auto_start_enabled = if is_background { false } else { payload.auto_start_enabled.unwrap_or(true) };
-
-    // On redeploy, preserve existing sleep settings unless explicitly provided
-    let preserve_sleep = is_update && payload.auto_stop_enabled.is_none() && payload.auto_start_enabled.is_none();
-    if is_background {
-        SleepSettings { auto_stop_enabled: false, auto_stop_timeout_mins, auto_start_enabled: false }
-    } else if preserve_sleep {
-        let existing = sqlx::query_as::<_, (bool, i64, bool)>(
+    let fallback = (
+        payload.auto_stop_enabled.unwrap_or(true),
+        payload.auto_stop_timeout_mins.unwrap_or(state.config.default_auto_stop_mins),
+        payload.auto_start_enabled.unwrap_or(true),
+    );
+    let (stored_stop, stored_mins, stored_start) = if is_update {
+        sqlx::query_as::<_, (bool, i64, bool)>(
             "SELECT auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled FROM projects WHERE id = ?",
         )
         .bind(&payload.project_id)
         .fetch_optional(&state.db)
         .await
         .ok()
-        .flatten();
-        match existing {
-            Some((s, t, a)) => SleepSettings { auto_stop_enabled: s, auto_stop_timeout_mins: t, auto_start_enabled: a },
-            None => SleepSettings { auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled },
+        .flatten()
+        .unwrap_or(fallback)
+    } else {
+        fallback
+    };
+
+    if is_background {
+        SleepSettings {
+            auto_stop_enabled: false,
+            auto_stop_timeout_mins: payload.auto_stop_timeout_mins.unwrap_or(stored_mins),
+            auto_start_enabled: false,
         }
     } else {
-        SleepSettings { auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled }
+        SleepSettings {
+            auto_stop_enabled: payload.auto_stop_enabled.unwrap_or(stored_stop),
+            auto_stop_timeout_mins: payload.auto_stop_timeout_mins.unwrap_or(stored_mins),
+            auto_start_enabled: payload.auto_start_enabled.unwrap_or(stored_start),
+        }
     }
 }
 
@@ -338,6 +347,26 @@ async fn stage_only_path(
             let (status_code, message) = e.into_response_parts();
             return (status_code, Json(json!({"error": message}))).into_response();
         }
+    }
+
+    // Seed the service row so the staged project shows its service and the
+    // first start can mark it running (mirrors compose staging).
+    if let Err(e) = sqlx::query(
+        "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, is_public, status, cmd, memory_limit_mb, cpu_limit)
+         VALUES (?, 'web', ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&payload.project_id)
+    .bind(&payload.image)
+    .bind(payload.port)
+    .bind(!is_background)
+    .bind(ProjectStatus::Pending)
+    .bind(&project.cmd)
+    .bind(project.memory_limit_mb)
+    .bind(project.cpu_limit)
+    .execute(&state.db)
+    .await
+    {
+        tracing::warn!(project_id = %payload.project_id, error = %e, "deploy: failed to seed staged service row");
     }
 
     if let Err(e) = status::transition(

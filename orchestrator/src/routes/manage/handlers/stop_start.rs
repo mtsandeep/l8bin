@@ -207,6 +207,43 @@ pub async fn start_project(
             },
         )
         .await?;
+
+        // Single-image projects staged before the service row was seeded at
+        // stage time have no project_services row, so the UPDATE inside
+        // start_services is a no-op and status derivation sees nothing. Ensure
+        // the row exists (mirrors the remote single-service path).
+        if !is_compose {
+            let (container_id, mapped_port): (Option<String>, Option<i64>) =
+                sqlx::query_as("SELECT container_id, mapped_port FROM projects WHERE id = ?")
+                    .bind(&project_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+                    .unwrap_or((None, None));
+            if let Some(container_id) = container_id {
+                if let Err(e) = sqlx::query(
+                    "INSERT OR IGNORE INTO project_services (project_id, service_name, image, port, mapped_port, is_public, status, container_id, cmd, memory_limit_mb, cpu_limit)
+                     VALUES (?, 'web', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&project_id)
+                .bind(&project.image)
+                .bind(project.internal_port)
+                .bind(mapped_port)
+                .bind(!project.is_background)
+                .bind(ProjectStatus::Running)
+                .bind(&container_id)
+                .bind(&project.cmd)
+                .bind(project.memory_limit_mb)
+                .bind(project.cpu_limit)
+                .execute(&state.db)
+                .await
+                {
+                    tracing::warn!(project_id = %project_id, error = %e, "start: failed to ensure project_services row");
+                }
+                status::derive_and_set_project_status(&state.db, &project_id).await;
+                let _ = state.route_sync_tx.send(());
+            }
+        }
     } else if is_compose {
         // Remote multi-service: use agent batch-run (same as deploy/recreate)
         let node_id = project.node_id.as_deref().unwrap();
