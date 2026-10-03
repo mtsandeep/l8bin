@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.25] - 2026-10-03
+
 ### Fixed
 - **Card "x d ago" stale for auto-stop-off projects** — the activity tracker now updates `last_active_at` for all running web projects, not just auto-stop ones. Background projects show no clock (no routed traffic).
 - **Staged single-container deploys stuck at "deploying"** — staging never created the `project_services` row, so the container ran but the project status never reached Running. Staging now seeds the row like compose does; the start path self-heals projects staged before the fix.
