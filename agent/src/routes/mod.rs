@@ -1,5 +1,6 @@
 pub mod caddy;
 pub mod containers;
+pub mod env;
 pub mod health;
 pub mod images;
 pub mod project_meta;

@@ -417,6 +417,29 @@ impl AgentClient {
         Self::decode(resp).await
     }
 
+    /// GET /internal/env?project_id= — read a project's runtime `.env` content.
+    pub async fn get_env_file(
+        &self,
+        project_id: &str,
+    ) -> Result<litebin_common::agent_api::EnvFileResponse, AgentClientError> {
+        let resp = self
+            .client
+            .get(self.url(litebin_common::agent_api::ENV_GET_PATH))
+            .query(&[("project_id", project_id)])
+            .send()
+            .await
+            .map_err(AgentClientError::Transport)?;
+        Self::decode(resp).await
+    }
+
+    /// POST /internal/env — replace a project's runtime `.env` content.
+    pub async fn write_env_file(
+        &self,
+        req: &litebin_common::agent_api::EnvWriteRequest,
+    ) -> Result<(), AgentClientError> {
+        self.post_status(litebin_common::agent_api::ENV_WRITE_PATH, req).await
+    }
+
     /// POST /images/load?image_id= — stream a docker-save tar to the agent.
     pub async fn load_image_stream(
         &self,

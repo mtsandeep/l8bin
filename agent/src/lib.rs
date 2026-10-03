@@ -151,6 +151,7 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/volumes/export", post(routes::volumes::export_volume))
         .route("/volumes/import", post(routes::volumes::import_volume))
         .route("/caddy/sync", post(routes::caddy::sync_caddy))
+        .route("/internal/env", get(routes::env::get_env).post(routes::env::write_env))
         .fallback(routes::waker::wake)
         .with_state(state)
 }

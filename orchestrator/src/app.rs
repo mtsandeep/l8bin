@@ -23,7 +23,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/auth/me", get(crate::routes::auth::me))
         .route("/auth/change-password", post(crate::routes::auth::change_password))
         .route("/status", get(crate::routes::auth::status))
-        // Project creation binds a session user; deploys stage projects themselves.
+        // POST binds a session user; deploy endpoints stage projects instead.
         .route("/projects", post(crate::routes::projects::create_project))
         .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
 
@@ -36,6 +36,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/projects/{id}/logs", get(crate::routes::stats::project_logs))
         .route("/projects/{id}/deploy-logs", get(crate::routes::stats::deploy_logs))
         .route("/projects/{id}/disk-usage", get(crate::routes::stats::project_disk_usage))
+        .route("/projects/{id}/env", get(crate::routes::env::get_project_env))
         .route("/nodes", get(crate::routes::nodes::list_nodes))
         .route("/nodes/image-stats", get(crate::routes::nodes::node_image_stats))
         .route("/meta", get(crate::routes::meta::get_meta))
@@ -43,6 +44,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
 
     // Routes - Manage (session OR deploy token with scope >= manage)
     let manage_routes = Router::new()
+        .route("/projects/{id}/env", put(crate::routes::env::update_project_env))
         .route("/projects/{id}/stop", post(crate::routes::manage::handlers::stop_project))
         .route("/projects/{id}/start", post(crate::routes::manage::handlers::start_project))
         .route("/projects/{id}/recreate", post(crate::routes::manage::handlers::recreate_project))
@@ -102,8 +104,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Chunk bodies can be up to ~the chunk size; raise axum's default 2 MiB limit.
         .layer(axum::extract::DefaultBodyLimit::max(litebin_common::upload::MAX_UPLOAD_BODY));
 
-    // Routes - Deploy token management (session auth only: admin tokens are
-    // mintable exclusively from an interactive session)
+    // Routes - Deploy token management (session only — tokens must not mint tokens)
     let token_routes = Router::new()
         .route("/deploy-tokens", post(crate::routes::deploy_tokens::create_token))
         .route("/deploy-tokens", get(crate::routes::deploy_tokens::list_tokens))

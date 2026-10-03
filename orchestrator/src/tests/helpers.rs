@@ -177,6 +177,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/projects/{id}/stats", get(routes::stats::project_stats))
         .route("/projects/{id}/logs", get(routes::stats::project_logs))
         .route("/projects/{id}/deploy-logs", get(routes::stats::deploy_logs))
+        .route("/projects/{id}/env", get(routes::env::get_project_env))
         .route("/nodes", get(routes::nodes::list_nodes))
         .route("/meta", get(routes::meta::get_meta))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::guard::require_read));
@@ -185,6 +186,7 @@ pub fn build_router(state: AppState) -> Router {
     let manage_routes = Router::new()
         .route("/projects/{id}/settings", patch(routes::settings::update_project_settings))
         .route("/projects/{id}/routes", post(routes::projects::create_route))
+        .route("/projects/{id}/env", axum::routing::put(routes::env::update_project_env))
         .route("/projects/{id}/stop", post(routes::manage::handlers::stop_project))
         .route("/projects/{id}/start", post(routes::manage::handlers::start_project))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::guard::require_manage));

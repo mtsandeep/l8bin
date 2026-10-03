@@ -1587,6 +1587,7 @@ dependencies = [
  "colored",
  "dialoguer",
  "dirs",
+ "dotenvy",
  "dunce",
  "flate2",
  "futures-core",

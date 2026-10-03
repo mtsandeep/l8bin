@@ -1,10 +1,5 @@
-//! Route guards for the token scope ladder.
-//!
-//! Every non-deploy API route group is protected by one of `require_read`,
-//! `require_manage`, or `require_admin`. All three accept a logged-in session
-//! (dashboard, CLI login) or a Bearer deploy token whose scope rank meets the
-//! group's requirement. Project-scoped tokens are additionally confined to
-//! their own project's `/projects/{id}/…` paths.
+//! Scope-ladder guards: a session, or a Bearer token with sufficient scope.
+//! Project-scoped tokens are confined to their own project's paths.
 
 use axum::{
     Json,
@@ -22,9 +17,7 @@ use litebin_common::types::TokenScope;
 use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 
-/// Inserted into request extensions when auth came from a Bearer token
-/// (absent for session-authenticated requests). Handlers use it to attribute
-/// actions and filter project-bound views (env API, project listing).
+/// Set on Bearer-auth requests; absent for sessions.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TokenContext {
@@ -76,10 +69,8 @@ async fn load_bearer_token(state: &AppState, headers: &HeaderMap) -> Option<crat
     row
 }
 
-/// True when a project-scoped token may access this path. Project tokens are
-/// limited to their own `/projects/{id}/…` subtree; cross-project views
-/// (`/projects` list, `/projects/stats` batch, `/nodes`) need a global token.
-/// `/meta` (URL computation) is safe for any token.
+/// Project tokens: their own `/projects/{id}/…` subtree plus `/meta`;
+/// cross-project views need a global token.
 fn path_allows_project_token(path: &str, bound_project: &str) -> bool {
     if path == "/meta" {
         return true;
@@ -97,7 +88,7 @@ async fn authorize(
     state: &AppState,
     request: &mut axum::extract::Request,
 ) -> Result<(), Response> {
-    // Session (dashboard / `l8b login`) always passes.
+    // Session always passes.
     if auth_session.user.is_some() {
         return Ok(());
     }

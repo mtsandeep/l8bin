@@ -43,6 +43,8 @@ pub const IMAGES_REMOVE_UNUSED_PATH: &str = "/images/remove-unused";
 pub const IMAGES_PRUNE_PATH: &str = "/images/prune";
 pub const CADDY_SYNC_PATH: &str = "/caddy/sync";
 pub const PROJECT_META_PATH: &str = "/internal/project-meta";
+pub const ENV_GET_PATH: &str = "/internal/env";
+pub const ENV_WRITE_PATH: &str = "/internal/env";
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -300,6 +302,27 @@ pub struct InspectResponse {
     pub image_id: String,
 }
 
+// ── Runtime env file (/internal/env) ─────────────────────────────────────────
+
+/// GET /internal/env?project_id=… — raw contents of the project's runtime `.env`.
+#[derive(Serialize, Deserialize)]
+pub struct EnvFileResponse {
+    /// Raw file content (comments included). Empty string when no file exists.
+    pub content: String,
+    /// True when `.env` differs from the last-injected snapshot (a
+    /// start/recreate is pending to apply).
+    #[serde(default = "default_false")]
+    pub has_pending_changes: bool,
+}
+
+/// POST /internal/env — overwrite the project's runtime `.env` wholesale.
+#[derive(Serialize, Deserialize)]
+pub struct EnvWriteRequest {
+    pub project_id: String,
+    /// Full file content (merge/replace already applied).
+    pub content: String,
+}
+
 // ── Node registration & project meta (/internal/*) ───────────────────────────
 
 #[derive(Serialize, Deserialize)]
@@ -494,5 +517,14 @@ mod tests {
             serde_json::from_str(r#"{"compose_yaml":"services: {}","env_content":null}"#).unwrap();
         assert_eq!(r.compose_yaml.as_deref(), Some("services: {}"));
         assert!(r.env_content.is_none());
+    }
+
+    #[test]
+    fn env_file_response_tolerates_absent_pending_flag() {
+        let r: EnvFileResponse = serde_json::from_str(r#"{"content":"A=1"}"#).unwrap();
+        assert_eq!(r.content, "A=1");
+        assert!(!r.has_pending_changes);
+        let out = serde_json::to_string(&EnvFileResponse { content: "A=1".into(), has_pending_changes: true }).unwrap();
+        assert!(out.contains(r#""has_pending_changes":true"#));
     }
 }

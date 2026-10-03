@@ -1,8 +1,5 @@
-//! `/meta` — non-sensitive platform metadata for read-scoped clients.
-//!
-//! The CLI and coding agents need the platform domain to compute project URLs
-//! (`https://{project}.{domain}`). `GET /settings` is not suitable: it returns
-//! Cloudflare credentials and stays session/admin-only.
+//! `/meta` — platform metadata for read-scoped clients (`GET /settings`
+//! carries Cloudflare secrets and stays admin-only).
 
 use axum::{Json, extract::State};
 use serde::Serialize;

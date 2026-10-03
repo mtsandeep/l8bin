@@ -1,7 +1,5 @@
-//! Auth matrix for the token scope ladder: read < deploy < manage < admin,
-//! plus project-binding confinement. Auth passed vs rejected is distinguished
-//! by whether the handler runs (404 for a missing project) vs the guard
-//! rejecting (401/403) — the endpoints used here never touch Docker.
+//! Scope-ladder auth matrix: 401/403/200 per group + project confinement.
+//! Endpoints chosen 404-on-missing-project, so a 404 proves the guard passed.
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -13,9 +11,7 @@ async fn login(server: &axum_test::TestServer, username: &str) {
     server.post("/auth/login").json(&json!({"username": username, "password": "pass"})).await;
 }
 
-/// Create a token via the session API and return the plaintext Bearer value.
-/// Drops the session cookie afterwards so every following request on this
-/// server authenticates via the Bearer token only.
+/// Mint a token, then drop the session cookie (Bearer-only afterwards).
 async fn create_token(server: &mut axum_test::TestServer, body: Value) -> String {
     let resp = server.post("/deploy-tokens").json(&body).await;
     resp.assert_status(StatusCode::CREATED);
@@ -45,7 +41,7 @@ async fn read_token_reads_but_cannot_manage_or_deploy() {
 
     server.get("/projects").add_header("authorization", format!("Bearer {token}")).await.assert_status(StatusCode::OK);
 
-    // Auth passes (handler runs → 404 for the missing project), scope is enough for read
+    // Guard passes; the handler 404s on the missing project
     server
         .get("/projects/missing/stats")
         .add_header("authorization", format!("Bearer {token}"))

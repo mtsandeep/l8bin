@@ -4,6 +4,7 @@ pub mod capabilities;
 pub mod deploy;
 pub mod deploy_tokens;
 pub mod docs;
+pub mod env;
 pub mod global_settings;
 pub mod health;
 pub mod heartbeat;

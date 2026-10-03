@@ -8,6 +8,7 @@ name = "l8b"
 path = "src/main.rs"
 
 [dependencies]
+dotenvy = "0.15"
 litebin-common = { path = "../litebin-common" }
 clap = { version = "4", features = ["derive", "env"] }
 clap-markdown = "0.1"

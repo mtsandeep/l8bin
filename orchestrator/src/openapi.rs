@@ -19,6 +19,7 @@ use utoipa::OpenApi;
         (name = "global-settings", description = "Global platform settings and DNS"),
         (name = "volumes", description = "Volume management"),
         (name = "scan", description = "Container scanning and import"),
+        (name = "env", description = "Runtime environment variables (write-only values)"),
         (name = "health", description = "Health checks and system stats"),
     ),
     paths(
@@ -90,6 +91,9 @@ use utoipa::OpenApi;
         crate::routes::health::system_stats,
         // Meta
         crate::routes::meta::get_meta,
+        // Env
+        crate::routes::env::get_project_env,
+        crate::routes::env::update_project_env,
     ),
     components(
         schemas(
@@ -173,6 +177,11 @@ use utoipa::OpenApi;
             // Health
             crate::routes::health::HealthResponse,
             crate::routes::health::ServiceStats,
+            // Env
+            crate::routes::env::UpdateEnvRequest,
+            crate::routes::env::UpdateEnvResponse,
+            crate::routes::env::EnvResponse,
+            crate::routes::env::EnvVarInfo,
             // Meta
             crate::routes::meta::MetaResponse,
             crate::routes::health::SystemStatsResponse,

@@ -1,5 +1,5 @@
 mod batch_run;
-mod env;
+pub(crate) mod env;
 mod lifecycle;
 mod metadata;
 mod scan;

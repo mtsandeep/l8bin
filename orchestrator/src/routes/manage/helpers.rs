@@ -66,6 +66,20 @@ pub fn project_is_staged(project: &crate::db::models::Project) -> bool {
     has_compose || has_image
 }
 
+/// Raw local `.env` content; creates the placeholder if missing, empty on
+/// IO errors.
+pub fn read_local_env_raw(project_id: &str) -> String {
+    ensure_project_dir_and_env(project_id);
+    let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
+    match std::fs::read_to_string(&env_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(project = project_id, error = %e, "failed to read .env");
+            String::new()
+        }
+    }
+}
+
 /// Read env vars from the local project .env file.
 pub fn read_local_project_env(project_id: &str) -> Vec<String> {
     // Ensure the directory and placeholder exist
@@ -106,11 +120,13 @@ pub fn local_env_has_changed(project_id: &str) -> bool {
     changed
 }
 
+/// Line-normalized: a trailing newline must not count as a change.
 fn file_hash(path: &std::path::Path) -> u64 {
-    match std::fs::read(path) {
-        Ok(bytes) => {
+    match std::fs::read_to_string(path) {
+        Ok(content) => {
+            let normalized = content.lines().collect::<Vec<_>>().join("\n");
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            std::hash::Hash::hash(&bytes, &mut hasher);
+            std::hash::Hash::hash(&normalized, &mut hasher);
             hasher.finish()
         }
         Err(_) => 0,
@@ -300,7 +316,7 @@ pub async fn sync_caddy(state: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::project_is_staged;
+    use super::{file_hash, project_is_staged, snapshot_content_hash};
     use litebin_common::types::ProjectStatus;
 
     fn sample_project(id: &str, image: Option<&str>) -> crate::db::models::Project {
@@ -343,5 +359,51 @@ mod tests {
     #[test]
     fn not_staged_without_image_or_compose() {
         assert!(!project_is_staged(&sample_project("p-missing-stage", None)));
+    }
+
+    /// Snapshot round-trip must not report pending.
+    #[test]
+    fn snapshot_round_trip_is_not_pending() {
+        let dir = std::env::temp_dir().join(format!("l8b-env-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(".env"),
+            "A=\"1\"
+B=\"2\"
+",
+        )
+        .unwrap();
+
+        let env_path = dir.join(".env");
+        let content = std::fs::read_to_string(&env_path).unwrap();
+        let header = "# h1
+# h2
+# h3
+# h4
+";
+        std::fs::write(
+            dir.join(".env.l8bin"),
+            format!(
+                "{header}
+{content}"
+            ),
+        )
+        .unwrap();
+
+        let env_hash = file_hash(&env_path);
+        let snapshot_hash = snapshot_content_hash(&dir.join(".env.l8bin"));
+        assert_eq!(env_hash, snapshot_hash, "snapshot content must hash equal to .env");
+        assert_ne!(env_hash, 0);
+
+        std::fs::write(
+            &env_path,
+            "A=\"1\"
+B=\"changed\"
+",
+        )
+        .unwrap();
+        assert_ne!(file_hash(&env_path), snapshot_hash);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

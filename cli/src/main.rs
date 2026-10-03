@@ -133,6 +133,11 @@ enum Commands {
         #[arg(default_value = ".")]
         path: String,
     },
+    /// Manage runtime environment variables (values are write-only)
+    Env {
+        #[command(subcommand)]
+        action: EnvAction,
+    },
     /// Manage CLI configuration
     Config {
         #[command(subcommand)]
@@ -153,6 +158,32 @@ enum ConfigAction {
     },
     /// Show current configuration
     Show,
+}
+
+#[derive(Subcommand)]
+enum EnvAction {
+    /// List env keys with masked previews (never values)
+    List {
+        /// Project ID
+        project: String,
+    },
+    /// Push env vars from a file or stdin (never from arguments)
+    Push {
+        /// Project ID
+        project: String,
+        /// Env file to push (default: .env in the current directory)
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        /// Read env content from stdin instead of a file (e.g. `sops -d … | l8b env push --stdin`)
+        #[arg(long)]
+        stdin: bool,
+        /// Replace the whole env file instead of merging into it
+        #[arg(long)]
+        replace: bool,
+        /// Recreate the container after pushing to apply changes
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 #[tokio::main]
@@ -252,6 +283,25 @@ async fn main() -> Result<()> {
             let dir = std::path::Path::new(&path);
             build::cleanup_build_artifacts(dir)?;
         }
+        Commands::Env { action } => match action {
+            EnvAction::List { project } => {
+                commands::env::list(
+                    commands::env::EnvListArgs { project },
+                    cli.server.as_deref(),
+                    cli.token.as_deref(),
+                )
+                .await?;
+            }
+            EnvAction::Push { project, file, stdin, replace, apply } => {
+                commands::env::push(
+                    commands::env::EnvPushArgs { project, file, stdin, replace, apply },
+                    cli.server.as_deref(),
+                    cli.token.as_deref(),
+                    &ci_mode,
+                )
+                .await?;
+            }
+        },
         Commands::Config { action } => match action {
             ConfigAction::Set { server, token } => {
                 if let Some(ref t) = token {

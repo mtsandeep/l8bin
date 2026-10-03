@@ -7,9 +7,15 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Deploy token scopes — cumulative `read < deploy < manage < admin`** — API route groups now accept scoped Bearer tokens: read (projects, stats, logs, deploy-logs, nodes, `/meta`), manage (+ stop/start/recreate, service ops, project/service settings, routes, capabilities), admin (+ project delete, volumes, node lifecycle, token CRUD, global settings). Existing tokens migrate to `deploy`, which now also grants read — a deploy token can finally verify its own deploy (token-based deploys previously couldn't poll status/logs, silently degrading CI). Project-scoped tokens are confined to their project's paths; `POST /deploy-tokens` accepts `scope` (default `deploy`); admin tokens remain mintable from a session only. Read-only tokens cannot deploy.
 - **`GET /meta`** — non-sensitive platform metadata (domain, subdomains, routing mode, version) so CLI/agents can compute project URLs without the Cloudflare secrets that `GET /settings` returns. Added to the caddy proxy whitelist (runtime route sync, `Caddyfile`, `install.sh`, `install-windows.ps1`).
+- **Runtime env API with write-only values** — `GET /projects/{id}/env` returns keys with masked previews only (never plaintext); `PUT /projects/{id}/env` (manage scope) merges or replaces, validates keys/values, and applies on the next container start via the existing recreate path. Storage stays the node-local `projects/<id>/.env` (local filesystem or the node's agent over mTLS). Responses include a `pending_apply` flag (env differs from what the container was last started with). Audit logs record who set which keys — values are never logged.
+- **`l8b env list/push`** — push runtime secrets from a file or stdin only (`--file`, `--stdin`, `--replace`, `--apply` to recreate and wait for running). Suggested agent workflow: `sops -d env.prod | l8b env push myapp --stdin --apply`. Works with deploy tokens (new bearer-capable API helpers; `fetch_platform_domain` now prefers `GET /meta`).
+- **Agent env endpoints** — `GET/POST /internal/env` (mTLS) read/write the node's project `.env`, typed via the shared `agent_api` contract.
 
 ### Changed
 - **Unauthenticated calls on the scoped route groups now return `401` JSON instead of a 307 redirect** — matches what the dashboard and API clients already expect.
+
+### Fixed
+- **Every env looked perpetually "pending"** — the `.env` vs `.env.l8bin` snapshot comparison hashed raw bytes on one side and line-joined content on the other, so any `.env` ending with a newline always reported as changed (visible as a permanently stale "env changed" indicator). Both hashes are now line-normalized (orchestrator + agent), with regression tests.
 
 ## [0.3.26] - 2026-10-03
 
