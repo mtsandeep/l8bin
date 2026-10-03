@@ -207,6 +207,26 @@ These are landed and form the current security baseline. Future hardening propos
 
 ---
 
+### 9. Auth-endpoint rate limiting
+
+No rate limiting exists on unauthenticated endpoints today. Guessing is not
+the concern (device_code is a 122-bit UUID; tokens are 256-bit) — abuse is:
+
+| Vector | Endpoint | Exposure |
+|---|---|---|
+| Password brute force | `POST /auth/login` | Unlimited attempts against the admin account (pre-existing, most important) |
+| Pending-code spam | `POST /auth/device/start` | Table/log bloat within the 10-min TTL window |
+| Poll hammering | `POST /auth/device/token` | Cheap DB hits, no leakage (unapproved → `expired`) |
+
+Plan: per-IP token-bucket middleware (in-process `DashMap`, no new deps —
+single-node orchestrator): login ~10/min/IP, device/start ~5/min/IP,
+device/token ~30/min/IP; 429 JSON responses. Cap pending device codes
+(~100 global) next to the existing purge. Pairing connect page should state
+"only approve codes you initiated" (device-flow phishing is inherent to the
+model; manual code entry + client-name display are the existing mitigations).
+Planned for: end of the AI-native phase 2 work (tracked in
+[ai-native.md](ai-native.md)).
+
 ## Decision Framework for Future Work
 
 When considering new security hardening, apply this filter:

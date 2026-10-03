@@ -155,6 +155,12 @@ With a dashboard-minted token in `L8B_TOKEN`, an agent gets the complete deploy�
 
 Dashboard work (connect page + env modal + deploy dialog) lands as one React pass.
 
+**Deferred to end of phase (agreed):** auth-endpoint rate limiting (per-IP token
+bucket on `/auth/login`, `/auth/device/start`, `/auth/device/token`) + pending-code
+cap + connect-page "only approve codes you initiated" copy. Guessing is not the
+risk (122-bit device_code, 256-bit tokens); brute-force and spam are. Details in
+[security-hardening.md](security-hardening.md) §9.
+
 ### Phase 3 — Native integration
 
 - `l8b mcp` stdio server wrapping the same client code; tools return phase-1 result structs.
