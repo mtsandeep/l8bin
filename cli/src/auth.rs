@@ -291,6 +291,20 @@ pub async fn api_post_json(
     Ok(json)
 }
 
+/// DELETE on the API using the client's baked-in auth (token or session).
+pub async fn api_delete(client: &reqwest::Client, server: &str, path: &str) -> Result<serde_json::Value> {
+    let url = format!("{}{}", server.trim_end_matches('/'), path);
+    let resp = client.delete(&url).send().await.with_context(|| format!("DELETE {} failed", url))?;
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
+    if !status.is_success() {
+        let error = json["error"].as_str().unwrap_or(&body_text);
+        anyhow::bail!("{} ({}): {}", url, status, error);
+    }
+    Ok(json)
+}
+
 /// Platform domain for project URLs, from `GET /meta`; derived from the
 /// server URL when the server is unreachable.
 pub async fn fetch_platform_domain(client: &reqwest::Client, server: &str) -> String {

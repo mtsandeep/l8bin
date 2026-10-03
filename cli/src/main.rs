@@ -118,6 +118,50 @@ enum Commands {
         #[arg(long)]
         secret: Vec<std::path::PathBuf>,
     },
+    /// List all projects with live status
+    List,
+    /// Show container logs for a project
+    Logs {
+        /// Project ID
+        project: String,
+        /// Number of lines to show
+        #[arg(long, default_value_t = 100)]
+        tail: usize,
+        /// Service name (multi-service projects; defaults to the public service)
+        #[arg(long)]
+        service: Option<String>,
+        /// Show deploy logs instead of container logs
+        #[arg(long)]
+        deploy: bool,
+    },
+    /// Print the project's managed URL
+    Url {
+        /// Project ID
+        project: String,
+    },
+    /// Stop a running project
+    Stop {
+        /// Project ID
+        project: String,
+    },
+    /// Start a stopped project
+    Start {
+        /// Project ID
+        project: String,
+    },
+    /// Recreate containers (applies pending .env changes)
+    Restart {
+        /// Project ID
+        project: String,
+    },
+    /// Delete a project, its containers, and its volumes
+    Delete {
+        /// Project ID
+        project: String,
+        /// Skip the confirmation prompt (required in CI/JSON mode)
+        #[arg(long)]
+        yes: bool,
+    },
     /// Log in to a LiteBin server
     Login {
         /// Server URL
@@ -303,6 +347,33 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             let client = auth::authenticated_client(&cfg)?;
             let server = auth::resolve_server(&cfg)?;
             ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port, secret).await?;
+        }
+        Commands::List => {
+            commands::projects::list(cli.server.as_deref(), cli.token.as_deref(), out).await?;
+        }
+        Commands::Logs { project, tail, service, deploy } => {
+            commands::projects::logs(
+                commands::projects::LogsArgs { project, tail, service, deploy },
+                cli.server.as_deref(),
+                cli.token.as_deref(),
+                out,
+            )
+            .await?;
+        }
+        Commands::Url { project } => {
+            commands::projects::url(project, cli.server.as_deref(), cli.token.as_deref(), out).await?;
+        }
+        Commands::Stop { project } => {
+            commands::projects::stop(project, cli.server.as_deref(), cli.token.as_deref(), out).await?;
+        }
+        Commands::Start { project } => {
+            commands::projects::start(project, cli.server.as_deref(), cli.token.as_deref(), out).await?;
+        }
+        Commands::Restart { project } => {
+            commands::projects::restart(project, cli.server.as_deref(), cli.token.as_deref(), out).await?;
+        }
+        Commands::Delete { project, yes } => {
+            commands::projects::delete(project, yes, cli.server.as_deref(), cli.token.as_deref(), out, ci_mode).await?;
         }
         Commands::Login { server } => {
             auth::login(&server).await?;
