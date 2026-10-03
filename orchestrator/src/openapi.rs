@@ -88,6 +88,8 @@ use utoipa::OpenApi;
         // Health
         crate::routes::health::health_check,
         crate::routes::health::system_stats,
+        // Meta
+        crate::routes::meta::get_meta,
     ),
     components(
         schemas(
@@ -96,6 +98,7 @@ use utoipa::OpenApi;
             litebin_common::types::NodeStatus,
             litebin_common::types::RoutingMode,
             litebin_common::types::DeployType,
+            litebin_common::types::TokenScope,
             litebin_common::types::Node,
             litebin_common::types::Project,
             litebin_common::types::VolumeMount,
@@ -170,6 +173,8 @@ use utoipa::OpenApi;
             // Health
             crate::routes::health::HealthResponse,
             crate::routes::health::ServiceStats,
+            // Meta
+            crate::routes::meta::MetaResponse,
             crate::routes::health::SystemStatsResponse,
         )
     ),

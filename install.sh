@@ -843,6 +843,9 @@ EOF
 	handle /health {
 		reverse_proxy litebin-orchestrator:5080
 	}
+	handle /meta {
+		reverse_proxy litebin-orchestrator:5080
+	}
 	handle /caddy/* {
 		reverse_proxy litebin-orchestrator:5080
 	}

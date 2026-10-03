@@ -167,25 +167,37 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/logout", post(routes::auth::logout))
         .route("/auth/me", get(routes::auth::me))
         .route("/auth/change-password", post(routes::auth::change_password))
+        .route("/projects", post(routes::projects::create_project))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), require_auth_or_401));
 
-    let api_routes = Router::new()
+    // Read routes (session OR deploy token with scope >= read)
+    let read_routes = Router::new()
         .route("/projects", get(routes::projects::list_projects))
-        .route("/projects", post(routes::projects::create_project))
         .route("/projects/{id}", get(routes::projects::get_project))
+        .route("/projects/{id}/stats", get(routes::stats::project_stats))
+        .route("/projects/{id}/logs", get(routes::stats::project_logs))
+        .route("/projects/{id}/deploy-logs", get(routes::stats::deploy_logs))
+        .route("/nodes", get(routes::nodes::list_nodes))
+        .route("/meta", get(routes::meta::get_meta))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::guard::require_read));
+
+    // Manage routes (session OR deploy token with scope >= manage)
+    let manage_routes = Router::new()
         .route("/projects/{id}/settings", patch(routes::settings::update_project_settings))
         .route("/projects/{id}/routes", post(routes::projects::create_route))
         .route("/projects/{id}/stop", post(routes::manage::handlers::stop_project))
         .route("/projects/{id}/start", post(routes::manage::handlers::start_project))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::guard::require_manage));
+
+    // Admin routes (session OR deploy token with scope = admin)
+    let admin_routes = Router::new()
         .route("/projects/{id}", delete(routes::manage::handlers::delete_project))
-        .route("/projects/{id}/stats", get(routes::stats::project_stats))
-        .route("/projects/{id}/logs", get(routes::stats::project_logs))
-        .route("/nodes", get(routes::nodes::list_nodes))
         .route("/nodes", post(routes::nodes::create_node))
         .route("/nodes/{id}", delete(routes::nodes::delete_node))
         .route("/nodes/{id}/connect", post(routes::nodes::connect_node))
+        .route("/settings", get(routes::global_settings::get_settings))
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
-        .route_layer(axum::middleware::from_fn_with_state(state.clone(), require_auth_or_401));
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::guard::require_admin));
 
     // Deploy + image upload (session OR deploy token auth — no login_required layer)
     let deploy_routes = Router::new()
@@ -204,7 +216,9 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .merge(auth_public)
         .merge(auth_protected)
-        .merge(api_routes)
+        .merge(read_routes)
+        .merge(manage_routes)
+        .merge(admin_routes)
         .merge(deploy_routes)
         .merge(token_routes)
         .route("/health", get(routes::health::health_check))

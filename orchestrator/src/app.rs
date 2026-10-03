@@ -23,29 +23,34 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/auth/me", get(crate::routes::auth::me))
         .route("/auth/change-password", post(crate::routes::auth::change_password))
         .route("/status", get(crate::routes::auth::status))
+        // Project creation binds a session user; deploys stage projects themselves.
+        .route("/projects", post(crate::routes::projects::create_project))
         .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
 
-    // Routes - Protected API (session auth only)
-    let api_routes = Router::new()
-        .route("/projects", post(crate::routes::projects::create_project))
+    // Routes - Read (session OR deploy token with scope >= read)
+    let read_routes = Router::new()
         .route("/projects", get(crate::routes::projects::list_projects))
         .route("/projects/stats", get(crate::routes::stats::all_project_stats))
         .route("/projects/{id}", get(crate::routes::projects::get_project))
-        .route("/projects/{id}/settings", patch(crate::routes::settings::update_project_settings))
-        .route("/projects/{id}/stop", post(crate::routes::manage::handlers::stop_project))
-        .route("/projects/{id}/start", post(crate::routes::manage::handlers::start_project))
-        .route("/projects/{id}", delete(crate::routes::manage::handlers::delete_project))
         .route("/projects/{id}/stats", get(crate::routes::stats::project_stats))
-        .route("/projects/{id}/disk-usage", get(crate::routes::stats::project_disk_usage))
         .route("/projects/{id}/logs", get(crate::routes::stats::project_logs))
         .route("/projects/{id}/deploy-logs", get(crate::routes::stats::deploy_logs))
+        .route("/projects/{id}/disk-usage", get(crate::routes::stats::project_disk_usage))
+        .route("/nodes", get(crate::routes::nodes::list_nodes))
+        .route("/nodes/image-stats", get(crate::routes::nodes::node_image_stats))
+        .route("/meta", get(crate::routes::meta::get_meta))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard::require_read));
+
+    // Routes - Manage (session OR deploy token with scope >= manage)
+    let manage_routes = Router::new()
+        .route("/projects/{id}/stop", post(crate::routes::manage::handlers::stop_project))
+        .route("/projects/{id}/start", post(crate::routes::manage::handlers::start_project))
         .route("/projects/{id}/recreate", post(crate::routes::manage::handlers::recreate_project))
+        .route("/projects/{id}/settings", patch(crate::routes::settings::update_project_settings))
         .route("/projects/{id}/services/{name}/start", post(crate::routes::manage::handlers::start_service))
         .route("/projects/{id}/services/{name}/stop", post(crate::routes::manage::handlers::stop_service))
         .route("/projects/{id}/services/{name}/restart", post(crate::routes::manage::handlers::restart_service))
         .route("/projects/{id}/services/{name}/settings", patch(crate::routes::settings::update_service_settings))
-        .route("/projects/{id}/volumes/{name}", delete(crate::routes::volumes::delete_volume))
-        .route("/projects/{id}/volumes", delete(crate::routes::volumes::delete_all_volumes))
         .route("/projects/{id}/routes", get(crate::routes::projects::list_routes))
         .route("/projects/{id}/routes", post(crate::routes::projects::create_route))
         .route("/projects/{id}/routes/{route_id}", delete(crate::routes::projects::delete_route))
@@ -55,11 +60,17 @@ pub(crate) fn build_app(state: AppState) -> Router {
             "/projects/{id}/capabilities/{capability}",
             delete(crate::routes::capabilities::revoke_project_capability),
         )
-        .route("/nodes", get(crate::routes::nodes::list_nodes))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard::require_manage));
+
+    // Routes - Admin (session OR deploy token with scope = admin)
+    // Destructive and platform-level operations.
+    let admin_routes = Router::new()
+        .route("/projects/{id}", delete(crate::routes::manage::handlers::delete_project))
+        .route("/projects/{id}/volumes/{name}", delete(crate::routes::volumes::delete_volume))
+        .route("/projects/{id}/volumes", delete(crate::routes::volumes::delete_all_volumes))
         .route("/nodes", post(crate::routes::nodes::create_node))
         .route("/nodes/{id}", delete(crate::routes::nodes::delete_node))
         .route("/nodes/{id}/connect", post(crate::routes::nodes::connect_node))
-        .route("/nodes/image-stats", get(crate::routes::nodes::node_image_stats))
         .route("/nodes/{id}/images/prune", post(crate::routes::nodes::prune_node_images))
         .route("/settings", get(crate::routes::global_settings::get_settings))
         .route("/settings", patch(crate::routes::global_settings::update_settings))
@@ -72,9 +83,10 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/system/stats", get(crate::routes::health::system_stats))
         .route("/scan", get(crate::routes::scan::scan_containers))
         .route("/scan/import", post(crate::routes::scan::import_containers))
-        .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard::require_admin));
 
-    // Routes - Deploy + image upload (session OR deploy token auth)
+    // Routes - Deploy + image upload (session OR deploy token with scope >= deploy,
+    // per-project binding checked in-handler via extract_deploy_token)
     let deploy_routes = Router::new()
         .route("/deploy", post(crate::routes::deploy::single::deploy_create))
         .route("/deploy", put(crate::routes::deploy::single::deploy_update))
@@ -90,7 +102,8 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Chunk bodies can be up to ~the chunk size; raise axum's default 2 MiB limit.
         .layer(axum::extract::DefaultBodyLimit::max(litebin_common::upload::MAX_UPLOAD_BODY));
 
-    // Routes - Deploy token management (session auth)
+    // Routes - Deploy token management (session auth only: admin tokens are
+    // mintable exclusively from an interactive session)
     let token_routes = Router::new()
         .route("/deploy-tokens", post(crate::routes::deploy_tokens::create_token))
         .route("/deploy-tokens", get(crate::routes::deploy_tokens::list_tokens))
@@ -100,7 +113,9 @@ pub(crate) fn build_app(state: AppState) -> Router {
     Router::new()
         .merge(auth_public)
         .merge(auth_protected)
-        .merge(api_routes)
+        .merge(read_routes)
+        .merge(manage_routes)
+        .merge(admin_routes)
         .merge(deploy_routes)
         .merge(token_routes)
         .route("/health", get(crate::routes::health::health_check))

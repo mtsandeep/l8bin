@@ -16,6 +16,7 @@ pub const ORCHESTRATOR_API_PATHS: &[&str] = &[
     "/images",
     "/images/*",
     "/health",
+    "/meta",
     "/nodes",
     "/nodes/*",
     "/settings",

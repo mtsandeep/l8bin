@@ -27,6 +27,7 @@ pub struct DeployToken {
     pub last_used_at: Option<i64>,
     pub expires_at: Option<i64>,
     pub created_at: i64,
+    pub scope: litebin_common::types::TokenScope,
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -34,6 +35,7 @@ pub struct DeployTokenResponse {
     pub id: String,
     pub name: Option<String>,
     pub project_id: Option<String>,
+    pub scope: litebin_common::types::TokenScope,
     pub last_used_at: Option<i64>,
     pub expires_at: Option<i64>,
     pub created_at: i64,
@@ -45,6 +47,7 @@ impl From<DeployToken> for DeployTokenResponse {
             id: t.id,
             name: t.name,
             project_id: t.project_id,
+            scope: t.scope,
             last_used_at: t.last_used_at,
             expires_at: t.expires_at,
             created_at: t.created_at,

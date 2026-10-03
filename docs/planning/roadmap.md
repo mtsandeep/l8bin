@@ -758,3 +758,5 @@ As features grow, the CLI has 40+ planned commands across all planning docs. Thi
 - **Escape hatch:** `l8b api get/post/put/delete <endpoint>` — thin wrapper around `curl` that authenticates using stored session. Gives CLI-only users access to every API endpoint without adding subcommands for each.
 
 To resolve: audit all planned CLI commands from planning docs, categorize as CLI / API-only, and add the `l8b api` wrapper. Not blocking any feature work.
+
+**Update (AI-native plan):** [ai-native.md](ai-native.md) revises the premise — coding agents are a primary CLI consumer, so agent-facing verbs (`list`, `logs`, `stop`, `start`, `restart`, `url`, `delete`, `env`) are priority rather than scope creep. The `l8b api` wrapper remains the long-tail escape hatch and complements the agent story.

@@ -1,7 +1,9 @@
 pub mod backend;
+pub mod guard;
 
 use axum::http::HeaderMap;
 use axum_login::AuthManagerLayerBuilder;
+use litebin_common::types::TokenScope;
 use sha2::{Digest, Sha256};
 use tower_sessions::Expiry;
 use tower_sessions::SessionManagerLayer;
@@ -23,7 +25,8 @@ pub fn auth_layer(state: AppState) -> axum_login::AuthManagerLayer<backend::Pass
 }
 
 /// Extract and validate a deploy token from the Authorization header.
-/// Returns Some(user_id) if a valid token is found for the given project_id.
+/// Returns Some(user_id) if a valid token with deploy-or-higher scope is found
+/// for the given project_id. Read-only tokens cannot deploy.
 /// Returns None if no Bearer token is present or the token is invalid.
 pub async fn extract_deploy_token(state: &AppState, headers: &HeaderMap, project_id: &str) -> Option<String> {
     let auth_header = headers.get("authorization")?.to_str().ok()?;
@@ -43,6 +46,11 @@ pub async fn extract_deploy_token(state: &AppState, headers: &HeaderMap, project
     .ok()?;
 
     let t = token_row?;
+
+    if t.scope < TokenScope::Deploy {
+        tracing::warn!(token_id = %t.id, scope = %t.scope, "auth: read-only token attempted deploy");
+        return None;
+    }
 
     let now = chrono::Utc::now().timestamp();
     if let Err(e) = sqlx::query("UPDATE deploy_tokens SET last_used_at = ? WHERE id = ?")

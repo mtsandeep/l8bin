@@ -207,6 +207,45 @@ impl fmt::Display for DeployType {
     }
 }
 
+/// Cumulative access level for deploy tokens. Declaration order is the rank:
+/// `Read < Deploy < Manage < Admin`.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type, utoipa::ToSchema,
+)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+pub enum TokenScope {
+    Read,
+    #[default]
+    Deploy,
+    Manage,
+    Admin,
+}
+
+impl fmt::Display for TokenScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenScope::Read => write!(f, "read"),
+            TokenScope::Deploy => write!(f, "deploy"),
+            TokenScope::Manage => write!(f, "manage"),
+            TokenScope::Admin => write!(f, "admin"),
+        }
+    }
+}
+
+impl TokenScope {
+    /// Parse a scope name, falling back to `Deploy` (the pre-scopes token behavior)
+    /// for unknown values from older databases.
+    pub fn parse_or_default(s: &str) -> Self {
+        match s {
+            "read" => TokenScope::Read,
+            "manage" => TokenScope::Manage,
+            "admin" => TokenScope::Admin,
+            _ => TokenScope::Deploy,
+        }
+    }
+}
+
 // ── Domain Types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, utoipa::ToSchema)]

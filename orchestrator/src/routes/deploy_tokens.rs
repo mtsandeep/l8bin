@@ -11,12 +11,15 @@ use sha2::{Digest, Sha256};
 use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 use crate::db::models::{DeployToken, DeployTokenResponse};
+use litebin_common::types::TokenScope;
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateTokenRequest {
     pub project_id: Option<String>,
     pub name: Option<String>,
     pub expires_at: Option<i64>,
+    /// Cumulative access level: read, deploy (default), manage, or admin.
+    pub scope: Option<TokenScope>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -86,9 +89,10 @@ pub async fn create_token(
 
     let now = chrono::Utc::now().timestamp();
     let token_id = uuid::Uuid::new_v4().to_string();
+    let scope = payload.scope.unwrap_or_default();
 
     if let Err(e) = sqlx::query(
-        "INSERT INTO deploy_tokens (id, user_id, project_id, token_hash, name, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO deploy_tokens (id, user_id, project_id, token_hash, name, created_at, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&token_id)
     .bind(&user_id)
@@ -97,6 +101,7 @@ pub async fn create_token(
     .bind(&payload.name)
     .bind(now)
     .bind(payload.expires_at)
+    .bind(scope)
     .execute(&state.db)
     .await
     {
@@ -112,6 +117,7 @@ pub async fn create_token(
         id: token_id,
         name: payload.name,
         project_id: payload.project_id,
+        scope,
         last_used_at: None,
         expires_at: payload.expires_at,
         created_at: now,

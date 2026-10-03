@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Deploy token scopes — cumulative `read < deploy < manage < admin`** — API route groups now accept scoped Bearer tokens: read (projects, stats, logs, deploy-logs, nodes, `/meta`), manage (+ stop/start/recreate, service ops, project/service settings, routes, capabilities), admin (+ project delete, volumes, node lifecycle, token CRUD, global settings). Existing tokens migrate to `deploy`, which now also grants read — a deploy token can finally verify its own deploy (token-based deploys previously couldn't poll status/logs, silently degrading CI). Project-scoped tokens are confined to their project's paths; `POST /deploy-tokens` accepts `scope` (default `deploy`); admin tokens remain mintable from a session only. Read-only tokens cannot deploy.
+- **`GET /meta`** — non-sensitive platform metadata (domain, subdomains, routing mode, version) so CLI/agents can compute project URLs without the Cloudflare secrets that `GET /settings` returns. Added to the caddy proxy whitelist (runtime route sync, `Caddyfile`, `install.sh`, `install-windows.ps1`).
+
+### Changed
+- **Unauthenticated calls on the scoped route groups now return `401` JSON instead of a 307 redirect** — matches what the dashboard and API clients already expect.
+
 ## [0.3.26] - 2026-10-03
 
 ### Fixed

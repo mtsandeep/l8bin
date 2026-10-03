@@ -9,6 +9,7 @@ pub mod health;
 pub mod heartbeat;
 pub mod images;
 pub mod manage;
+pub mod meta;
 pub mod nodes;
 pub mod openapi;
 pub mod projects;
