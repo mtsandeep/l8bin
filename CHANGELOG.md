@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.26] - 2026-10-03
+
 ### Fixed
 - **502s for running projects after a stack update** — recreating the caddy container drops its per-project network memberships, so every route 502'd until each project was redeployed (first triggered by 0.3.24's compose log-rotation changes recreating caddy). Master caddy and agent-caddy now reconnect to project networks at startup.
 
