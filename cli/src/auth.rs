@@ -356,7 +356,7 @@ pub struct NodeInfo {
 
 /// Fetch online nodes from the server. Returns empty vec on failure.
 pub async fn fetch_online_nodes(client: &reqwest::Client, server: &str) -> Vec<NodeInfo> {
-    match session_get(client, server, "/nodes").await {
+    match api_get(client, server, "/nodes").await {
         Ok(resp) => {
             let nodes: Vec<NodeInfo> = serde_json::from_value(resp).unwrap_or_default();
             nodes.into_iter().filter(|n| n.status == NodeStatus::Online).collect()

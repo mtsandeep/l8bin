@@ -4,14 +4,73 @@ use anyhow::{Result, bail};
 use colored::Colorize;
 use litebin_common::types::ProjectStatus;
 
+use serde::Serialize;
+
 use crate::auth;
 use crate::build;
 use crate::ci::CiMode;
 use crate::config;
 use crate::deploy as deploy_cmd;
+use crate::out::Out;
 use crate::ship;
 use crate::status;
 use crate::upload;
+
+#[derive(Serialize)]
+struct DeployOutcome {
+    project_id: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    background: bool,
+    duration_secs: u64,
+}
+
+/// Report a finished (or still-in-progress) deploy: JSON payload in --json mode,
+/// human lines otherwise. `deploying` after the poll timeout is not an error —
+/// agents read the `status` field.
+fn finish_deploy(
+    out: &Out,
+    project: &str,
+    final_status: Option<ProjectStatus>,
+    url: Option<String>,
+    background: bool,
+    started: std::time::Instant,
+) -> Result<()> {
+    let duration = started.elapsed().as_secs();
+    let status_label = match final_status {
+        Some(ProjectStatus::Error) => {
+            return Err(crate::out::fail(
+                format!("deploy failed for project '{project}'"),
+                format!("check deploy logs: l8b status --project {project}"),
+            ));
+        }
+        Some(ProjectStatus::Running | ProjectStatus::Completed) => "running",
+        Some(ProjectStatus::Stopped) => "stopped",
+        _ => "deploying",
+    };
+
+    out.ok(&DeployOutcome {
+        project_id: project.to_string(),
+        status: status_label.to_string(),
+        url: url.clone(),
+        background,
+        duration_secs: duration,
+    });
+
+    match status_label {
+        "running" => match (&url, background) {
+            (Some(u), false) => out.note(&format!("Deployed! {u}")),
+            _ => out.note("Deployed! No managed URL (background project)."),
+        },
+        "stopped" => out.note("Deployed, but the project is now stopped."),
+        _ => {
+            out.note("Deployment is still in progress.");
+            out.note(&format!("Run {} to check status.", format!("l8b status --project {project}").cyan()));
+        }
+    }
+    Ok(())
+}
 
 pub(crate) struct DeployArgs {
     pub project: String,
@@ -36,7 +95,9 @@ pub(crate) async fn run(
     server_flag: Option<&str>,
     token_flag: Option<&str>,
     ci_mode: &CiMode,
+    out: &Out,
 ) -> Result<()> {
+    let started = std::time::Instant::now();
     let DeployArgs {
         project,
         port,
@@ -119,26 +180,14 @@ pub(crate) async fn run(
         .await?;
 
         // Poll for completion (2 min timeout, non-interactive)
-        let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
-        match final_status.as_ref() {
-            Some(ProjectStatus::Running | ProjectStatus::Completed) => {
-                if effective_background {
-                    println!("Deployed! No managed URL (background project).");
-                } else {
-                    let domain = auth::fetch_platform_domain(&client, &server).await;
-                    let url = auth::project_live_url(&project, &domain);
-                    println!("Deployed! {}", url);
-                }
-            }
-            Some(ProjectStatus::Error) => {
-                println!("Deploy failed for project '{}'.", project);
-                std::process::exit(1);
-            }
-            _ => {
-                println!("Deployment is still in progress.");
-                println!("Run {} to check status.", format!("l8b status --project {}", project).cyan());
-            }
-        }
+        let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
+        let url = if effective_background {
+            None
+        } else {
+            let domain = auth::fetch_platform_domain(&client, &server).await;
+            Some(auth::project_live_url(&project, &domain))
+        };
+        finish_deploy(out, &project, final_status, url, effective_background, started)?;
     } else {
         let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
 
@@ -188,35 +237,20 @@ pub(crate) async fn run(
 
         if response.status == ProjectStatus::Deploying {
             // Poll for completion (2 min timeout, non-interactive)
-            let final_status = status::poll_project_status(&client, &server, &project, 120).await?;
-            match final_status.as_ref() {
-                Some(ProjectStatus::Running | ProjectStatus::Completed) => {
-                    if effective_background {
-                        println!("Deployed! No managed URL (background project).");
-                    } else {
-                        let url = if let Some(u) = response.url.as_deref().filter(|u| !u.is_empty()) {
-                            u.to_string()
-                        } else {
-                            let domain = auth::fetch_platform_domain(&client, &server).await;
-                            auth::project_live_url(&project, &domain)
-                        };
-                        println!("Deployed! {}", url);
-                    }
-                }
-                Some(ProjectStatus::Error) => {
-                    println!("Deploy failed for project '{}'.", project);
-                    std::process::exit(1);
-                }
-                _ => {
-                    println!("Deployment is still in progress.");
-                    println!("Run {} to check status.", format!("l8b status --project {}", project).cyan());
-                }
-            }
+            let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
+            let url = if effective_background {
+                None
+            } else if let Some(u) = response.url.as_deref().filter(|u| !u.is_empty()) {
+                Some(u.to_string())
+            } else {
+                let domain = auth::fetch_platform_domain(&client, &server).await;
+                Some(auth::project_live_url(&project, &domain))
+            };
+            finish_deploy(out, &project, final_status, url, effective_background, started)?;
         } else {
-            match response.url.as_deref() {
-                Some(url) => println!("Deployed! {}", url),
-                None => println!("Deployed! No managed URL (background project)."),
-            }
+            let final_status = Some(response.status);
+            let url = response.url.clone().filter(|u| !u.is_empty());
+            finish_deploy(out, &project, final_status, url, effective_background, started)?;
         }
 
         // Clean up

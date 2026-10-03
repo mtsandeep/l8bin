@@ -7,9 +7,19 @@ use anyhow::{Context, Result, bail};
 use colored::Colorize;
 use serde_json::json;
 
+use serde::Serialize;
+
 use crate::auth;
 use crate::config;
+use crate::out::Out;
 use crate::status;
+
+#[derive(Serialize)]
+struct EnvPayload {
+    project_id: String,
+    vars: serde_json::Value,
+    pending_apply: bool,
+}
 
 pub(crate) struct EnvListArgs {
     pub project: String,
@@ -27,13 +37,25 @@ pub(crate) struct EnvPushArgs {
     pub apply: bool,
 }
 
-pub(crate) async fn list(args: EnvListArgs, server_flag: Option<&str>, token_flag: Option<&str>) -> Result<()> {
+pub(crate) async fn list(
+    args: EnvListArgs,
+    server_flag: Option<&str>,
+    token_flag: Option<&str>,
+    out: &Out,
+) -> Result<()> {
     let cfg = config::CliConfig::load(server_flag, token_flag)?;
     let client = auth::authenticated_client(&cfg)?;
     let server = auth::resolve_server(&cfg)?;
 
     let env = auth::api_get(&client, &server, &format!("/projects/{}/env", args.project)).await?;
-    print_env(&args.project, &env);
+    out.ok(&EnvPayload {
+        project_id: args.project.clone(),
+        vars: env["vars"].clone(),
+        pending_apply: env["pending_apply"].as_bool().unwrap_or(false),
+    });
+    if !out.json {
+        print_env(&args.project, &env);
+    }
     Ok(())
 }
 
@@ -42,6 +64,7 @@ pub(crate) async fn push(
     server_flag: Option<&str>,
     token_flag: Option<&str>,
     ci_mode: &crate::ci::CiMode,
+    out: &Out,
 ) -> Result<()> {
     let cfg = config::CliConfig::load(server_flag, token_flag)?;
     let client = auth::authenticated_client(&cfg)?;
@@ -73,6 +96,12 @@ pub(crate) async fn push(
     let body = json!({"env": parsed, "mode": mode});
     let resp = auth::api_put_json(&client, &server, &format!("/projects/{}/env", args.project), &body).await?;
 
+    out.ok(&EnvPayload {
+        project_id: args.project.clone(),
+        vars: resp["vars"].clone(),
+        pending_apply: resp["pending_apply"].as_bool().unwrap_or(false),
+    });
+
     if ci_mode.enabled {
         println!("Updated {count} variable(s) (mode: {mode}).");
     } else {
@@ -98,7 +127,7 @@ pub(crate) async fn push(
 async fn apply(client: &reqwest::Client, server: &str, project: &str) -> Result<()> {
     println!("{} Recreating container to apply changes…", "→".yellow());
     auth::api_post_json(client, server, &format!("/projects/{project}/recreate"), &json!({})).await?;
-    let final_status = status::poll_project_status(client, server, project, 120).await?;
+    let final_status = status::poll_project_status(client, server, project, 120, false).await?;
     match final_status {
         Some(litebin_common::types::ProjectStatus::Running) | Some(litebin_common::types::ProjectStatus::Completed) => {
             println!("{} Applied — project is running.", "✓".green());

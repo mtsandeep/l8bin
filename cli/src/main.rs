@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod deploy;
 mod mise;
+mod out;
 mod railpack;
 mod ship;
 mod status;
@@ -31,6 +32,10 @@ struct Cli {
     /// CI mode: suppress verbose output and hide secrets (or set L8B_CI=true)
     #[arg(long, env = "L8B_CI", global = true)]
     ci: bool,
+
+    /// Machine-readable JSON output (single object on stdout; or set L8B_JSON=1)
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -126,6 +131,15 @@ enum Commands {
         /// Show status of a specific project
         #[arg(long, short)]
         project: Option<String>,
+        /// Wait until the project reaches a terminal state; exit 0 only if running
+        #[arg(long, requires = "project")]
+        wait: bool,
+        /// Wait timeout in seconds (default 120, with --wait)
+        #[arg(long, requires = "project")]
+        timeout: Option<u64>,
+        /// Probe the project URL for a 2xx (implies --wait; skipped for background projects)
+        #[arg(long, requires = "project")]
+        healthy: bool,
     },
     /// Clean up leftover build artifacts (.env backups, temp dockerignore files)
     Cleanup {
@@ -187,17 +201,34 @@ enum EnvAction {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     // --generate-markdown: print CLI docs and exit (for docs generation)
     // Check before clap parsing to avoid requiring a subcommand
     if std::env::args().any(|a| a == "--generate-markdown") {
         println!("{}", clap_markdown::help_markdown::<Cli>());
-        return Ok(());
+        return;
     }
 
     let cli = Cli::parse();
-    let ci_mode = ci::CiMode::from_flag(cli.ci);
+    let out = out::Out::from_flag(cli.json);
+    // JSON output is machine-consumed: keep stdout to the single JSON object.
+    let ci_mode = ci::CiMode::from_flag(cli.ci || out.json);
 
+    if let Err(e) = run(cli, &out, &ci_mode).await {
+        let (message, hint) = out::split_hint(&e);
+        if out.json {
+            println!("{}", serde_json::json!({"ok": false, "error": {"message": message, "hint": hint}}));
+        } else {
+            eprintln!("Error: {message}");
+            if let Some(h) = hint {
+                eprintln!("Hint: {h}");
+            }
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
     // Register secrets with GitHub Actions log masking
     if let Some(ref t) = cli.token {
         ci_mode.mask_secret(t);
@@ -248,13 +279,17 @@ async fn main() -> Result<()> {
                 },
                 cli.server.as_deref(),
                 cli.token.as_deref(),
-                &ci_mode,
+                ci_mode,
+                out,
             )
             .await?;
         }
         Commands::Ship { path, port, secret } => {
             if ci_mode.enabled {
-                bail!("'ship' is an interactive command and cannot be used in CI mode. Use 'deploy' instead.");
+                bail!(crate::out::fail(
+                    "'ship' is interactive and cannot run in CI/JSON mode",
+                    "use `l8b deploy --project <id>`"
+                ));
             }
             let cfg = config::CliConfig::load(cli.server.as_deref(), None)?;
             if auth::load_session().is_none() {
@@ -276,8 +311,14 @@ async fn main() -> Result<()> {
             auth::clear_session()?;
             println!("Logged out.");
         }
-        Commands::Status { project } => {
-            commands::status::run(project, cli.server.as_deref(), cli.token.as_deref()).await?;
+        Commands::Status { project, wait, timeout, healthy } => {
+            commands::status::run(
+                commands::status::StatusArgs { project, wait, timeout, healthy },
+                cli.server.as_deref(),
+                cli.token.as_deref(),
+                out,
+            )
+            .await?;
         }
         Commands::Cleanup { path } => {
             let dir = std::path::Path::new(&path);
@@ -289,6 +330,7 @@ async fn main() -> Result<()> {
                     commands::env::EnvListArgs { project },
                     cli.server.as_deref(),
                     cli.token.as_deref(),
+                    out,
                 )
                 .await?;
             }
@@ -297,7 +339,8 @@ async fn main() -> Result<()> {
                     commands::env::EnvPushArgs { project, file, stdin, replace, apply },
                     cli.server.as_deref(),
                     cli.token.as_deref(),
-                    &ci_mode,
+                    ci_mode,
+                    out,
                 )
                 .await?;
             }

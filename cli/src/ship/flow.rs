@@ -273,7 +273,7 @@ pub(super) async fn poll_deploy_status(
     success_label: &str,
     fail_label: &str,
 ) -> Result<()> {
-    let final_status = crate::status::poll_project_status(client, server, project_id, 120).await?;
+    let final_status = crate::status::poll_project_status(client, server, project_id, 120, false).await?;
 
     match final_status.as_ref() {
         Some(ProjectStatus::Running) => {
@@ -291,7 +291,7 @@ pub(super) async fn poll_deploy_status(
                 Select::new().with_prompt("Continue waiting or detach?").items(&choices).default(0).interact()?;
 
             if selection == 0 {
-                let final_status = crate::status::poll_project_status(client, server, project_id, 300).await?;
+                let final_status = crate::status::poll_project_status(client, server, project_id, 300, false).await?;
                 match final_status.as_ref() {
                     Some(ProjectStatus::Running) => {
                         println!("  {} {}", "✔".green(), success_label);
