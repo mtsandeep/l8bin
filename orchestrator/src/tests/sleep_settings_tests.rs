@@ -131,14 +131,10 @@ services:
 
     let resp = server
         .post("/deploy/compose")
-        .multipart(
-            axum_test::multipart::MultipartForm::new()
-                .add_text("project_id", project_id)
-                .add_part(
-                    "compose",
-                    axum_test::multipart::Part::text(compose).file_name("compose.yaml").mime_type("text/yaml"),
-                ),
-        )
+        .multipart(axum_test::multipart::MultipartForm::new().add_text("project_id", project_id).add_part(
+            "compose",
+            axum_test::multipart::Part::text(compose).file_name("compose.yaml").mime_type("text/yaml"),
+        ))
         .await;
 
     resp.assert_status(StatusCode::OK);
