@@ -62,11 +62,13 @@ async fn update_active_projects(state: &AppState, hosts: HashSet<String>, dashbo
         return;
     }
 
+    // Tracks all running web projects (dashboard indicator), not just
+    // janitor-managed ones; background projects have no routed traffic.
     let mut qb: sqlx::QueryBuilder<sqlx::Sqlite> = sqlx::QueryBuilder::new("UPDATE projects SET last_active_at = ");
     qb.push_bind(now);
     qb.push(", updated_at = ");
     qb.push_bind(now);
-    qb.push(" WHERE is_background = 0 AND status = 'running' AND auto_stop_enabled = 1 AND (");
+    qb.push(" WHERE is_background = 0 AND status = 'running' AND (");
 
     if !subdomain_ids.is_empty() {
         qb.push("id IN (");

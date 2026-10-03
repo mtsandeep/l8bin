@@ -487,10 +487,15 @@ export default function ProjectCard({
 
       {/* Footer */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1 text-[11px] text-slate-500">
-          <Clock size={11} />
-          <span>{timeAgo(project.last_active_at)}</span>
-        </div>
+        {project.is_background ? (
+          // No routed traffic — a clock would never update.
+          <span />
+        ) : (
+          <div className="flex items-center gap-1 text-[11px] text-slate-500">
+            <Clock size={11} />
+            <span>{timeAgo(project.last_active_at)}</span>
+          </div>
+        )}
 
         <div className="flex items-center gap-1.5">
           <button
