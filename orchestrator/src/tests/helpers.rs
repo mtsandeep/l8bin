@@ -159,7 +159,9 @@ pub fn build_router(state: AppState) -> Router {
     // Auth-public routes (no login required)
     let auth_public = Router::new()
         .route("/auth/login", post(routes::auth::login))
-        .route("/auth/register", post(routes::auth::register));
+        .route("/auth/register", post(routes::auth::register))
+        .route("/auth/device/start", post(routes::device_auth::start_device_flow))
+        .route("/auth/device/token", post(routes::device_auth::poll_device_token));
 
     // Auth-protected routes — use axum_login::login_required! but map 307 → 401
     // by wrapping with a middleware that intercepts redirects to /auth/login.
@@ -167,6 +169,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/logout", post(routes::auth::logout))
         .route("/auth/me", get(routes::auth::me))
         .route("/auth/change-password", post(routes::auth::change_password))
+        .route("/auth/device", get(routes::device_auth::lookup_device_request))
+        .route("/auth/device/approve", post(routes::device_auth::approve_device_request))
         .route("/projects", post(routes::projects::create_project))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), require_auth_or_401));
 

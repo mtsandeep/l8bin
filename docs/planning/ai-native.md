@@ -136,12 +136,24 @@ With a dashboard-minted token in `L8B_TOKEN`, an agent gets the complete deploy�
 
 **Acceptance check (phase 1):** agent with a token deploys an app that needs `DATABASE_URL` → app crashes → reads `logs` → pushes env via `l8b env push` → `restart` → `status --wait --healthy` returns running + `http_status: 200`. No SSH, no dashboard, secrets never printed. Human-mode output for existing commands stays byte-compatible. Old deploy tokens gain `read` (intended). GitHub Action post-deploy polling starts working under token auth.
 
-### Phase 2 — Zero-dashboard bootstrap
+### Phase 2 — Zero-dashboard bootstrap + env surface completion
 
 - Device pairing flow (`l8b login` rework, `/auth/device/*` endpoints, dashboard connect page with scope radio + project binding).
 - `l8b init` + `l8b.toml` (project discovery; optionally emit workspace `.mcp.json`).
 - Assisted setup: `l8b doctor` (server reachable, auth valid, Docker present, DNS preflight — with exact next steps), `l8b setup` (register first admin + mint/pair token against a fresh server), non-interactive installer flags (agent *can* drive install if the user opts in — trust boundary stays human).
 - `l8b domain set` command.
+
+**Env everywhere** (closes the runtime-env matrix; every surface can set env at deploy time or after):
+
+| Surface | Deploy-time env | Post-deploy env |
+|---|---|---|
+| `l8b deploy` | `--env-file <path>` — pushes after staging, before first start (new projects stage first via `stage_only`, then env, then start) | `l8b env push` ✓ done |
+| `l8b ship` | The "Awaiting runtime configuration" pause becomes a real step: pick local `.env` file(s) → push via API → start (skip = start with defaults) | same pause on resume ✓ |
+| Dashboard deploy dialog | Optional env textarea (KEY=VALUE); staged projects get env → start instead of start-then-pending | — |
+| Dashboard project view | — | Env modal: masked key list + `pending_apply` indicator + editor dialog (write-only PUT); unconfigured projects get env → start in-page (replacing the current "resume from the CLI" dead end) |
+| Direct file edit | ✓ unchanged (same file both paths write) | ✓ unchanged |
+
+Dashboard work (connect page + env modal + deploy dialog) lands as one React pass.
 
 ### Phase 3 — Native integration
 

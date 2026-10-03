@@ -15,13 +15,17 @@ pub(crate) fn build_app(state: AppState) -> Router {
     let auth_public = Router::new()
         .route("/auth/login", post(crate::routes::auth::login))
         .route("/auth/register", post(crate::routes::auth::register))
-        .route("/auth/setup", get(crate::routes::auth::setup_check));
+        .route("/auth/setup", get(crate::routes::auth::setup_check))
+        .route("/auth/device/start", post(crate::routes::device_auth::start_device_flow))
+        .route("/auth/device/token", post(crate::routes::device_auth::poll_device_token));
 
     // Routes - Auth protected (login required)
     let auth_protected = Router::new()
         .route("/auth/logout", post(crate::routes::auth::logout))
         .route("/auth/me", get(crate::routes::auth::me))
         .route("/auth/change-password", post(crate::routes::auth::change_password))
+        .route("/auth/device", get(crate::routes::device_auth::lookup_device_request))
+        .route("/auth/device/approve", post(crate::routes::device_auth::approve_device_request))
         .route("/status", get(crate::routes::auth::status))
         // POST binds a session user; deploy endpoints stage projects instead.
         .route("/projects", post(crate::routes::projects::create_project))

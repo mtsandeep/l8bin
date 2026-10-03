@@ -30,6 +30,10 @@ use utoipa::OpenApi;
         crate::routes::auth::setup_check,
         crate::routes::auth::me,
         crate::routes::auth::change_password,
+        crate::routes::device_auth::start_device_flow,
+        crate::routes::device_auth::lookup_device_request,
+        crate::routes::device_auth::approve_device_request,
+        crate::routes::device_auth::poll_device_token,
         crate::routes::auth::status,
         // Projects
         crate::routes::projects::create_project,
@@ -121,6 +125,12 @@ use utoipa::OpenApi;
             crate::routes::auth::ChangePasswordResponse,
             crate::routes::auth::StatusNode,
             crate::routes::auth::StatusResponse,
+            crate::routes::device_auth::DeviceStartRequest,
+            crate::routes::device_auth::DeviceStartResponse,
+            crate::routes::device_auth::DeviceRequestInfo,
+            crate::routes::device_auth::DeviceApproveRequest,
+            crate::routes::device_auth::DeviceTokenRequest,
+            crate::routes::device_auth::DeviceTokenResponse,
             // Projects
             crate::routes::projects::CreateProjectRequest,
             crate::routes::projects::ProjectResponse,

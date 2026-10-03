@@ -1,5 +1,10 @@
 # Development Guide
 
+## Database migrations
+
+Migrations are checksummed: once a migration file ships (or runs anywhere outside your machine), never edit it — sqlx refuses to start with `migration N was previously applied but has been modified`. Add a new migration instead. If a local dev database hits this error after editing an unshipped migration, update the checksum in `_sqlx_migrations` or delete the dev database.
+
+
 ## Prerequisites
 
 - **Rust** 1.85+ (edition 2024)

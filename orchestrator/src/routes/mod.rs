@@ -3,6 +3,7 @@ pub mod caddy;
 pub mod capabilities;
 pub mod deploy;
 pub mod deploy_tokens;
+pub mod device_auth;
 pub mod docs;
 pub mod env;
 pub mod global_settings;

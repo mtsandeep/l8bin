@@ -3,6 +3,7 @@ pub(crate) mod helpers;
 mod auth_tests;
 mod deploy_stage_tests;
 mod deploy_tokens_tests;
+mod device_auth_tests;
 mod env_tests;
 mod health_tests;
 mod janitor_tests;
