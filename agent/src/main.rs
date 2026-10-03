@@ -74,6 +74,8 @@ async fn main() -> Result<()> {
     // Connect agent to all existing project networks so it can proxy to containers
     let agent_id = std::env::var("AGENT_CONTAINER_NAME").unwrap_or_else(|_| "litebin-agent".into());
     docker.connect_to_project_networks(&agent_id).await;
+    // Agent updates recreate agent-caddy first; reattach it too or all its routes 502.
+    docker.connect_to_project_networks(&litebin_common::types::agent_caddy_container_name()).await;
 
     // Load persisted Caddy config (if orchestrator previously pushed one)
     let last_caddy_config: Arc<std::sync::RwLock<Option<serde_json::Value>>> =

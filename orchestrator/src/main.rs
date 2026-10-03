@@ -348,6 +348,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Stack updates recreate caddy without its project-network memberships;
+    // reattach (the orchestrator reconnects itself earlier at boot).
+    let caddy_id = std::env::var("CADDY_CONTAINER_NAME").unwrap_or_else(|_| "litebin-caddy".into());
+    state.docker.connect_to_project_networks(&caddy_id).await;
+
     // Create shutdown signal channel
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
