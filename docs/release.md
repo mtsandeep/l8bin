@@ -33,7 +33,7 @@ When you run `cargo-release`, it:
 5. Creates git tag `v<version>`
 6. Pushes the commit and tag to remote
 7. The `release.yml` GitHub Action picks up the tag and builds all artifacts
-8. The `publish-npm.yml` action publishes the `l8bin-mcp` npm shim with the same version (via npm Trusted Publishing — no token secret; prereleases are skipped)
+8. The `publish-npm.yml` workflow publishes the `l8bin-mcp` npm shim with the same version (via npm Trusted Publishing — no token secret; prereleases are skipped). It chains on the Release workflow via `workflow_run`, because releases created with `GITHUB_TOKEN` do not fire `release` events
 
 **You do not need to manually tag commits or edit the changelog header.** `cargo-release` handles everything.
 

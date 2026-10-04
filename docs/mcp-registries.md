@@ -1,6 +1,6 @@
 # Publishing l8bin-mcp
 
-npm publishing is automated: `publish-npm.yml` fires on every published GitHub
+npm publishing is automated: `publish-npm.yml` runs when the Release workflow
 release, verifies the version matches the release tag, and publishes with
 provenance via npm Trusted Publishing (OIDC — no token secret to manage).
 One-time setup:

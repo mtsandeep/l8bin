@@ -1,25 +1,32 @@
 name: Publish npm shim
 
-# Publishes l8bin-mcp on every GitHub release via npm Trusted Publishing
-# (OIDC — no token secret). Version is set by cargo release.
-# Configure on npmjs.com: package settings → Trusted Publishing →
-# repository mtsandeep/l8bin, workflow publish-npm.yml.
+# Runs when the Release workflow completes. Releases created by that workflow
+# use GITHUB_TOKEN, whose events don't trigger other workflows — so this
+# chains on the run itself (workflow_run always fires). Auth is npm Trusted
+# Publishing (OIDC — no token secret). Version is set by cargo release.
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # npm provenance
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The release commit, not whatever main has moved on to
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -28,8 +35,10 @@ jobs:
 
       - name: Verify package version matches the release tag
         id: version
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${HEAD_BRANCH#v}"
           if echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             :
           elif echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-'; then
@@ -38,7 +47,7 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           else
-            echo "Ref '$GITHUB_REF_NAME' is not a semver tag (got '$VERSION'); refusing to publish"
+            echo "Ref '$HEAD_BRANCH' is not a semver tag (got '$VERSION'); refusing to publish"
             exit 1
           fi
 
