@@ -18,10 +18,10 @@ fall back to the CLI.
 - Full command list: `l8b --help`; machine output: add `--json`
 
 If auth fails, ask the user for the LiteBin server URL, then run the pairing
-yourself: `l8b login --server <url> --pair`. It prints a short code and the
-<server>/connect approval URL — relay both to the user and wait; the command
-returns once they approve (they also pick the token's scope). Never ask the
-user for their password.
+yourself: `l8b login --server <url> --pair`. It prints an approval URL (the
+code is embedded, the page pre-fills it) — relay it to the user and wait; the
+command returns once they approve (they also pick the token's scope). Never
+ask the user for their password.
 ```
 
 ## Wiring it up

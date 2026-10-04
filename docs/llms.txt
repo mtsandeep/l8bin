@@ -24,7 +24,7 @@ When helping users deploy to LiteBin, follow these patterns:
 Requires a server already running LiteBin (server install: `curl -fsSL https://l8b.in | bash` on a VPS; see the quickstart). Then:
 
 1. Check for the CLI: `l8b --version`. Missing? Install: `curl -fsSL https://l8b.in | bash -s cli` (Windows: `iex "& { $(irm https://l8b.in/windows.ps1) } -Cli"`). The MCP server is the same binary via `l8b mcp` — no separate package, no npx.
-2. Authenticate: ask the user for their LiteBin server URL, then run `l8b login --server <url> --pair`. It prints a short code and the `<server>/connect` approval URL — relay both to the user and wait; the command returns once approved (the user picks the token scope).
+2. Authenticate: ask the user for their LiteBin server URL, then run `l8b login --server <url> --pair`. It prints an approval URL (the code is embedded, the page pre-fills it) — relay it to the user and wait; the command returns once approved (the user picks the token scope).
 3. Register in the repo: `l8b init --mcp` (writes `l8b.toml` + workspace `.mcp.json`), or add the server manually: command `l8b`, args `["mcp"]`.
 4. Verify: `l8b doctor` — exit 0 means the setup is healthy.
 

@@ -114,10 +114,20 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
 
     println!("Server: {server}");
     println!();
-    println!("  Open {} and enter this code:", format!("{server}/connect").cyan().bold());
+    let connect_url = format!("{server}/connect?code={user_code}");
+    println!("  Open to approve:");
     println!();
-    println!("    {}", user_code.green().bold());
+    println!("    {}", connect_url.cyan().bold());
     println!();
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        use std::io::Write;
+        print!("  Press ENTER to open the browser… ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).ok();
+        let _ = webbrowser::open(&connect_url);
+        println!();
+    }
     println!("  {} Expires in {} minutes. Waiting for approval…", "⏳".yellow(), expires_in / 60);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(expires_in);

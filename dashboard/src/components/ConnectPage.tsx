@@ -75,17 +75,36 @@ export default function ConnectPage() {
     }
   };
 
-  const lookup = async (e?: FormEvent) => {
-    e?.preventDefault();
-    if (!codeComplete) return;
+  const runLookup = async (code: string) => {
+    const chars = code
+      .toUpperCase()
+      .replace(/^L8B-?/, '')
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, 6)
+      .split('');
+    if (chars.length !== 6) return;
+    setCells(chars);
     setPhase({ kind: 'looking' });
     try {
-      const request = await lookupDeviceRequest(userCode);
+      const request = await lookupDeviceRequest(`L8B-${chars.join('')}`);
       setScope(request.suggested_scope);
       setPhase({ kind: 'review', request });
     } catch (err) {
       setPhase({ kind: 'error', message: err instanceof Error ? err.message : 'Lookup failed' });
     }
+  };
+
+  // Pre-filled from a CLI-initiated link (/connect?code=L8B-XXXXXX)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional one-shot on mount
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('code');
+    if (fromUrl) runLookup(fromUrl);
+  }, []);
+
+  const lookup = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!codeComplete) return;
+    await runLookup(userCode);
   };
 
   const decide = async (approve: boolean) => {
