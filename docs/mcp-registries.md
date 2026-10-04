@@ -1,17 +1,14 @@
 # Publishing l8bin-mcp
 
 npm publishing is automated: `publish-npm.yml` runs when the Release workflow
-release, verifies the version matches the release tag, and publishes with
+completes, verifies the version matches the release tag, and publishes with
 provenance via npm Trusted Publishing (OIDC — no token secret to manage).
-One-time setup:
+One-time setup (done):
 
-1. **Configure the trusted publisher** — on npmjs.com, package settings →
-   Trusted Publishing → repository `mtsandeep/l8bin`, workflow
-   `publish-npm.yml`. Trusted publishing is configured per existing package,
-   so the very first publish (`0.1.0`) is done once manually: `npm login`,
-   then `npm publish` from `npm/`.
-2. **A GitHub release that includes the `mcp` subcommand** — the shim downloads
-   the latest release binary; releases before `l8b mcp` existed cannot serve it.
+1. Trusted publisher configured on npmjs.com (repository `mtsandeep/l8bin`,
+   workflow `publish-npm.yml`); the `0.1.0` bootstrap publish is out.
+2. Releases include the `mcp` subcommand — the shim downloads the latest
+   release binary.
 
 ## Canonical listing metadata
 
@@ -42,15 +39,21 @@ Reuse these across every registry form:
 
 ## Registries
 
-| Registry | How | Notes |
-| --- | --- | --- |
-| Smithery | `https://smithery.ai/new`, point it at the repo | Reads `smithery.yaml` from the repo root; the web flow may regenerate it — keep the `npx -y l8bin-mcp` start command. |
-| Glama | `https://glama.ai/mcp/servers/submit` | Form submission with the metadata above. |
-| PulseMCP | `https://pulsemcp.com/submit` | Also propagates from canonical listings over time — submit manually anyway. |
-| mcp.so | `https://mcp.so/submit` | Simple form; same metadata. |
+| Priority | Registry | How | Status / Why |
+| --- | --- | --- | --- |
+| 1 | awesome-mcp-servers (punkpeye) | GitHub PR adding l8bin under the relevant category | The curated list the official MCP repo points to; feeds developer trust, SEO, and what models know about us. |
+| 2 | PulseMCP | `https://pulsemcp.com/submit` | Largest fully-open index, daily-updated; may auto-crawl the repo, but an explicit submit controls our metadata. |
+| 3 | Glama | `https://glama.ai/mcp/servers/submit` | Largest raw count; visibility is filter-gated but presence costs nothing. |
+| 4 | mcpservers.org | Directory submit form | Smaller community directory; quick to do. |
+| 5 | ToolHive (Stacklok) | Investigate their vetting submission | Security-vetted registry — a good trust signal for a self-hosted tool, and early in a curated queue beats a late entry in an open one. |
+| 6 | mcp.so | Directory submit form; submission goes through a review queue | **Submitted** — queued for review. Watch the live listing: scrapers picked a docker-compose command as the config initially; the submitted config is the `npx -y l8bin-mcp` JSON above. |
 
-The official `modelcontextprotocol/servers` repo is for reference servers —
-not applicable.
+Skipped, deliberately:
+
+- **Smithery** — requires a remote HTTP MCP server; we are stdio-only
+  (`l8b mcp` / npx). If an orchestrator HTTP MCP endpoint ever ships, revisit.
+- **BenchGecko** — too small to matter yet.
+- **modelcontextprotocol/servers** — reference servers only, not applicable.
 
 ## After listing
 
