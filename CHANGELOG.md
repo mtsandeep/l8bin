@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-04
+
 ### Added
 - **`l8b deploy` records the project in `l8b.toml`** — after a successful deploy the directory remembers its project (and node), so later sessions deploy, check status, and read logs with no arguments. The file holds non-secret facts only (`project`, `node`); commit it.
 
