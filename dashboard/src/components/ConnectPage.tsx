@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, KeyRound, Loader2, ShieldAlert, XCircle } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { approveDeviceRequest, type DeviceRequestInfo, fetchProjects, lookupDeviceRequest } from '../api';
 
@@ -22,7 +22,8 @@ type Phase =
 
 export default function ConnectPage() {
   const navigate = useNavigate();
-  const [code, setCode] = useState('');
+  const [cells, setCells] = useState<string[]>(['', '', '', '', '', '']);
+  const cellRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [phase, setPhase] = useState<Phase>({ kind: 'entry' });
   const [scope, setScope] = useState<ScopeId>('deploy');
   const [projects, setProjects] = useState<{ id: string; name: string | null }[]>([]);
@@ -35,13 +36,51 @@ export default function ConnectPage() {
       .catch(() => setProjects([]));
   }, []);
 
+  const userCode = `L8B-${cells.join('')}`;
+  const codeComplete = cells.every((c) => c !== '');
+
+  const setCell = (i: number, value: string) => {
+    const ch = value
+      .replace(/[^A-Za-z0-9]/g, '')
+      .toUpperCase()
+      .slice(-1);
+    setCells((prev) => prev.map((c, k) => (k === i ? ch : c)));
+    if (ch && i < 5) cellRefs.current[i + 1]?.focus();
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>, i: number) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text').toUpperCase();
+    const stripped = text.replace(/^L8B-?/, '');
+    const chars = stripped
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, 6)
+      .split('');
+    if (chars.length === 0) return;
+    setCells((prev) => {
+      const next = [...prev];
+      chars.forEach((c, k) => {
+        if (i + k < 6) next[i + k] = c;
+      });
+      return next;
+    });
+    cellRefs.current[Math.min(i + chars.length, 5)]?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, i: number) => {
+    if (e.key === 'Backspace' && !cells[i] && i > 0) {
+      e.preventDefault();
+      setCells((prev) => prev.map((c, k) => (k === i - 1 ? '' : c)));
+      cellRefs.current[i - 1]?.focus();
+    }
+  };
+
   const lookup = async (e?: FormEvent) => {
     e?.preventDefault();
-    const normalized = code.trim().toUpperCase();
-    if (!normalized) return;
+    if (!codeComplete) return;
     setPhase({ kind: 'looking' });
     try {
-      const request = await lookupDeviceRequest(normalized);
+      const request = await lookupDeviceRequest(userCode);
       setScope(request.suggested_scope);
       setPhase({ kind: 'review', request });
     } catch (err) {
@@ -65,9 +104,6 @@ export default function ConnectPage() {
     }
   };
 
-  const inputClass =
-    'w-full px-3 py-2.5 rounded-lg bg-slate-800/50 border border-slate-700/50 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20 transition-colors font-mono tracking-widest text-center uppercase';
-
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -86,18 +122,34 @@ export default function ConnectPage() {
                 ).
               </p>
               <form onSubmit={lookup} className="space-y-4">
-                <input
-                  type="text"
-                  value={code}
-                  onChange={(e) => {
-                    setCode(e.target.value.toUpperCase());
-                    if (phase.kind === 'error') setPhase({ kind: 'entry' });
-                  }}
-                  placeholder="L8B-XXXXXX"
-                  maxLength={10}
-                  className={inputClass}
-                  disabled={phase.kind === 'looking'}
-                />
+                <div>
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span className="text-sm font-mono font-semibold text-slate-500 tracking-widest">L8B-</span>
+                    {cells.map((c, i) => (
+                      <input
+                        key={i}
+                        ref={(el) => {
+                          cellRefs.current[i] = el;
+                        }}
+                        type="text"
+                        value={c}
+                        onChange={(e) => {
+                          setCell(i, e.target.value);
+                          if (phase.kind === 'error') setPhase({ kind: 'entry' });
+                        }}
+                        onPaste={(e) => handlePaste(e, i)}
+                        onKeyDown={(e) => handleKeyDown(e, i)}
+                        maxLength={1}
+                        disabled={phase.kind === 'looking'}
+                        className="w-10 h-12 rounded-lg bg-slate-800/50 border border-slate-700/50 text-lg font-mono text-slate-200 text-center uppercase focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-500/30 transition-colors"
+                        aria-label={`Code character ${i + 1}`}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-600 text-center mt-2">
+                    Paste the full code (L8B-…) into any cell to fill all six.
+                  </p>
+                </div>
                 {phase.kind === 'error' && (
                   <div className="px-3 py-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20">
                     <p className="text-xs text-rose-400">{phase.message}</p>
@@ -108,7 +160,7 @@ export default function ConnectPage() {
                 )}
                 <button
                   type="submit"
-                  disabled={phase.kind === 'looking' || code.trim().length < 4}
+                  disabled={phase.kind === 'looking' || !codeComplete}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   {phase.kind === 'looking' ? (
@@ -148,7 +200,7 @@ export default function ConnectPage() {
                     key={s.id}
                     className={`flex items-start gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
                       scope === s.id
-                        ? 'bg-violet-500/10 border-violet-500/40'
+                        ? 'bg-slate-600/30 border-slate-500'
                         : 'bg-slate-800/30 border-slate-700/50 hover:border-slate-600'
                     }`}
                   >

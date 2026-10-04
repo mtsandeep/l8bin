@@ -1024,7 +1024,6 @@ export async function approveDeviceRequest(payload: {
 export interface EnvVarInfo {
   key: string;
   masked: string;
-  length: number;
 }
 
 export interface ProjectEnv {
@@ -1044,7 +1043,7 @@ export async function fetchProjectEnv(projectId: string): Promise<ProjectEnv> {
 
 export async function updateProjectEnv(
   projectId: string,
-  payload: { env: Record<string, string>; mode?: 'merge' | 'replace' },
+  payload: { env: Record<string, string>; delete?: string[]; mode?: 'merge' | 'replace' },
 ): Promise<ProjectEnv> {
   const res = await fetch(`/projects/${projectId}/env`, {
     method: 'PUT',

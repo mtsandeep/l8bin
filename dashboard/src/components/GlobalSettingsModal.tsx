@@ -1005,7 +1005,7 @@ function TokensTab() {
                 onClick={() => setTokenLevel(level)}
                 className={`px-1 py-1.5 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                   tokenLevel === level
-                    ? 'bg-violet-600 text-white'
+                    ? 'bg-slate-600 text-white border border-slate-500'
                     : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
                 }`}
               >

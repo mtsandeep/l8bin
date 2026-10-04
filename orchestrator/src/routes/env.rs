@@ -48,10 +48,8 @@ pub enum EnvUpdateMode {
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct EnvVarInfo {
     pub key: String,
-    /// Masked preview: first character + `•••` (fully hidden for short values).
+    /// Constant mask when set; empty string for empty values.
     pub masked: String,
-    /// Value length in characters.
-    pub length: usize,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -72,14 +70,9 @@ pub struct UpdateEnvResponse {
 
 // ── Pure helpers (unit-tested) ───────────────────────────────────────────────
 
-/// Masked preview: first char for long values; fully hidden when short.
+/// Constant mask for set values — no first char, no length hints.
 pub(crate) fn mask_value(value: &str) -> String {
-    let chars: Vec<char> = value.chars().collect();
-    match chars.len() {
-        0 => String::new(),
-        n if n <= 4 => "*".repeat(n),
-        _ => format!("{}•••", chars[0]),
-    }
+    if value.is_empty() { String::new() } else { "••••••••".to_string() }
 }
 
 /// True for valid env var names: `[A-Za-z_][A-Za-z0-9_]*`.
@@ -153,7 +146,7 @@ fn apply_env_update(
 fn masked_vars(raw: &str) -> Vec<EnvVarInfo> {
     parse_env(raw)
         .into_iter()
-        .map(|(key, value)| EnvVarInfo { masked: mask_value(&value), length: value.chars().count(), key })
+        .map(|(key, value)| EnvVarInfo { masked: mask_value(&value), key })
         .collect()
 }
 
@@ -329,11 +322,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn masks_hide_all_but_first_char() {
-        assert_eq!(mask_value("ab"), "**");
-        assert_eq!(mask_value("abcd"), "****");
-        assert_eq!(mask_value("abcde"), "a•••");
-        assert_eq!(mask_value("super-secret-token"), "s•••");
+    fn masks_reveal_nothing() {
+        assert_eq!(mask_value("ab"), "••••••••");
+        assert_eq!(mask_value("super-secret-token"), "••••••••");
+        assert_eq!(mask_value("postgres://user:pw@db"), "••••••••");
         assert_eq!(mask_value(""), "");
     }
 
@@ -382,8 +374,7 @@ mod tests {
         let raw = "SECRET_TOKEN=\"hunter2hunter2\"\n";
         let vars = masked_vars(raw);
         assert_eq!(vars[0].key, "SECRET_TOKEN");
-        assert_eq!(vars[0].masked, "h•••");
-        assert_eq!(vars[0].length, 14);
+        assert_eq!(vars[0].masked, "••••••••");
         assert!(!serde_json::to_string(&vars).unwrap().contains("hunter2"));
     }
 }

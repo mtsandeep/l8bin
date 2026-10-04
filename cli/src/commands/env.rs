@@ -153,8 +153,8 @@ fn print_env(project: &str, env: &serde_json::Value) {
         for v in &vars {
             let key = v["key"].as_str().unwrap_or("?");
             let masked = v["masked"].as_str().unwrap_or("");
-            let length = v["length"].as_u64().unwrap_or(0);
-            println!("    {} = {} {}({} chars)", key.cyan(), masked.yellow(), "".dimmed(), length.to_string().dimmed());
+            let shown = if masked.is_empty() { "(empty)".dimmed().to_string() } else { masked.yellow().to_string() };
+            println!("    {} = {}", key.cyan(), shown);
         }
     }
     if env["pending_apply"].as_bool().unwrap_or(false) {
