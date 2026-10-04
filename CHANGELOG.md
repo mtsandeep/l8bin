@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-04
+
 ### Added
 - **Multi-server credentials with enforced targeting** — logins are stored per server and coexist (`l8b logout --server <url>` removes one). Commands resolve their target from `--server` > `l8b.toml` `server` > the single stored login, and refuse with the choices listed when it's ambiguous — no more silent deploys to the wrong instance. `l8b.toml` gains a `server` key; the MCP deploy/status/logs/env tools accept an optional `server` argument.
 - **`GET /whoami`** — identifies the credential making the request: token name, scope, and project binding, or the session user. Bare `l8b status` and `l8b doctor` surface it (`Auth: token 'landing-deploy-cli' (scope deploy, project 'landing')`), so agents can ask which access token they are holding. Project-bound tokens can call it.
