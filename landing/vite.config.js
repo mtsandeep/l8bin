@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         index: resolve(__dirname, 'index.html'),
         quickstart: resolve(__dirname, 'quickstart.html'),
+        agents: resolve(__dirname, 'agents.html'),
         live: resolve(__dirname, 'live/index.html'),
         docs: resolve(__dirname, 'docs/index.html'),
       },

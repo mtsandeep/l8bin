@@ -1,0 +1,14 @@
+# Smithery configuration (https://smithery.ai/docs/config#smitheryyaml)
+# Used when submitting this repo to the Smithery MCP registry.
+
+startCommand:
+  type: stdio
+  configSchema:
+    # No server-side config: auth is handled by `l8b login` (device pairing),
+    # project defaults come from l8b.toml in the workspace.
+    type: object
+    properties: {}
+  command: npx
+  args:
+    - -y
+    - l8bin-mcp

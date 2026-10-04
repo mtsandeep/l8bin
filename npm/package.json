@@ -1,0 +1,38 @@
+{
+  "name": "l8bin-mcp",
+  "version": "0.1.0",
+  "description": "l8bin (pronounced LiteBin) MCP server — deploy and operate your self-hosted projects from any MCP client. Wraps the l8b CLI, installing the platform binary on first use.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Sandeep MT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mtsandeep/l8bin.git",
+    "directory": "npm"
+  },
+  "homepage": "https://l8bin.com/agents",
+  "bugs": {
+    "url": "https://github.com/mtsandeep/l8bin/issues"
+  },
+  "bin": {
+    "l8bin-mcp": "bin/l8bin-mcp.mjs"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "litebin",
+    "l8bin",
+    "l8b",
+    "deploy",
+    "paas",
+    "self-hosted",
+    "docker"
+  ]
+}

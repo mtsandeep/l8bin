@@ -4,6 +4,7 @@ const DOC_MAP = {
   'api': null, // Scalar view
   'cli': '/docs/guides/cli-reference.md',
   'quickstart': '/quickstart.html', // dedicated page
+  'agents': '/agents.html', // dedicated page
   'multi-service': '/docs/guides/multi-service.md',
   'multi-server': '/docs/guides/multi-server.md',
   'volumes': '/docs/guides/volumes.md',

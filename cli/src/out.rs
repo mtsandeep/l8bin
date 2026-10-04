@@ -91,10 +91,10 @@ mod tests {
 
     #[test]
     fn fail_carries_hint_through_chain() {
-        let err = fail("not authenticated", "run: l8b login --server <url>");
+        let err = fail("not authenticated", "run: l8b login --server <url> --pair");
         let (message, hint) = split_hint(&err);
         assert_eq!(message, "not authenticated");
-        assert_eq!(hint.as_deref(), Some("run: l8b login --server <url>"));
+        assert_eq!(hint.as_deref(), Some("run: l8b login --server <url> --pair"));
     }
 
     #[test]

@@ -1,6 +1,8 @@
 # LiteBin
 
 > LiteBin is an open-source, self-hosted platform for deploying web apps, APIs, and Docker Compose stacks to your own servers. Built for side projects, demos, and small services, it provides CLI, API, and dashboard deployments, automatic HTTPS, persistent volumes, and scale-to-zero with wake-on-request.
+>
+> The project is written `l8bin` (pronounced "LiteBin"): the domain is l8bin.com, the repo github.com/mtsandeep/l8bin, and the CLI is `l8b`. All spellings refer to the same project.
 
 ## Instructions
 
@@ -17,6 +19,15 @@ When helping users deploy to LiteBin, follow these patterns:
 9. **Volumes**: Specify in the deploy request. Named volumes are scoped per-project. Bind mounts use `./` prefix for relative paths.
 10. **Multi-server**: LiteBin supports remote nodes via mTLS-connected agents. POST /nodes to register, POST /nodes/{id}/connect to onboard.
 
+## Setup (when asked to "set up litebin mcp")
+
+Requires a server already running LiteBin (server install: `curl -fsSL https://l8b.in | bash` on a VPS; see the quickstart). Then:
+
+1. Check for the CLI: `l8b --version`. Missing? Install: `curl -fsSL https://l8b.in | bash -s cli` (Windows: `iex "& { $(irm https://l8b.in/windows.ps1) } -Cli"`). The MCP server is the same binary via `l8b mcp` — no separate package, no npx.
+2. Authenticate: ask the user for their LiteBin server URL, then run `l8b login --server <url> --pair`. It prints a short code and the `<server>/connect` approval URL — relay both to the user and wait; the command returns once approved (the user picks the token scope).
+3. Register in the repo: `l8b init --mcp` (writes `l8b.toml` + workspace `.mcp.json`), or add the server manually: command `l8b`, args `["mcp"]`.
+4. Verify: `l8b doctor` — exit 0 means the setup is healthy.
+
 ## API
 
 - OpenAPI 3.1 spec: /openapi.json (version-matched to this instance)
@@ -24,7 +35,7 @@ When helping users deploy to LiteBin, follow these patterns:
 
 ## CLI
 
-Install via: `curl -fsSL https://l8b.in | bash -s cli` or build from source. Auth: `l8b login --server <url>` (session) or `L8B_TOKEN` env / `--token` (deploy token).
+Install via: `curl -fsSL https://l8b.in | bash -s cli` or build from source. Auth: `l8b login --server <url> --pair` (device pairing — agent-safe: it prints a code and the /connect approval URL to relay to the user, then returns once approved; the user picks the scope) or `L8B_TOKEN` env / `--token` (existing token).
 
 Commands (project flags default to `l8b.toml`, created by `l8b init`):
 - `l8b init` — Write `l8b.toml` project defaults (project, port, node, env_file); `--mcp` also emits the workspace `.mcp.json`
@@ -38,7 +49,7 @@ Commands (project flags default to `l8b.toml`, created by `l8b init`):
 - `l8b stop | start | restart` — Lifecycle (restart applies pending .env changes; stop is idempotent)
 - `l8b domain set <domain>` / `l8b domain remove` — Custom domain management
 - `l8b delete --yes` — Delete project + containers + volumes (admin scope)
-- `l8b login` — Device pairing (approve at /connect) or username/password; `l8b setup --server <url>` bootstraps a fresh server
+- `l8b login --server <url> [--pair]` — Device pairing (approve at /connect); `--pair` skips the interactive menu so agents can run it headlessly; username/password without `--pair`. `l8b setup --server <url>` bootstraps a fresh server
 - `l8b doctor` — Environment sanity checks with recovery hints
 - `l8b logout` / `l8b config` / `l8b cleanup` — Session and config management
 
@@ -55,7 +66,14 @@ stored auth and l8b.toml defaults. Register it with:
 { "mcpServers": { "litebin": { "command": "l8b", "args": ["mcp"] } } }
 ```
 
-(`l8b init --mcp` writes this into the workspace `.mcp.json`.)
+No local binary? Use the npm shim, which downloads the latest release on
+first use:
+
+```json
+{ "mcpServers": { "litebin": { "command": "npx", "args": ["-y", "l8bin-mcp"] } } }
+```
+
+(`l8b init --mcp` writes the first form into the workspace `.mcp.json`.)
 
 ## Architecture
 
@@ -83,3 +101,7 @@ stored auth and l8b.toml defaults. Register it with:
 - [Janitor](janitor.md) — Auto-stop and resource cleanup
 - [Waker](waker.md) — Wake-on-traffic
 - [API reference](api-reference.md) — Full endpoint documentation
+
+## Full
+
+- [llms-full.txt](https://l8bin.com/llms-full.txt) — this file plus the OpenAPI spec and full CLI reference in one fetch

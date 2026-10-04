@@ -1,0 +1,56 @@
+name: Publish npm shim
+
+# Publishes npm/l8bin-mcp when a GitHub release goes live. The shim downloads
+# release binaries at run time, so the package is released in lockstep with
+# the CLI. Requires an NPM_TOKEN secret (npm "Automation" access token).
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+
+      - name: Sync package version to the release tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            node -e "
+              const fs = require('fs');
+              const p = 'npm/package.json';
+              const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+              pkg.version = '${VERSION}';
+              fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+              console.log('npm package version:', pkg.version);
+            "
+          elif echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-'; then
+            # Prereleases never become /releases/latest (the shim only serves
+            # those), so npm must not advertise them either.
+            echo "Prerelease '$VERSION' — skipping npm publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Ref '$GITHUB_REF_NAME' is not a semver tag (got '$VERSION'); refusing to publish"
+            exit 1
+          fi
+
+      - name: Publish
+        if: steps.version.outputs.skip != 'true'
+        working-directory: npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

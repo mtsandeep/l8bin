@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --color-night-950: #030308;
+  --color-night-900: #0a0912;
+  --color-night-800: #131222;
+  --color-night-700: #1a1830;
+}
+
+:root {
+  --vio: #7c3aed;
+  --vio-l: #8b5cf6;
+  --vio-g: rgba(124, 58, 237, 0.15);
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glow {
+  box-shadow: 0 0 50px -12px var(--vio-g);
+}
+
+.grad-text {
+  background: linear-gradient(135deg, #a78bfa, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.dot-grid {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.fade-in {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+
+.fade-in.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.code-block {
+  font-family: "JetBrains Mono", monospace;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.copy-btn:hover { color: #8b5cf6; }
+
+.hero-rot {
+  display: inline-block;
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+.hero-rot.swap {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* Claude Code-style session lines */
+.cc-line {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.cc-line.on {
+  opacity: 1;
+  transform: none;
+}
+
+.cc-pad { padding-left: 2ch; }
+
+.cc-user { color: #d4d4d8; }
+.cc-user .cc-prompt { color: #8b5cf6; font-weight: 600; margin-right: 0.5ch; }
+
+.cc-think { color: #71717a; font-style: italic; }
+.cc-think .cc-star { display: inline-block; margin-right: 1ch; animation: cc-spin 3s linear infinite; }
+
+.cc-tool { color: #a1a1aa; }
+.cc-tool .cc-bullet, .cc-reply .cc-bullet { color: #d7875f; margin-right: 1ch; }
+.cc-tool .cc-name { font-weight: 700; color: #f4f4f5; }
+.cc-tool .cc-args { color: #71717a; }
+
+.cc-result { color: #71717a; padding-left: 4ch; }
+.cc-result .cc-branch { color: #52525b; margin-right: 1ch; }
+
+.cc-reply { color: #d4d4d8; }
+
+.cc-spinner {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #8b5cf6;
+  border-radius: 50%;
+  animation: cc-rot 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes cc-rot { to { transform: rotate(360deg); } }
+@keyframes cc-spin { to { transform: rotate(360deg); } }

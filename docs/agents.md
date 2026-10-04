@@ -17,8 +17,11 @@ fall back to the CLI.
   Values are write-only — never expect to read them back.
 - Full command list: `l8b --help`; machine output: add `--json`
 
-If auth fails, ask the user to run `l8b login --server <url>` and approve the
-code at <server>/connect.
+If auth fails, ask the user for the LiteBin server URL, then run the pairing
+yourself: `l8b login --server <url> --pair`. It prints a short code and the
+<server>/connect approval URL — relay both to the user and wait; the command
+returns once they approve (they also pick the token's scope). Never ask the
+user for their password.
 ```
 
 ## Wiring it up
@@ -29,6 +32,13 @@ l8b login --server https://l8bin.example.com
 
 # one-time, per repo: write l8b.toml (+ .mcp.json for MCP clients)
 l8b init --project myapp --port 3000 --mcp
+```
+
+Clients without a local `l8b` binary can use the npm shim instead, which
+downloads it on first use:
+
+```json
+{ "mcpServers": { "litebin": { "command": "npx", "args": ["-y", "l8bin-mcp"] } } }
 ```
 
 Agents that don't speak MCP can use the CLI directly — every command accepts

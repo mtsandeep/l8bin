@@ -84,7 +84,10 @@ pub(crate) async fn run(args: InitArgs, ci_mode: &CiMode, out: &Out) -> Result<(
                 &mcp_path,
                 "{\n  \"mcpServers\": {\n    \"litebin\": {\n      \"command\": \"l8b\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}\n",
             )?;
-            out.note(&format!("Wrote {} (litebin MCP server, arrives in a coming release)", mcp_path.display()));
+            out.note(&format!(
+                "Wrote {} (litebin MCP server — picked up by MCP clients that read the workspace .mcp.json)",
+                mcp_path.display()
+            ));
         }
     }
 

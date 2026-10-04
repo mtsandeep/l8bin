@@ -29,7 +29,7 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
                 name: "server".into(),
                 ok: false,
                 detail: "no server configured".into(),
-                hint: Some("l8b login --server <url>  or  --server / L8B_SERVER".into()),
+                hint: Some("l8b login --server <url> --pair  or  --server / L8B_SERVER".into()),
             });
             finish(&checks, out);
             return Ok(());
@@ -80,14 +80,14 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
                 name: "auth".into(),
                 ok: false,
                 detail: format!("credentials rejected: {e}"),
-                hint: Some("l8b login --server <url>  or  l8b config set --token <token>".into()),
+                hint: Some("l8b login --server <url> --pair  or  l8b config set --token <token>".into()),
             }),
         },
         Err(_) => checks.push(CheckResult {
             name: "auth".into(),
             ok: false,
             detail: "not logged in".into(),
-            hint: Some("l8b login --server <url>".into()),
+            hint: Some("l8b login --server <url> --pair".into()),
         }),
     }
 
