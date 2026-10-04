@@ -1,8 +1,9 @@
 name: Publish npm shim
 
-# Publishes npm/l8bin-mcp when a GitHub release goes live. The shim downloads
-# release binaries at run time, so the package is released in lockstep with
-# the CLI. Requires an NPM_TOKEN secret (npm "Automation" access token).
+# Publishes l8bin-mcp on every GitHub release via npm Trusted Publishing
+# (OIDC — no token secret). Version is set by cargo release.
+# Configure on npmjs.com: package settings → Trusted Publishing →
+# repository mtsandeep/l8bin, workflow publish-npm.yml.
 
 on:
   release:
@@ -25,26 +26,25 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
 
-      - name: Sync package version to the release tag
+      - name: Verify package version matches the release tag
         id: version
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           if echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            node -e "
-              const fs = require('fs');
-              const p = 'npm/package.json';
-              const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
-              pkg.version = '${VERSION}';
-              fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
-              console.log('npm package version:', pkg.version);
-            "
+            :
           elif echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-'; then
-            # Prereleases never become /releases/latest (the shim only serves
-            # those), so npm must not advertise them either.
+            # Prereleases never become /releases/latest, which is all the shim serves.
             echo "Prerelease '$VERSION' — skipping npm publish"
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           else
             echo "Ref '$GITHUB_REF_NAME' is not a semver tag (got '$VERSION'); refusing to publish"
+            exit 1
+          fi
+
+          PKG_VERSION=$(node -p "require('./npm/package.json').version")
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "npm/package.json says '$PKG_VERSION' but the release tag is '$VERSION' — releases must go through 'cargo release'"
             exit 1
           fi
 
@@ -52,5 +52,3 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         working-directory: npm
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

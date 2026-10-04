@@ -1,18 +1,17 @@
 # Publishing l8bin-mcp
 
 npm publishing is automated: `publish-npm.yml` fires on every published GitHub
-release, syncs the package version to the release tag, and publishes with
-provenance. One-time setup:
+release, verifies the version matches the release tag, and publishes with
+provenance via npm Trusted Publishing (OIDC — no token secret to manage).
+One-time setup:
 
-1. **`NPM_TOKEN` secret** — create an "Automation" access token at
-   npmjs.com (Access Tokens → Generate New Token → Automation) and add it as
-   the `NPM_TOKEN` secret in repo settings. Automation tokens skip 2FA prompts
-   in CI.
+1. **Configure the trusted publisher** — on npmjs.com, package settings →
+   Trusted Publishing → repository `mtsandeep/l8bin`, workflow
+   `publish-npm.yml`. Trusted publishing is configured per existing package,
+   so the very first publish (`0.1.0`) is done once manually: `npm login`,
+   then `npm publish` from `npm/`.
 2. **A GitHub release that includes the `mcp` subcommand** — the shim downloads
    the latest release binary; releases before `l8b mcp` existed cannot serve it.
-
-Manual publishing (if ever needed): `npm login`, then `npm publish` from the
-`npm/` directory. Verify contents first with `npm pack --dry-run`.
 
 ## Canonical listing metadata
 

@@ -28,11 +28,12 @@ When you run `cargo-release`, it:
 
 1. Updates the changelog (moves `[Unreleased]` entries to the new version)
 2. Bumps the version in **all** `Cargo.toml` files
-3. Updates `Cargo.lock`
+3. Updates `Cargo.lock` and `npm/package.json` (the `l8bin-mcp` shim version)
 4. Commits: `chore: release v<version>`
 5. Creates git tag `v<version>`
 6. Pushes the commit and tag to remote
 7. The `release.yml` GitHub Action picks up the tag and builds all artifacts
+8. The `publish-npm.yml` action publishes the `l8bin-mcp` npm shim with the same version (via npm Trusted Publishing — no token secret; prereleases are skipped)
 
 **You do not need to manually tag commits or edit the changelog header.** `cargo-release` handles everything.
 
@@ -143,4 +144,5 @@ All use `env!("CARGO_PKG_VERSION")` which is set at compile time from the worksp
 4. Run tests: cargo test --workspace
 5. Release: cargo release patch  (or minor/major)
 6. CI builds and publishes to GitHub Releases automatically
+7. The npm shim (l8bin-mcp) publishes automatically with the same version
 ```
