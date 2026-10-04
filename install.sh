@@ -868,6 +868,19 @@ EOF
 		reverse_proxy litebin-dashboard:80
 	}
 }
+handle /whoami {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /caddy/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /system/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle {
+		reverse_proxy litebin-dashboard:80
+	}
+}
 CADDYFILE
 
   # -- Generate docker-compose.yml --------------------------------------

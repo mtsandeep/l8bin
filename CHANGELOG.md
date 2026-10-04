@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`GET /whoami`** — identifies the credential making the request: token name, scope, and project binding, or the session user. Bare `l8b status` and `l8b doctor` surface it (`Auth: token 'landing-deploy-cli' (scope deploy, project 'landing')`), so agents can ask which access token they are holding. Project-bound tokens can call it.
+
 ## [0.4.1] - 2026-10-04
 
 ### Added

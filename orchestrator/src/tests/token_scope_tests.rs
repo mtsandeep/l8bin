@@ -204,3 +204,28 @@ async fn garbage_bearer_token_is_unauthorized() {
         .await
         .assert_status(StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn whoami_reports_token_identity_and_session_user() {
+    let mut server = test_server().await;
+    server.get("/whoami").await.assert_status(StatusCode::UNAUTHORIZED);
+    login(&server, "whoami-user").await;
+
+    // Session credential
+    let resp = server.get("/whoami").await;
+    resp.assert_status(StatusCode::OK);
+    let body: Value = resp.json();
+    assert_eq!(body["kind"], "session");
+    assert_eq!(body["username"], "whoami-user");
+
+    // Token credential: name, scope, and project binding
+    let token = create_token(&mut server, json!({"name": "whoami-token", "scope": "manage"})).await;
+    let resp = server.get("/whoami").add_header("authorization", format!("Bearer {token}")).await;
+    resp.assert_status(StatusCode::OK);
+    let body: Value = resp.json();
+    assert_eq!(body["kind"], "token");
+    assert_eq!(body["name"], "whoami-token");
+    assert_eq!(body["scope"], "manage");
+    assert!(body["project_id"].is_null());
+    assert!(body["token_id"].as_str().is_some());
+}

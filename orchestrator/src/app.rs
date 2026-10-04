@@ -44,6 +44,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/nodes", get(crate::routes::nodes::list_nodes))
         .route("/nodes/image-stats", get(crate::routes::nodes::node_image_stats))
         .route("/meta", get(crate::routes::meta::get_meta))
+        .route("/whoami", get(crate::routes::meta::whoami))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard::require_read));
 
     // Routes - Manage (session OR deploy token with scope >= manage)

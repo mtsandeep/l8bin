@@ -340,6 +340,22 @@ ROUTING_MODE=master_proxy
 {
 	admin 0.0.0.0:2019
 }
+handle /whoami {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle /caddy/* {
+		reverse_proxy litebin-orchestrator:5080
+	}
+	handle {
+		reverse_proxy litebin-dashboard:80
+	}
+'@
+    if ($isLocal) {
+        # Local: listen on localhost + subdomain.localhost (no TLS)
+        $caddyfile = @"
+{
+	admin 0.0.0.0:2019
+}
 
 http://`{$DASHBOARD_SUBDOMAIN}.`{$DOMAIN}, http://localhost, http://127.0.0.1 {
 $caddyRoutes

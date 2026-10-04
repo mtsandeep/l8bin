@@ -13,14 +13,14 @@ Two methods:
 
 | Scope | Cumulatively allows |
 |---|---|
-| `read` | See state: project list/get, stats, logs, deploy-logs, disk-usage, node list, `/meta` |
+| `read` | See state: project list/get, stats, logs, deploy-logs, disk-usage, node list, `/meta`, `/whoami` |
 | `deploy` | read + ship code: `/deploy`, `/deploy/compose`, `/compose/validate`, `/images/*` |
 | `manage` | deploy + operate apps: stop/start/recreate, service ops, project/service settings, routes, capabilities, env writes |
 | `admin` | manage + destructive/platform: project delete, volume deletes, node lifecycle, token CRUD, global settings |
 
 Notes:
 
-- Tokens are global or bound to a single project (`project_id`); project-bound tokens can only access that project's `/projects/{id}/…` paths (plus `/meta`).
+- Tokens are global or bound to a single project (`project_id`); project-bound tokens can only access that project's `/projects/{id}/…` paths (plus `/meta` and `/whoami`).
 - `admin` tokens are mintable only from a session (`POST /deploy-tokens` is session-only).
 - Read-only tokens cannot deploy. Unauthenticated calls return `401` JSON.
 
@@ -159,6 +159,7 @@ Values are write-only: listings show keys with masked previews only, never plain
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/meta` | Session or token (read) | Non-sensitive platform metadata: `{domain, dashboard_subdomain, poke_subdomain, routing_mode, version}` — use for URL computation instead of `/settings` |
+| `GET` | `/whoami` | Session or token (read) | Identifies the credential: `{kind: "token", token_id, name, scope, project_id}` or `{kind: "session", username}` — answers "which access token is this?" |
 | `GET` | `/settings` | Session or token (admin) | Get global settings (includes Cloudflare credentials and `tryout` when domain is sslip/nip) |
 | `PATCH` | `/settings` | Session or token (admin) | Update global settings (hot-swaps router if routing_mode changes). Domain must use `/settings/domain/apply`. Dashboard subdomain change syncs routes and re-registers agents. |
 | `POST` | `/settings/domain/preflight` | Session or token (admin) | Validate a new platform domain (`{ domain }` → `{ ok, errors[], warnings[] }`) |

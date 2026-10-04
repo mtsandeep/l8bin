@@ -95,6 +95,7 @@ use utoipa::OpenApi;
         crate::routes::health::system_stats,
         // Meta
         crate::routes::meta::get_meta,
+        crate::routes::meta::whoami,
         // Env
         crate::routes::env::get_project_env,
         crate::routes::env::update_project_env,

@@ -112,7 +112,24 @@ async fn show_server_status(server_flag: Option<&str>, token_flag: Option<&str>)
             Ok(server) => {
                 println!();
                 println!("  {} {}", "Server:".dimmed(), server.cyan());
-                println!("  {} {}", "Auth:".dimmed(), auth_method.green());
+
+                if has_token {
+                    let client = auth::authenticated_client(&cfg)?;
+                    match auth::api_get(&client, &server, "/whoami").await {
+                        Ok(me) => {
+                            let name = me["name"].as_str().unwrap_or("unnamed");
+                            let scope = me["scope"].as_str().unwrap_or("?");
+                            let label = match me["project_id"].as_str() {
+                                Some(p) => format!("token '{name}' (scope {scope}, project '{p}')"),
+                                None => format!("token '{name}' (scope {scope})"),
+                            };
+                            println!("  {} {}", "Auth:".dimmed(), label.green());
+                        }
+                        Err(_) => println!("  {} {}", "Auth:".dimmed(), auth_method.green()),
+                    }
+                } else {
+                    println!("  {} {}", "Auth:".dimmed(), auth_method.green());
+                }
 
                 if has_session {
                     let client = auth::authenticated_client(&cfg)?;

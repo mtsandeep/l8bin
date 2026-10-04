@@ -62,20 +62,28 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
         }),
     }
 
-    // Auth (token or session) — /meta is the cheapest authed call
+    // Auth (token or session) — /whoami identifies the credential
     let authed = auth::authenticated_client(&cfg);
     match authed {
-        Ok(c) => match auth::api_get(&c, &server, "/meta").await {
-            Ok(meta) => checks.push(CheckResult {
-                name: "auth".into(),
-                ok: true,
-                detail: format!(
-                    "authenticated ({}, domain {})",
-                    if cfg.token.is_some() { "token" } else { "session" },
-                    meta["domain"].as_str().unwrap_or("?")
-                ),
-                hint: None,
-            }),
+        Ok(c) => match auth::api_get(&c, &server, "/whoami").await {
+            Ok(me) => {
+                let identity = if me["kind"].as_str() == Some("token") {
+                    let name = me["name"].as_str().unwrap_or("unnamed");
+                    let scope = me["scope"].as_str().unwrap_or("?");
+                    match me["project_id"].as_str() {
+                        Some(p) => format!("token '{name}' (scope {scope}, project '{p}')"),
+                        None => format!("token '{name}' (scope {scope})"),
+                    }
+                } else {
+                    format!("session '{}'", me["username"].as_str().unwrap_or("?"))
+                };
+                checks.push(CheckResult {
+                    name: "auth".into(),
+                    ok: true,
+                    detail: format!("authenticated ({identity})"),
+                    hint: None,
+                })
+            }
             Err(e) => checks.push(CheckResult {
                 name: "auth".into(),
                 ok: false,

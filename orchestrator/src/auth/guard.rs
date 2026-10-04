@@ -18,12 +18,13 @@ use crate::AppState;
 use crate::auth::backend::PasswordBackend;
 
 /// Set on Bearer-auth requests; absent for sessions.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TokenContext {
     pub user_id: String,
     pub scope: TokenScope,
     pub project_id: Option<String>,
+    pub token_id: String,
+    pub token_name: Option<String>,
 }
 
 fn unauthorized(message: &str) -> Response {
@@ -72,7 +73,7 @@ async fn load_bearer_token(state: &AppState, headers: &HeaderMap) -> Option<crat
 /// Project tokens: their own `/projects/{id}/…` subtree plus `/meta`;
 /// cross-project views need a global token.
 fn path_allows_project_token(path: &str, bound_project: &str) -> bool {
-    if path == "/meta" {
+    if path == "/meta" || path == "/whoami" {
         return true;
     }
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
@@ -129,6 +130,8 @@ async fn authorize(
         user_id: token.user_id,
         scope: token.scope,
         project_id: token.project_id,
+        token_id: token.id,
+        token_name: token.name,
     });
     Ok(())
 }
