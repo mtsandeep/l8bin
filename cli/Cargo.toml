@@ -21,7 +21,6 @@ dunce = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 dirs = "6"
-rpassword = "7"
 tokio-util = { version = "0.7", features = ["io", "compat"] }
 indicatif = "0.17"
 toml = "0.8"

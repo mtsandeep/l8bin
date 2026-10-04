@@ -177,7 +177,7 @@ pub(super) async fn submit_compose(
         form = form.text("grant_capabilities", grant_capabilities.join(","));
     }
 
-    auth::session_post_multipart(client, server, "/deploy/compose", form).await
+    auth::api_post_multipart(client, server, "/deploy/compose", form).await
 }
 
 #[allow(clippy::too_many_arguments)]

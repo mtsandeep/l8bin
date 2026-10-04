@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use colored::Colorize;
 use litebin_common::types::ProjectStatus;
 
@@ -84,6 +84,7 @@ pub(crate) struct DeployArgs {
     pub cpu: Option<f64>,
     pub no_auto_stop: bool,
     pub secret: Vec<PathBuf>,
+    pub env_file: Option<PathBuf>,
     pub compose: bool,
     pub service: Vec<String>,
     pub grant_capability: Vec<String>,
@@ -110,6 +111,7 @@ pub(crate) async fn run(
         cpu,
         no_auto_stop,
         secret,
+        env_file,
         compose,
         service,
         grant_capability,
@@ -188,6 +190,7 @@ pub(crate) async fn run(
             Some(auth::project_live_url(&project, &domain))
         };
         finish_deploy(out, &project, final_status, url, effective_background, started)?;
+        apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
     } else {
         let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
 
@@ -247,15 +250,66 @@ pub(crate) async fn run(
                 Some(auth::project_live_url(&project, &domain))
             };
             finish_deploy(out, &project, final_status, url, effective_background, started)?;
+            apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
         } else {
             let final_status = Some(response.status);
             let url = response.url.clone().filter(|u| !u.is_empty());
             finish_deploy(out, &project, final_status, url, effective_background, started)?;
+            apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
         }
 
         // Clean up
         let _ = std::fs::remove_file(&image.path);
     }
 
+    Ok(())
+}
+
+/// Push `--env-file` after a deploy (merge); recreate to apply when running.
+async fn apply_env_file(
+    client: &reqwest::Client,
+    server: &str,
+    project: &str,
+    env_file: Option<&PathBuf>,
+    out: &Out,
+) -> Result<()> {
+    let Some(path) = env_file else { return Ok(()) };
+    let raw = std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let vars: std::collections::HashMap<String, String> = dotenvy::Iter::new(raw.as_slice())
+        .filter_map(|item| item.ok())
+        .map(|(k, v)| (k.trim().to_string(), v))
+        .collect();
+    if vars.is_empty() {
+        anyhow::bail!("no environment variables found in {}", path.display());
+    }
+
+    let count = vars.len();
+    let resp = crate::auth::api_put_json(
+        client,
+        server,
+        &format!("/projects/{project}/env"),
+        &serde_json::json!({ "env": vars, "mode": "merge" }),
+    )
+    .await
+    .with_context(|| format!("failed to push env from {}", path.display()))?;
+    out.note(&format!("Pushed {count} runtime variable(s) from {}.", path.display()));
+    let _ = resp;
+
+    // Apply now when the deploy already reached running.
+    let stats = crate::auth::api_get(client, server, &format!("/projects/{project}/stats")).await?;
+    if stats["status"].as_str() == Some("running") {
+        out.note("Recreating to apply environment…");
+        crate::auth::api_post_json(client, server, &format!("/projects/{project}/recreate"), &serde_json::json!({}))
+            .await?;
+        let final_status = crate::status::poll_project_status(client, server, project, 120, out.json).await?;
+        if matches!(final_status, Some(ProjectStatus::Running | ProjectStatus::Completed)) {
+            out.note("Environment applied — project is running.");
+        } else {
+            anyhow::bail!(crate::out::fail(
+                "environment pushed but recreate did not reach running",
+                format!("check status: l8b status --project {project}")
+            ));
+        }
+    }
     Ok(())
 }

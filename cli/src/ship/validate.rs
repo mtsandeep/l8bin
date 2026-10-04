@@ -22,7 +22,7 @@ pub(super) async fn validate_compose_for_deploy(
         "project_id": project_id,
         "is_background": is_background,
     });
-    let resp = auth::session_post(client, server, "/compose/validate", &body).await?;
+    let resp = auth::api_post_json(client, server, "/compose/validate", &body).await?;
 
     let ok = resp["report"]["ok"].as_bool().unwrap_or(false);
     let findings = resp["report"]["findings"].as_array().cloned().unwrap_or_default();

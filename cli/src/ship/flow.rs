@@ -31,17 +31,21 @@ pub async fn run(
     path_override: Option<&str>,
     port_override: Option<u16>,
     secret_override: Vec<PathBuf>,
+    token_auth: bool,
 ) -> Result<()> {
     let project_dir = Path::new(path_override.unwrap_or("."));
 
-    let projects_json = auth::session_get(client, server, "/projects").await?;
+    let projects_json = auth::api_get(client, server, "/projects").await.unwrap_or_else(|e| {
+        println!("  {} Could not list projects: {}", "!".yellow(), e);
+        serde_json::json!([])
+    });
     let projects: Vec<ProjectInfo> = serde_json::from_value(projects_json).unwrap_or_default();
 
     let choices = vec!["New project", "Existing project"];
     let selection = Select::new().with_prompt("Deploy to").items(&choices).default(0).interact()?;
 
     if selection == 0 {
-        new_project_flow(client, server, project_dir, port_override, secret_override).await
+        new_project_flow(client, server, project_dir, port_override, secret_override, token_auth).await
     } else {
         existing_project_flow(client, server, project_dir, &projects, port_override, secret_override).await
     }
@@ -55,6 +59,7 @@ async fn new_project_flow(
     project_dir: &Path,
     port_override: Option<u16>,
     secret_override: Vec<PathBuf>,
+    token_auth: bool,
 ) -> Result<()> {
     let name: String = Input::new()
         .with_prompt("Project name")
@@ -72,24 +77,38 @@ async fn new_project_flow(
 
     let is_background = select_background_project()?;
 
-    println!("  :: Creating project {}...", name.cyan());
-    auth::session_post(client, server, "/projects", &json!({"id": &name, "is_background": is_background}))
-        .await
-        .with_context(|| format!("failed to create project '{}'", name))?;
-    println!("  {} Project created", "✔".green());
+    let mut minted_token: Option<String> = None;
+    if token_auth {
+        // Project creation and token minting are session-only; the deploy
+        // stages the project itself, and CI tokens come from the dashboard.
+        println!("  {} Token auth: the deploy will create project {}.", "::".dimmed(), name.cyan());
+        println!("  {} For a CI token, add one under Settings {} Access Tokens.", "::".dimmed(), "→".cyan());
+        println!();
+    } else {
+        println!("  :: Creating project {}...", name.cyan());
+        auth::session_post(client, server, "/projects", &json!({"id": &name, "is_background": is_background}))
+            .await
+            .with_context(|| format!("failed to create project '{}'", name))?;
+        println!("  {} Project created", "✔".green());
 
-    println!("  :: Generating deploy token for {}...", name.cyan());
-    let token_resp =
-        auth::session_post(client, server, "/deploy-tokens", &json!({"project_id": &name, "name": "cli-generated"}))
-            .await?;
+        println!("  :: Generating deploy token for {}...", name.cyan());
+        let token_resp = auth::session_post(
+            client,
+            server,
+            "/deploy-tokens",
+            &json!({"project_id": &name, "name": "cli-generated"}),
+        )
+        .await?;
 
-    let token = token_resp["token"].as_str().unwrap_or("<error>").to_string();
+        let token = token_resp["token"].as_str().unwrap_or("<error>").to_string();
+        minted_token = Some(token.clone());
 
-    println!();
-    println!("  {} Deploy token generated for {}", "🔐".dimmed(), name.cyan());
-    println!("  {} Save it for CI/CD:", "!".yellow());
-    println!("  {}", format!("L8B_TOKEN={}", token).dimmed());
-    println!();
+        println!();
+        println!("  {} Deploy token generated for {}", "🔐".dimmed(), name.cyan());
+        println!("  {} Save it for CI/CD:", "!".yellow());
+        println!("  {}", format!("L8B_TOKEN={}", token).dimmed());
+        println!();
+    }
 
     let port = if is_background { None } else { Some(resolve_app_port(project_dir, port_override)?) };
 
@@ -111,18 +130,18 @@ async fn new_project_flow(
     } else {
         print_no_managed_url();
     }
-    println!("  {} Use this token to redeploy from CI/CD:", "💡".dimmed());
-    let deploy_hint = if is_background {
-        format!("L8B_TOKEN={} l8b deploy --project {} --background", token, name)
-    } else {
-        format!(
-            "L8B_TOKEN={} l8b deploy --project {} --port {}",
-            token,
-            name,
-            port.expect("web projects have an HTTP port")
-        )
-    };
-    println!("  {}", deploy_hint.dimmed());
+    if let Some(token) = minted_token {
+        println!("  {} Use this token to redeploy from CI/CD:", "💡".dimmed());
+        let deploy_hint = if is_background {
+            format!("L8B_TOKEN={token} l8b deploy --project {name} --background")
+        } else {
+            format!(
+                "L8B_TOKEN={token} l8b deploy --project {name} --port {}",
+                port.expect("web projects have an HTTP port")
+            )
+        };
+        println!("  {}", deploy_hint.dimmed());
+    }
     println!();
 
     Ok(())
@@ -224,19 +243,19 @@ async fn existing_project_flow(
         }
         "Recreate" => {
             println!("  :: Recreating {}...", project_id.cyan());
-            auth::session_post(client, server, &format!("/projects/{}/recreate", project_id), &json!({})).await?;
+            auth::api_post_json(client, server, &format!("/projects/{}/recreate", project_id), &json!({})).await?;
             println!("  {} Recreated", "✔".green());
             println!();
         }
         "Start" => {
             println!("  :: Starting {}...", project_id.cyan());
-            auth::session_post(client, server, &format!("/projects/{}/start", project_id), &json!({})).await?;
+            auth::api_post_json(client, server, &format!("/projects/{}/start", project_id), &json!({})).await?;
             println!("  {} Started", "✔".green());
             println!();
         }
         "Stop" => {
             println!("  :: Stopping {}...", project_id.cyan());
-            auth::session_post(client, server, &format!("/projects/{}/stop", project_id), &json!({})).await?;
+            auth::api_post_json(client, server, &format!("/projects/{}/stop", project_id), &json!({})).await?;
             println!("  {} Stopped", "✔".green());
             println!();
         }
@@ -324,29 +343,33 @@ pub(super) async fn await_runtime_config_and_start(
 ) -> Result<bool> {
     println!();
     println!("  {} {}", "⏸".yellow(), "Awaiting runtime configuration".bold());
-    show_env_path(server, project_id, node_id);
     println!("     {}", "Add runtime variables now if needed (DB passwords, API keys, etc.)".dimmed());
-    println!(
-        "     {}",
-        "Select \"Start containers now\" if your compose/app already has defaults or needs no env.".dimmed()
-    );
+    let _ = node_id;
 
-    let choices = vec!["Start containers now", "Pause — start later"];
-    let selection = Select::new().with_prompt("Ready to start containers?").items(&choices).default(0).interact()?;
+    loop {
+        let choices = vec!["Push env from a local .env file", "Start containers now", "Pause — start later"];
+        let selection = Select::new().with_prompt("Runtime configuration").items(&choices).default(0).interact()?;
 
-    if selection != 0 {
-        println!();
-        println!("  {} {}", "!".yellow(), "Paused — containers were not started.".bold());
-        println!("     {}", "Your image is ready. Edit the .env above if needed, then run:".dimmed());
-        println!("       {}", "l8b ship".cyan());
-        println!("     {}", "Select this project and choose \"Resume deployment\".".dimmed());
-        return Ok(false);
+        match selection {
+            0 => {
+                push_runtime_env_file(client, server, project_id).await?;
+            }
+            1 => break,
+            _ => {
+                println!();
+                println!("  {} {}", "!".yellow(), "Paused — containers were not started.".bold());
+                println!("     {}", "Push env later with `l8b env push`, or edit the file on the node:".dimmed());
+                show_env_path(server, project_id, node_id);
+                println!("     {}", "Then run `l8b ship` and choose \"Resume deployment\".".dimmed());
+                return Ok(false);
+            }
+        }
     }
 
     let start_spinner = spinner("  🚀 {spinner} {msg}");
     start_spinner.set_message("Starting containers...");
 
-    auth::session_post(client, server, &format!("/projects/{}/start", project_id), &json!({}))
+    auth::api_post_json(client, server, &format!("/projects/{}/start", project_id), &json!({}))
         .await
         .with_context(|| format!("failed to start staged project '{}'", project_id))?;
 
@@ -427,4 +450,43 @@ pub(super) fn resolve_upload_mode(
         return if idx == 0 { UploadMode::Direct } else { UploadMode::Relay };
     }
     UploadMode::Auto
+}
+
+/// Pick a local `.env` file (or enter a path) and push it as the project's
+/// runtime env (merge). Values are write-only; applies on container start.
+async fn push_runtime_env_file(client: &reqwest::Client, server: &str, project_id: &str) -> Result<()> {
+    let discovered = super::env::discover_env_files(std::path::Path::new("."), false)?;
+    let file: String = if discovered.is_empty() {
+        dialoguer::Input::new().with_prompt("Path to env file").interact_text()?
+    } else {
+        let mut items = discovered.clone();
+        items.push("(enter a path manually)".to_string());
+        let idx = Select::new().with_prompt("Push which file?").items(&items).default(0).interact()?;
+        if idx == discovered.len() {
+            dialoguer::Input::new().with_prompt("Path to env file").interact_text()?
+        } else {
+            discovered[idx].clone()
+        }
+    };
+
+    let raw = std::fs::read(&file).with_context(|| format!("failed to read {file}"))?;
+    let vars: std::collections::HashMap<String, String> = dotenvy::Iter::new(raw.as_slice())
+        .filter_map(|item| item.ok())
+        .map(|(k, v)| (k.trim().to_string(), v))
+        .collect();
+    if vars.is_empty() {
+        anyhow::bail!("no environment variables found in {file}");
+    }
+
+    let resp = crate::auth::api_put_json(
+        client,
+        server,
+        &format!("/projects/{project_id}/env"),
+        &serde_json::json!({ "env": vars, "mode": "merge" }),
+    )
+    .await?;
+    let keys = resp["vars"].as_array().map(Vec::len).unwrap_or(0);
+    println!("  {} Pushed {keys} variable(s) from {file} (values are write-only).", "✓".green());
+    println!("  {}", "They take effect when the containers start.".dimmed());
+    Ok(())
 }

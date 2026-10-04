@@ -39,6 +39,8 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// Deploy's flag set dwarfs the other variants; constructed once per invocation.
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Deploy the current directory to LiteBin
     Deploy {
@@ -85,6 +87,10 @@ enum Commands {
         /// Pass a local file (e.g. .env) as a Docker build secret (id=l8b_env)
         #[arg(long)]
         secret: Vec<std::path::PathBuf>,
+
+        /// Push this file as runtime env after deploying (KEY=VALUE lines, merged)
+        #[arg(long)]
+        env_file: Option<std::path::PathBuf>,
 
         /// Force compose mode (auto-detected if a compose file exists)
         #[arg(long)]
@@ -162,11 +168,20 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
-    /// Log in to a LiteBin server
+    /// Log in to a LiteBin server (dashboard approval or username/password)
     Login {
         /// Server URL
         #[arg(long)]
         server: String,
+        /// Scope to request: read, deploy, manage (default), or admin — the approver decides
+        #[arg(long)]
+        scope: Option<String>,
+        /// Skip the menu and pair via dashboard approval
+        #[arg(long, conflicts_with = "password")]
+        pair: bool,
+        /// Skip the menu and log in with username/password (session)
+        #[arg(long)]
+        password: bool,
     },
     /// Log out (clear stored session)
     Logout,
@@ -298,6 +313,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             cpu,
             no_auto_stop,
             secret,
+            env_file,
             compose,
             service,
             grant_capability,
@@ -316,6 +332,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     cpu,
                     no_auto_stop,
                     secret,
+                    env_file,
                     compose,
                     service,
                     grant_capability,
@@ -341,12 +358,12 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     .with_prompt("Server URL")
                     .default(cfg.server.clone().unwrap_or_default())
                     .interact_text()?;
-                auth::login(&server).await?;
+                auth::login(&server, "manage").await?;
             }
             let cfg = config::CliConfig::load(cli.server.as_deref(), None)?;
             let client = auth::authenticated_client(&cfg)?;
             let server = auth::resolve_server(&cfg)?;
-            ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port, secret).await?;
+            ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port, secret, cfg.token.is_some()).await?;
         }
         Commands::List => {
             commands::projects::list(cli.server.as_deref(), cli.token.as_deref(), out).await?;
@@ -375,8 +392,30 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
         Commands::Delete { project, yes } => {
             commands::projects::delete(project, yes, cli.server.as_deref(), cli.token.as_deref(), out, ci_mode).await?;
         }
-        Commands::Login { server } => {
-            auth::login(&server).await?;
+        Commands::Login { server, scope, pair, password } => {
+            let use_password = if password {
+                true
+            } else if pair {
+                false
+            } else if ci_mode.enabled || out.json {
+                bail!(out::fail(
+                    "login needs an auth method in CI/JSON mode",
+                    "use `l8b login --pair` (approve from the dashboard) or set L8B_TOKEN"
+                ));
+            } else {
+                let methods = vec!["Approve from the dashboard (recommended)", "Username and password"];
+                let choice = dialoguer::Select::new()
+                    .with_prompt("How do you want to authenticate?")
+                    .items(&methods)
+                    .default(0)
+                    .interact()?;
+                choice == 1
+            };
+            if use_password {
+                auth::login_password(&server).await?;
+            } else {
+                auth::login(&server, scope.as_deref().unwrap_or("manage")).await?;
+            }
         }
         Commands::Logout => {
             auth::clear_session()?;

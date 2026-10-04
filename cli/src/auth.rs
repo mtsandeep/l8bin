@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use colored::Colorize;
 use litebin_common::types::NodeStatus;
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
@@ -23,16 +24,6 @@ pub fn load_session() -> Option<Session> {
     serde_json::from_str(&content).ok()
 }
 
-pub fn save_session(session: &Session) -> Result<()> {
-    let path = session_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let content = serde_json::to_string_pretty(session)?;
-    std::fs::write(&path, content)?;
-    Ok(())
-}
-
 pub fn clear_session() -> Result<()> {
     let path = session_path();
     if path.exists() {
@@ -41,16 +32,17 @@ pub fn clear_session() -> Result<()> {
     Ok(())
 }
 
-pub async fn login(server: &str) -> Result<()> {
+/// Username/password login (session-based, same access as the dashboard).
+pub async fn login_password(server: &str) -> Result<()> {
     let server = if server.starts_with("http://") || server.starts_with("https://") {
         server.to_string()
     } else {
         format!("https://{}", server)
     };
-    println!("Server: {}", server);
-    let username = dialoguer::Input::<String>::new().with_prompt("Username").interact_text()?;
+    println!("Server: {server}");
 
-    let password = rpassword::prompt_password("Password: ")?;
+    let username: String = dialoguer::Input::new().with_prompt("Username").interact_text()?;
+    let password = dialoguer::Password::new().with_prompt("Password").interact()?;
 
     let client = reqwest::Client::new();
     let resp = client
@@ -69,19 +61,106 @@ pub async fn login(server: &str) -> Result<()> {
         anyhow::bail!("login failed ({}): {}", status, body);
     }
 
-    // Extract Set-Cookie header
     let cookie =
         resp.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join("; ");
-
     if cookie.is_empty() {
         anyhow::bail!("login succeeded but no session cookie received");
     }
 
+    // Re-save via save_session inline (the fn was removed with the old flow).
     let session = Session { server: server.trim_end_matches('/').to_string(), cookie };
-    save_session(&session)?;
+    {
+        let path = session_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, serde_json::to_string_pretty(&session)?)?;
+    }
     crate::config::CliConfig::save(Some(&session.server), None)?;
-    println!("Authenticated. Session saved.");
+    println!("{} Authenticated. Session saved.", "✓".green());
     Ok(())
+}
+
+/// Device-pairing login: prints a short-lived code, waits for the user to
+/// approve it at `{server}/connect` from an authenticated browser, then stores
+/// the issued scoped token. No passwords pass through the terminal.
+pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
+    let server = if server.starts_with("http://") || server.starts_with("https://") {
+        server.to_string()
+    } else {
+        format!("https://{}", server)
+    };
+    let server = server.trim_end_matches('/').to_string();
+
+    let client_name = std::env::var("L8B_CLIENT_NAME").unwrap_or_else(|_| "l8b CLI".to_string());
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{server}/auth/device/start"))
+        .json(&serde_json::json!({ "client_name": client_name, "scope": suggested_scope }))
+        .send()
+        .await
+        .context("pairing request failed")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("failed to start pairing ({}): {}", status, body);
+    }
+    let start: serde_json::Value = resp.json().await.context("invalid pairing response")?;
+    let device_code = start["device_code"].as_str().context("missing device_code")?.to_string();
+    let user_code = start["user_code"].as_str().context("missing user_code")?.to_string();
+    let expires_in = start["expires_in"].as_i64().unwrap_or(600) as u64;
+    let interval = start["interval"].as_i64().unwrap_or(3).max(1) as u64;
+
+    println!("Server: {server}");
+    println!();
+    println!("  Open {} and enter this code:", format!("{server}/connect").cyan().bold());
+    println!();
+    println!("    {}", user_code.green().bold());
+    println!();
+    println!("  {} Expires in {} minutes. Waiting for approval…", "⏳".yellow(), expires_in / 60);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(expires_in);
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("pairing code expired before approval — run `l8b login` again");
+        }
+
+        let resp = match client
+            .post(format!("{server}/auth/device/token"))
+            .json(&serde_json::json!({ "device_code": device_code }))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue, // transient network error — keep polling
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+        match body["status"].as_str().unwrap_or("pending") {
+            "pending" => continue,
+            "denied" => anyhow::bail!("pairing was denied on the server"),
+            "expired" => anyhow::bail!("pairing code expired — run `l8b login` again"),
+            "ok" => {
+                let token = body["token"].as_str().context("approval carried no token")?.to_string();
+                let scope = body["scope"].as_str().unwrap_or("deploy").to_string();
+                let project = body["project_id"].as_str();
+
+                crate::config::CliConfig::save(Some(&server), Some(&token))?;
+                println!();
+                println!("{} Authenticated. Token saved (scope: {scope}).", "✓".green());
+                if let Some(p) = project {
+                    println!("  Bound to project '{p}'.");
+                }
+                println!("  {} Revoke anytime from the dashboard: Settings → Access Tokens.", "→".dimmed());
+                return Ok(());
+            }
+            _ => continue,
+        }
+    }
 }
 
 /// Build a reqwest client with the appropriate auth headers.
@@ -160,36 +239,6 @@ pub async fn session_get(client: &reqwest::Client, server: &str, path: &str) -> 
         .send()
         .await
         .with_context(|| format!("GET {} failed", url))?;
-
-    let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
-
-    if !status.is_success() {
-        let error = json["error"].as_str().unwrap_or(&body_text);
-        anyhow::bail!("{} ({}): {}", url, status, error);
-    }
-
-    Ok(json)
-}
-
-/// POST multipart form to the API using session (cookie) auth.
-pub async fn session_post_multipart(
-    client: &reqwest::Client,
-    server: &str,
-    path: &str,
-    form: reqwest::multipart::Form,
-) -> Result<serde_json::Value> {
-    let session = load_session().ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
-
-    let url = format!("{}{}", server.trim_end_matches('/'), path);
-    let resp = client
-        .post(&url)
-        .header("Cookie", &session.cookie)
-        .multipart(form)
-        .send()
-        .await
-        .with_context(|| format!("POST {} failed", url))?;
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
@@ -295,6 +344,25 @@ pub async fn api_post_json(
 pub async fn api_delete(client: &reqwest::Client, server: &str, path: &str) -> Result<serde_json::Value> {
     let url = format!("{}{}", server.trim_end_matches('/'), path);
     let resp = client.delete(&url).send().await.with_context(|| format!("DELETE {} failed", url))?;
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
+    if !status.is_success() {
+        let error = json["error"].as_str().unwrap_or(&body_text);
+        anyhow::bail!("{} ({}): {}", url, status, error);
+    }
+    Ok(json)
+}
+
+/// POST multipart using the client's baked-in auth (token or session).
+pub async fn api_post_multipart(
+    client: &reqwest::Client,
+    server: &str,
+    path: &str,
+    form: reqwest::multipart::Form,
+) -> Result<serde_json::Value> {
+    let url = format!("{}{}", server.trim_end_matches('/'), path);
+    let resp = client.post(&url).multipart(form).send().await.with_context(|| format!("POST {} failed", url))?;
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
     let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));

@@ -1595,7 +1595,6 @@ dependencies = [
  "indicatif",
  "litebin-common",
  "reqwest",
- "rpassword",
  "rustls",
  "rustls-pemfile",
  "serde",
