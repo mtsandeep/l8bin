@@ -12,6 +12,7 @@ use crate::ci::CiMode;
 use crate::config;
 use crate::deploy as deploy_cmd;
 use crate::out::Out;
+use crate::project_config;
 use crate::ship;
 use crate::status;
 use crate::upload;
@@ -74,7 +75,7 @@ fn finish_deploy(
 
 pub(crate) struct DeployArgs {
     pub project: String,
-    pub port: u16,
+    pub port: Option<u16>,
     pub background: bool,
     pub path: PathBuf,
     pub node: Option<String>,
@@ -128,7 +129,7 @@ pub(crate) async fn run(
     let server = auth::resolve_server(&cfg)?;
 
     // Resolve effective node: project's sticky node_id takes precedence over --node flag
-    let existing_project = auth::session_get(&client, &server, &format!("/projects/{}", project)).await.ok();
+    let existing_project = auth::api_get(&client, &server, &format!("/projects/{}", project)).await.ok();
     let effective_node = if let Some(proj_json) = existing_project.as_ref() {
         let existing_node = proj_json.get("node_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
         if let Some(pinned) = existing_node
@@ -147,6 +148,14 @@ pub(crate) async fn run(
             .and_then(|project| project.get("is_background"))
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
+
+    // Port is first-deploy only; redeploys omit it and the server keeps the
+    // existing one.
+    let effective_port = if effective_background {
+        None
+    } else {
+        port.or_else(|| if existing_project.is_some() { None } else { Some(3000) })
+    };
 
     // Check for compose file (auto-detect or forced via --compose)
     let compose_file = ship::detect_compose_file(&path);
@@ -180,6 +189,11 @@ pub(crate) async fn run(
             platform.as_deref(),
         )
         .await?;
+
+        // Remember which project this directory deploys to.
+        if project_config::record_deploy(&path, &project, effective_node.as_deref())? {
+            out.note("Wrote l8b.toml — future deploys reuse this project automatically.");
+        }
 
         // Poll for completion (2 min timeout, non-interactive)
         let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
@@ -227,7 +241,7 @@ pub(crate) async fn run(
             &server,
             &project,
             &image_id,
-            if effective_background { None } else { Some(port) },
+            effective_port,
             effective_background,
             effective_node.as_deref(),
             cmd.as_deref(),
@@ -237,6 +251,11 @@ pub(crate) async fn run(
             &grant_capability,
         )
         .await?;
+
+        // Remember which project this directory deploys to.
+        if project_config::record_deploy(&path, &project, effective_node.as_deref())? {
+            out.note("Wrote l8b.toml — future deploys reuse this project automatically.");
+        }
 
         if response.status == ProjectStatus::Deploying {
             // Poll for completion (2 min timeout, non-interactive)

@@ -10,9 +10,7 @@ use crate::out::Out;
 
 pub(crate) struct InitArgs {
     pub project: Option<String>,
-    pub port: Option<u16>,
     pub node: Option<String>,
-    pub env_file: Option<String>,
     pub mcp: bool,
     pub force: bool,
     pub path: std::path::PathBuf,
@@ -30,7 +28,7 @@ pub(crate) async fn run(args: InitArgs, ci_mode: &CiMode, out: &Out) -> Result<(
         Some(p) => p,
         None => {
             if ci_mode.enabled {
-                bail!(crate::out::fail("init needs --project in CI/JSON mode", "l8b init --project <id> [--port N]"));
+                bail!(crate::out::fail("init needs --project in CI/JSON mode", "l8b init --project <id>"));
             }
             let default = default_from_dir(dir);
             dialoguer::Input::<String>::new()
@@ -45,32 +43,12 @@ pub(crate) async fn run(args: InitArgs, ci_mode: &CiMode, out: &Out) -> Result<(
         }
     };
 
-    let port = match args.port {
-        Some(p) => Some(p),
-        None => {
-            if ci_mode.enabled {
-                None
-            } else {
-                let p: String = dialoguer::Input::new()
-                    .with_prompt("App port (enter to skip)")
-                    .allow_empty(true)
-                    .interact_text()?;
-                p.trim().parse::<u16>().ok()
-            }
-        }
-    };
-
     let mut toml = String::new();
     toml.push_str("# LiteBin project config — used by `l8b deploy/env/status` as defaults.\n");
+    toml.push_str("# Commit this file — it holds no secrets; env values live on the server (l8b env push).\n");
     toml.push_str(&format!("project = \"{project}\"\n"));
-    if let Some(p) = port {
-        toml.push_str(&format!("port = {p}\n"));
-    }
     if let Some(ref n) = args.node {
         toml.push_str(&format!("node = \"{n}\"\n"));
-    }
-    if let Some(ref f) = args.env_file {
-        toml.push_str(&format!("env_file = \"{f}\"\n"));
     }
     std::fs::write(&toml_path, toml)?;
     out.note(&format!("Wrote {}", toml_path.display()));

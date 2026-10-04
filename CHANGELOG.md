@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`l8b deploy` records the project in `l8b.toml`** — after a successful deploy the directory remembers its project (and node), so later sessions deploy, check status, and read logs with no arguments. The file holds non-secret facts only (`project`, `node`); commit it.
+
+### Changed
+- **`l8b.toml` essentials only** — `port` and `env_file` are gone from the file, and `l8b init` no longer asks for or writes them. The port is set on the first deploy (default 3000 for new web projects) and sticky server-side: redeploys omit it and keep the existing one, `--port` is the only override. `deploy --env-file` still works as an explicit push-time flag.
+- **Redeploys may omit `port` in the deploy API** — the server keeps the project's existing one; an explicit port overrides.
+
+### Fixed
+- **Token deploys now see the existing project** — the deploy flow looked it up with a session-cookie call, so node pinning, workload type, and port reuse silently didn't apply when authenticating with a token.
+
 ## [0.4.0] - 2026-10-04
 
 ### Added

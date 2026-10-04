@@ -28,6 +28,18 @@ Requires a server already running LiteBin (server install: `curl -fsSL https://l
 3. Register in the repo: `l8b init --mcp` (writes `l8b.toml` + workspace `.mcp.json`), or add the server manually: command `l8b`, args `["mcp"]`.
 4. Verify: `l8b doctor` — exit 0 means the setup is healthy.
 
+## Deploying a repo (new vs existing)
+
+If the repo has no `l8b.toml`, this is its first deploy: ask the user what to
+name the project (lowercase letters, numbers, hyphens), or run `l8b list` and
+let them pick an existing project if this repo replaces one. After a
+successful deploy the CLI writes `l8b.toml` (project, node)
+into the directory — commit it, it holds no secrets — every later session then
+deploys, checks status, and
+reads logs without any project argument. Custom domains surface in `l8b
+status` / `l8b url` / `l8b list` output (preferred over the managed
+subdomain).
+
 ## API
 
 - OpenAPI 3.1 spec: /openapi.json (version-matched to this instance)
@@ -38,8 +50,8 @@ Requires a server already running LiteBin (server install: `curl -fsSL https://l
 Install via: `curl -fsSL https://l8b.in | bash -s cli` or build from source. Auth: `l8b login --server <url> --pair` (device pairing — agent-safe: it prints a code and the /connect approval URL to relay to the user, then returns once approved; the user picks the scope) or `L8B_TOKEN` env / `--token` (existing token).
 
 Commands (project flags default to `l8b.toml`, created by `l8b init`):
-- `l8b init` — Write `l8b.toml` project defaults (project, port, node, env_file); `--mcp` also emits the workspace `.mcp.json`
-- `l8b deploy [--env-file <path>]` — Build and deploy the current directory (Dockerfile auto-detected, Railpack fallback)
+- `l8b init` — Write `l8b.toml` project defaults (project, node); `--mcp` also emits the workspace `.mcp.json`
+- `l8b deploy [--env-file <path>] [--port N]` — Build and deploy the current directory (Dockerfile auto-detected, Railpack fallback). `--port` only matters on the first deploy of a web project; redeploys keep the existing port
 - `l8b ship` — Interactive guided deploy (humans only)
 - `l8b list` — All projects with live status and URLs
 - `l8b status [--wait] [--healthy]` — Project status; --wait polls (exit 0 only when running), --healthy probes the URL

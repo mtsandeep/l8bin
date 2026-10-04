@@ -9,9 +9,12 @@ This project deploys to LiteBin. The `l8b` CLI is pre-configured via `l8b.toml`
 and the MCP server is wired in `.mcp.json` — prefer the LiteBin MCP tools, or
 fall back to the CLI.
 
-- Deploy the current directory: tool `deploy` (or `l8b deploy`)
+- Deploy the current directory: tool `deploy` (or `l8b deploy`) — after a
+  successful deploy, `l8b.toml` records the project so future sessions need
+  no arguments
 - Check if it's up: tool `status` with `wait: true, healthy: true` (or
-  `l8b status --wait --healthy`) — succeeds only when serving HTTP 200
+  `l8b status --wait --healthy`) — succeeds only when serving HTTP 200; the
+  reported URL is the custom domain when one is set
 - Read logs on failure: tool `logs` (or `l8b logs`)
 - Runtime secrets (DATABASE_URL etc.): tool `env_push`, then `restart`.
   Values are write-only — never expect to read them back.

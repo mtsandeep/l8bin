@@ -50,7 +50,7 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
 
-        /// Internal port the app listens on (default: l8b.toml `port`, else 3000)
+        /// Internal app port (first deploy only; redeploys keep the existing port)
         #[arg(long)]
         port: Option<u16>,
 
@@ -175,15 +175,9 @@ enum Commands {
         /// Project ID (used as subdomain)
         #[arg(long)]
         project: Option<String>,
-        /// Internal port the app listens on
-        #[arg(long)]
-        port: Option<u16>,
         /// Target node ID
         #[arg(long)]
         node: Option<String>,
-        /// Default env file for `deploy --env-file`
-        #[arg(long)]
-        env_file: Option<String>,
         /// Also write a workspace .mcp.json for the litebin MCP server
         #[arg(long)]
         mcp: bool,
@@ -380,10 +374,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
         } => {
             let defaults = project_config::load(&path);
             let project = project_config::resolve_project(project.as_deref(), &path)?;
-            let port = port.or_else(|| defaults.as_ref().and_then(|c| c.port)).unwrap_or(3000);
             let node = node.or_else(|| defaults.as_ref().and_then(|c| c.node.clone()));
-            let env_file =
-                env_file.or_else(|| defaults.as_ref().and_then(|c| c.env_file.clone()).map(std::path::PathBuf::from));
             commands::deploy::run(
                 commands::deploy::DeployArgs {
                     project,
@@ -430,13 +421,8 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             let server = auth::resolve_server(&cfg)?;
             ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port, secret, cfg.token.is_some()).await?;
         }
-        Commands::Init { project, port, node, env_file, mcp, force, path } => {
-            commands::init::run(
-                commands::init::InitArgs { project, port, node, env_file, mcp, force, path },
-                ci_mode,
-                out,
-            )
-            .await?;
+        Commands::Init { project, node, mcp, force, path } => {
+            commands::init::run(commands::init::InitArgs { project, node, mcp, force, path }, ci_mode, out).await?;
         }
         Commands::Mcp => {
             mcp::run().await?;

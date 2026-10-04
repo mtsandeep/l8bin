@@ -16,6 +16,9 @@ struct DeploySettings {
     granted_capabilities: Vec<litebin_common::capabilities::ProjectCapability>,
     is_background: bool,
     stage_only: bool,
+    /// The request's port, or the project's existing one when a redeploy
+    /// omits it. Always set for web projects.
+    port: Option<i64>,
 }
 
 /// Parse capability grants, resolve the workload type, enforce the
@@ -42,27 +45,31 @@ async fn resolve_deploy_settings(
         }
     };
 
-    // PUT requests that omit workload type preserve the current project setting.
-    let existing_background: Option<bool> = if is_update {
-        sqlx::query_scalar("SELECT is_background FROM projects WHERE id = ?")
+    // Requests that omit workload type or port keep the project's current
+    // settings — both are set once and sticky afterwards.
+    let (existing_background, existing_port): (Option<bool>, Option<i64>) = if is_update {
+        sqlx::query_as("SELECT is_background, internal_port FROM projects WHERE id = ?")
             .bind(&payload.project_id)
             .fetch_optional(&state.db)
             .await
             .ok()
             .flatten()
+            .map(|(b, p)| (Some(b), p))
+            .unwrap_or((None, None))
     } else {
-        None
+        (None, None)
     };
     let is_background = resolve_background(payload.is_background, existing_background);
+    let port = resolve_port(payload.port, existing_port);
 
-    if is_background && payload.port.is_some() {
+    if is_background && port.is_some() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "background projects must not provide an HTTP port"})),
         )
             .into_response());
     }
-    if !is_background && payload.port.is_none() {
+    if !is_background && port.is_none() {
         return Err(
             (StatusCode::BAD_REQUEST, Json(json!({"error": "web projects require an HTTP port"}))).into_response()
         );
@@ -87,7 +94,7 @@ async fn resolve_deploy_settings(
         "deploy request received"
     );
 
-    Ok(DeploySettings { granted_capabilities, is_background, stage_only })
+    Ok(DeploySettings { granted_capabilities, is_background, stage_only, port })
 }
 
 /// Sleep settings to persist for this deploy (auto-stop/auto-start + timeout).
@@ -409,7 +416,7 @@ async fn stage_only_path(
 pub(super) async fn execute_deploy(
     state: AppState,
     user_id: String,
-    payload: DeployRequest,
+    mut payload: DeployRequest,
     is_update: bool,
 ) -> axum::response::Response {
     let now = chrono::Utc::now().timestamp();
@@ -420,6 +427,8 @@ pub(super) async fn execute_deploy(
     };
     let is_background = settings.is_background;
     let stage_only = settings.stage_only;
+    // payload.port is always concrete from here on.
+    payload.port = settings.port;
 
     let sleep = resolve_sleep_settings(&state, &payload, is_update, is_background).await;
 
@@ -544,9 +553,14 @@ fn resolve_background(requested: Option<bool>, existing: Option<bool>) -> bool {
     requested.or(existing).unwrap_or(false)
 }
 
+/// An omitted port keeps the project's existing one; an explicit port overrides.
+fn resolve_port(requested: Option<i64>, existing: Option<i64>) -> Option<i64> {
+    requested.or(existing)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve_background;
+    use super::{resolve_background, resolve_port};
     use dashmap::DashMap;
     use std::sync::Arc;
     use tokio::sync::Semaphore;
@@ -557,6 +571,14 @@ mod tests {
         assert!(resolve_background(Some(true), None));
         assert!(resolve_background(None, Some(true)));
         assert!(!resolve_background(Some(false), Some(true)));
+    }
+
+    #[test]
+    fn port_is_set_once_and_only_changed_explicitly() {
+        assert_eq!(resolve_port(Some(8080), None), Some(8080));
+        assert_eq!(resolve_port(Some(3000), Some(8080)), Some(3000));
+        assert_eq!(resolve_port(None, Some(8080)), Some(8080));
+        assert_eq!(resolve_port(None, None), None);
     }
 
     #[tokio::test]
