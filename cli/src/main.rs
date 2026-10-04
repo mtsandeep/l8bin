@@ -6,6 +6,7 @@ mod config;
 mod deploy;
 mod mise;
 mod out;
+mod project_config;
 mod railpack;
 mod ship;
 mod status;
@@ -44,13 +45,13 @@ struct Cli {
 enum Commands {
     /// Deploy the current directory to LiteBin
     Deploy {
-        /// Project ID (used as subdomain)
+        /// Project ID (default: `project` from l8b.toml)
         #[arg(long)]
-        project: String,
+        project: Option<String>,
 
-        /// Internal port the app listens on
-        #[arg(long, default_value = "3000")]
-        port: u16,
+        /// Internal port the app listens on (default: l8b.toml `port`, else 3000)
+        #[arg(long)]
+        port: Option<u16>,
 
         /// Run as a background project with no managed HTTP URL
         #[arg(long)]
@@ -128,8 +129,8 @@ enum Commands {
     List,
     /// Show container logs for a project
     Logs {
-        /// Project ID
-        project: String,
+        /// Project ID (default: l8b.toml `project`)
+        project: Option<String>,
         /// Number of lines to show
         #[arg(long, default_value_t = 100)]
         tail: usize,
@@ -142,31 +143,68 @@ enum Commands {
     },
     /// Print the project's managed URL
     Url {
-        /// Project ID
-        project: String,
+        /// Project ID (default: l8b.toml `project`)
+        project: Option<String>,
     },
     /// Stop a running project
     Stop {
-        /// Project ID
-        project: String,
+        /// Project ID (default: l8b.toml `project`)
+        project: Option<String>,
     },
     /// Start a stopped project
     Start {
-        /// Project ID
-        project: String,
+        /// Project ID (default: l8b.toml `project`)
+        project: Option<String>,
     },
     /// Recreate containers (applies pending .env changes)
     Restart {
-        /// Project ID
-        project: String,
+        /// Project ID (default: l8b.toml `project`)
+        project: Option<String>,
     },
     /// Delete a project, its containers, and its volumes
     Delete {
-        /// Project ID
-        project: String,
+        /// Project ID (default: l8b.toml `project`)
+        project: Option<String>,
         /// Skip the confirmation prompt (required in CI/JSON mode)
         #[arg(long)]
         yes: bool,
+    },
+    /// Write l8b.toml project defaults (and optionally the workspace .mcp.json)
+    Init {
+        /// Project ID (used as subdomain)
+        #[arg(long)]
+        project: Option<String>,
+        /// Internal port the app listens on
+        #[arg(long)]
+        port: Option<u16>,
+        /// Target node ID
+        #[arg(long)]
+        node: Option<String>,
+        /// Default env file for `deploy --env-file`
+        #[arg(long)]
+        env_file: Option<String>,
+        /// Also write a workspace .mcp.json for the litebin MCP server
+        #[arg(long)]
+        mcp: bool,
+        /// Overwrite an existing l8b.toml / .mcp.json
+        #[arg(long)]
+        force: bool,
+        /// Project directory (default: current dir)
+        #[arg(long, default_value = ".")]
+        path: std::path::PathBuf,
+    },
+    /// Environment sanity checks with recovery hints
+    Doctor,
+    /// First-run bootstrap: create the admin account and pair this machine
+    Setup {
+        /// Server URL
+        #[arg(long)]
+        server: String,
+    },
+    /// Manage a project's custom domain
+    Domain {
+        #[command(subcommand)]
+        action: DomainAction,
     },
     /// Log in to a LiteBin server (dashboard approval or username/password)
     Login {
@@ -191,13 +229,13 @@ enum Commands {
         #[arg(long, short)]
         project: Option<String>,
         /// Wait until the project reaches a terminal state; exit 0 only if running
-        #[arg(long, requires = "project")]
+        #[arg(long)]
         wait: bool,
         /// Wait timeout in seconds (default 120, with --wait)
-        #[arg(long, requires = "project")]
+        #[arg(long)]
         timeout: Option<u64>,
         /// Probe the project URL for a 2xx (implies --wait; skipped for background projects)
-        #[arg(long, requires = "project")]
+        #[arg(long)]
         healthy: bool,
     },
     /// Clean up leftover build artifacts (.env backups, temp dockerignore files)
@@ -234,16 +272,34 @@ enum ConfigAction {
 }
 
 #[derive(Subcommand)]
+enum DomainAction {
+    /// Set a custom domain
+    Set {
+        /// Custom domain (e.g. myapp.example.com)
+        domain: String,
+        /// Project ID (default: l8b.toml `project`)
+        #[arg(long, short)]
+        project: Option<String>,
+    },
+    /// Clear the custom domain
+    Remove {
+        /// Project ID (default: l8b.toml `project`)
+        #[arg(long, short)]
+        project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum EnvAction {
     /// List env keys with masked previews (never values)
     List {
-        /// Project ID
-        project: String,
+        /// Project ID (default: l8b.toml `project`)
+        project: Option<String>,
     },
     /// Push env vars from a file or stdin (never from arguments)
     Push {
-        /// Project ID
-        project: String,
+        /// Project ID (default: l8b.toml `project`)
+        project: Option<String>,
         /// Env file to push (default: .env in the current directory)
         #[arg(long)]
         file: Option<std::path::PathBuf>,
@@ -319,6 +375,12 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             grant_capability,
             upload,
         } => {
+            let defaults = project_config::load(&path);
+            let project = project_config::resolve_project(project.as_deref(), &path)?;
+            let port = port.or_else(|| defaults.as_ref().and_then(|c| c.port)).unwrap_or(3000);
+            let node = node.or_else(|| defaults.as_ref().and_then(|c| c.node.clone()));
+            let env_file =
+                env_file.or_else(|| defaults.as_ref().and_then(|c| c.env_file.clone()).map(std::path::PathBuf::from));
             commands::deploy::run(
                 commands::deploy::DeployArgs {
                     project,
@@ -365,10 +427,44 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             let server = auth::resolve_server(&cfg)?;
             ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port, secret, cfg.token.is_some()).await?;
         }
+        Commands::Init { project, port, node, env_file, mcp, force, path } => {
+            commands::init::run(
+                commands::init::InitArgs { project, port, node, env_file, mcp, force, path },
+                ci_mode,
+                out,
+            )
+            .await?;
+        }
+        Commands::Doctor => {
+            commands::doctor::run(cli.server.as_deref(), cli.token.as_deref(), out).await?;
+        }
+        Commands::Setup { server } => {
+            commands::setup::run(&server, ci_mode, out).await?;
+        }
+        Commands::Domain { action } => match action {
+            DomainAction::Set { domain, project } => {
+                let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
+                commands::projects::domain_set(
+                    project,
+                    Some(domain),
+                    false,
+                    cli.server.as_deref(),
+                    cli.token.as_deref(),
+                    out,
+                )
+                .await?;
+            }
+            DomainAction::Remove { project } => {
+                let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
+                commands::projects::domain_set(project, None, true, cli.server.as_deref(), cli.token.as_deref(), out)
+                    .await?;
+            }
+        },
         Commands::List => {
             commands::projects::list(cli.server.as_deref(), cli.token.as_deref(), out).await?;
         }
         Commands::Logs { project, tail, service, deploy } => {
+            let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
             commands::projects::logs(
                 commands::projects::LogsArgs { project, tail, service, deploy },
                 cli.server.as_deref(),
@@ -378,18 +474,23 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             .await?;
         }
         Commands::Url { project } => {
+            let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
             commands::projects::url(project, cli.server.as_deref(), cli.token.as_deref(), out).await?;
         }
         Commands::Stop { project } => {
+            let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
             commands::projects::stop(project, cli.server.as_deref(), cli.token.as_deref(), out).await?;
         }
         Commands::Start { project } => {
+            let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
             commands::projects::start(project, cli.server.as_deref(), cli.token.as_deref(), out).await?;
         }
         Commands::Restart { project } => {
+            let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
             commands::projects::restart(project, cli.server.as_deref(), cli.token.as_deref(), out).await?;
         }
         Commands::Delete { project, yes } => {
+            let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
             commands::projects::delete(project, yes, cli.server.as_deref(), cli.token.as_deref(), out, ci_mode).await?;
         }
         Commands::Login { server, scope, pair, password } => {
@@ -422,6 +523,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             println!("Logged out.");
         }
         Commands::Status { project, wait, timeout, healthy } => {
+            let project = project.or_else(|| project_config::load(std::path::Path::new(".")).and_then(|c| c.project));
             commands::status::run(
                 commands::status::StatusArgs { project, wait, timeout, healthy },
                 cli.server.as_deref(),
@@ -436,6 +538,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
         }
         Commands::Env { action } => match action {
             EnvAction::List { project } => {
+                let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
                 commands::env::list(
                     commands::env::EnvListArgs { project },
                     cli.server.as_deref(),
@@ -445,6 +548,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 .await?;
             }
             EnvAction::Push { project, file, stdin, replace, apply } => {
+                let project = project_config::resolve_project(project.as_deref(), std::path::Path::new("."))?;
                 commands::env::push(
                     commands::env::EnvPushArgs { project, file, stdin, replace, apply },
                     cli.server.as_deref(),

@@ -71,9 +71,28 @@ pub struct DeviceStartResponse {
 )]
 pub async fn start_device_flow(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<DeviceStartRequest>,
 ) -> impl IntoResponse {
+    if !crate::rate_limit::allow(&headers, crate::rate_limit::Policy::DeviceStart) {
+        return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "too many pairing requests; retry in a minute"})))
+            .into_response();
+    }
     purge_expired(&state.db).await;
+
+    let pending: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_codes WHERE status = 'pending' AND expires_at > ?")
+            .bind(now())
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+    if pending > 100 {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "too many pending pairing requests; retry shortly"})),
+        )
+            .into_response();
+    }
 
     let user_code = generate_user_code();
     let id = uuid::Uuid::new_v4().to_string();
@@ -271,8 +290,13 @@ pub struct DeviceTokenResponse {
 )]
 pub async fn poll_device_token(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<DeviceTokenRequest>,
 ) -> impl IntoResponse {
+    if !crate::rate_limit::allow(&headers, crate::rate_limit::Policy::DeviceToken) {
+        return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "polling too fast; retry in a minute"})))
+            .into_response();
+    }
     purge_expired(&state.db).await;
 
     let row: Option<(String, String, Option<String>, String, i64)> =

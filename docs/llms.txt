@@ -26,17 +26,21 @@ When helping users deploy to LiteBin, follow these patterns:
 
 Install via: `curl -fsSL https://l8b.in | bash -s cli` or build from source. Auth: `l8b login --server <url>` (session) or `L8B_TOKEN` env / `--token` (deploy token).
 
-Commands:
-- `l8b deploy --project <id>` — Build and deploy the current directory (Dockerfile auto-detected, Railpack fallback)
+Commands (project flags default to `l8b.toml`, created by `l8b init`):
+- `l8b init` — Write `l8b.toml` project defaults (project, port, node, env_file); `--mcp` also emits the workspace `.mcp.json`
+- `l8b deploy [--env-file <path>]` — Build and deploy the current directory (Dockerfile auto-detected, Railpack fallback)
 - `l8b ship` — Interactive guided deploy (humans only)
 - `l8b list` — All projects with live status and URLs
-- `l8b status --project <id> [--wait] [--healthy]` — Project status; --wait polls (exit 0 only when running), --healthy probes the URL
-- `l8b logs <project> [--tail N] [--service S] [--deploy]` — Container or deploy logs
-- `l8b url <project>` — The project's managed URL (background projects have none)
-- `l8b env list <project>` / `l8b env push <project> --file|--stdin [--replace] [--apply]` — Runtime env (write-only values)
-- `l8b stop | start | restart <project>` — Lifecycle (restart applies pending .env changes; stop is idempotent)
-- `l8b delete <project> --yes` — Delete project + containers + volumes (admin scope)
-- `l8b login` / `l8b logout` / `l8b config` / `l8b cleanup` — Session and config management
+- `l8b status [--wait] [--healthy]` — Project status; --wait polls (exit 0 only when running), --healthy probes the URL
+- `l8b logs [--tail N] [--service S] [--deploy]` — Container or deploy logs
+- `l8b url` — The project's managed URL (background projects have none)
+- `l8b env list` / `l8b env push --file|--stdin [--replace] [--apply]` — Runtime env (write-only values)
+- `l8b stop | start | restart` — Lifecycle (restart applies pending .env changes; stop is idempotent)
+- `l8b domain set <domain>` / `l8b domain remove` — Custom domain management
+- `l8b delete --yes` — Delete project + containers + volumes (admin scope)
+- `l8b login` — Device pairing (approve at /connect) or username/password; `l8b setup --server <url>` bootstraps a fresh server
+- `l8b doctor` — Environment sanity checks with recovery hints
+- `l8b logout` / `l8b config` / `l8b cleanup` — Session and config management
 
 All commands accept `--json` for machine-readable output.
 

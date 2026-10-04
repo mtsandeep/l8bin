@@ -163,3 +163,50 @@ async fn unknown_codes_are_not_pending_and_not_claimable() {
     server.get("/auth/device?user_code=L8B-ZZZZZZ").await.assert_status(StatusCode::NOT_FOUND);
     assert_eq!(poll(&server, "not-a-real-uuid").await["status"], "expired");
 }
+
+#[tokio::test]
+async fn device_start_is_rate_limited_per_ip() {
+    let server = test_server().await;
+    let ip = format!("198.51.100.{}", std::process::id() % 200 + 1);
+    for i in 0..5 {
+        let resp = server
+            .post("/auth/device/start")
+            .add_header("x-forwarded-for", ip.clone())
+            .json(&json!({"scope": "read"}))
+            .await;
+        resp.assert_status(StatusCode::OK);
+        let _ = i;
+    }
+    server
+        .post("/auth/device/start")
+        .add_header("x-forwarded-for", ip.clone())
+        .json(&json!({"scope": "read"}))
+        .await
+        .assert_status(StatusCode::TOO_MANY_REQUESTS);
+    // a different IP is unaffected
+    server
+        .post("/auth/device/start")
+        .add_header("x-forwarded-for", "198.51.100.222")
+        .json(&json!({"scope": "read"}))
+        .await
+        .assert_status(StatusCode::OK);
+}
+
+#[tokio::test]
+async fn login_is_rate_limited_per_ip() {
+    let server = test_server().await;
+    let ip = format!("203.0.113.{}", std::process::id() % 200 + 1);
+    for _ in 0..10 {
+        server
+            .post("/auth/login")
+            .add_header("x-forwarded-for", ip.clone())
+            .json(&json!({"username": "nobody", "password": "wrong"}))
+            .await;
+    }
+    server
+        .post("/auth/login")
+        .add_header("x-forwarded-for", ip.clone())
+        .json(&json!({"username": "nobody", "password": "wrong"}))
+        .await
+        .assert_status(StatusCode::TOO_MANY_REQUESTS);
+}

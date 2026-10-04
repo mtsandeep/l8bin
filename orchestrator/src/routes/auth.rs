@@ -44,8 +44,13 @@ impl From<User> for UserResponse {
 )]
 pub async fn login(
     mut auth_session: AuthSession<PasswordBackend>,
+    headers: axum::http::HeaderMap,
     Json(creds): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
+    if !crate::rate_limit::allow(&headers, crate::rate_limit::Policy::Login) {
+        tracing::warn!("login rate-limited");
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
     tracing::info!("Login attempt for user: {}", creds.username);
 
     let credentials = Credentials { username: creds.username, password: creds.password };

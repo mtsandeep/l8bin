@@ -30,6 +30,14 @@ _tty_read() {
 
 prompt() {
   local msg="$1" var="$2" default="${3:-}"
+  # Non-interactive override: L8B_INPUT_<VAR>=value answers this prompt.
+  local preset
+  preset=$(eval 'printf "%s" "${L8B_INPUT_'"${var}"':-}"')
+  if [ -n "$preset" ]; then
+    eval "$var=\"$preset\""
+    info "$msg: $preset (from L8B_INPUT_${var})"
+    return
+  fi
   if [ -n "$default" ]; then
     echo -ne "${CYAN}${msg}${NC} [${default}]: "
   else
@@ -42,6 +50,10 @@ prompt() {
 
 prompt_yes() {
   local msg="$1" default="${2:-n}"
+  if [ "${L8B_YES:-0}" = "1" ]; then
+    info "$msg: yes (L8B_YES=1)"
+    return 0
+  fi
   local yn
   echo -ne "${CYAN}${msg}${NC} [${default}]: "
   _tty_read yn

@@ -340,6 +340,31 @@ pub async fn api_post_json(
     Ok(json)
 }
 
+/// PATCH JSON using the client's baked-in auth (token or session).
+pub async fn api_patch_json(
+    client: &reqwest::Client,
+    server: &str,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let url = format!("{}{}", server.trim_end_matches('/'), path);
+    let resp = client
+        .patch(&url)
+        .header("Content-Type", "application/json")
+        .json(body)
+        .send()
+        .await
+        .with_context(|| format!("PATCH {} failed", url))?;
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
+    if !status.is_success() {
+        let error = json["error"].as_str().unwrap_or(&body_text);
+        anyhow::bail!("{} ({}): {}", url, status, error);
+    }
+    Ok(json)
+}
+
 /// DELETE on the API using the client's baked-in auth (token or session).
 pub async fn api_delete(client: &reqwest::Client, server: &str, path: &str) -> Result<serde_json::Value> {
     let url = format!("{}{}", server.trim_end_matches('/'), path);

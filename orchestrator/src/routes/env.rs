@@ -144,10 +144,7 @@ fn apply_env_update(
 }
 
 fn masked_vars(raw: &str) -> Vec<EnvVarInfo> {
-    parse_env(raw)
-        .into_iter()
-        .map(|(key, value)| EnvVarInfo { masked: mask_value(&value), key })
-        .collect()
+    parse_env(raw).into_iter().map(|(key, value)| EnvVarInfo { masked: mask_value(&value), key }).collect()
 }
 
 fn validate(payload: &UpdateEnvRequest) -> Result<(), (StatusCode, String)> {

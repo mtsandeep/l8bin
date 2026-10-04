@@ -10,6 +10,7 @@ mod db;
 mod nodes;
 mod openapi;
 mod platform;
+mod rate_limit;
 mod routes;
 mod routing_helpers;
 mod sleep;

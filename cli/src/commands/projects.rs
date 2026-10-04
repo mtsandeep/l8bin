@@ -285,6 +285,76 @@ pub(crate) async fn restart(
     std::process::exit(report(out, &project, label));
 }
 
+// ── domain ───────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct DomainResult {
+    project_id: String,
+    custom_domain: Option<String>,
+    url: Option<String>,
+}
+
+/// `l8b domain set <project> <domain>` (empty/`--remove` clears it).
+pub(crate) async fn domain_set(
+    project: String,
+    domain: Option<String>,
+    remove: bool,
+    server_flag: Option<&str>,
+    token_flag: Option<&str>,
+    out: &Out,
+) -> Result<()> {
+    if domain.is_none() && !remove {
+        bail!("pass a domain, or --remove to clear the custom domain");
+    }
+    let value = if remove {
+        String::new()
+    } else {
+        domain
+            .unwrap()
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_string()
+    };
+
+    let cfg = config::CliConfig::load(server_flag, token_flag)?;
+    let client = auth::authenticated_client(&cfg)?;
+    let server = auth::resolve_server(&cfg)?;
+
+    auth::api_patch_json(
+        &client,
+        &server,
+        &format!("/projects/{project}/settings"),
+        &serde_json::json!({ "custom_domain": value }),
+    )
+    .await?;
+
+    let url = if value.is_empty() {
+        let domain = auth::fetch_platform_domain(&client, &server).await;
+        Some(auth::project_live_url(&project, &domain))
+    } else {
+        Some(format!("https://{value}"))
+    };
+    out.ok(&DomainResult {
+        project_id: project.clone(),
+        custom_domain: if value.is_empty() { None } else { Some(value.clone()) },
+        url: url.clone(),
+    });
+    if !out.json {
+        match url {
+            Some(u) => {
+                println!("{project}: {u}");
+                if !value.is_empty() {
+                    println!("{}", "  Point a CNAME/A record at this server (or rely on cloudflare_dns mode) — LiteBin provisions TLS automatically.".dimmed());
+                }
+            }
+            None => println!("{project}: no managed URL"),
+        }
+    }
+    Ok(())
+}
+
 // ── delete ───────────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
