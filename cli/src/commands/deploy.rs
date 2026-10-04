@@ -123,10 +123,10 @@ pub(crate) async fn run(
         bail!("Project name must only contain lowercase letters, numbers, and hyphens");
     }
 
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, &path)?;
+    let client = target.client;
+    let server = target.server;
 
     // Resolve effective node: project's sticky node_id takes precedence over --node flag
     let existing_project = auth::api_get(&client, &server, &format!("/projects/{}", project)).await.ok();
@@ -191,7 +191,7 @@ pub(crate) async fn run(
         .await?;
 
         // Remember which project this directory deploys to.
-        if project_config::record_deploy(&path, &project, effective_node.as_deref())? {
+        if project_config::record_deploy(&path, &project, effective_node.as_deref(), Some(&server))? {
             out.note("Wrote l8b.toml — future deploys reuse this project automatically.");
         }
 
@@ -253,7 +253,7 @@ pub(crate) async fn run(
         .await?;
 
         // Remember which project this directory deploys to.
-        if project_config::record_deploy(&path, &project, effective_node.as_deref())? {
+        if project_config::record_deploy(&path, &project, effective_node.as_deref(), Some(&server))? {
             out.note("Wrote l8b.toml — future deploys reuse this project automatically.");
         }
 

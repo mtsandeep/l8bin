@@ -25,9 +25,10 @@ pub(crate) async fn run(
         return Ok(());
     };
 
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     let wait = args.wait || args.healthy;
     let timeout = args.timeout.unwrap_or(120);
@@ -94,92 +95,110 @@ async fn show_server_status(server_flag: Option<&str>, token_flag: Option<&str>)
 
     println!("l8b v{}", env!("CARGO_PKG_VERSION"));
 
-    let has_session = auth::load_session().is_some();
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let has_token = cfg.token.is_some();
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let store = config::CredentialStore::load();
+    let logged_in = store.logged_in_servers();
 
-    if !has_session && !has_token {
+    if logged_in.is_empty() && cfg.server.is_none() {
         println!();
         println!("  {}", "Not logged in.".dimmed());
         println!();
         println!("  Log in with:");
         println!("    {}", "l8b login --server <url>".cyan());
-        println!("    {}", "l8b config set --token <token>".cyan());
-    } else {
-        let auth_method = if has_token { "token" } else { "session" };
+        return Ok(());
+    }
 
-        match auth::resolve_server(&cfg) {
-            Ok(server) => {
-                println!();
-                println!("  {} {}", "Server:".dimmed(), server.cyan());
+    // The current server: flag > stored default > the single login.
+    let Some(current) = cfg
+        .server
+        .clone()
+        .map(|s| crate::config::normalize_server(&s))
+        .or_else(|| store.default.clone())
+        .or_else(|| logged_in.first().map(|s| s.to_string()))
+    else {
+        println!();
+        println!("  {}", "Logged into multiple servers — no default:".dimmed());
+        for s in &logged_in {
+            println!("    {}", s.cyan());
+        }
+        println!("  Pass {} to pick one.", "--server <url>".cyan());
+        return Ok(());
+    };
 
-                if has_token {
-                    let client = auth::authenticated_client(&cfg)?;
-                    match auth::api_get(&client, &server, "/whoami").await {
-                        Ok(me) => {
-                            let name = me["name"].as_str().unwrap_or("unnamed");
-                            let scope = me["scope"].as_str().unwrap_or("?");
-                            let label = match me["project_id"].as_str() {
-                                Some(p) => format!("token '{name}' (scope {scope}, project '{p}')"),
-                                None => format!("token '{name}' (scope {scope})"),
-                            };
-                            println!("  {} {}", "Auth:".dimmed(), label.green());
-                        }
-                        Err(_) => println!("  {} {}", "Auth:".dimmed(), auth_method.green()),
-                    }
+    println!();
+    println!("  {} {}", "Server:".dimmed(), current.cyan());
+
+    let cred = store.get(&current);
+    let has_session = cred.and_then(|c| c.cookie.clone()).is_some();
+
+    if let Some(cred) = cred
+        && let Some(auth) = cred.auth_header()
+    {
+        match auth::api_get(&auth::client_for(auth)?, &current, "/whoami").await {
+            Ok(me) => {
+                if me["kind"].as_str() == Some("token") {
+                    let name = me["name"].as_str().unwrap_or("unnamed");
+                    let scope = me["scope"].as_str().unwrap_or("?");
+                    let label = match me["project_id"].as_str() {
+                        Some(p) => format!("token '{name}' (scope {scope}, project '{p}')"),
+                        None => format!("token '{name}' (scope {scope})"),
+                    };
+                    println!("  {} {}", "Auth:".dimmed(), label.green());
                 } else {
-                    println!("  {} {}", "Auth:".dimmed(), auth_method.green());
-                }
-
-                if has_session {
-                    let client = auth::authenticated_client(&cfg)?;
-                    if let Ok(resp) = auth::session_get(&client, &server, "/status").await {
-                        if let Some(ver) = resp["version"].as_str() {
-                            println!("  {} {}", "Server version:".dimmed(), ver.cyan());
-                        }
-
-                        let user = &resp["user"];
-                        let username = user["username"].as_str().unwrap_or("unknown");
-                        let email = user["email"].as_str();
-                        let is_admin = user["is_admin"].as_bool().unwrap_or(false);
-                        let user_label = if let Some(email) = email {
-                            format!("{} ({})", username, email)
-                        } else {
-                            username.to_string()
-                        };
-                        let admin_tag = if is_admin { " [admin]" } else { "" };
-                        println!("  {} {}{}", "User:".dimmed(), user_label.cyan(), admin_tag.yellow());
-
-                        if let Some(nodes) = resp["nodes"].as_array() {
-                            println!("  {} {}", "Nodes:".dimmed(), nodes.len().to_string().cyan());
-                            for node in nodes {
-                                let name = node["name"].as_str().unwrap_or("?");
-                                let node_status = node["status"].as_str().unwrap_or("?");
-                                let version = node["version"].as_str().unwrap_or("?");
-                                let arch = node["architecture"].as_str().unwrap_or("?");
-                                let status_color =
-                                    if node_status == "online" { node_status.green() } else { node_status.dimmed() };
-                                println!(
-                                    "    {}  {}  {}",
-                                    name.cyan(),
-                                    status_color,
-                                    format!("v{} ({})", version, arch).dimmed()
-                                );
-                            }
-                        }
-
-                        if let Some(count) = resp["project_count"].as_i64() {
-                            println!("  {} {}", "Projects:".dimmed(), count.to_string().cyan());
-                        }
-                    }
+                    let user = me["username"].as_str().unwrap_or("?");
+                    println!("  {} {}", "Auth:".dimmed(), format!("session '{user}'").green());
                 }
             }
             Err(_) => {
-                println!();
-                println!("  {} {}", "Server:".dimmed(), "(not configured)".dimmed());
-                println!("  {} {}", "Auth:".dimmed(), auth_method.green());
+                let kind = if cred.token.is_some() { "token" } else { "session" };
+                println!("  {} {}", "Auth:".dimmed(), kind.green());
             }
         }
+    } else if cfg.token.is_some() {
+        println!("  {} {}", "Auth:".dimmed(), "token (--token/L8B_TOKEN)".green());
+    } else {
+        println!("  {} {}", "Auth:".dimmed(), "(not logged in to this server)".dimmed());
+    }
+
+    if has_session {
+        let client = auth::client_for(store.get(&current).and_then(|c| c.cookie.clone()).unwrap_or_default())?;
+        if let Ok(resp) = auth::session_get(&client, &current, "/status").await {
+            if let Some(ver) = resp["version"].as_str() {
+                println!("  {} {}", "Server version:".dimmed(), ver.cyan());
+            }
+
+            let user = &resp["user"];
+            let username = user["username"].as_str().unwrap_or("unknown");
+            let email = user["email"].as_str();
+            let is_admin = user["is_admin"].as_bool().unwrap_or(false);
+            let user_label =
+                if let Some(email) = email { format!("{} ({})", username, email) } else { username.to_string() };
+            let admin_tag = if is_admin { " [admin]" } else { "" };
+            println!("  {} {}{}", "User:".dimmed(), user_label.cyan(), admin_tag.yellow());
+
+            if let Some(nodes) = resp["nodes"].as_array() {
+                println!("  {} {}", "Nodes:".dimmed(), nodes.len().to_string().cyan());
+                for node in nodes {
+                    let name = node["name"].as_str().unwrap_or("?");
+                    let node_status = node["status"].as_str().unwrap_or("?");
+                    let version = node["version"].as_str().unwrap_or("?");
+                    let arch = node["architecture"].as_str().unwrap_or("?");
+                    let status_color = if node_status == "online" { node_status.green() } else { node_status.dimmed() };
+                    println!("    {}  {}  {}", name.cyan(), status_color, format!("v{} ({})", version, arch).dimmed());
+                }
+            }
+
+            if let Some(count) = resp["project_count"].as_i64() {
+                println!("  {} {}", "Projects:".dimmed(), count.to_string().cyan());
+            }
+        }
+    }
+
+    // Other known servers.
+    let others: Vec<&str> =
+        logged_in.iter().filter(|s| !current.eq_ignore_ascii_case(s.as_str())).map(|s| s.as_str()).collect();
+    if !others.is_empty() {
+        println!("  {} {}", "Also logged into:".dimmed(), others.join(", ").dimmed());
     }
 
     Ok(())

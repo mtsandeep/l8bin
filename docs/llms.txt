@@ -24,8 +24,8 @@ When helping users deploy to LiteBin, follow these patterns:
 Requires a server already running LiteBin (server install: `curl -fsSL https://l8b.in | bash` on a VPS; see the quickstart). Then:
 
 1. Check for the CLI: `l8b --version`. Missing? Install: `curl -fsSL https://l8b.in | bash -s cli` (Windows: `iex "& { $(irm https://l8b.in/windows.ps1) } -Cli"`). The MCP server is the same binary via `l8b mcp` — no separate package, no npx.
-2. Authenticate: ask the user for their LiteBin server URL, then run `l8b login --server <url> --pair`. It prints an approval URL (the code is embedded, the page pre-fills it) — relay it to the user and wait; the command returns once approved (the user picks the token scope).
-3. Register in the repo: `l8b init --mcp` (writes `l8b.toml` + workspace `.mcp.json`), or add the server manually: command `l8b`, args `["mcp"]`.
+2. Authenticate: ask the user for their LiteBin server URL, then run `l8b login --server <url> --pair`. It prints an approval URL (the code is embedded, the page pre-fills it) — relay it to the user and wait; the command returns once approved (the user picks the token scope). Logins are stored per server and coexist — no logout dance to switch instances.
+3. Register in the repo: `l8b init --mcp` (writes `l8b.toml` — project, node, server — + workspace `.mcp.json`), or add the server manually: command `l8b`, args `["mcp"]`.
 4. Verify: `l8b doctor` — exit 0 means the setup is healthy.
 
 ## Deploying a repo (new vs existing)
@@ -33,10 +33,10 @@ Requires a server already running LiteBin (server install: `curl -fsSL https://l
 If the repo has no `l8b.toml`, this is its first deploy: ask the user what to
 name the project (lowercase letters, numbers, hyphens), or run `l8b list` and
 let them pick an existing project if this repo replaces one. After a
-successful deploy the CLI writes `l8b.toml` (project, node)
+successful deploy the CLI writes `l8b.toml` (project, node, server)
 into the directory — commit it, it holds no secrets — every later session then
 deploys, checks status, and
-reads logs without any project argument. Custom domains surface in `l8b
+reads logs with no arguments at all. Custom domains surface in `l8b
 status` / `l8b url` / `l8b list` output (preferred over the managed
 subdomain).
 
@@ -117,3 +117,9 @@ first use:
 ## Full
 
 - [llms-full.txt](https://l8bin.com/llms-full.txt) — this file plus the OpenAPI spec and full CLI reference in one fetch
+
+Targeting is enforced, not assumed: the server a command hits comes from
+`--server` > `L8B_SERVER` > `l8b.toml` `server` > the single stored login. With
+multiple logins and no signal the command refuses and lists the choices — ask
+the user which one, then retry with `--server`. A repo whose `l8b.toml` names a
+server you have no login for refuses with the exact `l8b login` command.

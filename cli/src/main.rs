@@ -178,6 +178,9 @@ enum Commands {
         /// Target node ID
         #[arg(long)]
         node: Option<String>,
+        /// LiteBin server this repo deploys to (default: your only login)
+        #[arg(long)]
+        server: Option<String>,
         /// Also write a workspace .mcp.json for the litebin MCP server
         #[arg(long)]
         mcp: bool,
@@ -218,8 +221,12 @@ enum Commands {
         #[arg(long)]
         password: bool,
     },
-    /// Log out (clear stored session)
-    Logout,
+    /// Log out (remove a stored login; default: all of them)
+    Logout {
+        /// Log out of this server only
+        #[arg(long)]
+        server: Option<String>,
+    },
     /// Show CLI status and server info
     Status {
         /// Show status of a specific project
@@ -408,21 +415,33 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     "use `l8b deploy --project <id>`"
                 ));
             }
-            let cfg = config::CliConfig::load(cli.server.as_deref(), None)?;
-            if auth::load_session().is_none() {
-                let server = dialoguer::Input::<String>::new()
-                    .with_prompt("Server URL")
-                    .default(cfg.server.clone().unwrap_or_default())
-                    .interact_text()?;
-                auth::login(&server, "manage").await?;
-            }
-            let cfg = config::CliConfig::load(cli.server.as_deref(), None)?;
-            let client = auth::authenticated_client(&cfg)?;
-            let server = auth::resolve_server(&cfg)?;
-            ship::run(&client, &server, Some(path.to_str().unwrap_or(".")), port, secret, cfg.token.is_some()).await?;
+            let cfg = config::CliConfig::load(cli.server.as_deref(), None);
+            let target = match auth::resolve_target(&cfg, std::path::Path::new(&path)) {
+                Ok(t) => t,
+                Err(e) => {
+                    // Not-logged-in is interactive ship's cue to pair first.
+                    let (message, _) = crate::out::split_hint(&e);
+                    if message.contains("not logged in") || message.contains("ambiguous") {
+                        let server = dialoguer::Input::<String>::new()
+                            .with_prompt("Server URL")
+                            .default(cfg.server.clone().unwrap_or_default())
+                            .interact_text()?;
+                        auth::login(&server, "manage").await?;
+                        let cfg = config::CliConfig::load(Some(&server), None);
+                        auth::resolve_target(&cfg, std::path::Path::new(&path))?
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
+            let has_session =
+                config::CredentialStore::load().get(&target.server).and_then(|c| c.cookie.clone()).is_some();
+            ship::run(&target.client, &target.server, Some(path.to_str().unwrap_or(".")), port, secret, !has_session)
+                .await?;
         }
-        Commands::Init { project, node, mcp, force, path } => {
-            commands::init::run(commands::init::InitArgs { project, node, mcp, force, path }, ci_mode, out).await?;
+        Commands::Init { project, node, server, mcp, force, path } => {
+            commands::init::run(commands::init::InitArgs { project, node, server, mcp, force, path }, ci_mode, out)
+                .await?;
         }
         Commands::Mcp => {
             mcp::run().await?;
@@ -510,9 +529,25 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 auth::login(&server, scope.as_deref().unwrap_or("manage")).await?;
             }
         }
-        Commands::Logout => {
-            auth::clear_session()?;
-            println!("Logged out.");
+        Commands::Logout { server: logout_target } => {
+            let mut store = config::CredentialStore::load();
+            match &logout_target {
+                Some(t) => {
+                    store.remove(t);
+                    store.save()?;
+                    println!("Logged out of {t}.");
+                }
+                None => {
+                    if store.servers.is_empty() {
+                        println!("Not logged in.");
+                    } else {
+                        let servers: Vec<String> = store.servers.keys().cloned().collect();
+                        store = config::CredentialStore::default();
+                        store.save()?;
+                        println!("Logged out of {} server(s): {}", servers.len(), servers.join(", "));
+                    }
+                }
+            }
         }
         Commands::Status { project, wait, timeout, healthy } => {
             let project = project.or_else(|| project_config::load(std::path::Path::new(".")).and_then(|c| c.project));
@@ -556,18 +591,29 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 if let Some(ref t) = token {
                     ci_mode.mask_secret(t);
                 }
-                if let Some(ref s) = server {
-                    ci_mode.mask_secret(s);
-                }
-                config::CliConfig::save(server.as_deref(), token.as_deref())?;
+                let Some(server) = server else {
+                    bail!(crate::out::fail(
+                        "config set needs --server with --token",
+                        "l8b config set --server <url> --token <token>  (stores a credential for that server)"
+                    ));
+                };
+                let Some(token) = token else {
+                    bail!(crate::out::fail(
+                        "config set needs --token with --server",
+                        "l8b config set --server <url> --token <token>  (or pair interactively: l8b login --server <url> --pair)"
+                    ));
+                };
+                let mut store = config::CredentialStore::load();
+                store.upsert(&server, config::ServerCredential { token: Some(token), ..Default::default() });
+                store.save()?;
                 if ci_mode.enabled {
                     println!("Config saved.");
                 } else {
-                    println!("Config saved to {}", config::CliConfig::config_path().display());
+                    println!("Config saved to {}", config::CredentialStore::path().display());
                 }
             }
             ConfigAction::Show => {
-                config::CliConfig::show(ci_mode.enabled)?;
+                config::CredentialStore::load().show(ci_mode.enabled)?;
             }
         },
     }

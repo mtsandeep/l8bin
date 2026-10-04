@@ -1,0 +1,5 @@
+# LiteBin project config — used by `l8b deploy/env/status` as defaults.
+# Written by `l8b init`, updated automatically after a successful deploy.
+# Commit this file — it holds no secrets; env values live on the server (l8b env push).
+project = "landing"
+server = "https://dash.l8b.in"

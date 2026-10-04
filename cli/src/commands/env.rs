@@ -43,9 +43,10 @@ pub(crate) async fn list(
     token_flag: Option<&str>,
     out: &Out,
 ) -> Result<()> {
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     let env = auth::api_get(&client, &server, &format!("/projects/{}/env", args.project)).await?;
     out.ok(&EnvPayload {
@@ -66,9 +67,10 @@ pub(crate) async fn push(
     ci_mode: &crate::ci::CiMode,
     out: &Out,
 ) -> Result<()> {
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     let raw: Vec<u8> = if args.stdin {
         use std::io::Read;

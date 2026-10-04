@@ -40,6 +40,7 @@ fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project ID (default: l8b.toml)"},
+                    "server": {"type": "string", "description": "LiteBin server URL (default: l8b.toml server, else your only login; refused with the choices if ambiguous)"},
                     "path": {"type": "string", "description": "Project directory (default: cwd)"},
                     "port": {"type": "integer", "description": "Internal app port"},
                     "env_file": {"type": "string", "description": "Push this file as runtime env after deploying"},
@@ -48,6 +49,9 @@ fn tools() -> Vec<Tool> {
             }),
             invoke: |a| {
                 let mut argv = vec!["deploy".into(), "--json".into()];
+                if let Some(v) = a["server"].as_str() {
+                    argv.push(format!("--server={v}"));
+                }
                 if let Some(v) = a["project"].as_str() {
                     argv.push(format!("--project={v}"));
                 }
@@ -73,6 +77,7 @@ fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project ID (default: l8b.toml)"},
+                    "server": {"type": "string", "description": "LiteBin server URL (default: l8b.toml server, else your only login; refused with the choices if ambiguous)"},
                     "wait": {"type": "boolean", "description": "Wait for a terminal state"},
                     "healthy": {"type": "boolean", "description": "Probe the URL for a 2xx (implies wait)"},
                     "timeout": {"type": "integer", "description": "Wait timeout seconds (default 120)"}
@@ -80,6 +85,9 @@ fn tools() -> Vec<Tool> {
             }),
             invoke: |a| {
                 let mut argv = vec!["status".into(), "--json".into()];
+                if let Some(v) = a["server"].as_str() {
+                    argv.push(format!("--server={v}"));
+                }
                 if let Some(v) = a["project"].as_str() {
                     argv.push(format!("--project={v}"));
                 }
@@ -108,6 +116,7 @@ fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project ID (default: l8b.toml)"},
+                    "server": {"type": "string", "description": "LiteBin server URL (default: l8b.toml server, else your only login; refused with the choices if ambiguous)"},
                     "tail": {"type": "integer", "description": "Number of lines (default 100)"},
                     "service": {"type": "string", "description": "Service name for multi-service projects"},
                     "deploy": {"type": "boolean", "description": "Show deploy logs instead"}
@@ -116,6 +125,9 @@ fn tools() -> Vec<Tool> {
             invoke: |a| {
                 let project = a["project"].as_str().map(str::to_string);
                 let mut argv = vec!["logs".into(), "--json".into()];
+                if let Some(v) = a["server"].as_str() {
+                    argv.push(format!("--server={v}"));
+                }
                 if let Some(v) = a["tail"].as_u64() {
                     argv.push(format!("--tail={v}"));
                 }
@@ -136,10 +148,16 @@ fn tools() -> Vec<Tool> {
             description: "Runtime env keys with masked previews (values are write-only).",
             schema: json!({
                 "type": "object",
-                "properties": {"project": {"type": "string", "description": "Project ID (default: l8b.toml)"}}
+                "properties": {
+                    "project": {"type": "string", "description": "Project ID (default: l8b.toml)"},
+                    "server": {"type": "string", "description": "LiteBin server URL (default: l8b.toml server, else your only login; refused with the choices if ambiguous)"}
+                }
             }),
             invoke: |a| {
                 let mut argv = vec!["env".into(), "list".into(), "--json".into()];
+                if let Some(v) = a["server"].as_str() {
+                    argv.push(format!("--server={v}"));
+                }
                 if let Some(v) = a["project"].as_str() {
                     argv.push(v.into());
                 }
@@ -153,6 +171,7 @@ fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project ID (default: l8b.toml)"},
+                    "server": {"type": "string", "description": "LiteBin server URL (default: l8b.toml server, else your only login; refused with the choices if ambiguous)"},
                     "env": {"type": "object", "description": "KEY → value pairs to set", "additionalProperties": {"type": "string"}},
                     "replace": {"type": "boolean", "description": "Remove keys not present in env"},
                     "apply": {"type": "boolean", "description": "Recreate to apply now"}
@@ -161,6 +180,9 @@ fn tools() -> Vec<Tool> {
             }),
             invoke: |a| {
                 let mut argv = vec!["env".into(), "push".into(), "--stdin".into(), "--json".into()];
+                if let Some(v) = a["server"].as_str() {
+                    argv.push(format!("--server={v}"));
+                }
                 if a["replace"].as_bool() == Some(true) {
                     argv.push("--replace".into());
                 }

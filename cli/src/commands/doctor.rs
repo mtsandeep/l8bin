@@ -20,21 +20,22 @@ struct CheckResult {
 pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out: &Out) -> Result<()> {
     let mut checks: Vec<CheckResult> = Vec::new();
 
-    // Server configured + reachable
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let server = match auth::resolve_server(&cfg) {
-        Ok(s) => s,
-        Err(_) => {
+    // Target resolution: the refusal itself is the diagnosis.
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = match auth::resolve_target(&cfg, std::path::Path::new(".")) {
+        Ok(t) => t,
+        Err(e) => {
             checks.push(CheckResult {
                 name: "server".into(),
                 ok: false,
-                detail: "no server configured".into(),
-                hint: Some("l8b login --server <url> --pair  or  --server / L8B_SERVER".into()),
+                detail: crate::out::split_hint(&e).0,
+                hint: crate::out::split_hint(&e).1,
             });
             finish(&checks, out);
             return Ok(());
         }
     };
+    let server = target.server;
 
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()?;
     let health = client.get(format!("{server}/health")).send().await;
@@ -63,38 +64,29 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
     }
 
     // Auth (token or session) — /whoami identifies the credential
-    let authed = auth::authenticated_client(&cfg);
-    match authed {
-        Ok(c) => match auth::api_get(&c, &server, "/whoami").await {
-            Ok(me) => {
-                let identity = if me["kind"].as_str() == Some("token") {
-                    let name = me["name"].as_str().unwrap_or("unnamed");
-                    let scope = me["scope"].as_str().unwrap_or("?");
-                    match me["project_id"].as_str() {
-                        Some(p) => format!("token '{name}' (scope {scope}, project '{p}')"),
-                        None => format!("token '{name}' (scope {scope})"),
-                    }
-                } else {
-                    format!("session '{}'", me["username"].as_str().unwrap_or("?"))
-                };
-                checks.push(CheckResult {
-                    name: "auth".into(),
-                    ok: true,
-                    detail: format!("authenticated ({identity})"),
-                    hint: None,
-                })
-            }
-            Err(e) => checks.push(CheckResult {
+    match auth::api_get(&target.client, &server, "/whoami").await {
+        Ok(me) => {
+            let identity = if me["kind"].as_str() == Some("token") {
+                let name = me["name"].as_str().unwrap_or("unnamed");
+                let scope = me["scope"].as_str().unwrap_or("?");
+                match me["project_id"].as_str() {
+                    Some(p) => format!("token '{name}' (scope {scope}, project '{p}')"),
+                    None => format!("token '{name}' (scope {scope})"),
+                }
+            } else {
+                format!("session '{}'", me["username"].as_str().unwrap_or("?"))
+            };
+            checks.push(CheckResult {
                 name: "auth".into(),
-                ok: false,
-                detail: format!("credentials rejected: {e}"),
-                hint: Some("l8b login --server <url> --pair  or  l8b config set --token <token>".into()),
-            }),
-        },
-        Err(_) => checks.push(CheckResult {
+                ok: true,
+                detail: format!("authenticated ({identity})"),
+                hint: None,
+            })
+        }
+        Err(e) => checks.push(CheckResult {
             name: "auth".into(),
             ok: false,
-            detail: "not logged in".into(),
+            detail: format!("credentials rejected: {e}"),
             hint: Some("l8b login --server <url> --pair".into()),
         }),
     }

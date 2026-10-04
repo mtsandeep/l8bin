@@ -1,11 +1,24 @@
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+/// Per-invocation overrides (CLI flags > env vars). Stored credentials live
+/// in `CredentialStore`.
+#[derive(Debug, Clone, Default)]
 pub struct CliConfig {
     pub server: Option<String>,
     pub token: Option<String>,
+}
+
+impl CliConfig {
+    pub fn load(cli_server: Option<&str>, cli_token: Option<&str>) -> Self {
+        Self {
+            server: cli_server.map(str::to_string).or_else(|| std::env::var("L8B_SERVER").ok()),
+            token: cli_token.map(str::to_string).or_else(|| std::env::var("L8B_TOKEN").ok()),
+        }
+    }
 }
 
 pub const APP_DIR: &str = "litebin";
@@ -32,67 +45,108 @@ pub const IMAGE_PREFIX: &str = "l8b";
 /// Max retries for network-dependent operations (downloads, builds)
 pub const MAX_RETRIES: u32 = 3;
 
-impl CliConfig {
-    /// Load config from: CLI args > env vars > config file
-    pub fn load(cli_server: Option<&str>, cli_token: Option<&str>) -> Result<Self> {
-        let file_config = Self::read_config_file().unwrap_or_default();
+/// Credential for one server: a pairing/token auth, or a session cookie.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServerCredential {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// Token name (from pairing), for display only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookie: Option<String>,
+}
 
-        let server = cli_server
-            .map(|s| s.to_string())
-            .or_else(|| std::env::var("L8B_SERVER").ok())
-            .or(file_config.server.clone());
-
-        let token =
-            cli_token.map(|s| s.to_string()).or_else(|| std::env::var("L8B_TOKEN").ok()).or(file_config.token.clone());
-
-        Ok(Self { server, token })
+impl ServerCredential {
+    pub fn auth_header(&self) -> Option<String> {
+        if let Some(ref t) = self.token { Some(format!("Bearer {t}")) } else { self.cookie.clone() }
     }
+}
 
-    pub fn config_path() -> PathBuf {
+/// All stored logins, keyed by normalized server URL. `default` marks the
+/// last one logged into.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CredentialStore {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub servers: BTreeMap<String, ServerCredential>,
+}
+
+pub fn normalize_server(server: &str) -> String {
+    let s = server.trim().trim_end_matches('/');
+    if s.starts_with("http://") || s.starts_with("https://") { s.to_string() } else { format!("https://{s}") }
+}
+
+impl CredentialStore {
+    pub fn path() -> PathBuf {
         dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join(APP_DIR).join(CONFIG_FILE)
     }
 
-    pub fn read_config_file() -> Option<CliConfig> {
-        let path = Self::config_path();
-        let content = std::fs::read_to_string(&path).ok()?;
-        toml::from_str(&content).ok()
+    pub fn load() -> Self {
+        let path = Self::path();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => return Self::default(),
+        };
+        match toml::from_str(&content) {
+            Ok(store) => store,
+            Err(e) => {
+                eprintln!("warning: invalid {} ({e}); treating as empty — re-login with l8b login", path.display());
+                Self::default()
+            }
+        }
     }
 
-    pub fn save(server: Option<&str>, token: Option<&str>) -> Result<()> {
-        let path = Self::config_path();
+    pub fn save(&self) -> Result<()> {
+        let path = Self::path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-
-        let mut config = Self::read_config_file().unwrap_or_default();
-        if let Some(s) = server {
-            config.server = Some(s.to_string());
-        }
-        if let Some(t) = token {
-            config.token = Some(t.to_string());
-        }
-
-        let content = toml::to_string_pretty(&config)?;
-        std::fs::write(&path, content)?;
+        std::fs::write(&path, toml::to_string_pretty(self)?)?;
         Ok(())
     }
 
-    /// Show config: redacted in CI mode, raw in normal mode.
-    pub fn show(ci_enabled: bool) -> Result<()> {
-        let path = Self::config_path();
-        if !path.exists() {
-            println!("No config found. Set with:");
-            println!("  l8b config set --server <url>");
-            println!("  l8b config set --token <token>");
+    pub fn get(&self, server: &str) -> Option<&ServerCredential> {
+        self.servers.get(&normalize_server(server)).filter(|c| c.auth_header().is_some())
+    }
+
+    pub fn upsert(&mut self, server: &str, credential: ServerCredential) {
+        self.default = Some(normalize_server(server));
+        self.servers.insert(normalize_server(server), credential);
+    }
+
+    pub fn remove(&mut self, server: &str) {
+        let key = normalize_server(server);
+        self.servers.remove(&key);
+        if self.default.as_deref() == Some(key.as_str()) {
+            self.default = self.servers.keys().next().cloned();
+        }
+    }
+
+    /// Every server with a usable credential.
+    pub fn logged_in_servers(&self) -> Vec<&String> {
+        self.servers.iter().filter(|(_, c)| c.auth_header().is_some()).map(|(s, _)| s).collect()
+    }
+
+    /// Show: redacted in CI mode, raw file otherwise.
+    pub fn show(&self, ci_enabled: bool) -> Result<()> {
+        let path = Self::path();
+        if self.servers.is_empty() {
+            println!("No logins stored. Add one with:");
+            println!("  l8b login --server <url> --pair");
             return Ok(());
         }
         if ci_enabled {
-            let cfg = Self::read_config_file().unwrap_or_default();
-            println!("server: {}", cfg.server.as_deref().unwrap_or("(not set)"));
-            println!("token: {}", if cfg.token.is_some() { "(set)" } else { "(not set)" });
+            for s in self.logged_in_servers() {
+                let marker = if self.default.as_deref() == Some(s.as_str()) { " (default)" } else { "" };
+                println!("server: {s}{marker}");
+                println!("  auth: token (set)");
+            }
         } else {
-            let content = std::fs::read_to_string(&path)?;
-            println!("{}", content);
+            println!("{}", std::fs::read_to_string(&path).unwrap_or_default());
         }
         Ok(())
     }

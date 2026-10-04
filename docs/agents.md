@@ -5,9 +5,8 @@ Drop this file in your repo (as `AGENTS.md`, or merge into an existing one) so a
 ```markdown
 ## Deploying (LiteBin)
 
-This project deploys to LiteBin. The `l8b` CLI is pre-configured via `l8b.toml`
-and the MCP server is wired in `.mcp.json` — prefer the LiteBin MCP tools, or
-fall back to the CLI.
+This project deploys to LiteBin (`server` in `l8b.toml`). The MCP server is
+wired in `.mcp.json` — prefer the LiteBin MCP tools, or fall back to the CLI.
 
 - Deploy the current directory: tool `deploy` (or `l8b deploy`) — after a
   successful deploy, `l8b.toml` records the project so future sessions need

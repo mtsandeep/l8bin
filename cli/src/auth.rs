@@ -2,34 +2,100 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use litebin_common::types::NodeStatus;
 use reqwest::header::HeaderValue;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-use crate::config::CliConfig;
+use crate::config::{CliConfig, CredentialStore, normalize_server};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Session {
+/// A resolved deployment target: the server this command will hit, plus a
+/// client authenticated with that server's credential.
+pub struct Target {
     pub server: String,
-    pub cookie: String,
+    pub client: reqwest::Client,
 }
 
-const SESSION_FILE: &str = "session.json";
-
-pub fn session_path() -> std::path::PathBuf {
-    dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join(crate::config::APP_DIR).join(SESSION_FILE)
-}
-
-pub fn load_session() -> Option<Session> {
-    let path = session_path();
-    let content = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&content).ok()
-}
-
-pub fn clear_session() -> Result<()> {
-    let path = session_path();
-    if path.exists() {
-        std::fs::remove_file(&path)?;
+pub fn client_for(auth: String) -> Result<reqwest::Client> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if !auth.is_empty() {
+        let (name, value) = if auth.starts_with("Bearer ") { ("Authorization", auth) } else { ("Cookie", auth) };
+        headers.insert(
+            name,
+            HeaderValue::from_str(&value).map_err(|e| anyhow::anyhow!("invalid stored credential: {}", e))?,
+        );
     }
-    Ok(())
+    Ok(reqwest::Client::builder().default_headers(headers).timeout(std::time::Duration::from_secs(300)).build()?)
+}
+
+/// Resolve which server this command targets and build a client with that
+/// server's credential. Resolution order: `--server`/L8B_SERVER > `l8b.toml`
+/// `server` > the single stored login. Ambiguity is a refusal that lists the
+/// choices — never a silent default.
+pub fn resolve_target(cfg: &CliConfig, dir: &std::path::Path) -> Result<Target> {
+    let store = CredentialStore::load();
+    let toml_server = crate::project_config::load(dir).and_then(|c| c.server);
+    let (server, auth) = pick_server(cfg.server.as_deref(), toml_server.as_deref(), cfg.token.as_deref(), &store)?;
+    Ok(Target { server, client: client_for(auth)? })
+}
+
+/// The resolution rules, pure so they can be tested. Returns the server URL
+/// and its auth header value (raw token overrides the stored credential).
+pub fn pick_server(
+    flag_server: Option<&str>,
+    toml_server: Option<&str>,
+    raw_token: Option<&str>,
+    store: &CredentialStore,
+) -> Result<(String, String)> {
+    let bearer = |t: &str| format!("Bearer {t}");
+
+    for (candidate, login_msg) in [
+        (flag_server, "not logged in to {server}"),
+        (toml_server, "this repo deploys to {server}, but you are not logged in to it"),
+    ] {
+        if let Some(c) = candidate {
+            let server = normalize_server(c);
+            match store.get(&server) {
+                Some(cred) => {
+                    let auth = raw_token.map(bearer).or_else(|| cred.auth_header()).unwrap_or_default();
+                    return Ok((server, auth));
+                }
+                None if raw_token.is_some() => return Ok((server, bearer(raw_token.unwrap()))),
+                None => {
+                    return Err(crate::out::fail(
+                        login_msg.replace("{server}", &server),
+                        format!("l8b login --server {server} --pair"),
+                    ));
+                }
+            }
+        }
+    }
+
+    let logged_in = store.logged_in_servers();
+    match logged_in.len() {
+        0 => Err(crate::out::fail("not logged in to any server", "l8b login --server <url> --pair")),
+        1 => {
+            let server = logged_in[0].clone();
+            let auth =
+                raw_token.map(bearer).or_else(|| store.get(&server).and_then(|c| c.auth_header())).unwrap_or_default();
+            Ok((server, auth))
+        }
+        _ => {
+            let list = logged_in.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+            Err(crate::out::fail(
+                format!("ambiguous server — logged into: {list}"),
+                "pass --server, set `server` in l8b.toml, or run l8b init",
+            ))
+        }
+    }
+}
+
+/// Session cookie for a server, for endpoints that need a dashboard login
+/// (project creation, token minting).
+fn cookie_for(server: &str) -> Result<String> {
+    CredentialStore::load().get(server).and_then(|c| c.cookie.clone()).ok_or_else(|| {
+        crate::out::fail(
+            format!("this command needs a dashboard login (username/password) to {server}"),
+            format!("l8b login --server {server} --password"),
+        )
+    })
 }
 
 /// Username/password login (session-based, same access as the dashboard).
@@ -67,17 +133,11 @@ pub async fn login_password(server: &str) -> Result<()> {
         anyhow::bail!("login succeeded but no session cookie received");
     }
 
-    // Re-save via save_session inline (the fn was removed with the old flow).
-    let session = Session { server: server.trim_end_matches('/').to_string(), cookie };
-    {
-        let path = session_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&path, serde_json::to_string_pretty(&session)?)?;
-    }
-    crate::config::CliConfig::save(Some(&session.server), None)?;
-    println!("{} Authenticated. Session saved.", "✓".green());
+    let server = normalize_server(&server);
+    let mut store = CredentialStore::load();
+    store.upsert(&server, crate::config::ServerCredential { cookie: Some(cookie), ..Default::default() });
+    store.save()?;
+    println!("{} Authenticated. Session saved for {server}.", "✓".green());
     Ok(())
 }
 
@@ -159,9 +219,15 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
                 let scope = body["scope"].as_str().unwrap_or("deploy").to_string();
                 let project = body["project_id"].as_str();
 
-                crate::config::CliConfig::save(Some(&server), Some(&token))?;
+                let mut store = CredentialStore::load();
+                store.upsert(
+                    &server,
+                    crate::config::ServerCredential { token: Some(token), scope: Some(scope), ..Default::default() },
+                );
+                store.save()?;
                 println!();
-                println!("{} Authenticated. Token saved (scope: {scope}).", "✓".green());
+                let scope = store.get(&server).and_then(|c| c.scope.clone()).unwrap_or_default();
+                println!("{} Authenticated. Token saved for {server} (scope: {scope}).", "✓".green());
                 if let Some(p) = project {
                     println!("  Bound to project '{p}'.");
                 }
@@ -173,40 +239,6 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
     }
 }
 
-/// Build a reqwest client with the appropriate auth headers.
-/// Priority: deploy token > session cookie.
-/// Returns an error if neither a token nor a session is available.
-pub fn authenticated_client(config: &CliConfig) -> Result<reqwest::Client> {
-    let mut headers = reqwest::header::HeaderMap::new();
-
-    if let Some(token) = &config.token {
-        let val = format!("Bearer {}", token);
-        headers.insert("Authorization", val.parse().map_err(|e| anyhow::anyhow!("invalid token: {}", e))?);
-    } else if let Some(session) = load_session() {
-        headers.insert(
-            "Cookie",
-            HeaderValue::from_str(&session.cookie).map_err(|e| anyhow::anyhow!("invalid session cookie: {}", e))?,
-        );
-    } else {
-        anyhow::bail!("not authenticated. Run: l8b login --server <url>  or  set L8B_TOKEN");
-    }
-
-    let client =
-        reqwest::Client::builder().default_headers(headers).timeout(std::time::Duration::from_secs(300)).build()?;
-
-    Ok(client)
-}
-
-pub fn resolve_server(config: &CliConfig) -> Result<String> {
-    if let Some(server) = &config.server {
-        Ok(server.trim_end_matches('/').to_string())
-    } else if let Some(session) = load_session() {
-        Ok(session.server)
-    } else {
-        anyhow::bail!("no server URL. Use --server, L8B_SERVER env, or l8b login --server <url>")
-    }
-}
-
 /// POST to the API using session (cookie) auth.
 pub async fn session_post(
     client: &reqwest::Client,
@@ -214,12 +246,12 @@ pub async fn session_post(
     path: &str,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let session = load_session().ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
+    let cookie = cookie_for(server)?;
 
     let url = format!("{}{}", server.trim_end_matches('/'), path);
     let resp = client
         .post(&url)
-        .header("Cookie", &session.cookie)
+        .header("Cookie", &cookie)
         .header("Content-Type", "application/json")
         .json(body)
         .send()
@@ -240,15 +272,11 @@ pub async fn session_post(
 
 /// GET from the API using session (cookie) auth.
 pub async fn session_get(client: &reqwest::Client, server: &str, path: &str) -> Result<serde_json::Value> {
-    let session = load_session().ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
+    let cookie = cookie_for(server)?;
 
     let url = format!("{}{}", server.trim_end_matches('/'), path);
-    let resp = client
-        .get(&url)
-        .header("Cookie", &session.cookie)
-        .send()
-        .await
-        .with_context(|| format!("GET {} failed", url))?;
+    let resp =
+        client.get(&url).header("Cookie", &cookie).send().await.with_context(|| format!("GET {} failed", url))?;
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
@@ -264,15 +292,11 @@ pub async fn session_get(client: &reqwest::Client, server: &str, path: &str) -> 
 
 /// DELETE from the API using session (cookie) auth.
 pub async fn session_delete(client: &reqwest::Client, server: &str, path: &str) -> Result<serde_json::Value> {
-    let session = load_session().ok_or_else(|| anyhow::anyhow!("not logged in. Run: l8b login --server <url>"))?;
+    let cookie = cookie_for(server)?;
 
     let url = format!("{}{}", server.trim_end_matches('/'), path);
-    let resp = client
-        .delete(&url)
-        .header("Cookie", &session.cookie)
-        .send()
-        .await
-        .with_context(|| format!("DELETE {} failed", url))?;
+    let resp =
+        client.delete(&url).header("Cookie", &cookie).send().await.with_context(|| format!("DELETE {} failed", url))?;
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
@@ -538,4 +562,84 @@ pub async fn request_upload_target(
     let target: UploadTarget =
         serde_json::from_str(&text).with_context(|| format!("failed to parse upload-target response: {}", text))?;
     Ok(target)
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    use crate::config::{CredentialStore, ServerCredential};
+
+    fn store_with(servers: &[&str]) -> CredentialStore {
+        let mut s = CredentialStore::default();
+        for url in servers {
+            s.upsert(url, ServerCredential { token: Some(format!("t-{url}")), ..Default::default() });
+        }
+        s
+    }
+
+    #[test]
+    fn server_resolution_rules() {
+        let store = store_with(&["https://a.io", "https://b.io"]);
+
+        // Flag wins and carries that server's own credential.
+        let (s, auth) = pick_server(Some("https://b.io"), Some("https://a.io"), None, &store).unwrap();
+        assert_eq!(s, "https://b.io");
+        assert_eq!(auth, "Bearer t-https://b.io");
+
+        // Flag for an unknown server without a raw token: refusal with the fix.
+        let e = pick_server(Some("https://c.io"), None, None, &store).unwrap_err();
+        let text = format!("{e:#}");
+        assert!(text.contains("not logged in to https://c.io"), "got: {text}");
+        assert!(text.contains("l8b login --server https://c.io --pair"));
+
+        // Raw token satisfies an unknown flagged server.
+        let (s, auth) = pick_server(Some("https://c.io"), None, Some("raw"), &store).unwrap();
+        assert_eq!(s, "https://c.io");
+        assert_eq!(auth, "Bearer raw");
+
+        // Toml server beats the store; URLs normalize.
+        let (s, _) = pick_server(None, Some("https://b.io/"), None, &store).unwrap();
+        assert_eq!(s, "https://b.io");
+
+        // Toml server without a login: refusal naming the repo's server.
+        let e = pick_server(None, Some("https://d.io"), None, &store).unwrap_err();
+        assert!(format!("{e:#}").contains("this repo deploys to https://d.io"));
+
+        // Multiple logins and no signal: the ambiguity menu.
+        let e = pick_server(None, None, None, &store).unwrap_err();
+        let text = format!("{e:#}");
+        assert!(text.contains("ambiguous server"), "got: {text}");
+        assert!(text.contains("https://a.io") && text.contains("https://b.io"));
+
+        // Exactly one login is the honest default.
+        let (s, _) = pick_server(None, None, None, &store_with(&["https://solo.io"])).unwrap();
+        assert_eq!(s, "https://solo.io");
+
+        // Nothing stored.
+        let e = pick_server(None, None, None, &CredentialStore::default()).unwrap_err();
+        assert!(format!("{e:#}").contains("not logged in to any server"));
+    }
+
+    #[test]
+    fn credential_store_round_trips_through_toml() {
+        let mut store = CredentialStore::default();
+        store.upsert(
+            "https://a.io",
+            ServerCredential {
+                token: Some("secret".into()),
+                name: Some("paired".into()),
+                scope: Some("deploy".into()),
+                ..Default::default()
+            },
+        );
+        store.upsert("https://b.io", ServerCredential { cookie: Some("sid=1".into()), ..Default::default() });
+
+        let text = toml::to_string_pretty(&store).unwrap();
+        let parsed: CredentialStore = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.get("https://a.io").unwrap().token.as_deref(), Some("secret"));
+        assert_eq!(parsed.get("https://a.io").unwrap().auth_header().as_deref(), Some("Bearer secret"));
+        assert_eq!(parsed.get("https://b.io").unwrap().auth_header().as_deref(), Some("sid=1"));
+        assert_eq!(parsed.default.as_deref(), Some("https://b.io"));
+        assert!(parsed.get("https://missing.io").is_none());
+    }
 }

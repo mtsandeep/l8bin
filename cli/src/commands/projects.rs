@@ -30,9 +30,10 @@ struct ProjectSummary {
 }
 
 pub(crate) async fn list(server_flag: Option<&str>, token_flag: Option<&str>, out: &Out) -> Result<()> {
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     let projects = auth::api_get(&client, &server, "/projects").await?;
     let stats = auth::api_get(&client, &server, "/projects/stats").await?;
@@ -134,9 +135,10 @@ pub(crate) struct LogsArgs {
 }
 
 pub(crate) async fn logs(args: LogsArgs, server_flag: Option<&str>, token_flag: Option<&str>, out: &Out) -> Result<()> {
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     let path = if args.deploy {
         format!("/projects/{}/deploy-logs", args.project)
@@ -179,9 +181,10 @@ pub(crate) async fn logs(args: LogsArgs, server_flag: Option<&str>, token_flag: 
 // ── url ──────────────────────────────────────────────────────────────────────
 
 pub(crate) async fn url(project: String, server_flag: Option<&str>, token_flag: Option<&str>, out: &Out) -> Result<()> {
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     let result = status::build_status_result(&client, &server, &project).await?;
     out.ok(&serde_json::json!({"project_id": result.project_id, "url": result.url}));
@@ -217,9 +220,10 @@ pub(crate) async fn stop(
     token_flag: Option<&str>,
     out: &Out,
 ) -> Result<()> {
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     if let Err(e) =
         auth::api_post_json(&client, &server, &format!("/projects/{project}/stop"), &serde_json::json!({})).await
@@ -257,9 +261,10 @@ pub(crate) async fn start(
     token_flag: Option<&str>,
     out: &Out,
 ) -> Result<()> {
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     auth::api_post_json(&client, &server, &format!("/projects/{project}/start"), &serde_json::json!({})).await?;
     let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
@@ -275,9 +280,10 @@ pub(crate) async fn restart(
     token_flag: Option<&str>,
     out: &Out,
 ) -> Result<()> {
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     auth::api_post_json(&client, &server, &format!("/projects/{project}/recreate"), &serde_json::json!({})).await?;
     let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
@@ -318,9 +324,10 @@ pub(crate) async fn domain_set(
             .to_string()
     };
 
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     auth::api_patch_json(
         &client,
@@ -389,9 +396,10 @@ pub(crate) async fn delete(
         }
     }
 
-    let cfg = config::CliConfig::load(server_flag, token_flag)?;
-    let client = auth::authenticated_client(&cfg)?;
-    let server = auth::resolve_server(&cfg)?;
+    let cfg = config::CliConfig::load(server_flag, token_flag);
+    let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
+    let client = target.client;
+    let server = target.server;
 
     auth::api_delete(&client, &server, &format!("/projects/{project}")).await?;
     out.ok(&DeleteResult { project_id: project.clone(), deleted: true });
