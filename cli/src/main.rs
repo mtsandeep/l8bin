@@ -4,6 +4,7 @@ mod ci;
 mod commands;
 mod config;
 mod deploy;
+mod mcp;
 mod mise;
 mod out;
 mod project_config;
@@ -195,6 +196,8 @@ enum Commands {
     },
     /// Environment sanity checks with recovery hints
     Doctor,
+    /// Run as a stdio MCP server exposing l8b as tools (for coding agents)
+    Mcp,
     /// First-run bootstrap: create the admin account and pair this machine
     Setup {
         /// Server URL
@@ -434,6 +437,9 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 out,
             )
             .await?;
+        }
+        Commands::Mcp => {
+            mcp::run().await?;
         }
         Commands::Doctor => {
             commands::doctor::run(cli.server.as_deref(), cli.token.as_deref(), out).await?;

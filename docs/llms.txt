@@ -44,6 +44,19 @@ Commands (project flags default to `l8b.toml`, created by `l8b init`):
 
 All commands accept `--json` for machine-readable output.
 
+## MCP
+
+`l8b mcp` runs a stdio MCP server exposing these tools: deploy, status
+(wait/healthy), list, logs, env_list, env_push, stop, start, restart, url,
+domain_set, domain_remove, delete (confirm-gated), doctor. It uses the CLI's
+stored auth and l8b.toml defaults. Register it with:
+
+```json
+{ "mcpServers": { "litebin": { "command": "l8b", "args": ["mcp"] } } }
+```
+
+(`l8b init --mcp` writes this into the workspace `.mcp.json`.)
+
 ## Architecture
 
 - [Architecture overview](architecture.md) — Orchestrator + Agent + Caddy reverse proxy
@@ -61,6 +74,7 @@ All commands accept `--json` for machine-readable output.
 - [Getting started](cli.md) — First deployment walkthrough
 - [Multi-service deployment](multi-service.md) — Compose projects
 - [Local testing](local-testing.md) — Dev environment setup
+- [Agents](agents.md) — AGENTS.md template and MCP wiring for coding agents
 - [Security internals](security.md) — Auth, mTLS, deploy tokens
 
 ## Optional
