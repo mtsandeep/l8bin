@@ -455,7 +455,9 @@ pub async fn wake_for_host(
     if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() }
 }
 
-/// Catch-all fallback handler. Caddy proxies here when no project-specific route matches.
+/// Catch-all for requests that match no API route. Dashboard-host and bare-domain
+/// traffic is proxied to the dashboard SPA — the orchestrator is the sole router
+/// for the dashboard host. Anything else falls through to the waker.
 pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::body::Body>) -> Response {
     let (parts, body) = req.into_parts();
     let host = parts.headers.get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
@@ -464,6 +466,25 @@ pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::
     let uri = parts.uri.clone();
     let headers = parts.headers.clone();
     let body = axum::body::to_bytes(body, 10 * 1024 * 1024).await.unwrap_or_default();
+
+    let snap = state.platform.snapshot();
+    let host_without_port = host.split(':').next().unwrap_or("");
+    let dashboard_host = format!("{}.{}", snap.dashboard_subdomain, snap.domain);
+    if host_without_port == dashboard_host
+        || host_without_port == snap.domain
+        || (snap.domain == "localhost" && host_without_port == "127.0.0.1")
+    {
+        return proxy_request(
+            &state.proxy_client,
+            method,
+            &state.config.dashboard_upstream,
+            uri.path_and_query().map(|pq| pq.as_str()),
+            &headers,
+            body,
+        )
+        .await;
+    }
+
     wake_for_host(state, host, json, method, &uri, &headers, body).await
 }
 

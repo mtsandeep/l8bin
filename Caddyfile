@@ -2,82 +2,9 @@
 	admin 0.0.0.0:2019
 }
 
-# Static fallback — orchestrator replaces this via /load on startup.
-# Ensures the dashboard is reachable even before the orchestrator syncs routes.
+# Static fallback — the orchestrator replaces this via /load on startup.
+# All dashboard-host traffic (API + SPA) goes to the orchestrator, which routes
+# API paths itself and proxies the rest to the dashboard.
 {$DASHBOARD_SUBDOMAIN}.{$DOMAIN} {
-	handle /auth/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /compose {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /compose/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy-tokens {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy-tokens/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /images/* {
-		reverse_proxy litebin-orchestrator:5080 {
-			transport http {
-				read_timeout 1800s
-				write_timeout 1800s
-			}
-		}
-	}
-	handle /nodes {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /nodes/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /settings {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /settings/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /health {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /meta {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /caddy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /system/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle {
-		reverse_proxy litebin-dashboard:80
-	}
-}
-handle /whoami {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /caddy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /system/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle {
-		reverse_proxy litebin-dashboard:80
-	}
+	reverse_proxy litebin-orchestrator:5080
 }

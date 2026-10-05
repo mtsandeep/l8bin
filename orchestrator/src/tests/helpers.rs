@@ -21,58 +21,18 @@ use litebin_common::routing::{MasterProxyRouter, RoutingProvider};
 /// Spin up an in-memory DB, run migrations, and return both the TestServer and the DB pool.
 /// Use this when tests need to insert rows directly (e.g. to set up project fixtures).
 pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
-    let db = SqlitePool::connect("sqlite::memory:").await.unwrap();
-    sqlx::migrate!("src/db/migrations").run(&db).await.unwrap();
+    test_server_with_db_config(test_config()).await
+}
 
-    let now = chrono::Utc::now().timestamp();
-    sqlx::query(
-        "INSERT OR IGNORE INTO nodes (id, name, host, agent_port, status, fail_count, created_at, updated_at)
-         VALUES ('local', 'Local', 'localhost', 0, 'online', 0, ?, ?)",
-    )
-    .bind(now)
-    .bind(now)
-    .execute(&db)
-    .await
-    .unwrap();
+/// Spin up an in-memory DB, run migrations, and return a TestServer with the full router.
+pub async fn test_server() -> TestServer {
+    test_server_with_db_config(test_config()).await.0
+}
 
-    let config = Arc::new(test_config());
-    let docker = Arc::new(DockerManager::new_for_tests());
-    let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(Arc::new(MasterProxyRouter::new(
-        litebin_common::caddy::CaddyClient::new("http://localhost:2019"),
-        String::new(),
-    ))));
-
-    let platform = PlatformHandle::new(PlatformSettings {
-        domain: config.domain.clone(),
-        dashboard_subdomain: config.dashboard_subdomain.clone(),
-        poke_subdomain: config.poke_subdomain.clone(),
-        dns_target: String::new(),
-    });
-
-    let state = AppState {
-        config: config.clone(),
-        platform,
-        db: db.clone(),
-        docker,
-        router,
-        node_clients: Arc::new(DashMap::new()),
-        disk_cache: Arc::new(DashMap::new()),
-        project_locks: Arc::new(DashMap::new()),
-        wake_failures: Arc::new(DashMap::new()),
-        route_sync_tx: tokio::sync::mpsc::unbounded_channel().0,
-        proxy_client: reqwest::Client::new(),
-        multi_svc_health_check: Arc::new(DashMap::new()),
-        deploy_logs: Arc::new(DashMap::new()),
-        domain_jobs: Arc::new(DashMap::new()),
-        upload_store: Arc::new(
-            litebin_common::upload::UploadStore::new(
-                std::env::temp_dir().join("l8b-test-upload-store"),
-                litebin_common::upload::DEFAULT_CHUNK_SIZE,
-            )
-            .expect("upload store"),
-        ),
-    };
-
+/// test_server_with_db() with a caller-supplied Config
+/// (e.g. dashboard_upstream pointed at a local stub server).
+pub(crate) async fn test_server_with_db_config(config: Config) -> (TestServer, SqlitePool) {
+    let (state, db) = build_test_state(config).await;
     let app = build_router(state);
 
     let config = TestServerConfig { save_cookies: true, ..TestServerConfig::new() };
@@ -80,8 +40,8 @@ pub async fn test_server_with_db() -> (TestServer, SqlitePool) {
     (server, db)
 }
 
-/// Spin up an in-memory DB, run migrations, and return a TestServer with the full router.
-pub async fn test_server() -> TestServer {
+/// In-memory DB + full AppState; callers wrap it in a TestServer (or a real-socket server).
+pub(crate) async fn build_test_state(config: Config) -> (AppState, SqlitePool) {
     let db = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations").run(&db).await.unwrap();
 
@@ -97,9 +57,7 @@ pub async fn test_server() -> TestServer {
     .await
     .unwrap();
 
-    let config = Arc::new(test_config());
-
-    // Use the test constructor that doesn't connect to the Docker socket
+    let config = Arc::new(config);
     let docker = Arc::new(DockerManager::new_for_tests());
     let router: Arc<RwLock<Arc<dyn RoutingProvider>>> = Arc::new(RwLock::new(Arc::new(MasterProxyRouter::new(
         litebin_common::caddy::CaddyClient::new("http://localhost:2019"),
@@ -137,10 +95,7 @@ pub async fn test_server() -> TestServer {
         ),
     };
 
-    let app = build_router(state);
-
-    let config = TestServerConfig { save_cookies: true, ..TestServerConfig::new() };
-    TestServer::new_with_config(app, config).unwrap()
+    (state, db)
 }
 
 /// Build the full router for tests.
@@ -269,5 +224,6 @@ pub(crate) fn test_config() -> Config {
         public_ip: String::new(),
         dashboard_subdomain: "l8bin".to_string(),
         poke_subdomain: "poke".to_string(),
+        dashboard_upstream: "dashboard:80".to_string(),
     }
 }

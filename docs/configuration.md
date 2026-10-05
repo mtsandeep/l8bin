@@ -10,6 +10,7 @@ All configuration is done via environment variables in `.env` after install.
 | `DASHBOARD_SUBDOMAIN` | `l8bin` | Dashboard served at `{subdomain}.{domain}` (DB-backed after seed) |
 | `POKE_SUBDOMAIN` | `poke` | Wake-report endpoint subdomain (DB-backed; no Settings UI) |
 | `CADDY_ADMIN_URL` | `http://caddy:2019` | Caddy admin API URL |
+| `DASHBOARD_UPSTREAM` | `dashboard:80` | Where the orchestrator proxies non-API dashboard-host traffic (SPA) |
 | `DATABASE_URL` | `sqlite:./data/litebin.db` | SQLite database path |
 | `DOCKER_NETWORK` | `litebin-network` | Docker bridge network shared by all services and app containers |
 | `HOST` | `0.0.0.0` | Orchestrator bind address |

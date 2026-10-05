@@ -400,6 +400,39 @@ run_agent_caddy() {
     caddy:2.11.2-alpine
 }
 
+# Write the bootstrap Caddyfile. Read by caddy only at container boot — the
+# orchestrator replaces the running config via its admin API on startup.
+generate_caddyfile() {
+  cat > "$1" <<'CADDYFILE'
+{
+	admin 0.0.0.0:2019
+}
+
+# All dashboard-host traffic (API + SPA) goes to the orchestrator, which routes
+# API paths itself and proxies the rest to the dashboard.
+{$DASHBOARD_SUBDOMAIN}.{$DOMAIN} {
+	reverse_proxy litebin-orchestrator:5080
+}
+CADDYFILE
+}
+
+# Regenerate the bootstrap Caddyfile if this version's template changed.
+# Never restarts caddy here — a restart would drop the orchestrator-pushed
+# routes until the next sync; caddy reads the file on its next boot anyway.
+refresh_caddyfile_if_changed() {
+  local install_dir="$1" tmp
+  tmp=$(mktemp)
+  generate_caddyfile "$tmp"
+  if ! diff -q "$tmp" "${install_dir}/Caddyfile" >/dev/null 2>&1; then
+    echo ""
+    warn "Caddyfile updated for this version:"
+    diff -u --label "installed" --label "new" "${install_dir}/Caddyfile" "$tmp" || true
+    cp "$tmp" "${install_dir}/Caddyfile"
+    info "Caddyfile refreshed — caddy picks it up on its next restart"
+  fi
+  rm -f "$tmp"
+}
+
 # Run compose up in the install dir; die loudly if it fails.
 compose_up() {
   local install_dir="$1"
@@ -804,84 +837,7 @@ EOF
   chmod 600 "${install_dir}/.env" 2>/dev/null || true
 
   # -- Generate Caddyfile ------------------------------------------------
-  cat > "${install_dir}/Caddyfile" <<'CADDYFILE'
-{
-	admin 0.0.0.0:2019
-}
-
-{$DASHBOARD_SUBDOMAIN}.{$DOMAIN} {
-	handle /auth/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /compose {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /compose/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy-tokens {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy-tokens/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /images/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /nodes {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /nodes/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /settings {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /settings/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /health {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /meta {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /caddy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /system/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle {
-		reverse_proxy litebin-dashboard:80
-	}
-}
-handle /whoami {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /caddy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /system/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle {
-		reverse_proxy litebin-dashboard:80
-	}
-}
-CADDYFILE
+  generate_caddyfile "${install_dir}/Caddyfile"
 
   # -- Generate docker-compose.yml --------------------------------------
   generate_compose "${install_dir}/docker-compose.yml"
@@ -1527,6 +1483,8 @@ update_master() {
     info "docker-compose.yml updated"
   fi
   rm -f "$tmp_compose"
+
+  refresh_caddyfile_if_changed "$install_dir"
 
   # Backup database before restart
   info "Backing up database..."

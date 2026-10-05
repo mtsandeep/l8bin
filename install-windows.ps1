@@ -285,70 +285,9 @@ ROUTING_MODE=master_proxy
 
     # -- Generate Caddyfile (conditional on local vs live) ----------------------
     $caddyRoutes = @'
-	handle /auth/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /projects/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy-tokens {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /deploy-tokens/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /images/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /nodes {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /nodes/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /settings {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /settings/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /health {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /meta {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /caddy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle {
-		reverse_proxy litebin-dashboard:80
-	}
-'@
-    if ($isLocal) {
-        # Local: listen on localhost + subdomain.localhost (no TLS)
-        $caddyfile = @"
-{
-	admin 0.0.0.0:2019
-}
-handle /whoami {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle /caddy/* {
-		reverse_proxy litebin-orchestrator:5080
-	}
-	handle {
-		reverse_proxy litebin-dashboard:80
-	}
+	# All dashboard-host traffic (API + SPA) goes to the orchestrator,
+	# which routes API paths itself and proxies the rest to the dashboard.
+	reverse_proxy litebin-orchestrator:5080
 '@
     if ($isLocal) {
         # Local: listen on localhost + subdomain.localhost (no TLS)

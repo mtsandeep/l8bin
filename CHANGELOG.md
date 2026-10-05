@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **The orchestrator is the sole router for the dashboard host** — Caddy now sends it all dashboard-host traffic; the orchestrator serves API routes and streams the rest to the dashboard SPA. This deletes the hand-maintained API path list (which had already drifted); adding an endpoint is now just an axum route. The dashboard needs the orchestrator up.
+
+### Fixed
+- Malformed Caddyfile from the installers crash-looped `litebin-caddy` (0.4.2 `/whoami` regression); the bootstrap Caddyfile is now a single orchestrator proxy.
+
 ## [0.4.2] - 2026-10-04
 
 ### Added

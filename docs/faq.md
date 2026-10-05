@@ -156,6 +156,8 @@ docker logs litebin-orchestrator --tail 100 2>&1 | grep -i "failed\|timeout\|unr
 
 Ensure all registered agents are reachable. Remove or decommission unreachable nodes from the dashboard. See [Agent Not Connecting](#agent-not-connecting) to fix the unreachable agent.
 
+> **Dashboard not loading at all?** The dashboard host is served through the orchestrator — Caddy sends it all traffic and the orchestrator streams non-API requests to the dashboard container. If the orchestrator is down, the dashboard is down; check `docker logs litebin-orchestrator` first.
+
 ---
 
 ## Docker Logs

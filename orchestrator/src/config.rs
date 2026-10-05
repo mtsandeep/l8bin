@@ -23,6 +23,7 @@ pub struct Config {
     pub cloudflare_zone_id: String,
     pub dashboard_subdomain: String,
     pub poke_subdomain: String,
+    pub dashboard_upstream: String,
 }
 
 impl Config {
@@ -52,6 +53,7 @@ impl Config {
             cloudflare_zone_id: env::var("CLOUDFLARE_ZONE_ID").unwrap_or_default(),
             dashboard_subdomain: env::var("DASHBOARD_SUBDOMAIN").unwrap_or_else(|_| "l8bin".into()),
             poke_subdomain: env::var("POKE_SUBDOMAIN").unwrap_or_else(|_| "poke".into()),
+            dashboard_upstream: env::var("DASHBOARD_UPSTREAM").unwrap_or_else(|_| "dashboard:80".into()),
         })
     }
 }

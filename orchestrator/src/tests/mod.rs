@@ -1,6 +1,7 @@
 pub(crate) mod helpers;
 
 mod auth_tests;
+mod dashboard_proxy_tests;
 mod deploy_stage_tests;
 mod deploy_tokens_tests;
 mod device_auth_tests;

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::caddy::{CaddyClient, ORCHESTRATOR_API_PATHS};
+use crate::caddy::CaddyClient;
 
 /// Build the `handle_response` block that catches 502/503/504 from upstream
 /// and proxies the request to the orchestrator for auto-wake.
@@ -298,27 +298,14 @@ impl MasterProxyRouter {
             }]
         }));
 
-        // Dashboard: proxy API paths to orchestrator, everything else to dashboard
+        // Dashboard host: everything goes to the orchestrator, which routes API paths
+        // itself and proxies the rest to the dashboard SPA.
         let dashboard_host = format!("{}.{}", dashboard_subdomain, domain);
         routes.push(json!({
             "match": [{ "host": [dashboard_host] }],
             "handle": [{
-                "handler": "subroute",
-                "routes": [
-                    {
-                        "match": [{ "path": ORCHESTRATOR_API_PATHS }],
-                        "handle": [{
-                            "handler": "reverse_proxy",
-                            "upstreams": [{ "dial": orchestrator_upstream }]
-                        }]
-                    },
-                    {
-                        "handle": [{
-                            "handler": "reverse_proxy",
-                            "upstreams": [{ "dial": "dashboard:80" }]
-                        }]
-                    }
-                ]
+                "handler": "reverse_proxy",
+                "upstreams": [{ "dial": orchestrator_upstream }]
             }]
         }));
 
@@ -421,5 +408,31 @@ impl RoutingProvider for MasterProxyRouter {
 
         tracing::info!("caddy config loaded successfully");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The dashboard host routes to the orchestrator only — API/SPA splitting happens
+    /// inside the orchestrator, so its caddy route must carry no path matcher.
+    #[test]
+    fn dashboard_host_is_a_single_proxy_to_the_orchestrator() {
+        let router = MasterProxyRouter::new(CaddyClient::new("http://127.0.0.1:1"), String::new());
+        let config = router.build_config(&[], "example.com", "litebin-orchestrator:5080", "l8bin", "poke");
+        let routes = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array().unwrap();
+
+        let dashboard = routes
+            .iter()
+            .find(|r| {
+                r["match"][0]["host"].as_array().is_some_and(|h| h.contains(&json!("l8bin.example.com")))
+            })
+            .expect("dashboard host route exists");
+
+        assert_eq!(dashboard["handle"][0]["handler"], "reverse_proxy");
+        assert_eq!(dashboard["handle"][0]["upstreams"][0]["dial"], "litebin-orchestrator:5080");
+        assert!(dashboard["handle"][0].get("subroute").is_none(), "no subroute split");
+        assert!(dashboard["match"][0].get("path").is_none(), "no path matcher");
     }
 }

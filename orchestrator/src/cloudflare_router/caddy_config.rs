@@ -1,4 +1,4 @@
-use litebin_common::caddy::{ORCHESTRATOR_API_PATHS, http_to_https_redirect};
+use litebin_common::caddy::http_to_https_redirect;
 use litebin_common::routing::{ProjectRoute, wake_fallback_handle};
 use serde_json::{Value, json};
 
@@ -151,27 +151,14 @@ impl CloudflareDnsRouter {
             }]
         }));
 
-        // Dashboard + API routes
+        // Dashboard host: everything goes to the orchestrator, which routes API paths
+        // itself and proxies the rest to the dashboard SPA.
         let dashboard_host = format!("{}.{}", dashboard_subdomain, domain);
         routes.push(json!({
             "match": [{ "host": [dashboard_host] }],
             "handle": [{
-                "handler": "subroute",
-                "routes": [
-                    {
-                        "match": [{ "path": ORCHESTRATOR_API_PATHS }],
-                        "handle": [{
-                            "handler": "reverse_proxy",
-                            "upstreams": [{ "dial": orchestrator_upstream }]
-                        }]
-                    },
-                    {
-                        "handle": [{
-                            "handler": "reverse_proxy",
-                            "upstreams": [{ "dial": "dashboard:80" }]
-                        }]
-                    }
-                ]
+                "handler": "reverse_proxy",
+                "upstreams": [{ "dial": orchestrator_upstream }]
             }]
         }));
 
@@ -428,5 +415,30 @@ impl CloudflareDnsRouter {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same contract as MasterProxyRouter: dashboard host → single orchestrator proxy.
+    #[test]
+    fn master_config_dashboard_host_is_a_single_proxy_to_the_orchestrator() {
+        let config =
+            CloudflareDnsRouter::build_master_caddy_config(&[], "example.com", "litebin-orchestrator:5080", "l8bin", "poke");
+        let routes = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array().unwrap();
+
+        let dashboard = routes
+            .iter()
+            .find(|r| {
+                r["match"][0]["host"].as_array().is_some_and(|h| h.contains(&json!("l8bin.example.com")))
+            })
+            .expect("dashboard host route exists");
+
+        assert_eq!(dashboard["handle"][0]["handler"], "reverse_proxy");
+        assert_eq!(dashboard["handle"][0]["upstreams"][0]["dial"], "litebin-orchestrator:5080");
+        assert!(dashboard["handle"][0].get("subroute").is_none(), "no subroute split");
+        assert!(dashboard["match"][0].get("path").is_none(), "no path matcher");
     }
 }
