@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- The installer offers to install Docker itself (official get.docker.com script) when missing, and points to a VPS bootstrap gist (ssh keys, firewall, fail2ban, unattended-upgrades + Docker) if you'd rather set the box up first.
+
 ### Changed
 - **The orchestrator is the sole router for the dashboard host** — Caddy now sends it all dashboard-host traffic; the orchestrator serves API routes and streams the rest to the dashboard SPA. This deletes the hand-maintained API path list (which had already drifted); adding an endpoint is now just an axum route. The dashboard needs the orchestrator up.
 

@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="mtsandeep/l8bin"
 L8B_IN="${L8B_IN:-https://l8b.in}"
 CHANGELOG_URL="${CHANGELOG_URL:-https://github.com/${REPO}/releases}"
+VPS_SETUP_URL="${VPS_SETUP_URL:-https://gist.github.com/mtsandeep/fbcfe30351d78b8ff9ec9d3c75354ec6}"
 
 # -- Colors ------------------------------------------------------------------
 RED='\033[0;31m'
@@ -87,12 +88,52 @@ require_cmd() {
   command -v "$1" &>/dev/null || die "'$1' is required but not installed"
 }
 
+# Install Docker via the official get.docker.com script (repo + compose plugin).
+install_docker() {
+  info "Installing Docker via get.docker.com (can take a few minutes)..."
+  if ! curl -fsSL https://get.docker.com | sh; then
+    error "Docker installation failed."
+    return 1
+  fi
+  systemctl enable --now docker 2>/dev/null || true
+}
+
 ensure_docker() {
   if command -v docker &>/dev/null; then
     info "Docker found: $(docker --version)"
-  else
-    die "Docker is required. Install Docker: https://docs.docker.com/get-docker/"
+    return
   fi
+
+  echo ""
+  warn "Docker is required but not installed."
+  if is_linux && [ "$(id -u)" -eq 0 ]; then
+    echo ""
+    echo "  Install it now with the official script, or set it up yourself."
+    echo "  For a full VPS bootstrap (ssh keys, firewall, fail2ban,"
+    echo "  unattended-upgrades + Docker):"
+    echo "    ${VPS_SETUP_URL}"
+    echo ""
+    if prompt_yes "Install Docker now?" y && install_docker && command -v docker &>/dev/null; then
+      info "Docker installed: $(docker --version)"
+      return
+    fi
+  elif is_linux; then
+    echo ""
+    echo "  Re-run as root to let the installer set it up:"
+    echo "    curl -fsSL ${L8B_IN} | sudo bash -s master"
+  fi
+
+  echo ""
+  error "Install Docker, then re-run this installer:"
+  if is_linux; then
+    echo "    Quick:  curl -fsSL https://get.docker.com | sh"
+  fi
+  echo "    Docs:   https://docs.docker.com/engine/install/"
+  if is_linux; then
+    echo ""
+    echo "  Full VPS bootstrap (security + Docker): ${VPS_SETUP_URL}"
+  fi
+  exit 1
 }
 
 ensure_docker_compose() {
