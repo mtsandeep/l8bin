@@ -425,15 +425,18 @@ mod tests {
     /// Same contract as MasterProxyRouter: dashboard host → single orchestrator proxy.
     #[test]
     fn master_config_dashboard_host_is_a_single_proxy_to_the_orchestrator() {
-        let config =
-            CloudflareDnsRouter::build_master_caddy_config(&[], "example.com", "litebin-orchestrator:5080", "l8bin", "poke");
+        let config = CloudflareDnsRouter::build_master_caddy_config(
+            &[],
+            "example.com",
+            "litebin-orchestrator:5080",
+            "l8bin",
+            "poke",
+        );
         let routes = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array().unwrap();
 
         let dashboard = routes
             .iter()
-            .find(|r| {
-                r["match"][0]["host"].as_array().is_some_and(|h| h.contains(&json!("l8bin.example.com")))
-            })
+            .find(|r| r["match"][0]["host"].as_array().is_some_and(|h| h.contains(&json!("l8bin.example.com"))))
             .expect("dashboard host route exists");
 
         assert_eq!(dashboard["handle"][0]["handler"], "reverse_proxy");

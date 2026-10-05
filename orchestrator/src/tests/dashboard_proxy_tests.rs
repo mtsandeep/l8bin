@@ -2,10 +2,10 @@
 //! Unmatched paths on the dashboard host / bare domain are streamed to the dashboard
 //! SPA upstream; API routes keep hitting their real handlers.
 
+use axum::Router;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 
 use super::helpers::{test_config, test_server_with_db_config};
 
@@ -160,12 +160,8 @@ async fn dashboard_proxy_streams_response() {
     let server = axum_test::TestServer::new_with_config(app, config).unwrap();
 
     let client = reqwest::Client::new();
-    let mut resp = client
-        .get(server.server_url("/stream").unwrap())
-        .header(HOST, "l8bin.localhost")
-        .send()
-        .await
-        .unwrap();
+    let mut resp =
+        client.get(server.server_url("/stream").unwrap()).header(HOST, "l8bin.localhost").send().await.unwrap();
 
     let first = resp.chunk().await.unwrap().expect("first chunk before release");
     assert_eq!(first, "chunk1");

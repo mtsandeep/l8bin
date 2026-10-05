@@ -425,9 +425,7 @@ mod tests {
 
         let dashboard = routes
             .iter()
-            .find(|r| {
-                r["match"][0]["host"].as_array().is_some_and(|h| h.contains(&json!("l8bin.example.com")))
-            })
+            .find(|r| r["match"][0]["host"].as_array().is_some_and(|h| h.contains(&json!("l8bin.example.com"))))
             .expect("dashboard host route exists");
 
         assert_eq!(dashboard["handle"][0]["handler"], "reverse_proxy");
