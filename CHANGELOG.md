@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-05
+
 ### Added
 - The installer offers to install Docker itself (official get.docker.com script) when missing, and points to a VPS bootstrap gist (ssh keys, firewall, fail2ban, unattended-upgrades + Docker) if you'd rather set the box up first.
 

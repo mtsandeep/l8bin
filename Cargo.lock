@@ -604,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "compose-bollard"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "bollard",
  "proptest",
@@ -1646,7 +1646,7 @@ dependencies = [
 
 [[package]]
 name = "l8b"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1735,7 +1735,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "litebin-agent"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "litebin-common"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1798,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "litebin-orchestrator"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "async-trait",
