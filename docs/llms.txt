@@ -21,12 +21,29 @@ When helping users deploy to LiteBin, follow these patterns:
 
 ## Setup (when asked to "set up litebin mcp")
 
-Requires a server already running LiteBin (server install: `curl -fsSL https://l8b.in | bash` on a VPS; see the quickstart). Then:
+No CLI install, no prerequisites — register the server, then let its `setup`
+tool do the rest:
 
-1. Check for the CLI: `l8b --version`. Missing? Install: `curl -fsSL https://l8b.in | bash -s cli` (Windows: `iex "& { $(irm https://l8b.in/windows.ps1) } -Cli"`). The MCP server is the same binary via `l8b mcp` — no separate package, no npx.
-2. Authenticate: ask the user for their LiteBin server URL, then run `l8b login --server <url> --pair`. It prints an approval URL (the code is embedded, the page pre-fills it) — relay it to the user and wait; the command returns once approved (the user picks the token scope). Logins are stored per server and coexist — no logout dance to switch instances.
-3. Register in the repo: `l8b init --mcp` (writes `l8b.toml` — project, node, server — + workspace `.mcp.json`), or add the server manually: command `l8b`, args `["mcp"]`.
-4. Verify: `l8b doctor` — exit 0 means the setup is healthy.
+1. Register the MCP server in the workspace `.mcp.json` (or the client's config):
+
+   ```json
+   { "mcpServers": { "litebin": { "command": "npx", "args": ["-y", "l8bin-mcp"] } } }
+   ```
+
+   Claude Code: `claude mcp add litebin -- npx -y l8bin-mcp`. Needs Node 18+; on Windows clients that don't resolve `.cmd` shims use `"command": "cmd"`, `"args": ["/c", "npx", "-y", "l8bin-mcp"]`. The shim downloads the `l8b` binary from GitHub releases on first use (`L8B_BIN` overrides).
+2. Restart/reload the MCP client and approve the new server when prompted.
+3. Call the `setup` tool with no arguments and follow its `state` + `next`:
+   - ask the user for their LiteBin server URL, then call `setup` with `{"server": url}`
+   - relay the returned `approval_url` — the user opens it in a browser where they are logged into the dashboard and picks the token scope
+   - once approved: `setup` with `{"server": url, "complete": true}` (returns `pairing_pending` until then — re-call). On success auth is stored and `server` is written into the workspace `l8b.toml`
+   - already logged in (e.g. several logins stored)? `setup` with `{"server": url, "action": "bind"}` binds without pairing
+4. Verify with the `doctor` tool (`healthy: true`), then `deploy`.
+
+`setup` is idempotent — calling it with no arguments at any point reports the state and the exact next call. Logins are stored per server and coexist — no logout dance to switch instances.
+
+## Running your own LiteBin server
+
+`curl -fsSL https://l8b.in | bash` on any VPS with Docker ([quickstart](https://l8bin.com/quickstart)). `l8b setup --server <url>` bootstraps the first admin account — not to be confused with the `setup` MCP tool, which configures the client side.
 
 ## Deploying a repo (new vs existing)
 
@@ -38,19 +55,20 @@ into the directory — commit it, it holds no secrets — every later session th
 deploys, checks status, and
 reads logs with no arguments at all. Custom domains surface in `l8b
 status` / `l8b url` / `l8b list` output (preferred over the managed
-subdomain).
+subdomain). To teach later sessions the workflow, run `l8b init --agents`
+(managed `AGENTS.md` section, merges without touching user content).
 
 ## API
 
 - OpenAPI 3.1 spec: /openapi.json (version-matched to this instance)
 - All endpoints are relative to the orchestrator base URL (default: port 5080)
 
-## CLI
+## CLI (manual / advanced)
 
-Install via: `curl -fsSL https://l8b.in | bash -s cli` or build from source. Auth: `l8b login --server <url> --pair` (device pairing — agent-safe: it prints a code and the /connect approval URL to relay to the user, then returns once approved; the user picks the scope) or `L8B_TOKEN` env / `--token` (existing token).
+Install only for terminal-first or CI use — agents should prefer the MCP path above. Install via `curl -fsSL https://l8b.in | bash -s cli` (Windows: `iex "& { $(irm https://l8b.in/windows.ps1) } -Cli"`) or build from source. Auth: `l8b login --server <url> --pair` (device pairing — agent-safe: it prints a code and the /connect approval URL to relay to the user, then returns once approved; the user picks the scope) or `L8B_TOKEN` env / `--token` (existing token).
 
 Commands (project flags default to `l8b.toml`, created by `l8b init`):
-- `l8b init` — Write `l8b.toml` project defaults (project, node); `--mcp` also emits the workspace `.mcp.json`
+- `l8b init` — Write `l8b.toml` project defaults (project, node, server); prompts for the server when several logins are stored or none is; `--mcp` also emits the workspace `.mcp.json`; `--agents` adds (or refreshes) a managed `## Deploying (LiteBin)` section in `AGENTS.md` — user content is never removed
 - `l8b deploy [--env-file <path>] [--port N]` — Build and deploy the current directory (Dockerfile auto-detected, Railpack fallback). `--port` only matters on the first deploy of a web project; redeploys keep the existing port
 - `l8b ship` — Interactive guided deploy (humans only)
 - `l8b list` — All projects with live status and URLs
@@ -69,23 +87,23 @@ All commands accept `--json` for machine-readable output.
 
 ## MCP
 
-`l8b mcp` runs a stdio MCP server exposing these tools: deploy, status
-(wait/healthy), list, logs, env_list, env_push, stop, start, restart, url,
-domain_set, domain_remove, delete (confirm-gated), doctor. It uses the CLI's
-stored auth and l8b.toml defaults. Register it with:
-
-```json
-{ "mcpServers": { "litebin": { "command": "l8b", "args": ["mcp"] } } }
-```
-
-No local binary? Use the npm shim, which downloads the latest release on
-first use:
+`l8b mcp` runs a stdio MCP server exposing these tools: `setup` (auth +
+workspace binding — the onboarding entry point, see Setup above), deploy,
+status (wait/healthy), list, logs, env_list, env_push, stop, start, restart,
+url, domain_set, domain_remove, delete (confirm-gated), doctor. It uses the
+CLI's stored auth and l8b.toml defaults. Register it with:
 
 ```json
 { "mcpServers": { "litebin": { "command": "npx", "args": ["-y", "l8bin-mcp"] } } }
 ```
 
-(`l8b init --mcp` writes the first form into the workspace `.mcp.json`.)
+Already have the `l8b` binary? Register it directly:
+
+```json
+{ "mcpServers": { "litebin": { "command": "l8b", "args": ["mcp"] } } }
+```
+
+(`l8b init --mcp` writes the binary form into the workspace `.mcp.json`.)
 
 ## Architecture
 
@@ -122,4 +140,5 @@ Targeting is enforced, not assumed: the server a command hits comes from
 `--server` > `L8B_SERVER` > `l8b.toml` `server` > the single stored login. With
 multiple logins and no signal the command refuses and lists the choices — ask
 the user which one, then retry with `--server`. A repo whose `l8b.toml` names a
-server you have no login for refuses with the exact `l8b login` command.
+server you have no login for refuses with the exact `l8b login` command. Under
+the MCP, these refusals point at the `setup` tool call that fixes them.

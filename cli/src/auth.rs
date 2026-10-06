@@ -6,6 +6,27 @@ use serde::Deserialize;
 
 use crate::config::{CliConfig, CredentialStore, normalize_server};
 
+/// True when running as a subprocess of `l8b mcp` — recovery hints should
+/// address the driving agent, not a human at a terminal.
+pub fn serving_agent() -> bool {
+    std::env::var("L8B_MCP").is_ok_and(|v| v == "1")
+}
+
+/// Recovery hint for "not authenticated", phrased per audience. Pure.
+pub fn login_hint(server: Option<&str>, agent: bool) -> String {
+    match (server, agent) {
+        (Some(s), false) => format!("l8b login --server {s} --pair"),
+        (Some(s), true) => format!("call the `setup` MCP tool with {{\"server\": \"{s}\"}}"),
+        (None, false) => "l8b login --server <url> --pair".to_string(),
+        (None, true) => "call the `setup` MCP tool (no arguments) to see the current state".to_string(),
+    }
+}
+
+/// `login_hint` reading L8B_MCP.
+pub fn login_hint_env(server: Option<&str>) -> String {
+    login_hint(server, serving_agent())
+}
+
 /// A resolved deployment target: the server this command will hit, plus a
 /// client authenticated with that server's credential.
 pub struct Target {
@@ -61,7 +82,7 @@ pub fn pick_server(
                 None => {
                     return Err(crate::out::fail(
                         login_msg.replace("{server}", &server),
-                        format!("l8b login --server {server} --pair"),
+                        login_hint_env(Some(&server)),
                     ));
                 }
             }
@@ -70,7 +91,7 @@ pub fn pick_server(
 
     let logged_in = store.logged_in_servers();
     match logged_in.len() {
-        0 => Err(crate::out::fail("not logged in to any server", "l8b login --server <url> --pair")),
+        0 => Err(crate::out::fail("not logged in to any server", login_hint_env(None))),
         1 => {
             let server = logged_in[0].clone();
             let auth =
@@ -79,10 +100,12 @@ pub fn pick_server(
         }
         _ => {
             let list = logged_in.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
-            Err(crate::out::fail(
-                format!("ambiguous server — logged into: {list}"),
-                "pass --server, set `server` in l8b.toml, or run l8b init",
-            ))
+            let hint = if serving_agent() {
+                "call the `setup` MCP tool (no arguments) — it reports the stored logins and binds this workspace to one"
+            } else {
+                "pass --server, set `server` in l8b.toml, or run l8b init"
+            };
+            Err(crate::out::fail(format!("ambiguous server — logged into: {list}"), hint))
         }
     }
 }
@@ -100,11 +123,7 @@ fn cookie_for(server: &str) -> Result<String> {
 
 /// Username/password login (session-based, same access as the dashboard).
 pub async fn login_password(server: &str) -> Result<()> {
-    let server = if server.starts_with("http://") || server.starts_with("https://") {
-        server.to_string()
-    } else {
-        format!("https://{}", server)
-    };
+    let server = normalize_server(server);
     println!("Server: {server}");
 
     let username: String = dialoguer::Input::new().with_prompt("Username").interact_text()?;
@@ -133,7 +152,6 @@ pub async fn login_password(server: &str) -> Result<()> {
         anyhow::bail!("login succeeded but no session cookie received");
     }
 
-    let server = normalize_server(&server);
     let mut store = CredentialStore::load();
     store.upsert(&server, crate::config::ServerCredential { cookie: Some(cookie), ..Default::default() });
     store.save()?;
@@ -141,23 +159,25 @@ pub async fn login_password(server: &str) -> Result<()> {
     Ok(())
 }
 
-/// Device-pairing login: prints a short-lived code, waits for the user to
-/// approve it at `{server}/connect` from an authenticated browser, then stores
-/// the issued scoped token. No passwords pass through the terminal.
-pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
-    let server = if server.starts_with("http://") || server.starts_with("https://") {
-        server.to_string()
-    } else {
-        format!("https://{}", server)
-    };
-    let server = server.trim_end_matches('/').to_string();
+/// A device-pairing flow started against a server (not yet approved).
+pub struct PairingStart {
+    /// Normalized server URL.
+    pub server: String,
+    pub device_code: String,
+    pub user_code: String,
+    /// Poll interval in seconds, as suggested by the server.
+    pub interval: u64,
+    /// Expiry as unix seconds.
+    pub expires_at: i64,
+}
 
-    let client_name = std::env::var("L8B_CLIENT_NAME").unwrap_or_else(|_| "l8b CLI".to_string());
-    let client = reqwest::Client::new();
-
-    let resp = client
+/// POST /auth/device/start — begin device pairing. `scope` is a suggestion;
+/// the approver decides the final scope on the dashboard.
+pub async fn start_pairing(server: &str, scope: &str, client_name: &str) -> Result<PairingStart> {
+    let server = normalize_server(server);
+    let resp = reqwest::Client::new()
         .post(format!("{server}/auth/device/start"))
-        .json(&serde_json::json!({ "client_name": client_name, "scope": suggested_scope }))
+        .json(&serde_json::json!({ "client_name": client_name, "scope": scope }))
         .send()
         .await
         .context("pairing request failed")?;
@@ -169,8 +189,58 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
     let start: serde_json::Value = resp.json().await.context("invalid pairing response")?;
     let device_code = start["device_code"].as_str().context("missing device_code")?.to_string();
     let user_code = start["user_code"].as_str().context("missing user_code")?.to_string();
-    let expires_in = start["expires_in"].as_i64().unwrap_or(600) as u64;
+    let expires_in = start["expires_in"].as_i64().unwrap_or(600).max(0);
     let interval = start["interval"].as_i64().unwrap_or(3).max(1) as u64;
+    Ok(PairingStart { server, device_code, user_code, interval, expires_at: crate::config::unix_now() + expires_in })
+}
+
+/// One POST /auth/device/token poll.
+pub enum PairingPoll {
+    Pending,
+    Approved { token: String, scope: String, project_id: Option<String> },
+    Denied,
+    Expired,
+}
+
+/// Poll a pairing once. Transient network errors and non-2xx (incl. 429)
+/// map to Pending — callers keep polling.
+pub async fn poll_pairing(client: &reqwest::Client, server: &str, device_code: &str) -> PairingPoll {
+    let resp = match client
+        .post(format!("{}/auth/device/token", server.trim_end_matches('/')))
+        .json(&serde_json::json!({ "device_code": device_code }))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return PairingPoll::Pending,
+    };
+    if !resp.status().is_success() {
+        return PairingPoll::Pending;
+    }
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    match body["status"].as_str().unwrap_or("pending") {
+        "ok" => match body["token"].as_str() {
+            Some(token) => PairingPoll::Approved {
+                token: token.to_string(),
+                scope: body["scope"].as_str().unwrap_or("deploy").to_string(),
+                project_id: body["project_id"].as_str().map(str::to_string),
+            },
+            None => PairingPoll::Pending,
+        },
+        "denied" => PairingPoll::Denied,
+        "expired" => PairingPoll::Expired,
+        _ => PairingPoll::Pending,
+    }
+}
+
+/// Device-pairing login: prints a short-lived code, waits for the user to
+/// approve it at `{server}/connect` from an authenticated browser, then stores
+/// the issued scoped token. No passwords pass through the terminal.
+pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
+    let client_name = std::env::var("L8B_CLIENT_NAME").unwrap_or_else(|_| "l8b CLI".to_string());
+    let start = start_pairing(server, suggested_scope, &client_name).await?;
+    let server = start.server;
+    let user_code = &start.user_code;
 
     println!("Server: {server}");
     println!();
@@ -188,37 +258,21 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
         let _ = webbrowser::open(&connect_url);
         println!();
     }
+    let expires_in = (start.expires_at - crate::config::unix_now()).max(0) as u64;
     println!("  {} Expires in {} minutes. Waiting for approval…", "⏳".yellow(), expires_in / 60);
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(expires_in);
+    let client = reqwest::Client::new();
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
-        if std::time::Instant::now() >= deadline {
+        tokio::time::sleep(std::time::Duration::from_secs(start.interval)).await;
+        if crate::config::unix_now() >= start.expires_at {
             anyhow::bail!("pairing code expired before approval — run `l8b login` again");
         }
 
-        let resp = match client
-            .post(format!("{server}/auth/device/token"))
-            .json(&serde_json::json!({ "device_code": device_code }))
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(_) => continue, // transient network error — keep polling
-        };
-        if !resp.status().is_success() {
-            continue;
-        }
-        let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        match body["status"].as_str().unwrap_or("pending") {
-            "pending" => continue,
-            "denied" => anyhow::bail!("pairing was denied on the server"),
-            "expired" => anyhow::bail!("pairing code expired — run `l8b login` again"),
-            "ok" => {
-                let token = body["token"].as_str().context("approval carried no token")?.to_string();
-                let scope = body["scope"].as_str().unwrap_or("deploy").to_string();
-                let project = body["project_id"].as_str();
-
+        match poll_pairing(&client, &server, &start.device_code).await {
+            PairingPoll::Pending => continue,
+            PairingPoll::Denied => anyhow::bail!("pairing was denied on the server"),
+            PairingPoll::Expired => anyhow::bail!("pairing code expired — run `l8b login` again"),
+            PairingPoll::Approved { token, scope, project_id } => {
                 let mut store = CredentialStore::load();
                 store.upsert(
                     &server,
@@ -228,13 +282,12 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
                 println!();
                 let scope = store.get(&server).and_then(|c| c.scope.clone()).unwrap_or_default();
                 println!("{} Authenticated. Token saved for {server} (scope: {scope}).", "✓".green());
-                if let Some(p) = project {
+                if let Some(p) = project_id {
                     println!("  Bound to project '{p}'.");
                 }
                 println!("  {} Revoke anytime from the dashboard: Settings → Access Tokens.", "→".dimmed());
                 return Ok(());
             }
-            _ => continue,
         }
     }
 }
@@ -578,6 +631,17 @@ mod target_tests {
     }
 
     #[test]
+    fn login_hint_audiences() {
+        assert_eq!(login_hint(Some("https://a.io"), false), "l8b login --server https://a.io --pair");
+        assert_eq!(login_hint(None, false), "l8b login --server <url> --pair");
+        assert_eq!(
+            login_hint(Some("https://a.io"), true),
+            "call the `setup` MCP tool with {\"server\": \"https://a.io\"}"
+        );
+        assert!(login_hint(None, true).contains("`setup` MCP tool"));
+    }
+
+    #[test]
     fn server_resolution_rules() {
         let store = store_with(&["https://a.io", "https://b.io"]);
 
@@ -641,5 +705,29 @@ mod target_tests {
         assert_eq!(parsed.get("https://b.io").unwrap().auth_header().as_deref(), Some("sid=1"));
         assert_eq!(parsed.default.as_deref(), Some("https://b.io"));
         assert!(parsed.get("https://missing.io").is_none());
+    }
+
+    #[test]
+    fn pairing_session_round_trips_and_expires() {
+        let session = crate::config::PairingSession {
+            server: "https://a.io".into(),
+            device_code: "dc-1".into(),
+            user_code: "L8B-ABC123".into(),
+            interval: 5,
+            expires_at: crate::config::unix_now() + 600,
+        };
+        let text = toml::to_string_pretty(&session).unwrap();
+        let parsed: crate::config::PairingSession = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.device_code, "dc-1");
+        assert_eq!(parsed.approval_url(), "https://a.io/connect?code=L8B-ABC123");
+        assert!(!parsed.expired());
+
+        let expired = crate::config::PairingSession { expires_at: crate::config::unix_now() - 1, ..session };
+        assert!(expired.expired());
+
+        // interval falls back when absent (older file)
+        let stripped = text.replace("interval = 5\n", "");
+        let parsed: crate::config::PairingSession = toml::from_str(&stripped).unwrap();
+        assert_eq!(parsed.interval, 3);
     }
 }

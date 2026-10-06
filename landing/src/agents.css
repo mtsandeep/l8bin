@@ -59,6 +59,44 @@
 
 .copy-btn:hover { color: #8b5cf6; }
 
+/* "Register it yourself" client tabs: one card, tab strip header, code body */
+.reg-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.reg-tab {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 0.4rem 0.85rem;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #71717a;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+.reg-tab:hover { color: #d4d4d8; }
+
+.reg-tab.on {
+  color: #c4b5fd;
+  background: rgba(124, 58, 237, 0.15);
+}
+
+.reg-tab:focus-visible { outline: 2px solid var(--vio-l); outline-offset: 1px; }
+
+.reg-panel {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  background: #18181b;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
 .hero-rot {
   display: inline-block;
   transition: opacity 0.4s ease, transform 0.4s ease;

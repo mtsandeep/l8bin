@@ -23,6 +23,12 @@ impl CliConfig {
 
 pub const APP_DIR: &str = "litebin";
 const CONFIG_FILE: &str = "config.toml";
+const PAIRING_FILE: &str = "pairing.toml";
+
+/// Wall-clock unix seconds (monotonicity is not needed here).
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or_default()
+}
 
 /// Railpack GitHub release URL (used to auto-download the binary)
 pub const RAILPACK_RELEASE_URL: &str = "https://api.github.com/repos/railwayapp/railpack/releases/latest";
@@ -149,5 +155,58 @@ impl CredentialStore {
             println!("{}", std::fs::read_to_string(&path).unwrap_or_default());
         }
         Ok(())
+    }
+}
+
+/// An in-flight device pairing, persisted between `setup` tool calls — the
+/// MCP process may restart between starting and completing one. A single
+/// session exists at a time; starting a new one overwrites it, and the
+/// superseded code lapses server-side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairingSession {
+    /// Normalized server URL.
+    pub server: String,
+    pub device_code: String,
+    pub user_code: String,
+    #[serde(default = "default_poll_interval")]
+    pub interval: u64,
+    /// Unix seconds.
+    pub expires_at: i64,
+}
+
+fn default_poll_interval() -> u64 {
+    3
+}
+
+impl PairingSession {
+    pub fn path() -> PathBuf {
+        dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join(APP_DIR).join(PAIRING_FILE)
+    }
+
+    /// None when missing or invalid — an unreadable session is as good as none.
+    pub fn load() -> Option<Self> {
+        toml::from_str(&std::fs::read_to_string(Self::path()).ok()?).ok()
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let path = Self::path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, toml::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
+    /// Best-effort removal — called on success, denial, and expiry.
+    pub fn clear() {
+        std::fs::remove_file(Self::path()).ok();
+    }
+
+    pub fn expired(&self) -> bool {
+        unix_now() >= self.expires_at
+    }
+
+    pub fn approval_url(&self) -> String {
+        format!("{}/connect?code={}", self.server.trim_end_matches('/'), self.user_code)
     }
 }

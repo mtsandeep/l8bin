@@ -34,6 +34,35 @@ macro_rules! verb {
 fn tools() -> Vec<Tool> {
     vec![
         Tool {
+            name: "setup",
+            description: "One-time LiteBin configuration: authenticate and bind this workspace to a server. Call with no arguments first — the result reports `state` (unconfigured | needs_binding | ambiguous | misconfigured | pairing_pending | configured) plus a `next` instruction to follow. {\"server\": url} starts device pairing (returns approval_url — have the user open it; they pick the token scope); {\"server\": url, \"complete\": true} finishes after approval (polls up to 60s; re-call while pairing_pending); {\"server\": url, \"action\": \"bind\"} binds an existing login. Idempotent.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "server": {"type": "string", "description": "LiteBin server URL, e.g. https://l8bin.com or a self-hosted orchestrator"},
+                    "complete": {"type": "boolean", "description": "Finish pairing: poll for approval, store the credential, write `server` into l8b.toml"},
+                    "action": {"type": "string", "enum": ["status", "bind"], "description": "status: same as no arguments; bind: bind an existing login without pairing"},
+                    "scope": {"type": "string", "enum": ["read", "deploy", "manage", "admin"], "description": "Scope suggested when pairing (default manage; the approver decides)"}
+                }
+            }),
+            invoke: |a| {
+                let mut argv = vec!["__setup".into(), "--json".into()];
+                if let Some(v) = a["server"].as_str() {
+                    argv.push(format!("--server={v}"));
+                }
+                if a["complete"].as_bool() == Some(true) {
+                    argv.push("--complete".into());
+                }
+                if let Some(v) = a["action"].as_str() {
+                    argv.push(format!("--action={v}"));
+                }
+                if let Some(v) = a["scope"].as_str() {
+                    argv.push(format!("--scope={v}"));
+                }
+                (argv, None)
+            },
+        },
+        Tool {
             name: "deploy",
             description: "Build and deploy a project directory to LiteBin (Dockerfile auto-detected, Railpack fallback). Polls until running and returns status + URL.",
             schema: json!({
@@ -391,6 +420,7 @@ async fn tools_call(params: &Value) -> Result<Value, String> {
     let exe = std::env::current_exe().map_err(|e| format!("failed to resolve l8b binary: {e}"))?;
     let mut cmd = std::process::Command::new(exe);
     cmd.args(&argv)
+        .env("L8B_MCP", "1") // subprocess knows it serves an agent → agent-shaped recovery hints
         .stdin(if stdin_data.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() })
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -442,5 +472,24 @@ mod tests {
         let tool = all.iter().find(|t| t.name == "delete").unwrap();
         let (argv, _) = (tool.invoke)(&json!({"confirm": false}));
         assert_eq!(argv[0], "__rejected");
+    }
+
+    #[test]
+    fn setup_maps_args_to_argv() {
+        let all = tools();
+        let tool = all.iter().find(|t| t.name == "setup").unwrap();
+
+        let (argv, _) = (tool.invoke)(&json!({}));
+        assert_eq!(argv, vec!["__setup", "--json"]);
+
+        let (argv, _) =
+            (tool.invoke)(&json!({"server": "https://a.io", "complete": true, "action": "bind", "scope": "read"}));
+        assert_eq!(
+            argv,
+            vec!["__setup", "--json", "--server=https://a.io", "--complete", "--action=bind", "--scope=read"]
+        );
+
+        // setup is advertised first — agents skim tools/list top-down
+        assert_eq!(all.first().unwrap().name, "setup");
     }
 }

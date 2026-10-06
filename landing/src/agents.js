@@ -23,6 +23,16 @@ function copyCode(btn) {
 
 window.copyCode = copyCode;
 
+// "Register it yourself" client tabs
+document.querySelectorAll('[data-tabs]').forEach(scope => {
+  scope.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      scope.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b === btn));
+      scope.querySelectorAll('[data-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== btn.dataset.tab));
+    });
+  });
+});
+
 // Rotating hero: ask/outcome pairs
 const HERO_SLIDES = [
   { ask: '“Deploy it with LiteBin.”', ans: 'Consider it shipped — live at portfolio.l8b.in.' },

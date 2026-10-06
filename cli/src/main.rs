@@ -1,3 +1,4 @@
+mod agents_md;
 mod auth;
 mod build;
 mod ci;
@@ -184,6 +185,9 @@ enum Commands {
         /// Also write a workspace .mcp.json for the litebin MCP server
         #[arg(long)]
         mcp: bool,
+        /// Also add (or refresh) a LiteBin section in AGENTS.md
+        #[arg(long)]
+        agents: bool,
         /// Overwrite an existing l8b.toml / .mcp.json
         #[arg(long)]
         force: bool,
@@ -195,6 +199,22 @@ enum Commands {
     Doctor,
     /// Run as a stdio MCP server exposing l8b as tools (for coding agents)
     Mcp,
+    /// Configure LiteBin auth and bind the workspace (driven by the `setup` MCP tool)
+    #[command(name = "__setup", hide = true)]
+    McpSetup {
+        /// LiteBin server URL
+        #[arg(long)]
+        server: Option<String>,
+        /// Finish the pending pairing: poll for approval, store the credential, bind the workspace
+        #[arg(long)]
+        complete: bool,
+        /// status: report state (same as no arguments); bind: bind an existing login
+        #[arg(long, value_enum)]
+        action: Option<commands::mcp_setup::SetupAction>,
+        /// Scope suggested when pairing (default manage; the approver decides)
+        #[arg(long)]
+        scope: Option<String>,
+    },
     /// First-run bootstrap: create the admin account and pair this machine
     Setup {
         /// Server URL
@@ -439,12 +459,20 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             ship::run(&target.client, &target.server, Some(path.to_str().unwrap_or(".")), port, secret, !has_session)
                 .await?;
         }
-        Commands::Init { project, node, server, mcp, force, path } => {
-            commands::init::run(commands::init::InitArgs { project, node, server, mcp, force, path }, ci_mode, out)
-                .await?;
+        Commands::Init { project, node, server, mcp, agents, force, path } => {
+            commands::init::run(
+                commands::init::InitArgs { project, node, server, mcp, agents, force, path },
+                ci_mode,
+                out,
+            )
+            .await?;
         }
         Commands::Mcp => {
             mcp::run().await?;
+        }
+        Commands::McpSetup { server, complete, action, scope } => {
+            commands::mcp_setup::run(commands::mcp_setup::SetupToolArgs { server, complete, action, scope }, out)
+                .await?;
         }
         Commands::Doctor => {
             commands::doctor::run(cli.server.as_deref(), cli.token.as_deref(), out).await?;

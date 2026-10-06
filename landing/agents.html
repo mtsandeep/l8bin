@@ -102,14 +102,36 @@
                   </button>
                 </div>
               </div>
-              <p class="text-sm text-zinc-500 mt-4">The agent takes it from here. It installs the <code class="bg-white/5 px-1 rounded font-mono">l8b</code> CLI if it's missing, asks for your server URL, runs the pairing, and hands you an approval link. Open it, pick the scope, approve.</p>
-              <p class="text-[11px] font-mono uppercase tracking-widest text-zinc-600 mt-5 mb-2">rather run it yourself?</p>
-              <div class="code-block relative group">
-                <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                <pre class="text-xs text-zinc-300"><code>curl -fsSL https://l8b.in | bash -s cli
-l8b login --server https://l8bin.example.com --pair</code></pre>
+              <p class="text-sm text-zinc-500 mt-4">The agent takes it from here. It writes <code class="bg-white/5 px-1 rounded font-mono">.mcp.json</code> with the npx shim (no CLI install, the binary downloads on first use), then has you reload the client so it can call the <code class="bg-white/5 px-1 rounded font-mono">setup</code> tool: it asks for your server URL, runs the pairing, and hands you an approval link. Open it, pick the scope, approve.</p>
+              <div class="mt-5" data-tabs>
+                <p class="text-[11px] font-mono uppercase tracking-widest text-zinc-600 mb-2">rather register it yourself?</p>
+                <div class="rounded-xl overflow-hidden border border-white/10">
+                  <div class="reg-tabs">
+                    <button type="button" class="reg-tab on" data-tab="claude">Claude Code</button>
+                    <button type="button" class="reg-tab" data-tab="codex">Codex</button>
+                    <button type="button" class="reg-tab" data-tab="others">Others</button>
+                  </div>
+                  <div data-panel="claude" class="reg-panel relative">
+                    <button type="button" onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <pre class="text-xs text-zinc-300"><code>claude mcp add litebin -- npx -y l8bin-mcp</code></pre>
+                  </div>
+                  <div data-panel="codex" class="reg-panel relative hidden">
+                    <button type="button" onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <pre class="text-xs text-zinc-300"><code>codex mcp add l8bin -- npx -y l8bin-mcp</code></pre>
+                  </div>
+                  <div data-panel="others" class="reg-panel relative hidden">
+                    <button type="button" onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                    <pre class="text-xs text-zinc-300"><code>{ "mcpServers": { "litebin": { "command": "npx", "args": ["-y", "l8bin-mcp"] } } }</code></pre>
+                    <p class="text-[11px] text-zinc-600 mt-3">Paste into the workspace <code>.mcp.json</code> or your client's MCP config. Windows clients that don't resolve <code>.cmd</code> shims: command <span class="text-zinc-400">cmd</span>, args <span class="text-zinc-400">["/c", "npx", "-y", "l8bin-mcp"]</span>.</p>
+                  </div>
+                </div>
+                <p class="text-sm text-zinc-500 mt-4">After the reload, ask your agent to run the <code class="bg-white/5 px-1 rounded font-mono">setup</code> tool; it pairs auth from there.</p>
               </div>
             </div>
           </div>
@@ -118,18 +140,11 @@ l8b login --server https://l8bin.example.com --pair</code></pre>
           <div class="flex gap-5 md:gap-6">
             <div class="w-10 h-10 rounded-full bg-night-800 border border-cyan-500/40 flex items-center justify-center text-cyan-400 font-black text-sm shrink-0 relative z-10">3</div>
             <div class="flex-1 min-w-0 pt-1">
-              <h3 class="text-lg font-bold text-zinc-100">Wire the repo</h3>
-              <div class="code-block relative group">
-                <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                <code class="text-xs text-zinc-300">l8b init --mcp</code>
-              </div>
-              <ul class="space-y-2 text-sm text-zinc-500 mt-4">
-                <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Writes <code class="bg-white/5 px-1 rounded font-mono">l8b.toml</code> + <code class="bg-white/5 px-1 rounded font-mono">.mcp.json</code>: Claude Code, Cursor and ZCode pick the tools up on next open</span></li>
-                <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Codex: <span class="text-zinc-300 font-mono">codex mcp add l8bin -- npx -y l8bin-mcp</span></span></li>
-                <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Other clients: any stdio entry with command <span class="text-zinc-300 font-mono">npx</span>, args <span class="text-zinc-300 font-mono">["-y", "l8bin-mcp"]</span></span></li>
-                <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Agents that don't speak MCP: the <a href="https://github.com/mtsandeep/l8bin/blob/main/docs/agents.md" class="text-violet-400 hover:underline">AGENTS.md template</a></span></li>
+              <h3 class="text-lg font-bold text-zinc-100">Reload the client</h3>
+              <p class="text-xs text-zinc-500 mb-4">Your agent already registered the MCP server in <code class="bg-white/5 px-1 rounded font-mono">.mcp.json</code>; one reload and the tools are live.</p>
+              <ul class="space-y-2 text-sm text-zinc-500 mt-2">
+                <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Claude Code, Cursor and ZCode pick up the <code class="bg-white/5 px-1 rounded font-mono">.mcp.json</code> your agent wrote on next open; approve it when prompted</span></li>
+                <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Registered manually (Codex etc.)? Just open the client; the tools are already live</span></li>
               </ul>
             </div>
           </div>
@@ -164,16 +179,24 @@ l8b login --server https://l8bin.example.com --pair</code></pre>
       <p class="text-[11px] font-mono uppercase tracking-widest text-cyan-400 mb-2">03 · Toolbox</p>
       <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-6">
         <h2 class="text-2xl md:text-3xl font-black text-zinc-100 uppercase tracking-tight">The toolbox.</h2>
-        <p class="text-xs font-mono text-zinc-500">14 tools, one stdio server, no extra daemon</p>
+        <p class="text-xs font-mono text-zinc-500">15 tools, one stdio server, no extra daemon</p>
       </div>
       <div class="flex flex-wrap items-center gap-2 mb-5">
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-violet-500/10 border border-violet-500/25 text-violet-300">setup</span>
         <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">deploy</span>
         <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">status</span>
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">list</span>
         <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">logs</span>
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">env_list</span>
         <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">env_push</span>
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">url</span>
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">stop</span>
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">start</span>
         <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">restart</span>
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">domain_set</span>
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">domain_remove</span>
+        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">delete</span>
         <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-300">doctor</span>
-        <span class="text-[11px] font-mono px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-500">+ 8 more</span>
       </div>
       <p class="text-xs font-mono text-zinc-600">works with Claude Code, Codex, Cursor, ZCode, Copilot &amp; any MCP client</p>
     </section>

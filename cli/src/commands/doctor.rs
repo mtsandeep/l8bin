@@ -41,11 +41,18 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
     let health = client.get(format!("{server}/health")).send().await;
     match health {
         Ok(r) if r.status().is_success() => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            // /health carries no version; /meta does (read-scoped, best-effort).
+            let version = match auth::api_get(&target.client, &server, "/meta").await {
+                Ok(m) => m["version"].as_str().map(str::to_string),
+                Err(_) => None,
+            };
             checks.push(CheckResult {
                 name: "server".into(),
                 ok: true,
-                detail: format!("reachable ({})", body["version"].as_str().unwrap_or("version unknown")),
+                detail: match version {
+                    Some(v) => format!("reachable (v{v})"),
+                    None => "reachable".to_string(),
+                },
                 hint: None,
             });
         }
@@ -87,7 +94,7 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
             name: "auth".into(),
             ok: false,
             detail: format!("credentials rejected: {e}"),
-            hint: Some("l8b login --server <url> --pair".into()),
+            hint: Some(auth::login_hint_env(Some(&server))),
         }),
     }
 
@@ -109,7 +116,7 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
         }),
     }
 
-    // Project config (informational)
+    // Project config — a workspace without l8b.toml isn't bound to anything.
     match crate::project_config::load(std::path::Path::new(".")) {
         Some(c) => checks.push(CheckResult {
             name: "l8b.toml".into(),
@@ -119,9 +126,9 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
         }),
         None => checks.push(CheckResult {
             name: "l8b.toml".into(),
-            ok: true, // informational, not a failure
+            ok: false,
             detail: "not found in the current directory".into(),
-            hint: Some("l8b init  — records project defaults for agents and scripts".into()),
+            hint: Some("l8b init — records project defaults for agents and scripts".into()),
         }),
     }
 
@@ -130,7 +137,7 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
 }
 
 fn finish(checks: &[CheckResult], out: &Out) {
-    let all_ok = checks.iter().filter(|c| c.name != "l8b.toml").all(|c| c.ok);
+    let all_ok = checks.iter().all(|c| c.ok);
     out.ok(&serde_json::json!({ "checks": checks, "healthy": all_ok }));
 
     if !out.json {

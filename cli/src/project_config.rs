@@ -37,6 +37,25 @@ pub fn resolve_project(explicit: Option<&str>, dir: &Path) -> Result<String> {
     bail!("no project specified — pass it explicitly or set `project` in {FILE_NAME} (run `l8b init`)");
 }
 
+/// The canonical l8b.toml rendering (header comments + present keys). The
+/// rewrite intentionally keeps only project, node, and server.
+pub(crate) fn render(project: Option<&str>, node: Option<&str>, server: Option<&str>) -> String {
+    let mut toml = String::new();
+    toml.push_str("# LiteBin project config — used by `l8b deploy/env/status` as defaults.\n");
+    toml.push_str("# Written by `l8b init`, updated automatically after a successful deploy.\n");
+    toml.push_str("# Commit this file — it holds no secrets; env values live on the server (l8b env push).\n");
+    if let Some(p) = project {
+        toml.push_str(&format!("project = \"{p}\"\n"));
+    }
+    if let Some(n) = node {
+        toml.push_str(&format!("node = \"{n}\"\n"));
+    }
+    if let Some(s) = server {
+        toml.push_str(&format!("server = \"{s}\"\n"));
+    }
+    toml
+}
+
 /// Record a successful deploy in `l8b.toml` so later sessions redeploy the
 /// same project without being told. Writes `project`, `node`, and `server`;
 /// returns false when nothing changed.
@@ -44,19 +63,17 @@ pub fn record_deploy(dir: &Path, project: &str, node: Option<&str>, server: Opti
     let existing = load(dir).unwrap_or_default();
     let node = node.map(str::to_string).or(existing.node);
     let server = server.map(str::to_string).or(existing.server);
+    write_toml(dir, render(Some(project), node.as_deref(), server.as_deref()))
+}
 
-    let mut toml = String::new();
-    toml.push_str("# LiteBin project config — used by `l8b deploy/env/status` as defaults.\n");
-    toml.push_str("# Written by `l8b init`, updated automatically after a successful deploy.\n");
-    toml.push_str("# Commit this file — it holds no secrets; env values live on the server (l8b env push).\n");
-    toml.push_str(&format!("project = \"{project}\"\n"));
-    if let Some(ref n) = node {
-        toml.push_str(&format!("node = \"{n}\"\n"));
-    }
-    if let Some(ref s) = server {
-        toml.push_str(&format!("server = \"{s}\"\n"));
-    }
+/// Write/replace `server` in `dir/l8b.toml`, preserving project/node when
+/// present; creates the file when absent. Returns true when the file changed.
+pub fn set_server(dir: &Path, server: &str) -> Result<bool> {
+    let existing = load(dir).unwrap_or_default();
+    write_toml(dir, render(existing.project.as_deref(), existing.node.as_deref(), Some(server)))
+}
 
+fn write_toml(dir: &Path, toml: String) -> Result<bool> {
     let path = dir.join(FILE_NAME);
     if std::fs::read_to_string(&path).ok().as_deref() == Some(toml.as_str()) {
         return Ok(false);
@@ -102,6 +119,31 @@ mod tests {
         assert!(!raw.contains("env_file"));
         assert!(!raw.contains("port"));
         assert_eq!(load(&dir).unwrap().node.as_deref(), Some("worker-1"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn set_server_creates_preserves_replaces() {
+        let dir = std::env::temp_dir().join(format!("l8b-setserver-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Creates the file when absent.
+        assert!(set_server(&dir, "https://a.io").unwrap());
+        assert_eq!(load(&dir).unwrap().server.as_deref(), Some("https://a.io"));
+
+        // Preserves project/node, replaces server.
+        std::fs::write(dir.join(FILE_NAME), "project = \"myapp\"\nnode = \"worker-1\"\nserver = \"https://old.io\"\n")
+            .unwrap();
+        assert!(set_server(&dir, "https://b.io").unwrap());
+        let cfg = load(&dir).unwrap();
+        assert_eq!(cfg.project.as_deref(), Some("myapp"));
+        assert_eq!(cfg.node.as_deref(), Some("worker-1"));
+        assert_eq!(cfg.server.as_deref(), Some("https://b.io"));
+
+        // No-op returns false.
+        assert!(!set_server(&dir, "https://b.io").unwrap());
 
         std::fs::remove_dir_all(&dir).ok();
     }
