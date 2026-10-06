@@ -25,7 +25,7 @@ LiteBin runs many app containers on shared infrastructure. Apps are treated as u
 | Session cookies | Browser sessions | SQLite-backed, Secure flag in production |
 | Deploy tokens | CLI / CI/CD | SHA-256 hashed in DB, scoped per-project or global, optional expiry |
 
-The deploy endpoint supports two-tier auth: session cookie checked first, then `Authorization: Bearer <token>` fallback.
+The deploy endpoint supports two-tier auth: session cookie checked first, then `Authorization: Bearer <token>` fallback. Unauthenticated endpoints are rate-limited per IP (`orchestrator/src/rate_limit.rs`): login 10/min, device-flow start 5/min, device-flow poll 30/min, with a cap on pending pairing codes — see [ai-native.md](ai-native.md).
 
 ### Password recovery
 

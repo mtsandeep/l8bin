@@ -759,4 +759,4 @@ As features grow, the CLI has 40+ planned commands across all planning docs. Thi
 
 To resolve: audit all planned CLI commands from planning docs, categorize as CLI / API-only, and add the `l8b api` wrapper. Not blocking any feature work.
 
-**Update (AI-native plan):** [ai-native.md](ai-native.md) revises the premise — coding agents are a primary CLI consumer, so agent-facing verbs (`list`, `logs`, `stop`, `start`, `restart`, `url`, `delete`, `env`) are priority rather than scope creep. The `l8b api` wrapper remains the long-tail escape hatch and complements the agent story.
+**Update (AI-native — shipped):** the premise was revised and implemented — coding agents are a primary CLI consumer, and the agent-facing verbs (`list`, `logs`, `stop`, `start`, `restart`, `url`, `delete`, `env`, plus `init`, `doctor`, `setup`, `domain`, `mcp`) are built, along with a stdio MCP server and device-flow pairing. See [docs/ai-native.md](../ai-native.md). The `l8b api` wrapper was never built; the MCP tools cover the long tail for agents.
