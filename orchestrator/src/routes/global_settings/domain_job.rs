@@ -349,13 +349,16 @@ async fn run_domain_job(state: &AppState, job_id: &str, start_from: usize) {
             let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await.ok().flatten().unwrap_or_default();
             if !cf_token.is_empty() && !cf_zone.is_empty() {
                 let cf = CloudflareClient::new(&cf_token, &cf_zone);
-                let old_suffix = format!(".{}", old_domain);
-                match cf.list_records_by_suffix(&old_suffix, "A").await {
-                    Ok(records) => {
-                        for record in &records {
-                            if let Err(e) = cf.delete_record(&record.id).await {
-                                tracing::warn!(record = %record.name, error = %e, "domain job: failed to delete old DNS record");
+                // Delete only records LiteBin created (dns_records ledger) —
+                // a user's own records under the old domain are left alone.
+                match crate::dns_ledger::rows(&state.db).await {
+                    Ok(ledger) => {
+                        for row in crate::dns_ledger::under_domain(&ledger, &old_domain) {
+                            if let Err(e) = cf.delete_record(&row.record_id).await {
+                                tracing::warn!(record = %row.name, error = %e, "domain job: failed to delete old DNS record");
+                                continue;
                             }
+                            let _ = crate::dns_ledger::remove(&state.db, &row.name).await;
                         }
                     }
                     Err(e) => {
@@ -364,7 +367,7 @@ async fn run_domain_job(state: &AppState, job_id: &str, start_from: usize) {
                             job_id,
                             4,
                             DomainStepStatus::Failed,
-                            Some(format!("failed to list old DNS records: {e}")),
+                            Some(format!("failed to load DNS record ledger: {e}")),
                         );
                         return;
                     }

@@ -7,6 +7,7 @@ mod cloudflare_router;
 mod config;
 use utoipa::OpenApi;
 mod db;
+mod dns_ledger;
 mod nodes;
 mod openapi;
 mod platform;
@@ -83,9 +84,19 @@ async fn main() -> anyhow::Result<()> {
     let first_arg = std::env::args().nth(1);
     match first_arg.as_deref() {
         Some("reset-password") => return cli::reset_password().await,
+        Some("set-domain") => {
+            let domain = std::env::args().nth(2);
+            match domain {
+                Some(d) => return cli::set_domain(&d).await,
+                None => {
+                    eprintln!("usage: litebin-orchestrator set-domain <domain>");
+                    std::process::exit(2);
+                }
+            }
+        }
         Some(other) if !other.starts_with('-') => {
             eprintln!("unknown subcommand: {other}");
-            eprintln!("available subcommands: reset-password");
+            eprintln!("available subcommands: reset-password, set-domain");
             eprintln!("run with no arguments to start the orchestrator server");
             std::process::exit(2);
         }

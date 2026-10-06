@@ -166,7 +166,7 @@ Values are write-only: listings show keys with masked previews only, never plain
 | `POST` | `/settings/domain/apply` | Session or token (admin) | Start domain change job (`{ domain, acknowledge_dns }` → `{ job_id }`) |
 | `GET` | `/settings/domain/jobs/:id` | Session or token (admin) | Poll domain change job progress |
 | `POST` | `/settings/domain/jobs/:id/retry` | Session or token (admin) | Retry a failed domain change job from the failed step |
-| `POST` | `/settings/cleanup-dns` | Session or token (admin) | Delete all Cloudflare A records for the domain |
+| `POST` | `/settings/cleanup-dns` | Session or token (admin) | Delete LiteBin-managed Cloudflare records (dns_records ledger; user-created records untouched) |
 | `POST` | `/settings/sync-dns` | Session or token (admin) | Sync Cloudflare DNS records |
 
 ### Health

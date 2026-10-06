@@ -109,8 +109,7 @@ ensure_docker() {
   if is_linux && [ "$(id -u)" -eq 0 ]; then
     echo ""
     echo "  Install it now with the official script, or set it up yourself."
-    echo "  For a full VPS bootstrap (ssh keys, firewall, fail2ban,"
-    echo "  unattended-upgrades + Docker):"
+    echo "  For a full VPS bootstrap (ssh keys, firewall, fail2ban + Docker):"
     echo "    ${VPS_SETUP_URL}"
     echo ""
     if prompt_yes "Install Docker now?" y && install_docker && command -v docker &>/dev/null; then
@@ -1871,6 +1870,32 @@ certs_cmd() {
   esac
 }
 
+# -- Domain recovery ----------------------------------------------------------
+# Change the platform domain on-server via the orchestrator's offline
+# set-domain subcommand, then restart it (boot sync rebuilds routing).
+set_domain_cmd() {
+  local domain="${1:-}"
+  [ -n "$domain" ] || die "Usage: curl -fsSL ${L8B_IN} | sudo bash -s set-domain <new-domain>"
+
+  local master_dir
+  master_dir=$(detect_master_dir)
+  [ -n "$master_dir" ] || die "No master installation found (looked for docker-compose.yml in /opt/litebin and ~/litebin)."
+
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^litebin-orchestrator$"; then
+    die "Orchestrator container is not running. Start it first:  cd ${master_dir} && docker compose up -d"
+  fi
+
+  echo "Setting platform domain to ${CYAN}${domain}${NC} ..."
+  (cd "$master_dir" && docker compose exec -T orchestrator /app/litebin-orchestrator set-domain "$domain") \
+    || die "set-domain failed inside the orchestrator container"
+
+  echo "Restarting orchestrator ..."
+  (cd "$master_dir" && docker compose restart orchestrator)
+
+  echo ""
+  echo -e "${GREEN}Done.${NC} The dashboard follows the new domain once the restart completes (~10s)."
+}
+
 # -- Main --------------------------------------------------------------------
 case "${1:-}" in
   master)  install_master ;;
@@ -1878,6 +1903,7 @@ case "${1:-}" in
   cli)     install_cli ;;
   certs)   certs_cmd "${2:-}" ;;
   update)  update_litebin ;;
+  set-domain) set_domain_cmd "${2:-}" ;;
   -h|--help|"help")
     local latest
     latest=$(get_latest_release 2>/dev/null) || true
@@ -1891,6 +1917,7 @@ case "${1:-}" in
     echo "  cli       Install the l8b CLI tool"
     echo "  update    Update LiteBin (auto-detects master or agent)"
     echo "  certs     Manage mTLS certs (interactive, or use --show-bundle / --regenerate)"
+    echo "  set-domain <domain>  Change the platform domain on-server (dashboard-free recovery)"
     ;;
   "")       show_menu ;;
   *)        die "Unknown mode: $1. Run with --help for usage." ;;

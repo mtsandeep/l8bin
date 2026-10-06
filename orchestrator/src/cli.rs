@@ -86,6 +86,81 @@ pub async fn reset_password() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `set-domain <domain>` subcommand.
+///
+/// Persists a new platform domain into the settings DB and best-effort
+/// re-registers online agents; restart the orchestrator afterwards (boot
+/// route sync rebuilds Caddy/DNS/agent configs). Intended usage:
+///
+/// ```text
+/// docker exec -it litebin-orchestrator /app/litebin-orchestrator set-domain <domain>
+/// ```
+///
+/// Safety notes:
+/// - No HTTP route is registered for this — the only way in is process argv.
+/// - Editing `.env` `DOMAIN` would NOT work: it is an INSERT OR IGNORE seed
+///   and the DB row wins once it exists.
+pub async fn set_domain(raw: &str) -> anyhow::Result<()> {
+    // We deliberately skip tracing initialization for subcommands so the
+    // output stays clean and script-friendly.
+    let config = Config::from_env()?;
+    let db = db::init_pool(&config.database_url).await?;
+
+    let domain = crate::platform::normalize_domain(raw).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    println!("litebin orchestrator — set platform domain");
+    println!();
+
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'domain'").fetch_optional(&db).await?;
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES ('domain', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(&domain)
+    .execute(&db)
+    .await?;
+    println!("domain: {} -> {}", old.as_deref().unwrap_or("(unset)"), domain);
+
+    // Best-effort re-register online agents so their Caddy hosts and wake
+    // URLs follow the new domain. Offline agents keep the old registration —
+    // re-run node connect (API/dashboard) for them after recovery.
+    let poke_subdomain = setting_or(&db, "poke_subdomain", config.poke_subdomain.clone()).await;
+    let wake = crate::routes::nodes::wake_report_url_from(&config, &poke_subdomain, &domain);
+    let heartbeat = crate::routes::nodes::heartbeat_url_from(&config, &poke_subdomain, &domain);
+    let node_clients = std::sync::Arc::new(dashmap::DashMap::new());
+    let (ok, errs) =
+        crate::routes::nodes::reregister_nodes(&db, &config, &node_clients, &domain, wake, heartbeat).await;
+    if ok > 0 {
+        println!("re-registered {ok} online agent(s) with the new domain");
+    }
+    for e in &errs {
+        println!("warning: {e}");
+    }
+    if !errs.is_empty() {
+        println!("agents that failed above keep the old domain; re-run node connect for them after restart");
+    }
+    if ok == 0 && errs.is_empty() {
+        println!("no remote agents to re-register");
+    }
+
+    let dashboard_subdomain = setting_or(&db, "dashboard_subdomain", config.dashboard_subdomain.clone()).await;
+    println!();
+    println!("Dashboard will be at https://{dashboard_subdomain}.{domain} after restart.");
+    println!("Restart now:  docker compose restart orchestrator");
+    Ok(())
+}
+
+async fn setting_or(db: &sqlx::SqlitePool, key: &str, fallback: String) -> String {
+    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .filter(|v| !v.is_empty())
+        .unwrap_or(fallback)
+}
+
 fn prompt(label: &str) -> io::Result<String> {
     print!("{label}");
     io::stdout().flush()?;

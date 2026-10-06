@@ -30,26 +30,33 @@ pub async fn cleanup_dns(State(state): State<AppState>) -> Result<Json<CleanupDn
         return Err((StatusCode::BAD_REQUEST, "Cloudflare API token and Zone ID must be configured".into()));
     }
 
-    let domain = state.platform.domain();
-    let suffix = format!(".{}", domain);
+    // Delete only records LiteBin created (dns_records ledger) — records the
+    // user created themselves are left alone. This covers the whole zone
+    // (platform-domain subdomains and project custom domains alike), since
+    // Cloudflare integration is being removed entirely.
+    let records =
+        crate::dns_ledger::rows(&state.db).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let cloudflare = CloudflareClient::new(&cf_token, &cf_zone);
-    let records = cloudflare
-        .list_records_by_suffix(&suffix, "A")
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let mut deleted_count = 0usize;
-    for record in &records {
-        match cloudflare.delete_record(&record.id).await {
-            Ok(_) => deleted_count += 1,
+    for row in &records {
+        match cloudflare.delete_record(&row.record_id).await {
+            Ok(_) => {
+                deleted_count += 1;
+                let _ = crate::dns_ledger::remove(&state.db, &row.name).await;
+            }
             Err(e) => {
-                tracing::warn!(record = %record.name, error = %e, "failed to delete DNS record during cleanup");
+                tracing::warn!(record = %row.name, error = %e, "failed to delete DNS record during cleanup");
             }
         }
     }
 
-    tracing::info!(deleted = deleted_count, total = records.len(), "DNS cleanup complete");
+    tracing::info!(
+        deleted = deleted_count,
+        total = records.len(),
+        "DNS cleanup complete (LiteBin-managed records only)"
+    );
     Ok(Json(CleanupDnsResponse { deleted_count }))
 }
 

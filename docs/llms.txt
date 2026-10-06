@@ -78,6 +78,7 @@ Commands (project flags default to `l8b.toml`, created by `l8b init`):
 - `l8b env list` / `l8b env push --file|--stdin [--replace] [--apply]` — Runtime env (write-only values)
 - `l8b stop | start | restart` — Lifecycle (restart applies pending .env changes; stop is idempotent)
 - `l8b domain set <domain>` / `l8b domain remove` — Custom domain management
+- `l8b platform domain set <domain> [--ack-dns]` / `l8b platform domain show` — Change or show the server's platform domain (admin scope; old URLs die, sign in again on the new host)
 - `l8b delete --yes` — Delete project + containers + volumes (admin scope)
 - `l8b login --server <url> [--pair]` — Device pairing (approve at /connect); `--pair` skips the interactive menu so agents can run it headlessly; username/password without `--pair`. `l8b setup --server <url>` bootstraps a fresh server
 - `l8b doctor` — Environment sanity checks with recovery hints

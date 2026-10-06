@@ -511,8 +511,7 @@ function GeneralTab() {
                 Remove Cloudflare &amp; Cleanup DNS
               </button>
               <p className="text-[10px] text-slate-600">
-                Deletes all A records matching <span className="text-slate-400 font-mono">*.{domain}</span> and clears
-                credentials.
+                Deletes LiteBin-managed A records (records you created yourself are left alone) and clears credentials.
               </p>
             </div>
           )}
@@ -528,8 +527,8 @@ function GeneralTab() {
                 <p className="text-xs text-slate-300 mb-1">This will:</p>
                 <ul className="text-xs text-slate-400 list-disc list-inside mb-4 space-y-1">
                   <li>
-                    Delete all A records matching <span className="font-mono text-slate-300">*.{domain}</span> from
-                    Cloudflare
+                    Delete LiteBin-managed A records from Cloudflare (records you created yourself, e.g.{" "}
+                    <span className="font-mono text-slate-300">mail.{domain}</span>, are left alone)
                   </li>
                   <li>Clear your Cloudflare API token and Zone ID</li>
                   <li>Switch routing mode to Local (master proxy)</li>

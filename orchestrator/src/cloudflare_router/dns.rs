@@ -138,7 +138,7 @@ impl CloudflareDnsRouter {
 
         let domain_suffix = format!(".{}", domain);
 
-        // List existing A records for our domain
+        // Read-only listing: existing-name check + ledger backfill for pre-ledger records.
         let existing = self.cloudflare.list_records_by_suffix(&domain_suffix, "A").await?;
 
         let mut result = litebin_common::routing::DnsSyncResult::default();
@@ -146,28 +146,42 @@ impl CloudflareDnsRouter {
         // Build set of existing record names for fast lookup
         let existing_names: HashSet<&str> = existing.iter().map(|r| r.name.as_str()).collect();
 
-        // Delete records that exist but shouldn't
+        // Delete stale records — ledger rows only (user-created records never are).
+        let ledger_rows = crate::dns_ledger::rows(&self.db).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "sync_dns: failed to load DNS record ledger; skipping stale deletion");
+            Vec::new()
+        });
         let desired_names: HashSet<&str> = desired.keys().map(|s| s.as_str()).collect();
-        for record in &existing {
-            if !desired_names.contains(record.name.as_str()) {
-                if let Err(e) = self.cloudflare.delete_record(&record.id).await {
-                    tracing::warn!(record = %record.name, error = %e, "failed to delete stale DNS record");
-                    result.errors += 1;
-                } else {
-                    result.deleted += 1;
-                }
+        for row in crate::dns_ledger::stale(&ledger_rows, &desired_names) {
+            if let Err(e) = self.cloudflare.delete_record(&row.record_id).await {
+                tracing::warn!(record = %row.name, error = %e, "failed to delete stale DNS record");
+                result.errors += 1;
+                continue;
             }
+            if let Err(e) = crate::dns_ledger::remove(&self.db, &row.name).await {
+                tracing::warn!(record = %row.name, error = %e, "failed to drop stale DNS record from ledger");
+            }
+            result.deleted += 1;
         }
 
-        // Upsert desired records
+        // Upsert desired records, recording every managed name in the ledger
         for (name, ip) in &desired {
             if existing_names.contains(name.as_str()) {
+                if let Some(record) = existing.iter().find(|r| r.name == name.as_str()) {
+                    record_in_ledger(&self.db, &ledger_rows, name, &record.id).await;
+                }
                 result.unchanged += 1;
                 continue;
             }
             match self.cloudflare.upsert_record(name, "A", ip, 1, false).await {
-                Ok(true) => result.created += 1,
-                Ok(false) => result.unchanged += 1,
+                Ok(upserted) => {
+                    if upserted.created {
+                        result.created += 1;
+                    } else {
+                        result.unchanged += 1;
+                    }
+                    record_in_ledger(&self.db, &ledger_rows, name, &upserted.id).await;
+                }
                 Err(e) => {
                     tracing::warn!(name, ip, error = %e, "failed to upsert DNS record");
                     result.errors += 1;
@@ -186,5 +200,15 @@ impl CloudflareDnsRouter {
         );
 
         Ok(result)
+    }
+}
+
+/// Remember a managed record in the ledger (no-op when already recorded).
+async fn record_in_ledger(db: &sqlx::SqlitePool, ledger_rows: &[crate::dns_ledger::LedgerRow], name: &str, id: &str) {
+    if ledger_rows.iter().any(|r| r.name == name && r.record_id == id) {
+        return;
+    }
+    if let Err(e) = crate::dns_ledger::upsert(db, name, id).await {
+        tracing::warn!(record = name, error = %e, "failed to record DNS record in ledger");
     }
 }

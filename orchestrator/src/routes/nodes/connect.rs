@@ -148,40 +148,61 @@ pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>)
 
 /// Build the wake_report_url for agents to POST to.
 pub fn format_wake_report_url(state: &AppState) -> String {
-    if state.config.ca_cert_path.is_empty() {
-        // Dev mode: direct to orchestrator over HTTP
-        format!("http://localhost:{}{}", state.config.port, litebin_common::types::WAKE_REPORT_PATH)
-    } else {
-        // Production: route through Caddy (port 443) for proper TLS
-        format!(
-            "https://{}.{}{}",
-            state.platform.poke_subdomain(),
-            state.platform.domain(),
-            litebin_common::types::WAKE_REPORT_PATH
-        )
-    }
+    wake_report_url_from(&state.config, &state.platform.poke_subdomain(), &state.platform.domain())
 }
 
 /// Build the heartbeat_url for agents to POST activity data to.
 pub fn format_heartbeat_url(state: &AppState) -> String {
-    if state.config.ca_cert_path.is_empty() {
-        format!("http://localhost:{}{}", state.config.port, litebin_common::types::HEARTBEAT_PATH)
+    heartbeat_url_from(&state.config, &state.platform.poke_subdomain(), &state.platform.domain())
+}
+
+/// Stateless URL builders, usable outside an AppState (recovery subcommands).
+pub fn wake_report_url_from(config: &crate::config::Config, poke_subdomain: &str, domain: &str) -> String {
+    if config.ca_cert_path.is_empty() {
+        // Dev mode: direct to orchestrator over HTTP
+        format!("http://localhost:{}{}", config.port, litebin_common::types::WAKE_REPORT_PATH)
     } else {
         // Production: route through Caddy (port 443) for proper TLS
-        format!(
-            "https://{}.{}{}",
-            state.platform.poke_subdomain(),
-            state.platform.domain(),
-            litebin_common::types::HEARTBEAT_PATH
-        )
+        format!("https://{}.{}{}", poke_subdomain, domain, litebin_common::types::WAKE_REPORT_PATH)
+    }
+}
+
+pub fn heartbeat_url_from(config: &crate::config::Config, poke_subdomain: &str, domain: &str) -> String {
+    if config.ca_cert_path.is_empty() {
+        format!("http://localhost:{}{}", config.port, litebin_common::types::HEARTBEAT_PATH)
+    } else {
+        // Production: route through Caddy (port 443) for proper TLS
+        format!("https://{}.{}{}", poke_subdomain, domain, litebin_common::types::HEARTBEAT_PATH)
     }
 }
 
 /// Push /internal/register to all online remote agents with current platform domain + URLs.
 /// Returns (success_count, error messages).
 pub async fn reregister_online_agents(state: &AppState) -> (usize, Vec<String>) {
+    let domain = state.platform.domain();
+    reregister_nodes(
+        &state.db,
+        &state.config,
+        &state.node_clients,
+        &domain,
+        format_wake_report_url(state),
+        format_heartbeat_url(state),
+    )
+    .await
+}
+
+/// Core of [`reregister_online_agents`] without an AppState — used by the
+/// `set-domain` recovery subcommand.
+pub async fn reregister_nodes(
+    db: &sqlx::SqlitePool,
+    config: &crate::config::Config,
+    node_clients: &Arc<dashmap::DashMap<String, Arc<reqwest::Client>>>,
+    domain: &str,
+    wake_report_url: String,
+    heartbeat_url: String,
+) -> (usize, Vec<String>) {
     let nodes = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE status = 'online' AND id != 'local'")
-        .fetch_all(&state.db)
+        .fetch_all(db)
         .await
     {
         Ok(n) => n,
@@ -192,17 +213,13 @@ pub async fn reregister_online_agents(state: &AppState) -> (usize, Vec<String>) 
     let mut errs = Vec::new();
 
     for node in nodes {
-        let client = match crate::nodes::client::get_node_client(&state.node_clients, &node.id) {
+        let client = match crate::nodes::client::get_node_client(node_clients, &node.id) {
             Ok(c) => c,
             Err(_) => {
-                match build_node_client(
-                    &state.config.ca_cert_path,
-                    &state.config.client_cert_path,
-                    &state.config.client_key_path,
-                ) {
+                match build_node_client(&config.ca_cert_path, &config.client_cert_path, &config.client_key_path) {
                     Ok(c) => {
                         let arc = Arc::new(c);
-                        state.node_clients.insert(node.id.clone(), arc.clone());
+                        node_clients.insert(node.id.clone(), arc.clone());
                         arc
                     }
                     Err(e) => {
@@ -213,14 +230,14 @@ pub async fn reregister_online_agents(state: &AppState) -> (usize, Vec<String>) 
             }
         };
 
-        let agent = crate::nodes::client::AgentClient::new(client, &node, &state.config);
+        let agent = crate::nodes::client::AgentClient::new(client, &node, config);
         let secret = node.agent_secret.clone().unwrap_or_default();
         let register_request = litebin_common::agent_api::RegisterRequest {
             node_id: node.id.clone(),
             secret,
-            domain: state.platform.domain(),
-            wake_report_url: format_wake_report_url(state),
-            heartbeat_url: format_heartbeat_url(state),
+            domain: domain.to_string(),
+            wake_report_url: wake_report_url.clone(),
+            heartbeat_url: heartbeat_url.clone(),
         };
 
         match agent.register(&register_request).await {

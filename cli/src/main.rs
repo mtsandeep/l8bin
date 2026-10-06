@@ -226,6 +226,11 @@ enum Commands {
         #[command(subcommand)]
         action: DomainAction,
     },
+    /// Manage the server's platform domain (admin)
+    Platform {
+        #[command(subcommand)]
+        action: PlatformAction,
+    },
     /// Log in to a LiteBin server (dashboard approval or username/password)
     Login {
         /// Server URL
@@ -311,6 +316,32 @@ enum DomainAction {
         #[arg(long, short)]
         project: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum PlatformAction {
+    /// Change or show the platform domain (`{project}.{domain}`)
+    Domain {
+        #[command(subcommand)]
+        action: PlatformDomainAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum PlatformDomainAction {
+    /// Change the platform domain (old URLs stop working; you sign in again on the new host)
+    Set {
+        /// New platform domain (e.g. example.com or apps.example.com)
+        domain: String,
+        /// Accept preflight DNS warnings without prompting (required in CI/JSON mode)
+        #[arg(long)]
+        ack_dns: bool,
+        /// How long to wait for the change job, in seconds (default 300)
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Show the current platform domain and dashboard URL
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -498,6 +529,23 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 commands::projects::domain_set(project, None, true, cli.server.as_deref(), cli.token.as_deref(), out)
                     .await?;
             }
+        },
+        Commands::Platform { action } => match action {
+            PlatformAction::Domain { action } => match action {
+                PlatformDomainAction::Set { domain, ack_dns, timeout } => {
+                    commands::platform::domain_set(
+                        commands::platform::DomainSetArgs { domain, ack_dns, timeout },
+                        cli.server.as_deref(),
+                        cli.token.as_deref(),
+                        ci_mode,
+                        out,
+                    )
+                    .await?;
+                }
+                PlatformDomainAction::Show => {
+                    commands::platform::show(cli.server.as_deref(), cli.token.as_deref(), out).await?;
+                }
+            },
         },
         Commands::List => {
             commands::projects::list(cli.server.as_deref(), cli.token.as_deref(), out).await?;

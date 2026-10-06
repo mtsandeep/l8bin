@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `l8b platform domain set/show` — change or show the platform domain from the CLI (admin scope; `--ack-dns` accepts DNS warnings; polls the change job). Without dashboard access: `install.sh set-domain <domain>` changes it on-server (`docker exec litebin-orchestrator /app/litebin-orchestrator set-domain <domain>` + restart) and re-registers agents best-effort.
+
+### Fixed
+- Cloudflare record deletion is scoped to a new `dns_records` ledger of records LiteBin created — domain changes, syncs, and "Remove Cloudflare" no longer delete user-created records under the platform domain (e.g. `mail.{domain}` at a zone apex); existing records backfill into the ledger on first sync.
+
 ## [0.4.4] - 2026-10-06
 
 ### Added

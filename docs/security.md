@@ -47,6 +47,10 @@ The command prompts for a username and a new password (hidden input), then write
 
 This matches the model used by other self-hosted tools (out-of-band CLI for password recovery).
 
+### Domain-expiry recovery
+
+The same out-of-band mechanism recovers the platform domain when it expires and the dashboard becomes unreachable: `litebin-orchestrator set-domain <domain>` persists a new domain into the settings DB (re-registering online agents best-effort) and a restart rebuilds all routing from it. The installer wraps it: `curl -fsSL https://l8b.in | sudo bash -s set-domain <new-domain>`. With the API still reachable, `l8b platform domain set <domain>` (admin scope) runs the full dashboard-equivalent job instead. Same trust model as `reset-password` — argv-only, no route, requires `docker exec` on the box.
+
 ---
 
 ## Network Isolation

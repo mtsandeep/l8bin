@@ -19,6 +19,13 @@ pub struct DnsRecord {
     pub ttl: i64,
 }
 
+/// Upsert outcome: the record's Cloudflare ID and whether it was newly created.
+#[derive(Debug, Clone)]
+pub struct UpsertedRecord {
+    pub id: String,
+    pub created: bool,
+}
+
 /// Cloudflare API response wrapper
 #[derive(Debug, Deserialize)]
 struct CfResponse<T> {
@@ -145,7 +152,7 @@ impl CloudflareClient {
 
     /// Create or update a DNS record. If a record with the same name and type exists,
     /// it is updated (PUT). Otherwise, a new record is created (POST).
-    /// Returns true if a new record was created, false if it already existed or was updated.
+    /// Returns the record's ID (ledger it) and whether it was newly created.
     pub async fn upsert_record(
         &self,
         name: &str,
@@ -153,7 +160,7 @@ impl CloudflareClient {
         content: &str,
         ttl: i64,
         proxied: bool,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<UpsertedRecord> {
         let existing = self.list_records(name, record_type).await?;
 
         if let Some(record) = existing.first() {
@@ -190,7 +197,7 @@ impl CloudflareClient {
             }
 
             tracing::info!(name, record_type, content, "updated DNS record");
-            Ok(false)
+            Ok(UpsertedRecord { id: record.id.clone(), created: false })
         } else {
             // Create new record
             let body = serde_json::json!({
@@ -223,7 +230,10 @@ impl CloudflareClient {
                     cf_resp.errors.as_ref().is_some_and(|errs| errs.iter().any(|e| e.code == Some(81057)));
                 if is_duplicate {
                     tracing::info!(name, record_type, content, "DNS record already exists");
-                    return Ok(false);
+                    // Pre-list raced empty — re-list for the existing record's ID.
+                    let id =
+                        self.list_records(name, record_type).await?.first().map(|r| r.id.clone()).unwrap_or_default();
+                    return Ok(UpsertedRecord { id, created: false });
                 }
                 let errors =
                     cf_resp.errors.unwrap_or_default().iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
@@ -231,11 +241,12 @@ impl CloudflareClient {
             }
 
             tracing::info!(name, record_type, content, "created DNS record");
-            Ok(true)
+            let id = cf_resp.result.map(|r| r.id).unwrap_or_default();
+            Ok(UpsertedRecord { id, created: true })
         }
     }
 
-    /// Delete a DNS record by its Cloudflare record ID.
+    /// Delete a DNS record by ID; 81047 ("record does not exist") is success.
     pub async fn delete_record(&self, record_id: &str) -> anyhow::Result<()> {
         let url = format!("{}/{}", self.base_url(), record_id);
 
@@ -250,10 +261,40 @@ impl CloudflareClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            let missing = serde_json::from_str::<CfResponse<serde_json::Value>>(&body)
+                .ok()
+                .and_then(|r| r.errors)
+                .is_some_and(|errs| errs.iter().any(|e| e.code == Some(81047)));
+            if missing {
+                tracing::info!(record_id, "DNS record already gone");
+                return Ok(());
+            }
             anyhow::bail!("cloudflare delete_record failed ({}): {}", status, body);
         }
 
         tracing::info!(record_id, "deleted DNS record");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_not_found_body_is_detected() {
+        let body = r#"{"success":false,"errors":[{"code":81047,"message":"Record does not exist."}]}"#;
+        let parsed: CfResponse<serde_json::Value> = serde_json::from_str(body).unwrap();
+        let missing = parsed.errors.is_some_and(|errs| errs.iter().any(|e| e.code == Some(81047)));
+        assert!(missing);
+    }
+
+    #[test]
+    fn delete_auth_error_body_is_not_not_found() {
+        let body =
+            r#"{"success":false,"errors":[{"code":9109,"message":"Unauthorized to access requested resource"}]}"#;
+        let parsed: CfResponse<serde_json::Value> = serde_json::from_str(body).unwrap();
+        let missing = parsed.errors.is_some_and(|errs| errs.iter().any(|e| e.code == Some(81047)));
+        assert!(!missing);
     }
 }
