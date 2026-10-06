@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-06
+
 ### Added
 - **MCP-first setup — the `setup` tool** — registering the LiteBin MCP via `npx -y l8bin-mcp` is now the whole install; the new `setup` MCP tool configures the rest in-session: it reports a state (`unconfigured | needs_binding | ambiguous | misconfigured | pairing_pending | configured`) with the exact next call, starts device pairing (returns the `approval_url` to relay to the user), completes it (storing the credential and writing `server` into the workspace `l8b.toml`), or binds an existing login. Unauthenticated tool failures under the MCP hint the `setup` call instead of `l8b login`. `l8b init` now prompts for the server (pick from stored logins or pair a new one) instead of silently omitting it when several logins exist. The npx shim serves the new tool from this release onward.
 - **`l8b init --agents`** — merges a managed `## Deploying (LiteBin)` section into `AGENTS.md` so later sessions (and non-MCP agents) know the workflow: created when the file is absent, appended to user content, refreshed in place on re-run, user content never removed.

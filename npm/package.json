@@ -1,6 +1,6 @@
 {
   "name": "l8bin-mcp",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "l8bin (pronounced LiteBin) MCP server — deploy and operate your self-hosted projects from any MCP client. Wraps the l8b CLI, installing the platform binary on first use.",
   "type": "module",
   "license": "MIT",
