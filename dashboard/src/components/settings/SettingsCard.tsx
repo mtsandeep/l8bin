@@ -8,7 +8,7 @@ export default function SettingsCard({
 }: {
   icon: LucideIcon;
   title: string;
-  description: string;
+  description?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -17,7 +17,7 @@ export default function SettingsCard({
         <Icon size={14} className="text-violet-400 mt-0.5 shrink-0" />
         <div>
           <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
-          <p className="text-xs text-slate-500 mt-0.5">{description}</p>
+          {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}
         </div>
       </header>
       <div className="p-4">{children}</div>

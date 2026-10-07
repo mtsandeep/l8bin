@@ -91,6 +91,8 @@ use utoipa::OpenApi;
         crate::routes::backup::backup_disable,
         crate::routes::backup::backup_add_s3,
         crate::routes::backup::backup_remove_s3,
+        crate::routes::backup::backup_create_point,
+        crate::routes::backup::backup_delete_point,
         crate::routes::backup::backup_restore,
         // Volumes
         crate::routes::volumes::delete_volume,
@@ -195,7 +197,9 @@ use utoipa::OpenApi;
             crate::routes::backup::BackupS3Request,
             crate::routes::backup::BackupRestoreRequest,
             crate::routes::backup::BackupActionResponse,
-            crate::backup::GenerationInfo,
+            crate::routes::backup::BackupPoint,
+            crate::routes::backup::BackupPointRequest,
+            crate::backup::ReplicaInfo,
             // Scan
             crate::routes::scan::ImportRequest,
             crate::routes::scan::ImportResponse,

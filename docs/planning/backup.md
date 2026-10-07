@@ -56,6 +56,15 @@ The orchestrator runs *from* the database it would restore, so restore is a two-
 
 The dashboard polls `/backup/status` until the orchestrator is back. Stale `-wal`/`-shm` files are deleted with the swap — the restored file is a plain snapshot.
 
+## Named Points
+
+Restore points can be bookmarked with a name (e.g. "before migration"). A point is just a `(name, timestamp)` row in the `backup_points` table — restore still goes through `litestream restore -timestamp`; the name is only a memorable label. Creating a point requires existing replica data (it must land inside the coverage window). Managed from the dashboard (Restore card) or API:
+
+```
+POST   /backup/points        {name}          → point at server time "now"
+DELETE /backup/points/{id}                   → remove the label (data unaffected)
+```
+
 ## CLI
 
 ```

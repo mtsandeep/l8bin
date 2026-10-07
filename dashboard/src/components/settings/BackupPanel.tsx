@@ -1,20 +1,23 @@
 import {
   AlertTriangle,
+  Bookmark,
   Check,
   Cloud,
   DatabaseBackup,
   HardDrive,
-  History,
   Pencil,
   Plus,
   RotateCcw,
   Trash2,
+  X,
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import {
   addBackupS3,
   type BackupStatus,
+  createBackupPoint,
+  deleteBackupPoint,
   disableBackup,
   enableBackup,
   fetchBackupStatus,
@@ -26,7 +29,7 @@ import {
 import { useToast } from '../ToastContext';
 import SettingsCard from './SettingsCard';
 
-type Busy = 'enable' | 'disable' | 's3' | 'remove-s3' | 'restore' | null;
+type Busy = 'enable' | 'disable' | 's3' | 'remove-s3' | 'restore' | 'point' | 'point-del' | null;
 
 const Card = SettingsCard;
 
@@ -36,6 +39,11 @@ const inputCls =
 /** ISO timestamp for N ms ago (empty for latest). */
 function msAgoIso(ms: number): string {
   return new Date(Date.now() - ms).toISOString().replace(/\.\d+Z$/, 'Z');
+}
+
+/** Display an ISO timestamp in the browser's locale (raw Z-suffixed ISOs are confusing). */
+function fmtTs(iso: string): string {
+  return new Date(iso).toLocaleString();
 }
 
 /** ms → value for <input type="datetime-local"> ("YYYY-MM-DDTHH:mm", browser-local). */
@@ -65,6 +73,7 @@ export default function BackupPanel() {
   const [restoreTimestamp, setRestoreTimestamp] = useState('');
   const [restorePick, setRestorePick] = useState<RestorePickId | null>('latest');
   const [customValue, setCustomValue] = useState('');
+  const [pointName, setPointName] = useState('');
   const [restarting, setRestarting] = useState(false);
   // S3 form
   const [s3FormOpen, setS3FormOpen] = useState(false);
@@ -235,14 +244,12 @@ export default function BackupPanel() {
   const s3Configured = status.s3.configured;
   const s3FormValid = endpoint.trim() && bucket.trim() && accessKey.trim() && secretKey.trim();
 
-  // Restore coverage: litestream can restore to any second from the oldest
-  // generation's start until now. Quick picks only appear inside that window.
-  const generationStarts = status.generations
-    .map((g) => g.start_time)
-    .filter((s): s is string => !!s)
-    .map((s) => new Date(s).getTime());
-  const oldestMs = generationStarts.length > 0 ? Math.min(...generationStarts) : null;
-  const availablePicks = RESTORE_PICKS.filter((p) => oldestMs !== null && Date.now() - p.ms >= oldestMs);
+  // Restore coverage: litestream keeps one continuous store — restorable to any
+  // second from coverage_start until now. Quick picks enable inside that window.
+  const replica = status.replica;
+  const oldestMs = replica?.coverage_start ? new Date(replica.coverage_start).getTime() : null;
+  const hasData = (replica?.file_count ?? 0) > 0;
+  const pickCovered = (ms: number) => hasData && Date.now() - ms >= (oldestMs ?? 0);
   const choosePick = (id: (typeof RESTORE_PICKS)[number]['id']) => {
     setRestorePick(id);
     const pick = RESTORE_PICKS.find((p) => p.id === id);
@@ -255,7 +262,13 @@ export default function BackupPanel() {
   const selectedLabel =
     restorePick && restorePick !== 'latest' && restorePick !== 'custom'
       ? RESTORE_PICKS.find((p) => p.id === restorePick)?.label
-      : restoreTimestamp.trim() || 'the latest backup state';
+      : restoreTimestamp.trim()
+        ? fmtTs(restoreTimestamp.trim())
+        : 'the latest backup state';
+  /** When the chosen timestamp is exactly a named point, show its name. */
+  const namedPoint = restoreTimestamp.trim()
+    ? status.points.find((p) => p.timestamp === restoreTimestamp.trim())
+    : undefined;
 
   return (
     <div className="space-y-5">
@@ -267,29 +280,24 @@ export default function BackupPanel() {
       <div className="rounded-lg border border-slate-700/50 bg-slate-900/50 px-4 py-3 flex items-center gap-x-4 gap-y-1.5 flex-wrap">
         <span className={`h-2 w-2 rounded-full shrink-0 ${status.sidecar_running ? 'bg-green-400' : 'bg-amber-400'}`} />
         <span className="text-xs font-medium text-slate-100">
-          {status.sidecar_running ? 'Continuous backup active' : 'Backup sidecar not running'}
+          {status.sidecar_running ? 'Backup active' : 'Backup sidecar not running'}
         </span>
         {status.last_sync ? (
           <span className="text-xs text-slate-500">
-            last write replicated {timeAgo(Math.floor(new Date(status.last_sync).getTime() / 1000))}
+            last write {timeAgo(Math.floor(new Date(status.last_sync).getTime() / 1000))}
           </span>
         ) : (
           <span className="text-xs text-slate-500">waiting for first sync…</span>
         )}
-        {status.replica_size_bytes != null && (
+        {hasData && replica != null && oldestMs !== null && (
           <span className="text-xs text-slate-500 ml-auto">
-            backup {formatBytes(status.replica_size_bytes)}
-            {status.db_size_bytes != null && ` · live db ${formatBytes(status.db_size_bytes)}`}
+            {formatBytes(replica.size_bytes)} · restorable from {new Date(oldestMs).toLocaleString()}
           </span>
         )}
       </div>
 
       {/* Destinations */}
-      <Card
-        icon={HardDrive}
-        title="Destinations"
-        description="Where backups are written. The local replica is always on; S3/R2 adds an off-server copy."
-      >
+      <Card icon={HardDrive} title="Destinations">
         <div className="space-y-2">
           {/* Local */}
           <div className="flex items-center gap-3 rounded-md border border-slate-700/40 px-3 py-2.5">
@@ -297,10 +305,8 @@ export default function BackupPanel() {
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium text-slate-200">This server</p>
               <p className="text-xs text-slate-500">
-                {status.generations.length > 0
-                  ? `${status.generations.length} generation${status.generations.length === 1 ? '' : 's'} · ${
-                      status.replica_size_bytes != null ? formatBytes(status.replica_size_bytes) : '—'
-                    } · 30-day retention`
+                {hasData
+                  ? `${replica?.file_count ?? 0} files · ${formatBytes(replica?.size_bytes ?? 0)} · 30-day retention`
                   : 'backups/litebin.db · 30-day retention'}
               </p>
             </div>
@@ -480,75 +486,83 @@ export default function BackupPanel() {
         </div>
       </Card>
 
-      {/* Backup history */}
-      <SettingsCard
-        icon={History}
-        title="Backup history"
-        description="Each generation is a continuous run of replicated writes. Restore to any of these points — or to any second in between."
-      >
-        {status.generations.length === 0 ? (
-          <div className="py-5 text-center">
-            {status.sidecar_running ? (
-              <>
-                <p className="text-xs text-slate-400">First replication hasn&apos;t completed yet</p>
-                <p className="text-xs text-slate-600 mt-1">
-                  Litestream syncs within seconds of the next database write — this list fills in automatically.
-                </p>
-              </>
-            ) : (
-              <p className="text-xs text-slate-500">Backup sidecar is not running — start it to resume replication.</p>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {status.generations.slice(0, 10).map((gen) => (
-              <div
-                key={gen.id}
-                className="flex items-center gap-3 rounded-md border border-slate-700/30 bg-slate-900/50 px-3 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-slate-200">
-                    {gen.start_time ? new Date(gen.start_time).toLocaleString() : 'unknown start'}
-                  </p>
-                  <p className="text-xs text-slate-500 font-mono truncate">
-                    {gen.file_count} segment{gen.file_count === 1 ? '' : 's'} · {formatBytes(gen.size_bytes)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (gen.start_time) setRestoreTimestamp(gen.start_time);
-                    setRestorePick(null);
-                    setRestoreAck(false);
-                    setShowRestoreConfirm(true);
-                  }}
-                  disabled={!gen.start_time || busy !== null}
-                  className="shrink-0 px-2.5 py-1 rounded text-xs font-medium text-slate-300 hover:text-red-300 hover:bg-red-500/10 border border-slate-700/50 transition-colors cursor-pointer disabled:opacity-40"
-                  title={gen.start_time ? `Restore the database to ${gen.start_time}` : undefined}
-                >
-                  Restore here
-                </button>
-              </div>
-            ))}
-            {status.generations.length > 10 && (
-              <p className="text-xs text-slate-600 pt-1">
-                Showing 10 of {status.generations.length} generations — older ones still restore via an exact timestamp
-                below.
-              </p>
-            )}
-          </div>
-        )}
-      </SettingsCard>
-
       {/* Restore */}
-      <Card
-        icon={RotateCcw}
-        title="Restore"
-        description="Roll the database back to any moment since backup was enabled — any second, not just scheduled points."
-      >
+      <Card icon={RotateCcw} title="Restore">
         <div className="space-y-4">
+          {/* Named points */}
+          {status.points.length > 0 && (
+            <div className="space-y-1.5">
+              {status.points.map((pt) => (
+                <div
+                  key={pt.id}
+                  className="flex items-center gap-3 rounded-md border border-slate-700/30 bg-slate-900/50 px-3 py-2"
+                >
+                  <Bookmark size={13} className="text-amber-300 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-slate-200 truncate">{pt.name}</p>
+                    <p className="text-xs text-slate-500">
+                      {new Date(pt.timestamp).toLocaleString()} ·{' '}
+                      {timeAgo(Math.floor(new Date(pt.timestamp).getTime() / 1000))}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRestoreTimestamp(pt.timestamp);
+                      setRestorePick(null);
+                      setRestoreAck(false);
+                      setShowRestoreConfirm(true);
+                    }}
+                    disabled={busy !== null || !status.sidecar_running}
+                    className="shrink-0 px-2.5 py-1 rounded text-xs font-medium text-slate-300 hover:text-red-300 hover:bg-red-500/10 border border-slate-700/50 transition-colors cursor-pointer disabled:opacity-40"
+                  >
+                    Restore here
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      run('point-del', async () => {
+                        const res = await deleteBackupPoint(pt.id);
+                        setStatus(res.status);
+                      })
+                    }
+                    disabled={busy !== null}
+                    className="shrink-0 p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-40"
+                    title="Delete named point (backup data is unaffected)"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={pointName}
+              onChange={(e) => setPointName(e.target.value)}
+              placeholder="Name the current state (e.g. before migration)"
+              className={inputCls}
+              maxLength={64}
+            />
+            <button
+              type="button"
+              onClick={() =>
+                run('point', async () => {
+                  const res = await createBackupPoint(pointName.trim());
+                  setStatus(res.status);
+                  setPointName('');
+                  showToast('Point saved — restore to it by name anytime', 'success');
+                })
+              }
+              disabled={busy !== null || !hasData || !pointName.trim()}
+              className="shrink-0 px-3 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-100 hover:bg-slate-600 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {busy === 'point' ? 'Saving…' : 'Save point'}
+            </button>
+          </div>
+
           <div>
-            <p className="text-xs text-slate-400 mb-1.5">Restore point</p>
             <div className="flex flex-wrap gap-1.5 mb-3">
               <button
                 type="button"
@@ -556,41 +570,56 @@ export default function BackupPanel() {
                   setRestorePick('latest');
                   setRestoreTimestamp('');
                 }}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                  restorePick === 'latest'
-                    ? 'bg-violet-500/15 text-violet-300 border border-violet-500/40'
-                    : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
+                disabled={!hasData}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  !hasData
+                    ? 'bg-slate-900 text-slate-600 border border-slate-700/30 cursor-not-allowed'
+                    : restorePick === 'latest'
+                      ? 'bg-violet-500/15 text-violet-300 border border-violet-500/40 cursor-pointer'
+                      : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200 cursor-pointer'
                 }`}
+                title={hasData ? undefined : 'No backup data yet'}
               >
                 Latest
               </button>
-              {availablePicks.map((pick) => (
-                <button
-                  key={pick.id}
-                  type="button"
-                  onClick={() => choosePick(pick.id)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                    restorePick === pick.id
-                      ? 'bg-violet-500/15 text-violet-300 border border-violet-500/40'
-                      : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
-                  }`}
-                >
-                  {pick.label}
-                </button>
-              ))}
+              {RESTORE_PICKS.map((pick) => {
+                const covered = pickCovered(pick.ms);
+                return (
+                  <button
+                    key={pick.id}
+                    type="button"
+                    onClick={() => choosePick(pick.id)}
+                    disabled={!covered}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                      !covered
+                        ? 'bg-slate-900 text-slate-600 border border-slate-700/30 cursor-not-allowed'
+                        : restorePick === pick.id
+                          ? 'bg-violet-500/15 text-violet-300 border border-violet-500/40 cursor-pointer'
+                          : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200 cursor-pointer'
+                    }`}
+                    title={covered ? undefined : 'Backup history does not reach this far back yet'}
+                  >
+                    {pick.label}
+                  </button>
+                );
+              })}
               <button
                 type="button"
                 onClick={() => setRestorePick('custom')}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                  restorePick === 'custom'
-                    ? 'bg-violet-500/15 text-violet-300 border border-violet-500/40'
-                    : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200'
+                disabled={!hasData}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  !hasData
+                    ? 'bg-slate-900 text-slate-600 border border-slate-700/30 cursor-not-allowed'
+                    : restorePick === 'custom'
+                      ? 'bg-violet-500/15 text-violet-300 border border-violet-500/40 cursor-pointer'
+                      : 'bg-slate-900 text-slate-400 border border-slate-700/50 hover:text-slate-200 cursor-pointer'
                 }`}
+                title={hasData ? undefined : 'No backup data yet'}
               >
                 Custom…
               </button>
             </div>
-            {restorePick === 'custom' && (
+            {restorePick === 'custom' && hasData && (
               <input
                 id="backup-restore-ts"
                 type="datetime-local"
@@ -602,24 +631,26 @@ export default function BackupPanel() {
                 style={{ colorScheme: 'dark' }}
               />
             )}
-            {oldestMs !== null && availablePicks.length < RESTORE_PICKS.length && (
+            {hasData && !pickCovered(RESTORE_PICKS[RESTORE_PICKS.length - 1].ms) && (
               <p className="text-xs text-slate-600 mt-1.5">
-                Older quick picks appear as backup history builds up (backup started{' '}
-                {timeAgo(Math.floor(oldestMs / 1000))}).
+                Unavailable points activate as backup history builds up (backup started{' '}
+                {timeAgo(Math.floor((oldestMs ?? 0) / 1000))}).
+              </p>
+            )}
+            {!hasData && (
+              <p className="text-xs text-slate-600 mt-1.5">
+                Restore points activate as soon as the first backup data lands — usually within a minute of enabling.
               </p>
             )}
           </div>
 
-          <div className="rounded-md bg-slate-900/70 border border-slate-700/40 px-3 py-2.5 space-y-1">
-            <p className="text-xs text-slate-400">
-              Restoring to <span className="text-slate-200 font-medium">{selectedLabel}</span>:
-            </p>
-            <ul className="text-xs text-slate-500 list-disc list-inside space-y-0.5">
-              <li>Everything written after that point is discarded (projects, tokens, settings)</li>
-              <li>The current database is kept on the server as litebin.db.pre-restore</li>
-              <li>The orchestrator restarts to apply — a few seconds of downtime, and you sign in again</li>
-            </ul>
-          </div>
+          <p className="text-xs text-slate-500">
+            Restoring to{' '}
+            <span className="text-slate-300 font-medium">
+              {namedPoint ? `"${namedPoint.name}" (${selectedLabel})` : selectedLabel}
+            </span>{' '}
+            — everything after that point is discarded.
+          </p>
 
           <button
             type="button"
@@ -627,7 +658,7 @@ export default function BackupPanel() {
               setRestoreAck(false);
               setShowRestoreConfirm(true);
             }}
-            disabled={busy !== null || !status.sidecar_running}
+            disabled={busy !== null || !status.sidecar_running || !hasData}
             className="px-4 py-2 rounded-md text-xs font-medium bg-red-600/80 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
           >
             Restore database
@@ -703,8 +734,13 @@ export default function BackupPanel() {
               <h3 className="text-sm font-semibold text-slate-100">Restore database</h3>
             </div>
             <p className="text-xs text-slate-300 mb-1">
-              Replace the current database with the backup
-              {restoreTimestamp.trim() ? ` as of ${restoreTimestamp.trim()}` : "'s latest state"}?
+              Replace the current database with{' '}
+              {namedPoint
+                ? `the point "${namedPoint.name}" (${fmtTs(namedPoint.timestamp)})`
+                : restoreTimestamp.trim()
+                  ? `the backup as of ${fmtTs(restoreTimestamp.trim())}`
+                  : "the backup's latest state"}
+              ?
             </p>
             <ul className="text-xs text-slate-400 list-disc list-inside mb-3 space-y-1">
               <li>Discards everything written since — projects, tokens, settings</li>

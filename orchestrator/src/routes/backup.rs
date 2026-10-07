@@ -21,6 +21,15 @@ pub struct BackupS3Status {
     pub prefix: Option<String>,
 }
 
+/// A user-named restore point — a bookmark on the continuous restore window.
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BackupPoint {
+    pub id: i64,
+    pub name: String,
+    /// Bookmarked moment (RFC 3339) — passed to `litestream restore -timestamp`.
+    pub timestamp: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BackupStatus {
     /// Backup turned on (sidecar should be running).
@@ -33,11 +42,10 @@ pub struct BackupStatus {
     pub last_sync: Option<String>,
     /// Live database size in bytes.
     pub db_size_bytes: Option<u64>,
-    /// Total local replica size in bytes.
-    pub replica_size_bytes: Option<u64>,
-    /// Local replica generations, newest first. Empty until the first sync completes.
-    #[serde(default)]
-    pub generations: Vec<crate::backup::GenerationInfo>,
+    /// Local replica store summary — None until litestream creates it.
+    pub replica: Option<crate::backup::ReplicaInfo>,
+    /// User-named restore points, newest first.
+    pub points: Vec<BackupPoint>,
     pub s3: BackupS3Status,
 }
 
@@ -54,6 +62,12 @@ pub struct BackupS3Request {
 pub struct BackupRestoreRequest {
     /// Point-in-time restore (RFC 3339). Latest snapshot when omitted.
     pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BackupPointRequest {
+    /// Label for the current moment (1-64 chars).
+    pub name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -74,6 +88,16 @@ async fn load_s3(state: &AppState) -> Result<backup::S3Config, (StatusCode, Stri
     })
 }
 
+async fn load_points(state: &AppState) -> Result<Vec<BackupPoint>, (StatusCode, String)> {
+    let rows = sqlx::query_as::<_, (i64, String, String)>(
+        "SELECT id, name, timestamp FROM backup_points ORDER BY timestamp DESC, id DESC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(rows.into_iter().map(|(id, name, timestamp)| BackupPoint { id, name, timestamp }).collect())
+}
+
 async fn load_status(state: &AppState) -> Result<BackupStatus, (StatusCode, String)> {
     let enabled = get_setting(&state.db, SETTING_BACKUP_ENABLED).await?.as_deref() == Some("1");
     let s3 = load_s3(state).await?;
@@ -91,13 +115,8 @@ async fn load_status(state: &AppState) -> Result<BackupStatus, (StatusCode, Stri
     };
 
     let replica_dir = data_dir.as_deref().map(|dir| dir.join("backups").join("litebin.db"));
-    let last_sync = replica_dir.as_deref().and_then(backup::latest_replica_write).and_then(|t| {
-        let secs = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
-        chrono::DateTime::from_timestamp(secs as i64, 0).map(|dt| dt.to_rfc3339())
-    });
-    let generations = replica_dir.as_deref().map(backup::list_generations).unwrap_or_default();
-    let replica_size_bytes =
-        if generations.is_empty() { None } else { Some(generations.iter().map(|g| g.size_bytes).sum()) };
+    let replica = replica_dir.as_deref().and_then(backup::replica_info);
+    let last_sync = replica.as_ref().and_then(|r| r.last_write.clone());
     let db_size_bytes =
         data_dir.as_deref().and_then(|dir| std::fs::metadata(dir.join("litebin.db")).ok()).map(|m| m.len());
 
@@ -108,8 +127,8 @@ async fn load_status(state: &AppState) -> Result<BackupStatus, (StatusCode, Stri
         sidecar_running: running,
         last_sync,
         db_size_bytes,
-        replica_size_bytes,
-        generations,
+        replica,
+        points: load_points(state).await?,
         s3: BackupS3Status {
             configured: s3.is_configured(),
             endpoint: (!s3.endpoint.is_empty()).then_some(s3.endpoint),
@@ -251,6 +270,70 @@ pub async fn backup_remove_s3(
 
 #[utoipa::path(
     post,
+    path = "/backup/points",
+    request_body = BackupPointRequest,
+    responses(
+        (status = 200, body = BackupActionResponse),
+        (status = 400, description = "invalid name"),
+        (status = 409, description = "no backup data yet"),
+    ),
+    tag = "backup",
+    security(("session_auth" = []))
+)]
+pub async fn backup_create_point(
+    State(state): State<AppState>,
+    Json(payload): Json<BackupPointRequest>,
+) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
+    let name = payload.name.trim().to_string();
+    if name.is_empty() || name.len() > 64 {
+        return Err((StatusCode::BAD_REQUEST, "name must be 1-64 characters".into()));
+    }
+
+    // The point must land inside the restore window — require existing replica data.
+    let data_dir = backup::resolve_data_dir(&state.config.database_url)
+        .ok_or((StatusCode::CONFLICT, "backup unavailable: in-memory database".into()))?;
+    let has_data = backup::replica_info(&data_dir.join("backups").join("litebin.db")).is_some_and(|r| r.file_count > 0);
+    if !has_data {
+        return Err((StatusCode::CONFLICT, "no backup data yet — wait for the first sync".into()));
+    }
+
+    sqlx::query("INSERT INTO backup_points (name, timestamp) VALUES (?, ?)")
+        .bind(&name)
+        .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: false }))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/backup/points/{id}",
+    responses(
+        (status = 200, body = BackupActionResponse),
+        (status = 404, description = "point not found"),
+    ),
+    tag = "backup",
+    security(("session_auth" = []))
+)]
+pub async fn backup_delete_point(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
+    let result = sqlx::query("DELETE FROM backup_points WHERE id = ?")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "backup point not found".into()));
+    }
+    Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: false }))
+}
+
+#[utoipa::path(
+    post,
     path = "/backup/restore",
     request_body = BackupRestoreRequest,
     responses(
@@ -287,6 +370,8 @@ pub async fn backup_restore(
         cmd.push("-timestamp");
         cmd.push(ts.trim());
     }
+    // litestream ≥0.5 requires a positional DB_PATH (config alone is not enough)
+    cmd.push(backup::SIDECAR_DB_PATH);
 
     let exec = tokio::time::timeout(Duration::from_secs(300), state.docker.exec_container(&sidecar, &cmd))
         .await

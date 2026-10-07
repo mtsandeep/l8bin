@@ -164,6 +164,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/backup/disable", post(routes::backup::backup_disable))
         .route("/backup/s3", post(routes::backup::backup_add_s3))
         .route("/backup/s3", axum::routing::delete(routes::backup::backup_remove_s3))
+        .route("/backup/points", post(routes::backup::backup_create_point))
+        .route("/backup/points/{id}", axum::routing::delete(routes::backup::backup_delete_point))
         .route("/backup/restore", post(routes::backup::backup_restore))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::guard::require_admin));
 

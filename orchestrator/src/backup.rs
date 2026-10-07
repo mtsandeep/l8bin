@@ -204,69 +204,42 @@ fn walk_files(dir: &Path, depth: u8) -> (u64, u64, Option<SystemTime>) {
     (count, size, newest)
 }
 
-/// Latest write time inside the local file replica (generation → level → LTX files).
-/// None when no replica exists yet.
-pub fn latest_replica_write(replica_dir: &Path) -> Option<SystemTime> {
-    walk_files(replica_dir, 4).2.or_else(|| std::fs::metadata(replica_dir).ok()?.modified().ok())
-}
+/// Local replica retention configured in litestream.yml (`retention: 720h`).
+pub const REPLICA_RETENTION_SECS: u64 = 720 * 3600;
 
-/// One litestream generation: a continuous run of replicated writes, started when
-/// litestream (re)connected to the database.
+/// Snapshot of the local LTX store. Litestream ≥0.5 keeps one continuous store
+/// at `<replica>/ltx/<level>/<minTXID>-<maxTXID>.ltx` — no generation dirs — so
+/// restore coverage is a window: [coverage_start, now].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub struct GenerationInfo {
-    pub id: String,
-    /// Generation start (RFC 3339) — decoded from the ULID name, falling back to newest file mtime.
-    pub start_time: Option<String>,
+pub struct ReplicaInfo {
+    /// Earliest restorable moment (RFC 3339): the later of store creation and
+    /// the retention horizon.
+    pub coverage_start: Option<String>,
     pub file_count: u64,
     pub size_bytes: u64,
+    /// Newest LTX write (RFC 3339) — None before the first sync.
+    pub last_write: Option<String>,
 }
 
-/// Decode the millisecond timestamp from the first 10 chars of a Crockford
-/// base32 ULID (litestream ≥0.5 names generations this way).
-fn ulid_start_ms(name: &str) -> Option<u64> {
-    const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-    let bytes = name.as_bytes();
-    if bytes.len() < 10 {
-        return None;
-    }
-    let mut ms: u64 = 0;
-    for &c in &bytes[..10] {
-        let c = c.to_ascii_uppercase();
-        let val = ALPHABET.iter().position(|&a| a == c)? as u64;
-        ms = ms.checked_mul(32)?.checked_add(val)?;
-    }
-    Some(ms)
+fn system_time_to_rfc3339(t: SystemTime) -> Option<String> {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    chrono::DateTime::from_timestamp(secs as i64, 0).map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
 }
 
-/// List generations in the local replica, newest first.
-pub fn list_generations(replica_dir: &Path) -> Vec<GenerationInfo> {
-    let Ok(entries) = std::fs::read_dir(replica_dir) else {
-        return Vec::new();
-    };
-    let mut generations: Vec<GenerationInfo> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let md = entry.metadata().ok()?;
-            if !md.is_dir() {
-                return None;
-            }
-            let id = entry.file_name().to_string_lossy().to_string();
-            let (file_count, size_bytes, newest) = walk_files(&entry.path(), 3);
-            let start_time = ulid_start_ms(&id)
-                .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms as i64))
-                .map(|dt| dt.to_rfc3339())
-                .or_else(|| {
-                    newest
-                        .or_else(|| md.modified().ok())
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
-                        .map(|dt| dt.to_rfc3339())
-                });
-            Some(GenerationInfo { id, start_time, file_count, size_bytes })
-        })
-        .collect();
-    generations.sort_by(|a, b| b.id.cmp(&a.id)); // ULIDs sort chronologically
-    generations
+/// Summarize the local replica. Returns None when the store doesn't exist yet.
+pub fn replica_info(replica_dir: &Path) -> Option<ReplicaInfo> {
+    let md = std::fs::metadata(replica_dir).ok()?;
+    let (file_count, size_bytes, newest) = walk_files(replica_dir, 4);
+    // The store dir is created once (its only child `ltx` is added at init), so its
+    // mtime is a stable "backup began" marker. Retention bounds how far back data goes.
+    let store_created = md.modified().ok();
+    let retention_horizon = SystemTime::now().checked_sub(std::time::Duration::from_secs(REPLICA_RETENTION_SECS));
+    let coverage_start = store_created
+        .zip(retention_horizon)
+        .map(|(created, horizon)| created.max(horizon))
+        .or(store_created)
+        .and_then(system_time_to_rfc3339);
+    Some(ReplicaInfo { coverage_start, file_count, size_bytes, last_write: newest.and_then(system_time_to_rfc3339) })
 }
 
 async fn setting_or_default(db: &sqlx::SqlitePool, key: &str) -> String {
@@ -377,50 +350,37 @@ mod tests {
     }
 
     #[test]
-    fn replica_write_walks_generations() {
-        let dir = std::env::temp_dir().join(format!("l8b-replica-test-{}", std::process::id()));
+    fn replica_info_walks_ltx_store() {
+        let dir = std::env::temp_dir().join(format!("l8b-replica-info-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let generation = dir.join("backups/litebin.db/01GEN");
-        std::fs::create_dir_all(&generation).unwrap();
-        std::fs::write(generation.join("0000000001.wal"), b"x").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let before = latest_replica_write(dir.join("backups/litebin.db").as_path()).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(generation.join("0000000002.wal"), b"y").unwrap();
-        let after = latest_replica_write(dir.join("backups/litebin.db").as_path()).unwrap();
-        assert!(after > before);
-        assert!(latest_replica_write(dir.join("nonexistent").as_path()).is_none());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn decodes_ulid_timestamp() {
-        // 01ARZ3NDEKTSV4RRFFQ69G5FAV — the canonical ULID spec example (2016-07-31T…) → 1469922850259 ms
-        assert_eq!(ulid_start_ms("01ARZ3NDEKTSV4RRFFQ69G5FAV"), Some(1_469_922_850_259));
-        assert!(ulid_start_ms("short").is_none());
-        assert!(ulid_start_ms("01ARZ3!DEKTSV4RRFFQ6").is_none(), "invalid base32 char");
-    }
-
-    #[test]
-    fn lists_generations_newest_first() {
-        let dir = std::env::temp_dir().join(format!("l8b-gen-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        // Litestream ≥0.5 layout: <generation>/<level>/<minTXID>-<maxTXID>.ltx
-        for (name, files) in [("01ARZ3NDEKTSV4RRFFQ69G5FAV", 2), ("01FBX0MTHFHHHHHHHHHHHHHHHH", 1)] {
-            let level = dir.join(name).join("0");
-            std::fs::create_dir_all(&level).unwrap();
-            for i in 0..files {
-                std::fs::write(level.join(format!("{i:016}-{i:016}.ltx")), vec![0u8; 100]).unwrap();
-            }
+        // Litestream ≥0.5 layout: <replica>/ltx/<level>/<minTXID>-<maxTXID>.ltx
+        let level = dir.join("ltx/0");
+        std::fs::create_dir_all(&level).unwrap();
+        for i in 0..2 {
+            std::fs::write(level.join(format!("{i:016}-{i:016}.ltx")), vec![0u8; 100]).unwrap();
         }
-        std::fs::write(dir.join("not-a-dir"), b"").unwrap();
 
-        let gens = list_generations(&dir);
-        assert_eq!(gens.len(), 2, "skips stray files");
-        assert_eq!(gens[0].id, "01FBX0MTHFHHHHHHHHHHHHHHHH", "newest ULID first");
-        assert_eq!(gens[0].file_count, 1, "counts nested ltx files");
-        assert_eq!(gens[0].size_bytes, 100);
-        assert!(gens[0].start_time.is_some());
+        let info = replica_info(&dir).expect("store exists");
+        assert_eq!(info.file_count, 2);
+        assert_eq!(info.size_bytes, 200);
+        assert!(info.coverage_start.is_some(), "coverage starts at store creation");
+        assert!(info.last_write.is_some());
+        assert!(replica_info(dir.join("nonexistent").as_path()).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replica_info_coverage_never_precedes_retention_horizon() {
+        let dir = std::env::temp_dir().join(format!("l8b-retention-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ltx/9")).unwrap();
+        std::fs::write(dir.join("ltx/9/0000000000000001-0000000000000002.ltx"), b"x").unwrap();
+
+        let info = replica_info(&dir).expect("store exists");
+        // A fresh store's coverage starts ~now (well after the retention horizon).
+        let coverage = info.coverage_start.unwrap();
+        let horizon = chrono::Utc::now() - chrono::Duration::seconds(REPLICA_RETENTION_SECS as i64 + 60);
+        assert!(coverage.parse::<chrono::DateTime<chrono::Utc>>().unwrap() > horizon);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

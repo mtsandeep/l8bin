@@ -79,3 +79,38 @@ async fn backup_restore_conflicts_without_sidecar() {
         .await
         .assert_status(StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn backup_point_validates_name() {
+    let (server, auth) = admin_server().await;
+    server
+        .post("/backup/points")
+        .add_header("authorization", auth.clone())
+        .json(&json!({"name": "   "}))
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+    server
+        .post("/backup/points")
+        .add_header("authorization", auth)
+        .json(&json!({"name": "x".repeat(65)}))
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn backup_point_requires_replica_data() {
+    let (server, auth) = admin_server().await;
+    // In-memory test DB → no replica store → conflict
+    server
+        .post("/backup/points")
+        .add_header("authorization", auth)
+        .json(&json!({"name": "before migration"}))
+        .await
+        .assert_status(StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn backup_point_delete_missing_is_404() {
+    let (server, auth) = admin_server().await;
+    server.delete("/backup/points/999").add_header("authorization", auth).await.assert_status(StatusCode::NOT_FOUND);
+}

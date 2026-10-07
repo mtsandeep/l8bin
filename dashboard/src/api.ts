@@ -196,11 +196,18 @@ export interface BackupS3Status {
   prefix: string | null;
 }
 
-export interface BackupGeneration {
-  id: string;
-  start_time: string | null;
+export interface BackupReplicaInfo {
+  /** Earliest restorable moment (RFC 3339). */
+  coverage_start: string | null;
   file_count: number;
   size_bytes: number;
+  last_write: string | null;
+}
+
+export interface BackupPoint {
+  id: number;
+  name: string;
+  timestamp: string;
 }
 
 export interface BackupStatus {
@@ -210,8 +217,8 @@ export interface BackupStatus {
   sidecar_running: boolean;
   last_sync: string | null;
   db_size_bytes: number | null;
-  replica_size_bytes: number | null;
-  generations: BackupGeneration[];
+  replica: BackupReplicaInfo | null;
+  points: BackupPoint[];
   s3: BackupS3Status;
 }
 
@@ -364,6 +371,14 @@ export function addBackupS3(config: BackupS3Config): Promise<BackupActionRespons
 
 export function removeBackupS3(): Promise<BackupActionResponse> {
   return backupAction('/backup/s3', 'DELETE');
+}
+
+export function createBackupPoint(name: string): Promise<BackupActionResponse> {
+  return backupAction('/backup/points', 'POST', { name });
+}
+
+export function deleteBackupPoint(id: number): Promise<BackupActionResponse> {
+  return backupAction(`/backup/points/${id}`, 'DELETE');
 }
 
 export function restoreBackup(timestamp?: string): Promise<BackupActionResponse> {

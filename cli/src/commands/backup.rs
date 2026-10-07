@@ -44,12 +44,22 @@ fn print_status(status: &serde_json::Value) {
     } else {
         println!("replicas:    local only");
     }
-    let generations = status["generations"].as_array().map(|a| a.len()).unwrap_or(0);
-    if let Some(replica_bytes) = status["replica_size_bytes"].as_u64() {
-        println!("replica:     {generations} generation(s), {replica_bytes} bytes");
+    if let Some(replica) = status["replica"].as_object() {
+        let coverage = replica["coverage_start"].as_str().unwrap_or("—");
+        let files = replica["file_count"].as_u64().unwrap_or(0);
+        let bytes = replica["size_bytes"].as_u64().unwrap_or(0);
+        println!("replica:     {files} files, {bytes} bytes (coverage from {coverage})");
     }
     if let Some(db_bytes) = status["db_size_bytes"].as_u64() {
         println!("live db:     {db_bytes} bytes");
+    }
+    if let Some(points) = status["points"].as_array()
+        && !points.is_empty()
+    {
+        println!("named points:");
+        for pt in points {
+            println!("  {:<24} {}", pt["name"].as_str().unwrap_or("?"), pt["timestamp"].as_str().unwrap_or("?"));
+        }
     }
 }
 

@@ -92,6 +92,8 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/backup/disable", post(crate::routes::backup::backup_disable))
         .route("/backup/s3", post(crate::routes::backup::backup_add_s3))
         .route("/backup/s3", delete(crate::routes::backup::backup_remove_s3))
+        .route("/backup/points", post(crate::routes::backup::backup_create_point))
+        .route("/backup/points/{id}", delete(crate::routes::backup::backup_delete_point))
         .route("/backup/restore", post(crate::routes::backup::backup_restore))
         .route("/system/stats", get(crate::routes::health::system_stats))
         .route("/scan", get(crate::routes::scan::scan_containers))
