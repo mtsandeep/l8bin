@@ -10,7 +10,7 @@ use crate::auth;
 
 use super::ComposeDeployOpts;
 use super::build_upload::{collect_build_infos, prepare_compose_deployment, submit_compose};
-use super::env::EnvSelectMode;
+use super::env::EnvSource;
 use super::flow::{await_runtime_config_and_start, poll_deploy_status, resolve_upload_mode, select_target_node};
 use super::public_service::{auto_pick_public_service, pick_public_service};
 use super::ui::{
@@ -29,7 +29,7 @@ pub(super) async fn build_and_deploy(
     project_dir: &Path,
     port: Option<u16>,
     is_background: bool,
-    mut secret: Vec<std::path::PathBuf>,
+    env_source: EnvSource,
     is_new_project: bool,
     node_id: Option<&str>,
 ) -> Result<Option<String>> {
@@ -47,6 +47,7 @@ pub(super) async fn build_and_deploy(
             compose_name,
             is_new_project,
             is_background,
+            env_source,
             selected_node.as_deref(),
             platform.as_deref(),
             upload_mode,
@@ -68,8 +69,13 @@ pub(super) async fn build_and_deploy(
         }
     }
 
-    if secret.is_empty() {
-        secret = super::env::select_env_files(project_dir, EnvSelectMode::Interactive)?;
+    let env_files = super::env::resolve_env_files(project_dir, &env_source, true, false)?;
+
+    // Runtime-env checkpoint for single-image redeploys, after build-env selection
+    // (same order as the first-deploy flow). Compose redeploys stage and hit the
+    // full checkpoint on their own.
+    if !is_new_project && detect_compose_file(project_dir).is_none() {
+        super::flow::maybe_update_runtime_env(client, server, project_id).await?;
     }
 
     if cfg!(target_os = "windows") && !has_dockerfile {
@@ -90,7 +96,9 @@ pub(super) async fn build_and_deploy(
         p
     };
 
-    let image = crate::build::build_project(project_dir, None, &image_tag, secret, false, platform.as_deref()).await?;
+    let build_env = crate::build::BuildEnv { context_files: env_files, external_files: Vec::new() };
+    let image =
+        crate::build::build_project(project_dir, None, &image_tag, build_env, false, platform.as_deref()).await?;
 
     println!("  📦 Image built — {}", HumanBytes(image.image_size));
     if image.compressed_size < image.image_size {
@@ -213,6 +221,7 @@ async fn deploy_compose(
     compose_name: &str,
     is_new_project: bool,
     is_background: bool,
+    env_source: EnvSource,
     node_id: Option<&str>,
     platform: Option<&str>,
     upload_flag: crate::upload::UploadMode,
@@ -267,7 +276,7 @@ async fn deploy_compose(
         &compose,
         &build_infos,
         selected_public.as_deref(),
-        EnvSelectMode::InteractiveNoCustomOrder,
+        env_source,
         node_id,
         platform,
         upload_mode,
@@ -369,7 +378,7 @@ pub async fn deploy_compose_noninteractive(
         &compose,
         &build_infos,
         selected_public.as_deref(),
-        EnvSelectMode::AutoAllExceptExample,
+        opts.env_source,
         opts.node_id.as_deref(),
         platform,
         opts.upload,

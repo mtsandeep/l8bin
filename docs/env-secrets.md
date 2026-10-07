@@ -1,32 +1,34 @@
 # Environment & Secret Synchronization
 
-LiteBin distinguishes between **Build-Time Secrets** (baked into your app during image creation) and **Runtime Environment Variables** (injected when your container starts).
+LiteBin distinguishes between **Build-Time Secrets** (available to your app during image creation) and **Runtime Environment Variables** (injected when your container starts).
 
 ## Build-Time vs. Runtime
 | Feature | Build-Time (CLI) | Runtime (Agent / Master) |
 | :--- | :--- | :--- |
-| **Command** | `l8b ship --secret ...` | Handled via server-side project folder |
+| **Command** | `l8b ship` / `l8b deploy` | Handled via server-side project folder |
 | **Primary Use** | `NEXT_PUBLIC_*` variables, Static Site Gen | DB URLs, API Keys, Backend salts |
 | **Visibility** | Baked into JS/HTML assets | Visible via environment variables |
 | **Isolation** | Unique to the specific image build | Can be updated without rebuilding the image |
-| **Mechanism** | Merged into `.env` during build | Injected from `projects/<id>/.env` |
+| **Mechanism** | Files into the build context (Dockerfile) or Railpack build secrets | Injected from `projects/<id>/.env` |
 
 ---
 
 ## Build-Time Secrets (The Build Phase)
 
-LiteBin acts as a secure pre-processor during the `ship` and `deploy` commands. It synchronizes your local environment files to the build context without requiring any modifications to your `Dockerfile` or your `.gitignore`.
+LiteBin never modifies your local `.env` files — they are read only, exactly as they exist on disk.
 
 ### 1. Discovery & Selection
-When you run `l8b ship`, the CLI automatically scans your project root for environment files:
-- **Automatic Detection**: Finds all files matching the `.env*` pattern.
-- **Smart Sorting**: Files are sorted by precedence (base `.env` first, specific `.local` files last).
-- **Interactive Multi-select**: The CLI ensures you select at least one file if you choose "Pick specific...".
+The CLI scans the project root for files matching `.env*` (excluding `.env.example`), sorted by precedence (`.env` first, `.local`/`.prod` last):
+- **`l8b ship`** (interactive): shows the detected files and asks **Use these files** (default), **Pick specific files...**, or **Skip build env**. Passing `--secret` or `--no-env` skips the prompt.
+- **`l8b deploy`** (non-interactive): includes all detected files automatically. Use `--no-env` to exclude them.
 
-### 2. Standard Injection
-- **Merging**: Selected files are merged into a single temporary `.env` file using a "last-one-wins" rule.
-- **Whitelisting**: The CLI automatically ensures this temporary file is included in the Docker build context by using a transient `Dockerfile.dockerignore`.
-- **Security**: Since the file is only present during the build and is deleted by the host CLI, your secrets never live in image layers or git history.
+### 2. How Files Reach the Build
+- **Dockerfile builds**: the selected files are re-included in the Docker build context via a transient `<Dockerfile>.dockerignore` (removed after the build). Your files themselves are never touched. Note that a `COPY . .` in your Dockerfile **does bake them into image layers** — keep real secrets in runtime env (below).
+- **Railpack builds** (no Dockerfile): the selected files are parsed and passed to Railpack as native build-time env. Values are supplied to build steps via BuildKit secret mounts and are **never written to the image or its layers**.
+
+### 3. Multi-Service (compose) Builds
+- Services built by Railpack receive the union of root and service-directory env vars.
+- Services with their own Dockerfile include only the `.env*` files in that service's build context (root files cannot be included there) — shared variables belong in runtime env.
 
 ---
 
@@ -65,7 +67,7 @@ litebin/
         └── .env.l8bin    <-- Created after first container start (env snapshot)
 ```
 
-Interactive `l8b ship` moves the project from `pending` to `unconfigured`, then pauses with **Awaiting runtime configuration** so you can edit this file (for example DB passwords) before confirming container start. If your app needs no runtime env, choose **Start containers now** immediately; the project then moves through `deploying` to `running`. Redeploys skip this pause.
+Interactive `l8b ship` moves the project from `pending` to `unconfigured`, then pauses with **Awaiting runtime configuration** so you can configure this file before containers start — push from a local `.env` (LiteBin writes it), place it on the server yourself (the path is shown; LiteBin waits), or skip. If your app needs no runtime env, choose skip/start immediately; the project then moves through `deploying` to `running`. Redeploys offer the same choice in a lighter form — **Skip, no changes to env** is the default (one Enter if you don't want changes) with an optional push that lands before the new containers start.
 
 The initial `.env` contains only a comment instructing you to add your runtime variables. You can edit it at any time — LiteBin picks up changes on the next container start.
 
@@ -123,12 +125,13 @@ Simply run:
 ```bash
 l8b ship
 ```
-You will be prompted to select which local environment files you'd like to include in the build.
+Detected `.env*` files are listed and included with one Enter keypress (**Use these files**), or pick a subset / skip build env entirely.
 
-### Explicit Secrets (CLI / CI)
-You can also specify secrets manually using the `--secret` flag:
+### Explicit Selection (CLI / CI)
+Specify files manually with `--secret` (repeatable), or exclude build env entirely with `--no-env`:
 ```bash
 l8b deploy --port 80 --secret .env --secret .env.production
+l8b deploy --no-env
 ```
 
 ### Best Practices

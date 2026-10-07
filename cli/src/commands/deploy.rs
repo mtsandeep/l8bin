@@ -85,6 +85,7 @@ pub(crate) struct DeployArgs {
     pub cpu: Option<f64>,
     pub no_auto_stop: bool,
     pub secret: Vec<PathBuf>,
+    pub no_env: bool,
     pub env_file: Option<PathBuf>,
     pub compose: bool,
     pub service: Vec<String>,
@@ -112,12 +113,15 @@ pub(crate) async fn run(
         cpu,
         no_auto_stop,
         secret,
+        no_env,
         env_file,
         compose,
         service,
         grant_capability,
         upload,
     } = args;
+
+    let env_source = ship::EnvSource::from_flags(secret, no_env);
 
     if !project.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
         bail!("Project name must only contain lowercase letters, numbers, and hyphens");
@@ -185,6 +189,7 @@ pub(crate) async fn run(
                 grant_capabilities: grant_capability,
                 is_background: effective_background,
                 upload,
+                env_source,
             },
             platform.as_deref(),
         )
@@ -212,11 +217,13 @@ pub(crate) async fn run(
         let nodes = auth::fetch_online_nodes(&client, &server).await;
         let platform = ship::resolve_platform(&nodes, effective_node.as_deref());
 
+        let env_files = ship::resolve_env_files(&path, &env_source, false, ci_mode.enabled)?;
+        let build_env = build::BuildEnv { context_files: env_files, external_files: Vec::new() };
         let image = build::build_project(
             &path,
             dockerfile.as_deref(),
             &image_tag,
-            secret,
+            build_env,
             ci_mode.enabled,
             platform.as_deref(),
         )

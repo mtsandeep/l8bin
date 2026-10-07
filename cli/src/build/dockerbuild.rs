@@ -4,13 +4,11 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use super::SavedImage;
-use super::context::BuildContextGuard;
 
 pub(super) async fn build_with_docker(
     project_dir: &Path,
     dockerfile: Option<&str>,
     image_tag: &str,
-    _ctx_guard: Option<&BuildContextGuard>,
     quiet: bool,
     ci_mode: bool,
     platform: Option<&str>,

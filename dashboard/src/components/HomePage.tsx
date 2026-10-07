@@ -36,6 +36,7 @@ export default function HomePage() {
   const { nodes } = useNodes(user);
 
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'offline' | null>(null);
+  const [search, setSearch] = useState('');
   const [stackExpanded, setStackExpanded] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
 
@@ -73,12 +74,16 @@ export default function HomePage() {
   };
   const offline = projects.filter(isOffline).length;
 
-  const sortedProjects = [...projects].sort((a, b) => b.id.localeCompare(a.id));
-  const filteredProjects = statusFilter
+  const sortedProjects = [...projects].sort((a, b) => a.id.localeCompare(b.id));
+  const query = search.trim().toLowerCase();
+  const matchesSearch = (p: Project) =>
+    p.id.toLowerCase().includes(query) || (p.name ?? '').toLowerCase().includes(query);
+  const filteredProjects = (statusFilter
     ? statusFilter === 'offline'
       ? sortedProjects.filter(isOffline)
       : sortedProjects.filter((p) => p.status === statusFilter)
-    : sortedProjects;
+    : sortedProjects
+  ).filter(matchesSearch);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
@@ -325,14 +330,39 @@ export default function HomePage() {
               </button>
             </span>
           )}
-          <button
-            type="button"
-            onClick={loadProjectsAndStats}
-            className="ml-auto p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors cursor-pointer"
-            title="Refresh"
-          >
-            <RefreshCw size={14} />
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setSearch('');
+                }}
+                placeholder="Search projects"
+                className="w-36 sm:w-44 bg-slate-800/50 border border-slate-700/50 rounded-lg pl-7 pr-7 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 transition-colors"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
+                  title="Clear"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={loadProjectsAndStats}
+              className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Refresh"
+            >
+              <RefreshCw size={14} />
+            </button>
+          </div>
         </div>
 
         {/* Project grid */}
@@ -346,9 +376,9 @@ export default function HomePage() {
               <Container size={20} className="text-slate-600" />
             </div>
             <p className="text-sm text-slate-500 mb-4">
-              {statusFilter ? `No ${statusFilter} projects` : 'No projects yet'}
+              {query ? `No projects match "${search.trim()}"` : statusFilter ? `No ${statusFilter} projects` : 'No projects yet'}
             </p>
-            {!statusFilter && (
+            {!statusFilter && !query && (
               <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
                 <button
                   type="button"

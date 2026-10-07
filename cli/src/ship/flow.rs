@@ -31,9 +31,11 @@ pub async fn run(
     path_override: Option<&str>,
     port_override: Option<u16>,
     secret_override: Vec<PathBuf>,
+    no_env: bool,
     token_auth: bool,
 ) -> Result<()> {
     let project_dir = Path::new(path_override.unwrap_or("."));
+    let env_source = super::env::EnvSource::from_flags(secret_override, no_env);
 
     let projects_json = auth::api_get(client, server, "/projects").await.unwrap_or_else(|e| {
         println!("  {} Could not list projects: {}", "!".yellow(), e);
@@ -45,9 +47,9 @@ pub async fn run(
     let selection = Select::new().with_prompt("Deploy to").items(&choices).default(0).interact()?;
 
     if selection == 0 {
-        new_project_flow(client, server, project_dir, port_override, secret_override, token_auth).await
+        new_project_flow(client, server, project_dir, port_override, &env_source, token_auth).await
     } else {
-        existing_project_flow(client, server, project_dir, &projects, port_override, secret_override).await
+        existing_project_flow(client, server, project_dir, &projects, port_override, &env_source).await
     }
 }
 
@@ -58,7 +60,7 @@ async fn new_project_flow(
     server: &str,
     project_dir: &Path,
     port_override: Option<u16>,
-    secret_override: Vec<PathBuf>,
+    env_source: &super::env::EnvSource,
     token_auth: bool,
 ) -> Result<()> {
     let name: String = Input::new()
@@ -119,7 +121,7 @@ async fn new_project_flow(
         project_dir,
         port,
         is_background,
-        secret_override,
+        env_source.clone(),
         true,
         None,
     )
@@ -153,11 +155,14 @@ async fn existing_project_flow(
     project_dir: &Path,
     projects: &[ProjectInfo],
     port_override: Option<u16>,
-    secret_override: Vec<PathBuf>,
+    env_source: &super::env::EnvSource,
 ) -> Result<()> {
     if projects.is_empty() {
         anyhow::bail!("No existing projects found. Create one with the 'New project' option.");
     }
+
+    let mut projects: Vec<&ProjectInfo> = projects.iter().collect();
+    projects.sort_by(|a, b| a.id.cmp(&b.id));
 
     let items: Vec<String> = projects
         .iter()
@@ -230,7 +235,7 @@ async fn existing_project_flow(
                 project_dir,
                 port,
                 project.is_background,
-                secret_override,
+                env_source.clone(),
                 is_first,
                 existing_node,
             )
@@ -343,18 +348,61 @@ pub(super) async fn await_runtime_config_and_start(
 ) -> Result<bool> {
     println!();
     println!("  {} {}", "⏸".yellow(), "Awaiting runtime configuration".bold());
-    println!("     {}", "Add runtime variables now if needed (DB passwords, API keys, etc.)".dimmed());
-    let _ = node_id;
+    println!(
+        "     {}",
+        "Runtime variables (DB passwords, API keys, etc.) are injected when containers start.".dimmed()
+    );
 
-    loop {
-        let choices = vec!["Push env from a local .env file", "Start containers now", "Pause — start later"];
-        let selection = Select::new().with_prompt("Runtime configuration").items(&choices).default(0).interact()?;
+    // Best-effort: env already on the server (e.g. a resume) skips the setup choice.
+    let mut has_env = print_server_env(client, server, project_id).await;
+    let mut manual = false;
+
+    if !has_env {
+        let setup_choices = vec![
+            "Push from a local .env — LiteBin writes it for me",
+            "I'll place the .env on the server myself",
+            "Skip — this app needs no runtime env",
+        ];
+        let selection =
+            Select::new().with_prompt("  🔒 Runtime env setup").items(&setup_choices).default(0).interact()?;
 
         match selection {
             0 => {
                 push_runtime_env_file(client, server, project_id).await?;
+                has_env = print_server_env(client, server, project_id).await;
             }
-            1 => break,
+            1 => {
+                manual = true;
+                println!();
+                println!("  {} A placeholder env file is already on the node — edit it and come back:", "🔒".dimmed());
+                show_env_path(server, project_id, node_id);
+                println!("     {}", "Your changes are picked up when the containers start.".dimmed());
+                println!();
+            }
+            _ => {}
+        }
+    }
+
+    loop {
+        let push_label = if has_env { "Push another env file" } else { "Push a local .env file" };
+        let mut choices = vec!["Start containers now".to_string(), push_label.to_string()];
+        if manual {
+            choices.push("Check what's on the server".to_string());
+        }
+        choices.push("Pause — start later".to_string());
+        let selection = Select::new().with_prompt("Runtime configuration").items(&choices).default(0).interact()?;
+
+        match selection {
+            0 => break,
+            1 => {
+                push_runtime_env_file(client, server, project_id).await?;
+                has_env = print_server_env(client, server, project_id).await;
+            }
+            2 if manual => {
+                if !print_server_env(client, server, project_id).await {
+                    println!("  {} {}", "!".yellow(), "No variables on the server yet.".dimmed());
+                }
+            }
             _ => {
                 println!();
                 println!("  {} {}", "!".yellow(), "Paused — containers were not started.".bold());
@@ -385,6 +433,17 @@ pub(super) async fn await_runtime_config_and_start(
     )
     .await?;
     Ok(true)
+}
+
+/// Redeploy runtime-env checkpoint: keep current (default) or push from a
+/// local file. Prints nothing unless you push.
+pub(super) async fn maybe_update_runtime_env(client: &reqwest::Client, server: &str, project_id: &str) -> Result<()> {
+    let choices = vec!["Skip, no changes to env", "Push from a local .env file"];
+    let selection = Select::new().with_prompt("  🔒 Runtime env").items(&choices).default(0).interact()?;
+    if selection == 1 {
+        push_runtime_env_file(client, server, project_id).await?;
+    }
+    Ok(())
 }
 
 pub(super) async fn select_target_node(
@@ -452,6 +511,27 @@ pub(super) fn resolve_upload_mode(
     UploadMode::Auto
 }
 
+/// Print the project's server-side runtime env (masked previews). Returns
+/// whether any variables are set. Best-effort — failures print nothing.
+async fn print_server_env(client: &reqwest::Client, server: &str, project_id: &str) -> bool {
+    let Ok(env) = auth::api_get(client, server, &format!("/projects/{project_id}/env")).await else {
+        return false;
+    };
+    let vars = env["vars"].as_array().cloned().unwrap_or_default();
+    if vars.is_empty() {
+        return false;
+    }
+    println!("  {} Runtime env on server — {} variable(s):", "⚙".dimmed(), vars.len());
+    for v in &vars {
+        let key = v["key"].as_str().unwrap_or("?");
+        let masked = v["masked"].as_str().unwrap_or("");
+        let shown = if masked.is_empty() { "(empty)".dimmed().to_string() } else { masked.yellow().to_string() };
+        println!("      {} = {}", key.cyan(), shown);
+    }
+    println!();
+    true
+}
+
 /// Pick a local `.env` file (or enter a path) and push it as the project's
 /// runtime env (merge). Values are write-only; applies on container start.
 async fn push_runtime_env_file(client: &reqwest::Client, server: &str, project_id: &str) -> Result<()> {
@@ -486,7 +566,7 @@ async fn push_runtime_env_file(client: &reqwest::Client, server: &str, project_i
     )
     .await?;
     let keys = resp["vars"].as_array().map(Vec::len).unwrap_or(0);
-    println!("  {} Pushed {keys} variable(s) from {file} (values are write-only).", "✓".green());
+    println!("  {} Pushed {keys} variable(s) from {file}.", "✓".green());
     println!("  {}", "They take effect when the containers start.".dimmed());
     Ok(())
 }

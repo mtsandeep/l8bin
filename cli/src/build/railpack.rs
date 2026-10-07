@@ -1,11 +1,14 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 use super::SavedImage;
-use super::context::{BuildContextGuard, gitignored_dirs};
+use super::context::gitignored_dirs;
 use super::dockerbuild::{create_build_spinner, ensure_buildkit, save_tar};
+
+type EnvPairs<'a> = &'a BTreeMap<String, String>;
 
 // Railpack via Docker (Windows)
 
@@ -96,7 +99,7 @@ ENTRYPOINT ["railpack"]
 pub(super) async fn build_with_railpack_docker(
     project_dir: &Path,
     image_tag: &str,
-    _ctx_guard: Option<&BuildContextGuard>,
+    env_pairs: EnvPairs<'_>,
     quiet: bool,
     ci_mode: bool,
     platform: Option<&str>,
@@ -140,46 +143,11 @@ pub(super) async fn build_with_railpack_docker(
         None
     };
 
-    let project_dir_str = project_dir.to_string_lossy().to_string();
     let max_retries = crate::config::MAX_RETRIES;
     let mut last_output = None;
 
     for attempt in 1..=max_retries {
-        let mut cmd = Command::new("docker");
-        cmd.args([
-            "run",
-            "--rm",
-            "-v",
-            &format!("{}:/app", project_dir_str),
-            "-v",
-            "/var/run/docker.sock:/var/run/docker.sock",
-            "-e",
-            "BUILDKIT_HOST=docker-container://buildkit",
-        ]);
-
-        // Mask gitignored directories so the bind mount doesn't leak
-        // node_modules, .git, etc. into the build context.
-        for dir in gitignored_dirs(project_dir) {
-            cmd.args(["--tmpfs", &format!("/app/{}", dir)]);
-        }
-
-        cmd.arg(RAILPACK_IMAGE);
-
-        let args = ["build", "--name", image_tag];
-        let mut rp_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-
-        if let Some(p) = platform {
-            rp_args.push("--platform".to_string());
-            rp_args.push(p.to_string());
-        }
-
-        rp_args.push("/app".to_string());
-        cmd.args(rp_args);
-
-        cmd.env("MSYS_NO_PATHCONV", "1");
-        if attempt == max_retries {
-            cmd.arg("--verbose");
-        }
+        let mut cmd = railpack_docker_command(project_dir, image_tag, platform, env_pairs, attempt == max_retries);
 
         if quiet || ci_mode {
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -227,7 +195,7 @@ pub(super) async fn build_with_railpack_docker(
 pub(super) async fn build_with_railpack_native(
     project_dir: &Path,
     image_tag: &str,
-    _ctx_guard: Option<&BuildContextGuard>,
+    env_pairs: EnvPairs<'_>,
     quiet: bool,
     ci_mode: bool,
     platform: Option<&str>,
@@ -253,17 +221,15 @@ pub(super) async fn build_with_railpack_native(
     let mut last_output = None;
 
     for attempt in 1..=max_retries {
-        let mut cmd = Command::new(&railpack_bin);
-        cmd.args(["build", "--name", image_tag]);
-        if let Some(p) = platform {
-            cmd.args(["--platform", p]);
-        }
-        cmd.arg(".");
-        if attempt == max_retries {
-            cmd.arg("--verbose");
-        }
-        cmd.env("BUILDKIT_HOST", &buildkit_host);
-        cmd.current_dir(project_dir);
+        let mut cmd = railpack_native_command(
+            &railpack_bin,
+            project_dir,
+            image_tag,
+            platform,
+            &buildkit_host,
+            env_pairs,
+            attempt == max_retries,
+        );
 
         if quiet || ci_mode {
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -321,4 +287,156 @@ fn parse_railpack_summary(output: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// `railpack build` inside the Railpack container. Env vars ride along as bare
+/// `-e KEY` (docker pulls each value from this process's environment) plus
+/// name-only `--env KEY` flags, keeping values off the command line.
+fn railpack_docker_command(
+    project_dir: &Path,
+    image_tag: &str,
+    platform: Option<&str>,
+    env_pairs: EnvPairs<'_>,
+    verbose: bool,
+) -> Command {
+    let mut cmd = Command::new("docker");
+    cmd.args([
+        "run",
+        "--rm",
+        "-v",
+        &format!("{}:/app", project_dir.to_string_lossy()),
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "-e",
+        "BUILDKIT_HOST=docker-container://buildkit",
+    ]);
+
+    // Mask gitignored directories so the bind mount doesn't leak
+    // node_modules, .git, etc. into the build context.
+    for dir in gitignored_dirs(project_dir) {
+        cmd.args(["--tmpfs", &format!("/app/{}", dir)]);
+    }
+
+    for key in env_pairs.keys() {
+        cmd.args(["-e", key]);
+    }
+
+    cmd.arg(RAILPACK_IMAGE);
+    cmd.args(["build", "--name", image_tag]);
+    if let Some(p) = platform {
+        cmd.args(["--platform", p]);
+    }
+    for key in env_pairs.keys() {
+        cmd.args(["--env", key]);
+    }
+    cmd.arg("/app");
+    if verbose {
+        cmd.arg("--verbose");
+    }
+
+    cmd.env("MSYS_NO_PATHCONV", "1");
+    for (key, value) in env_pairs {
+        cmd.env(key, value);
+    }
+    cmd
+}
+
+/// Native `railpack build` with env vars on the process environment plus
+/// name-only `--env KEY` registration (railpack reads values from its env).
+fn railpack_native_command(
+    railpack_bin: &Path,
+    project_dir: &Path,
+    image_tag: &str,
+    platform: Option<&str>,
+    buildkit_host: &str,
+    env_pairs: EnvPairs<'_>,
+    verbose: bool,
+) -> Command {
+    let mut cmd = Command::new(railpack_bin);
+    cmd.args(["build", "--name", image_tag]);
+    if let Some(p) = platform {
+        cmd.args(["--platform", p]);
+    }
+    for key in env_pairs.keys() {
+        cmd.args(["--env", key]);
+    }
+    cmd.arg(".");
+    if verbose {
+        cmd.arg("--verbose");
+    }
+
+    cmd.env("BUILDKIT_HOST", buildkit_host);
+    for (key, value) in env_pairs {
+        cmd.env(key, value);
+    }
+    cmd.current_dir(project_dir);
+    cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pairs() -> BTreeMap<String, String> {
+        [("ALPHA".to_string(), "1".to_string()), ("BETA".to_string(), "hush".to_string())].into()
+    }
+
+    fn args_as_strings(cmd: &Command) -> Vec<String> {
+        cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect()
+    }
+
+    #[test]
+    fn native_cmd_registers_env_names_only() {
+        let dir = std::env::temp_dir();
+        let cmd = railpack_native_command(
+            Path::new("railpack"),
+            &dir,
+            "l8b/app:latest",
+            None,
+            "docker-container://buildkit",
+            &pairs(),
+            false,
+        );
+
+        let args = args_as_strings(&cmd);
+        let dot = args.iter().position(|a| a == ".").unwrap();
+        let first_env = args.iter().position(|a| a == "--env").unwrap();
+        assert!(first_env < dot, "--env flags must precede the positional: {args:?}");
+        assert!(args.contains(&"ALPHA".to_string()) && args.contains(&"BETA".to_string()));
+        assert!(!args.iter().any(|a| a == "1" || a == "hush"), "values must not appear in args: {args:?}");
+
+        let envs: Vec<(String, String)> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_string_lossy().to_string(), v?.to_string_lossy().to_string())))
+            .collect();
+        assert!(envs.contains(&("ALPHA".to_string(), "1".to_string())));
+        assert!(envs.contains(&("BETA".to_string(), "hush".to_string())));
+        assert!(envs.contains(&("BUILDKIT_HOST".to_string(), "docker-container://buildkit".to_string())));
+    }
+
+    #[test]
+    fn docker_cmd_bare_e_and_rp_env() {
+        let dir = std::env::temp_dir();
+        let cmd = railpack_docker_command(&dir, "l8b/app:latest", Some("linux/arm64"), &pairs(), true);
+
+        let args = args_as_strings(&cmd);
+        let image_pos = args.iter().position(|a| a == RAILPACK_IMAGE).unwrap();
+        let bare_e = args.iter().position(|a| a == "-e").unwrap();
+        assert!(bare_e < image_pos, "bare -e flags must precede the railpack image: {args:?}");
+        assert!(args.contains(&"ALPHA".to_string()) && args.contains(&"BETA".to_string()));
+        assert!(!args.iter().any(|a| a == "1" || a == "hush"), "values must not appear in args: {args:?}");
+
+        let app_pos = args.iter().position(|a| a == "/app").unwrap();
+        let rp_env = args[image_pos..].iter().position(|a| a == "--env").map(|i| i + image_pos).unwrap();
+        assert!(rp_env < app_pos, "--env flags must precede /app: {args:?}");
+        assert!(args.contains(&"--platform".to_string()) && args.contains(&"linux/arm64".to_string()));
+        assert!(args.last().unwrap() == "--verbose");
+
+        let envs: Vec<(String, String)> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_string_lossy().to_string(), v?.to_string_lossy().to_string())))
+            .collect();
+        assert!(envs.contains(&("ALPHA".to_string(), "1".to_string())));
+        assert!(envs.contains(&("MSYS_NO_PATHCONV".to_string(), "1".to_string())));
+    }
 }

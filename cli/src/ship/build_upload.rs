@@ -7,7 +7,7 @@ use indicatif::HumanBytes;
 
 use crate::auth;
 
-use super::env::{EnvSelectMode, merge_service_env_files, select_env_files};
+use super::env::{EnvSource, resolve_env_files, service_env_files};
 use super::public_service::inject_public_label;
 
 #[derive(Clone)]
@@ -90,16 +90,25 @@ pub(super) async fn build_and_upload_services(
             format!("build context '{}' does not exist for service '{}'", primary.build_context, primary.svc_name)
         })?;
 
-        let secret = merge_service_env_files(root_env_paths, &svc_dir);
+        let build_env = crate::build::BuildEnv {
+            context_files: service_env_files(&svc_dir),
+            external_files: root_env_paths.to_vec(),
+        };
         let image_tag = format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, primary.svc_name);
         let names: Vec<&str> = group.iter().map(|g| g.svc_name.as_str()).collect();
         let label =
             if group.len() > 1 { format!("{} (shared image)", names.join(", ")) } else { primary.svc_name.clone() };
         println!("    {} {} ({})", "→".dimmed(), label.cyan(), svc_dir.display());
 
-        let saved_image =
-            crate::build::build_project(&svc_dir, primary.dockerfile.as_deref(), &image_tag, secret, ci_mode, platform)
-                .await?;
+        let saved_image = crate::build::build_project(
+            &svc_dir,
+            primary.dockerfile.as_deref(),
+            &image_tag,
+            build_env,
+            ci_mode,
+            platform,
+        )
+        .await?;
         println!("    {} {} — {}", "  ✓".green(), names.join(", "), HumanBytes(saved_image.compressed_size));
 
         let image_id = crate::upload::upload_image(
@@ -189,13 +198,13 @@ pub(super) async fn prepare_compose_deployment(
     compose: &serde_yaml::Value,
     build_infos: &[BuildInfo],
     selected_public: Option<&str>,
-    env_mode: EnvSelectMode,
+    env_source: EnvSource,
     node_id: Option<&str>,
     platform: Option<&str>,
     mode: crate::upload::UploadMode,
     ci_mode: bool,
 ) -> Result<String> {
-    let root_env_paths = select_env_files(project_dir, env_mode)?;
+    let root_env_paths = resolve_env_files(project_dir, &env_source, !ci_mode, ci_mode)?;
     let resolved_images = build_and_upload_services(
         client,
         server,

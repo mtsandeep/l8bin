@@ -74,7 +74,8 @@ l8b deploy --project <PROJECT_ID> [options]
 | `--memory` | server default | Memory limit in MB |
 | `--cpu` | server default | CPU limit (e.g. `0.5` for half a core) |
 | `--no-auto-stop` | *off* | Disable idle auto-stop |
-| `--secret` | *(none)* | Pass a local file (e.g. .env) as a Docker build secret (repeatable) |
+| `--secret` | *(none)* | Include this .env file in the build (repeatable; overrides .env auto-discovery) |
+| `--no-env` | *off* | Exclude build-time env files entirely (skip .env auto-discovery) |
 | `--compose` | auto-detect | Force compose mode (deploy as multi-service) |
 | `--service` | *(none)* | Deploy only specific services (repeatable, compose mode only) |
 | `--grant-capability` | *(none)* | Explicitly grant a requested capability; repeatable (`docker-observe`, `host-network`, `raw-ports`) |
@@ -178,6 +179,8 @@ l8b ship [options]
 |------|---------|-------------|
 | `--path` | `.` | Path to the project directory |
 | `--port` | prompt | Skip port prompt and use this port |
+| `--secret` | *(none)* | Include this .env file in the build (repeatable; skips the confirm prompt) |
+| `--no-env` | *off* | Exclude build-time env files entirely (skip .env auto-discovery) |
 
 #### Flow
 
@@ -204,10 +207,14 @@ $ l8b ship
   ✔ Deployment staged
 
   ⏸ Awaiting runtime configuration
-  🔒 Runtime secrets on node local: ~/litebin/projects/my-app/.env
-? Ready to start containers?
-> Start containers now
-  Pause — start later
+     Runtime variables (DB passwords, API keys, etc.) are injected when containers start.
+? Runtime env setup
+> Push from a local .env — LiteBin writes it for me
+  I'll place the .env on the server myself      (shows the node path, waits)
+  Skip — this app needs no runtime env
+
+  (after a push the server's env is listed with masked values;
+   "Start containers now" is then the default)
 
   ✔ Deploy successful!
 
@@ -287,7 +294,7 @@ l8b config show
 
 ### `l8b cleanup`
 
-Clean up leftover build artifacts (.env backups, temp dockerignore files).
+Clean up leftover build artifacts (temp generated dockerignore files from interrupted builds).
 
 ```bash
 l8b cleanup

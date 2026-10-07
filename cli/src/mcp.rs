@@ -64,7 +64,7 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "deploy",
-            description: "Build and deploy a project directory to LiteBin (Dockerfile auto-detected, Railpack fallback). Polls until running and returns status + URL.",
+            description: "Build and deploy a project directory to LiteBin (Dockerfile auto-detected, Railpack fallback). Local .env* files are included in the build automatically (no_env=true to skip). Polls until running and returns status + URL.",
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -73,7 +73,8 @@ fn tools() -> Vec<Tool> {
                     "path": {"type": "string", "description": "Project directory (default: cwd)"},
                     "port": {"type": "integer", "description": "Internal app port"},
                     "env_file": {"type": "string", "description": "Push this file as runtime env after deploying"},
-                    "background": {"type": "boolean", "description": "Background project (no HTTP URL)"}
+                    "background": {"type": "boolean", "description": "Background project (no HTTP URL)"},
+                    "no_env": {"type": "boolean", "description": "Exclude build-time env files (skip .env auto-discovery)"}
                 }
             }),
             invoke: |a| {
@@ -95,6 +96,9 @@ fn tools() -> Vec<Tool> {
                 }
                 if a["background"].as_bool() == Some(true) {
                     argv.push("--background".into());
+                }
+                if a["no_env"].as_bool() == Some(true) {
+                    argv.push("--no-env".into());
                 }
                 (argv, None)
             },

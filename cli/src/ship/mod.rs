@@ -7,6 +7,7 @@ mod ui;
 mod validate;
 
 pub use deploy::deploy_compose_noninteractive;
+pub(crate) use env::{EnvSource, resolve_env_files};
 pub use flow::run;
 pub use ui::{detect_compose_file, resolve_platform};
 
@@ -22,4 +23,6 @@ pub struct ComposeDeployOpts {
     pub is_background: bool,
     /// How to upload images (auto/direct/relay). Mirrors the `--upload` flag.
     pub upload: crate::upload::UploadMode,
+    /// Build-time env selection (`--secret` / `--no-env` / auto-discovery).
+    pub env_source: EnvSource,
 }

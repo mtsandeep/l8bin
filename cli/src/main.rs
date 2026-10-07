@@ -87,9 +87,13 @@ enum Commands {
         #[arg(long)]
         no_auto_stop: bool,
 
-        /// Pass a local file (e.g. .env) as a Docker build secret (id=l8b_env)
+        /// Include this .env file in the build (repeatable; overrides .env auto-discovery)
         #[arg(long)]
         secret: Vec<std::path::PathBuf>,
+
+        /// Exclude build-time env files entirely (skip .env auto-discovery)
+        #[arg(long = "no-env", conflicts_with = "secret")]
+        no_env: bool,
 
         /// Push this file as runtime env after deploying (KEY=VALUE lines, merged)
         #[arg(long)]
@@ -123,9 +127,13 @@ enum Commands {
         #[arg(long)]
         port: Option<u16>,
 
-        /// Pass a local file (e.g. .env) as a Docker build secret (id=l8b_env)
+        /// Include this .env file in the build (repeatable; overrides .env auto-discovery)
         #[arg(long)]
         secret: Vec<std::path::PathBuf>,
+
+        /// Exclude build-time env files entirely (skip .env auto-discovery)
+        #[arg(long = "no-env", conflicts_with = "secret")]
+        no_env: bool,
     },
     /// List all projects with live status
     List,
@@ -272,7 +280,7 @@ enum Commands {
         #[arg(long)]
         healthy: bool,
     },
-    /// Clean up leftover build artifacts (.env backups, temp dockerignore files)
+    /// Clean up leftover build artifacts (temp generated dockerignore files)
     Cleanup {
         /// Project directory (default: current directory)
         #[arg(default_value = ".")]
@@ -476,6 +484,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             cpu,
             no_auto_stop,
             secret,
+            no_env,
             env_file,
             compose,
             service,
@@ -498,6 +507,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     cpu,
                     no_auto_stop,
                     secret,
+                    no_env,
                     env_file,
                     compose,
                     service,
@@ -511,7 +521,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             )
             .await?;
         }
-        Commands::Ship { path, port, secret } => {
+        Commands::Ship { path, port, secret, no_env } => {
             if ci_mode.enabled {
                 bail!(crate::out::fail(
                     "'ship' is interactive and cannot run in CI/JSON mode",
@@ -539,8 +549,16 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             };
             let has_session =
                 config::CredentialStore::load().get(&target.server).and_then(|c| c.cookie.clone()).is_some();
-            ship::run(&target.client, &target.server, Some(path.to_str().unwrap_or(".")), port, secret, !has_session)
-                .await?;
+            ship::run(
+                &target.client,
+                &target.server,
+                Some(path.to_str().unwrap_or(".")),
+                port,
+                secret,
+                no_env,
+                !has_session,
+            )
+            .await?;
         }
         Commands::Init { project, node, server, mcp, agents, force, path } => {
             commands::init::run(
@@ -607,13 +625,12 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 commands::backup::enable(cli.server.as_deref(), cli.token.as_deref(), out).await?;
             }
             BackupAction::Disable { yes } => {
-                commands::backup::disable(yes, cli.server.as_deref(), cli.token.as_deref(), &ci_mode, out)
-                    .await?;
+                commands::backup::disable(yes, cli.server.as_deref(), cli.token.as_deref(), ci_mode, out).await?;
             }
             BackupAction::AddS3 { endpoint, bucket, prefix, access_key, secret_key } => {
                 commands::backup::add_s3(
                     commands::backup::AddS3Args { endpoint, bucket, prefix, access_key, secret_key },
-                    &ci_mode,
+                    ci_mode,
                     cli.server.as_deref(),
                     cli.token.as_deref(),
                     out,
@@ -621,15 +638,14 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 .await?;
             }
             BackupAction::RemoveS3 { yes } => {
-                commands::backup::remove_s3(yes, cli.server.as_deref(), cli.token.as_deref(), &ci_mode, out)
-                    .await?;
+                commands::backup::remove_s3(yes, cli.server.as_deref(), cli.token.as_deref(), ci_mode, out).await?;
             }
             BackupAction::Restore { timestamp, yes } => {
                 commands::backup::restore(
                     commands::backup::RestoreArgs { timestamp, yes },
                     cli.server.as_deref(),
                     cli.token.as_deref(),
-                    &ci_mode,
+                    ci_mode,
                     out,
                 )
                 .await?;
