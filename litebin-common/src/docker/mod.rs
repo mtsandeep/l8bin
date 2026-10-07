@@ -191,6 +191,11 @@ impl DockerManager {
         self.cpu_limit.store(cpu_limit.to_bits(), Ordering::Relaxed);
     }
 
+    /// Default network containers are attached to (e.g. `litebin-network`).
+    pub fn network(&self) -> &str {
+        &self.network
+    }
+
     /// Translate `projects/...` paths in bind specs to host-side paths,
     /// so Docker resolves them correctly on the host.
     pub(crate) fn translate_bind_paths(&self, binds: &mut [String]) {

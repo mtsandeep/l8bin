@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Platform backup (SQLite) via Litestream** — opt-in from Settings → Backup or `l8b backup enable` (admin). The orchestrator pulls `litestream/litestream:0.5.17` and manages the sidecar container directly over the Docker API, sharing the `orchestrator-data` volume — no compose/installer changes, 0 RAM when disabled. Local file replica always; optional S3/R2 as an additional destination (`l8b backup add-s3`); point-in-time `l8b backup restore` stages the snapshot and restarts the orchestrator to swap it in (previous db kept as `litebin.db.pre-restore`). `litestream.yml` is generated from DB settings at boot, so updates never clobber it.
+
+### Changed
+- **Settings is a page, not a modal** — `/settings` with General, Access Tokens, and Backup as sub-pages (`/settings/general|tokens|backup`, deep-linkable, admin-gated). The old cramped settings modal is gone.
 - `l8b platform domain set/show` — change or show the platform domain from the CLI (admin scope; `--ack-dns` accepts DNS warnings; polls the change job). Without dashboard access: `install.sh set-domain <domain>` changes it on-server (`docker exec litebin-orchestrator /app/litebin-orchestrator set-domain <domain>` + restart) and re-registers agents best-effort.
 
 ### Fixed

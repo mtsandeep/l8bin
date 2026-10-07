@@ -294,31 +294,14 @@ Per-project access control with two modes: maintenance mode (503 page) and passw
 
 ---
 
-## Phase 4: Platform Backup (SQLite)
+## Phase 4: Platform Backup (SQLite) — SHIPPED
 
-SQLite backup via Litestream sidecar. No custom backup code in LiteBin. Full plan: [backup.md](backup.md).
-
-### User Experience
-
-```
-1. Install LiteBin → Litestream starts automatically (local file backup)
-2. Optional: add S3/R2 from dashboard for cloud backups
-3. Restore: l8b backup restore (from local or S3, point-in-time)
-```
-
-### Design
-
-- **Litestream as optional sidecar** — always-on for local, S3 configurable later
-- **Zero custom code** — LiteBin generates config, manages container, that's it
-- **~5-10 MB RAM** extra
-- **Real-time WAL streaming**, point-in-time recovery, LZ4 compression
-- **Local backup by default** during `install.sh`, S3/R2 post-install
+SQLite backup via Litestream sidecar, **opt-in from the dashboard/CLI** (nothing installed by default). The orchestrator manages the sidecar container directly via the Docker API — no installer changes, 0 RAM when disabled. Local file replica always; S3/R2 as an additional destination; point-in-time restore restarts the orchestrator to swap the DB. Full details: [backup.md](backup.md).
 
 ### Configuration Points
 
-- **install.sh** — always includes Litestream with local file replica
-- **Dashboard** — add/remove S3 replicas, view status, trigger restore
-- **CLI** — `l8b backup status`, `l8b backup add-s3`, `l8b backup restore`
+- **Dashboard** — Settings → Backup: enable/disable, status, S3 add/remove, restore
+- **CLI** — `l8b backup status | enable | disable | add-s3 | remove-s3 | restore`
 
 ---
 

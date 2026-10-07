@@ -159,6 +159,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/nodes/{id}/connect", post(routes::nodes::connect_node))
         .route("/settings", get(routes::global_settings::get_settings))
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
+        .route("/backup/status", get(routes::backup::backup_status))
+        .route("/backup/enable", post(routes::backup::backup_enable))
+        .route("/backup/disable", post(routes::backup::backup_disable))
+        .route("/backup/s3", post(routes::backup::backup_add_s3))
+        .route("/backup/s3", axum::routing::delete(routes::backup::backup_remove_s3))
+        .route("/backup/restore", post(routes::backup::backup_restore))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::guard::require_admin));
 
     // Deploy + image upload (session OR deploy token auth — no login_required layer)

@@ -15,6 +15,7 @@ export default defineConfig({
       '/images': { target: 'http://localhost:5080', changeOrigin: true },
       '/auth': { target: 'http://localhost:5080', changeOrigin: true },
       '/settings': { target: 'http://localhost:5080', changeOrigin: true },
+      '/backup': { target: 'http://localhost:5080', changeOrigin: true },
       '/nodes': { target: 'http://localhost:5080', changeOrigin: true },
       '/system': { target: 'http://localhost:5080', changeOrigin: true },
       '/scan': { target: 'http://localhost:5080', changeOrigin: true },

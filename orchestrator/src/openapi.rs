@@ -17,6 +17,7 @@ use utoipa::OpenApi;
         (name = "settings", description = "Project and global settings"),
         (name = "deploy-tokens", description = "Deploy token management for CI/CD"),
         (name = "global-settings", description = "Global platform settings and DNS"),
+        (name = "backup", description = "Platform SQLite backup (Litestream sidecar)"),
         (name = "volumes", description = "Volume management"),
         (name = "scan", description = "Container scanning and import"),
         (name = "env", description = "Runtime environment variables (write-only values)"),
@@ -84,6 +85,13 @@ use utoipa::OpenApi;
         crate::routes::global_settings::domain_apply,
         crate::routes::global_settings::domain_job_status,
         crate::routes::global_settings::domain_job_retry,
+        // Backup
+        crate::routes::backup::backup_status,
+        crate::routes::backup::backup_enable,
+        crate::routes::backup::backup_disable,
+        crate::routes::backup::backup_add_s3,
+        crate::routes::backup::backup_remove_s3,
+        crate::routes::backup::backup_restore,
         // Volumes
         crate::routes::volumes::delete_volume,
         crate::routes::volumes::delete_all_volumes,
@@ -181,6 +189,13 @@ use utoipa::OpenApi;
             crate::platform::DomainJobStep,
             crate::platform::DomainJobStatus,
             crate::platform::DomainStepStatus,
+            // Backup
+            crate::routes::backup::BackupStatus,
+            crate::routes::backup::BackupS3Status,
+            crate::routes::backup::BackupS3Request,
+            crate::routes::backup::BackupRestoreRequest,
+            crate::routes::backup::BackupActionResponse,
+            crate::backup::GenerationInfo,
             // Scan
             crate::routes::scan::ImportRequest,
             crate::routes::scan::ImportResponse,

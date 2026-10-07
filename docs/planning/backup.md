@@ -1,180 +1,95 @@
 # Platform Backup (SQLite)
 
-LiteBin's platform data — the SQLite database containing all project configs, node configs, routes, and settings — is backed up via Litestream.
+LiteBin's platform data — the SQLite database containing all project configs, node configs, routes, and settings — is backed up via [Litestream](https://litestream.io/).
 
-## Approach
+**Status: shipped.** Backup is opt-in from the dashboard (Settings → Backup) or CLI. No custom backup code — LiteBin generates the config and manages the sidecar container.
 
-**No custom backup code in LiteBin.** Use [Litestream](https://litestream.io/) as an optional sidecar. It's battle-tested (used by Fly.io, Turso), handles real-time WAL streaming, point-in-time recovery, local file + S3/R2 storage, LZ4 compression, and retry logic — all for ~5-10MB RAM.
+## How It Works
 
-LiteBin focuses on what it does best (project management, deployment, routing). Backup is delegated to a proven tool.
+```
+┌─────────────────────────────┐      ┌──────────────────────────────┐
+│  litebin-orchestrator       │      │  litebin-litestream (sidecar)│
+│                             │      │                              │
+│  /app/data/litebin.db  ◄────┼──────┼─  /data/litebin.db (ro use)  │
+│  /app/data/litestream.yml ──┼─────►│  /data/litestream.yml (cfg)  │
+│                             │      │         │ WAL streaming      │
+│  owns config, manages       │      │         ▼                    │
+│  container via Docker API   │      │  /data/backups/litebin.db    │
+│                             │      │  (local replica)             │
+│                             │      │  s3://bucket/prefix (option) │
+└─────────────────────────────┘      └──────────────────────────────┘
+          both mount the same `orchestrator-data` volume
+```
 
-## Why Not Build It In?
+- **Opt-in from the dashboard.** Nothing is installed by default. "Enable backup" pulls `litestream/litestream:0.5.17`, creates the sidecar container via the Docker API (same mechanism as project containers), and starts streaming. Disabling stops and removes the container; replicas stay on the volume and resume on re-enable.
+- **The orchestrator owns `litestream.yml`** (at `/app/data/litestream.yml`, shared via the volume). Generated from DB `settings` rows at boot and on every config change. The DB is the single source of truth — `install.sh` never writes it, and updates never clobber user config.
+- **Local replica is the default destination** (`file:///data/backups/litebin.db`, 30-day retention). **S3/R2 is an additional destination**, not an alternative — once configured, Litestream streams to both simultaneously.
+- **Master-only.** Agents hold no platform state.
 
-| | Built-in (rusqlite backup API) | Litestream |
-|---|-------------------------------|------------|
-| Real-time streaming | No (scheduled only) | Yes (WAL frame streaming) |
-| Point-in-time restore | No | Yes (any second) |
-| Storage backends | Local file only | Local file, S3, R2, GCS, Azure |
-| Compression | No | LZ4 |
-| Incremental | No (full copy each time) | Yes (WAL frames only) |
-| Code to maintain | ~30-50 lines + scheduling + retention + error handling | Zero |
-| Extra RAM | 0 (in-process) | ~5-10 MB |
-| Extra container | No | Yes (12.7 MB image) |
+## Settings Keys
+
+Stored in the `settings` table: `backup_enabled`, `backup_s3_endpoint`, `backup_s3_bucket`, `backup_s3_prefix`, `backup_s3_access_key`, `backup_s3_secret_key`. Secrets are stored plaintext — same as `cloudflare_api_token`. Encryption at rest is S3 SSE (bucket-side), not LiteBin's job.
+
+## API (admin scope)
+
+```
+GET    /backup/status    → { enabled, available, sidecar_installed, sidecar_running, last_sync, s3: { configured, endpoint, bucket, prefix } }
+POST   /backup/enable    → create + start sidecar (first enable pulls the image, ~30s)
+POST   /backup/disable   → stop + remove sidecar (replicas kept)
+POST   /backup/s3        → { endpoint, bucket, prefix?, access_key_id, secret_access_key } — regenerates yml, restarts sidecar
+DELETE /backup/s3        → clear S3 config, regenerate yml, restart sidecar
+POST   /backup/restore   → { timestamp? } — point-in-time (RFC 3339) or latest
+```
+
+## Restore
+
+The orchestrator runs *from* the database it would restore, so restore is a two-phase swap:
+
+```
+1. POST /backup/restore execs in the sidecar:
+     litestream restore -config /data/litestream.yml -o /data/litebin.db.restored -force [-timestamp T]
+2. On success the orchestrator responds 200 and exits (restart: unless-stopped revives it)
+3. At boot — before the DB pool opens — litebin.db.restored is swapped in:
+     old db/-wal/-shm → litebin.db.pre-restore* (one-shot safety copy)
+     litebin.db.restored → litebin.db
+```
+
+The dashboard polls `/backup/status` until the orchestrator is back. Stale `-wal`/`-shm` files are deleted with the swap — the restored file is a plain snapshot.
+
+## CLI
+
+```
+l8b backup status
+l8b backup enable
+l8b backup disable --yes
+l8b backup add-s3 --endpoint https://<id>.r2.cloudflarestorage.com --bucket my-backups \
+                  --access-key AKIA... --secret-key ...
+l8b backup remove-s3 --yes
+l8b backup restore [--timestamp 2026-10-06T10:30:00Z] --yes
+```
 
 ## Resource Impact
 
 | Component | RAM |
 |-----------|-----|
-| Orchestrator | ~8.5 MB |
-| Dashboard | ~4.6 MB |
-| Caddy | ~20 MB idle / ~54 MB active |
-| **LiteBin total** | **~33 MB idle** |
-| Litestream (optional) | ~5-10 MB |
-| **With Litestream** | **~38-43 MB idle** |
+| LiteBin idle | ~33 MB |
+| Litestream (only when enabled) | ~5-10 MB |
 
-Actual production numbers from a live LiteBin server. Caddy scales with traffic — ~20 MB idle, ~54 MB under load.
+Zero containers and zero RAM for installs that never enable backup.
 
-## Configuration
+## Implementation
 
-Backup is optional and configurable from three entry points:
+| Piece | Location |
+|---|---|
+| Sidecar lifecycle, exec, restart, mount detection | `litebin-common/src/docker/container/sidecar.rs` |
+| yml generation, restore swap, replica status, boot reconcile | `orchestrator/src/backup.rs` |
+| HTTP endpoints | `orchestrator/src/routes/backup.rs` |
+| Dashboard Backup tab | `dashboard/src/components/GlobalSettingsModal.tsx` |
+| CLI | `cli/src/commands/backup.rs` |
+| Tests | `orchestrator/src/backup.rs` (unit), `orchestrator/src/tests/backup_tests.rs` (HTTP) |
 
-### 1. During Installation (`install.sh`)
+`install.sh` is unchanged — the sidecar exists only after the user enables backup.
 
-```bash
-# Install master — backup is enabled by default (local file storage)
-./install.sh master
-```
+## Not Covered Here
 
-**What `install.sh` does (no flags needed):**
-1. Adds `litestream` service to the generated `docker-compose.yml` — always included
-2. Generates `litestream.yml` with local file replica: `file:///data/backups/litebin.db`
-3. Creates `data/backups/` directory for local storage
-4. Starts Litestream alongside the master stack
-
-S3/R2 is not configured during installation — it's added later via dashboard or CLI.
-
-### 2. Dashboard Settings (toggle after install)
-
-Settings page shows a "Backup" section:
-- **Status** — enabled by default (local file), shows last sync time and replica health
-- **Add S3/R2** — configure access key, secret key, endpoint, bucket. Adds a second replica alongside local
-- **Remove S3/R2** — remove cloud replica, keep local
-- **Restore** — trigger restore from last backup (with confirmation)
-
-**How it works under the hood:**
-- Local backup is always on (Litestream runs from install)
-- Add S3: orchestrator updates `litestream.yml` with a second replica, restarts Litestream
-- Remove S3: orchestrator removes the S3 replica from config, restarts Litestream
-
-### 3. CLI Command
-
-```bash
-# Backup is enabled by default, no command needed to start
-# Check status
-l8b backup status
-
-# Add S3/R2 replica (optional)
-l8b backup add-s3 --url s3://my-bucket/litebin/ --endpoint https://<id>.r2.cloudflarestorage.com
-
-# Restore from last backup
-l8b backup restore
-
-# Restore to specific point in time
-l8b backup restore --timestamp "2026-05-01T10:30:00Z"
-```
-
-CLI commands call the same orchestrator endpoints that the dashboard uses.
-
-## Configuration File
-
-`litestream.yml` generated by LiteBin (user doesn't edit this directly):
-
-```yaml
-dbs:
-  - path: /data/litebin.db
-    replicas:
-      - url: "file:///data/backups/litebin.db"
-      # - url: "s3://my-bucket/litebin/"
-      #   access-key-id: ${LITESTREAM_ACCESS_KEY}
-      #   secret-access-key: ${LITESTREAM_SECRET_KEY}
-      #   endpoint: https://<account_id>.r2.cloudflarestorage.com
-```
-
-The orchestrator generates and manages this file. User provides storage settings via install.sh, dashboard, or CLI — LiteBin handles the YAML.
-
-## Compose Stack
-
-When backup is enabled, `install.sh` adds to `docker-compose.yml`:
-
-```yaml
-services:
-  orchestrator:
-    volumes:
-      - ./data:/app/data
-
-  litestream:
-    image: litestream/litestream:latest
-    container_name: litebin-litestream
-    restart: unless-stopped
-    volumes:
-      - ./data:/data:ro
-      - ./litestream.yml:/etc/litestream.yml:ro
-    environment:
-      - LITESTREAM_ACCESS_KEY=${LITESTREAM_ACCESS_KEY:-}
-      - LITESTREAM_SECRET_KEY=${LITESTREAM_SECRET_KEY:-}
-    depends_on:
-      - orchestrator
-```
-
-When backup is disabled or not configured, the `litestream` service is not added to the compose file at all. No unused containers.
-
-## Backup Encryption
-
-Litestream does not encrypt backup data — it streams compressed (LZ4) plaintext WAL frames to the configured replica. Encryption at rest must be handled at the storage layer.
-
-**S3 server-side encryption (SSE)** is the standard approach — zero code changes in LiteBin, configured on the bucket:
-
-| Provider | SSE Type | Setup | Protects Against |
-|----------|----------|-------|-----------------|
-| AWS S3 | SSE-S3 (default) | Enabled by default on new buckets | Physical disk theft at AWS |
-| AWS S3 | SSE-KMS | Bucket policy + KMS key | Bucket credential leak |
-| Cloudflare R2 | SSE-C | Customer-provided key per request | Bucket credential leak |
-
-**Recommended:** SSE-S3 is free and automatic for AWS S3. For Cloudflare R2, enable SSE-C if the provider supports it. This is a bucket configuration step during S3/R2 setup, not a LiteBin feature.
-
-Note: Litestream's local file replica (`file:///data/backups/litebin.db`) is not encrypted. Local backups are only useful for same-server recovery — if the server is compromised, local backup encryption provides no additional security.
-
-## How Litestream Works
-
-1. Watches SQLite's WAL file for changes
-2. On each write, streams new WAL frames to configured replicas
-3. LZ4 compression before upload
-4. Near real-time (configurable sync interval, default 1 second)
-5. If storage unreachable, WAL frames queue locally (no data loss)
-6. Restore creates a consistent snapshot at any point in time
-
-## What Gets Backed Up
-
-- **Backed up:** `litebin.db` — all project configs, node configs, services, sessions, Cloudflare records, settings
-- **Not backed up:** Project files (`projects/` directory), Docker volumes, `.env*` files, images
-- **Why:** The DB is the orchestrator's brain — if lost, all project config is gone. Project files and volumes are on the agents and handled separately.
-
-## What's NOT Covered
-
-Litestream only backs up the SQLite database. Other data needs separate handling:
-
-| Data | Location | Backup approach |
-|------|----------|----------------|
-| SQLite DB | Orchestrator `data/litebin.db` | Litestream (this doc) |
-| Project files | Agent `projects/` directory | Host-level backup (restic, borg) or user responsibility |
-| Docker volumes | Agent Docker volumes | Volume export/import (planned in migration) or host-level backup |
-| `.env*` files | Agent `projects/{id}/.env*` | Never backed up by LiteBin (user responsibility) |
-| Caddy certs | Agent data volume | Regenerated on demand (Let's Encrypt) |
-
-## Implementation Notes
-
-- **install.sh changes:** Always add `litestream` service and generate `litestream.yml` with local file replica. No flags needed. ~20 lines.
-- **Orchestrator changes:** Add `GET /admin/backup/status`, `POST /admin/backup/add-s3`, `POST /admin/backup/remove-s3`, `POST /admin/backup/restore` endpoints. These manage the `litestream.yml` file and control the container via Docker API. ~100 lines.
-- **Dashboard changes:** Settings page backup section. Status display, S3 config form, restore button.
-- **LiteBin CLI changes:** `backup status/add-s3/restore` subcommands that call the orchestrator endpoints.
-- **No Litestream dependency in code** — LiteBin generates the config and manages the container, but doesn't import or call Litestream as a library.
+Project data (Docker volumes, uploaded images, compose files) is a separate plan: [project-backup.md](project-backup.md). Disaster recovery (dead-master restore from S3) builds on this: [disaster-recovery.md](disaster-recovery.md).

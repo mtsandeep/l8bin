@@ -1,6 +1,7 @@
 mod activity;
 mod app;
 mod auth;
+mod backup;
 mod capabilities;
 mod cli;
 mod cloudflare_router;
@@ -128,6 +129,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Apply a pending backup restore (from POST /backup/restore) before opening the DB
+    if let Some(data_dir) = backup::resolve_data_dir(&config.database_url) {
+        backup::apply_pending_restore(&data_dir);
+    }
+
     // Init database
     let db = db::init_pool(&config.database_url).await?;
 
@@ -203,6 +209,9 @@ async fn main() -> anyhow::Result<()> {
     let mut docker =
         DockerManager::new(config.docker_network.clone(), default_mem_mb * 1024 * 1024, default_cpu_limit)?;
     docker.detect_host_projects_dir().await;
+
+    // Refresh litestream.yml and re-ensure the backup sidecar when enabled
+    backup::reconcile(&db, &config, &docker).await;
 
     // Initialize node client pool and load existing online nodes
     let node_clients: Arc<DashMap<String, Arc<reqwest::Client>>> = Arc::new(DashMap::new());

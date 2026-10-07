@@ -23,7 +23,6 @@ import { useSettings } from '../hooks/useSettings';
 import { useAuth } from './AuthContext';
 import ChangePasswordModal from './ChangePasswordModal';
 import DeployForm from './DeployForm';
-import GlobalSettingsModal from './GlobalSettingsModal';
 import ProjectCard from './ProjectCard';
 
 export default function HomePage() {
@@ -39,7 +38,7 @@ export default function HomePage() {
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'offline' | null>(null);
   const [stackExpanded, setStackExpanded] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
-  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
+
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRefMobile = useRef<HTMLDivElement>(null);
@@ -192,7 +191,7 @@ export default function HomePage() {
             {user?.is_admin && (
               <button
                 type="button"
-                onClick={() => setShowGlobalSettings(true)}
+                onClick={() => navigate('/settings/general')}
                 className="p-2 rounded-lg text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 transition-colors"
                 title="Global Settings"
               >
@@ -395,9 +394,6 @@ export default function HomePage() {
 
       {/* Change Password modal */}
       {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
-
-      {/* Global Settings modal */}
-      {showGlobalSettings && <GlobalSettingsModal onClose={() => setShowGlobalSettings(false)} />}
     </div>
   );
 }

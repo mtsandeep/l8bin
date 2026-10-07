@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod backup;
 pub mod caddy;
 pub mod capabilities;
 pub mod deploy;

@@ -189,6 +189,37 @@ export interface DomainPreflightResult {
   warnings: string[];
 }
 
+export interface BackupS3Status {
+  configured: boolean;
+  endpoint: string | null;
+  bucket: string | null;
+  prefix: string | null;
+}
+
+export interface BackupGeneration {
+  id: string;
+  start_time: string | null;
+  file_count: number;
+  size_bytes: number;
+}
+
+export interface BackupStatus {
+  enabled: boolean;
+  available: boolean;
+  sidecar_installed: boolean;
+  sidecar_running: boolean;
+  last_sync: string | null;
+  db_size_bytes: number | null;
+  replica_size_bytes: number | null;
+  generations: BackupGeneration[];
+  s3: BackupS3Status;
+}
+
+export interface BackupActionResponse {
+  status: BackupStatus;
+  restarting?: boolean;
+}
+
 export type DomainJobStatus = 'pending' | 'running' | 'failed' | 'completed';
 export type DomainStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
@@ -289,6 +320,54 @@ export async function cleanupDnsRecords(): Promise<{ deleted_count: number }> {
     throw new Error(parseErrorMessage(text, 'Failed to cleanup DNS records'));
   }
   return res.json();
+}
+
+export async function fetchBackupStatus(): Promise<BackupStatus> {
+  const res = await fetch(`${API_BASE}/backup/status`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch backup status');
+  return res.json();
+}
+
+async function backupAction(path: string, method: string, body?: unknown): Promise<BackupActionResponse> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    credentials: 'include',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Backup operation failed'));
+  }
+  return res.json();
+}
+
+export function enableBackup(): Promise<BackupActionResponse> {
+  return backupAction('/backup/enable', 'POST');
+}
+
+export function disableBackup(): Promise<BackupActionResponse> {
+  return backupAction('/backup/disable', 'POST');
+}
+
+export interface BackupS3Config {
+  endpoint: string;
+  bucket: string;
+  prefix?: string;
+  access_key_id: string;
+  secret_access_key: string;
+}
+
+export function addBackupS3(config: BackupS3Config): Promise<BackupActionResponse> {
+  return backupAction('/backup/s3', 'POST', config);
+}
+
+export function removeBackupS3(): Promise<BackupActionResponse> {
+  return backupAction('/backup/s3', 'DELETE');
+}
+
+export function restoreBackup(timestamp?: string): Promise<BackupActionResponse> {
+  return backupAction('/backup/restore', 'POST', { timestamp: timestamp || null });
 }
 
 export async function syncDnsRecords(): Promise<{

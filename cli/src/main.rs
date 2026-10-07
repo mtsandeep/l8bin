@@ -231,6 +231,11 @@ enum Commands {
         #[command(subcommand)]
         action: PlatformAction,
     },
+    /// Manage platform database backup (admin)
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
     /// Log in to a LiteBin server (dashboard approval or username/password)
     Login {
         /// Server URL
@@ -324,6 +329,53 @@ enum PlatformAction {
     Domain {
         #[command(subcommand)]
         action: PlatformDomainAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Show backup status (enabled, replicas, last sync)
+    Status,
+    /// Enable continuous backup (starts the Litestream sidecar)
+    Enable,
+    /// Disable backup (stops the sidecar; replicas are kept)
+    Disable {
+        /// Skip confirmation (required in CI/JSON mode)
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Add or update an S3/R2 replica
+    AddS3 {
+        /// S3 endpoint (e.g. https://<account_id>.r2.cloudflarestorage.com)
+        #[arg(long)]
+        endpoint: String,
+        /// Bucket name
+        #[arg(long)]
+        bucket: String,
+        /// Key prefix (default litebin/)
+        #[arg(long)]
+        prefix: Option<String>,
+        /// Access key ID
+        #[arg(long)]
+        access_key: String,
+        /// Secret access key
+        #[arg(long)]
+        secret_key: String,
+    },
+    /// Remove the S3/R2 replica (local backup keeps running)
+    RemoveS3 {
+        /// Skip confirmation (required in CI/JSON mode)
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Restore the database from backup (orchestrator restarts to apply)
+    Restore {
+        /// Point-in-time to restore to (RFC 3339, e.g. 2026-10-06T10:30:00Z)
+        #[arg(long)]
+        timestamp: Option<String>,
+        /// Skip confirmation (required in CI/JSON mode)
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -546,6 +598,42 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     commands::platform::show(cli.server.as_deref(), cli.token.as_deref(), out).await?;
                 }
             },
+        },
+        Commands::Backup { action } => match action {
+            BackupAction::Status => {
+                commands::backup::status(cli.server.as_deref(), cli.token.as_deref(), out).await?;
+            }
+            BackupAction::Enable => {
+                commands::backup::enable(cli.server.as_deref(), cli.token.as_deref(), out).await?;
+            }
+            BackupAction::Disable { yes } => {
+                commands::backup::disable(yes, cli.server.as_deref(), cli.token.as_deref(), &ci_mode, out)
+                    .await?;
+            }
+            BackupAction::AddS3 { endpoint, bucket, prefix, access_key, secret_key } => {
+                commands::backup::add_s3(
+                    commands::backup::AddS3Args { endpoint, bucket, prefix, access_key, secret_key },
+                    &ci_mode,
+                    cli.server.as_deref(),
+                    cli.token.as_deref(),
+                    out,
+                )
+                .await?;
+            }
+            BackupAction::RemoveS3 { yes } => {
+                commands::backup::remove_s3(yes, cli.server.as_deref(), cli.token.as_deref(), &ci_mode, out)
+                    .await?;
+            }
+            BackupAction::Restore { timestamp, yes } => {
+                commands::backup::restore(
+                    commands::backup::RestoreArgs { timestamp, yes },
+                    cli.server.as_deref(),
+                    cli.token.as_deref(),
+                    &ci_mode,
+                    out,
+                )
+                .await?;
+            }
         },
         Commands::List => {
             commands::projects::list(cli.server.as_deref(), cli.token.as_deref(), out).await?;
