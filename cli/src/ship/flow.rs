@@ -134,15 +134,7 @@ async fn new_project_flow(
     }
     if let Some(token) = minted_token {
         println!("  {} Use this token to redeploy from CI/CD:", "💡".dimmed());
-        let deploy_hint = if is_background {
-            format!("L8B_TOKEN={token} l8b deploy --project {name} --background")
-        } else {
-            format!(
-                "L8B_TOKEN={token} l8b deploy --project {name} --port {}",
-                port.expect("web projects have an HTTP port")
-            )
-        };
-        println!("  {}", deploy_hint.dimmed());
+        println!("  {}", format!("L8B_TOKEN={token} l8b deploy --project {name}").dimmed());
     }
     println!();
 

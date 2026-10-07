@@ -221,6 +221,10 @@ pub(super) fn analyze_service(
     }
 }
 
+/// Ports analysis: only an explicit `HOST:CONTAINER` mapping publishes on the
+/// host (requires raw-ports). Container-only short syntax is never published —
+/// services reach each other over the managed network; expose externally with
+/// a project route.
 fn analyze_ports(svc_name: &str, svc: &ComposeService, is_public: bool, findings: &mut Vec<CompatibilityFinding>) {
     let prefix = format!("services.{svc_name}.ports");
     let Some(ports) = &svc.ports else {
@@ -228,8 +232,7 @@ fn analyze_ports(svc_name: &str, svc: &ComposeService, is_public: bool, findings
     };
 
     let exposed = svc.exposed_ports();
-    let has_udp = exposed.iter().any(|(_, proto)| proto == "udp");
-    let has_host_mapping = ports.iter().any(|p| p.contains(':'));
+    let has_explicit = ports.iter().any(|p| p.contains(':'));
 
     if is_public {
         findings.push(finding(
@@ -239,16 +242,15 @@ fn analyze_ports(svc_name: &str, svc: &ComposeService, is_public: bool, findings
             "public service ports are translated to LiteBin managed HTTP ingress (loopback bind + Caddy route), not published as written",
             None,
         ));
-        // Extra published ports beyond the primary HTTP container port need raw-ports.
-        if has_udp || exposed.len() > 1 {
+        if exposed.len() > 1 && has_explicit {
             findings.push(finding(
                 &prefix,
                 Some(svc_name.into()),
                 FindingDisposition::PermissionRequired,
-                "additional or non-HTTP published ports require the raw-ports capability",
+                "additional HOST:CONTAINER ports publish on the host — requires the raw-ports capability",
                 Some("raw-ports"),
             ));
-        } else if has_host_mapping {
+        } else if has_explicit {
             // Single HTTP mapping like 8080:80 — host side is ignored intentionally.
             findings.push(finding(
                 &prefix,
@@ -258,20 +260,13 @@ fn analyze_ports(svc_name: &str, svc: &ComposeService, is_public: bool, findings
                 None,
             ));
         }
-    } else {
+    } else if has_explicit {
         findings.push(finding(
             &prefix,
             Some(svc_name.into()),
             FindingDisposition::PermissionRequired,
-            "host port publishing requires the raw-ports capability (non-public services do not get HTTP ingress)",
+            "HOST:CONTAINER publishes on the host — requires the raw-ports capability",
             Some("raw-ports"),
-        ));
-        findings.push(finding(
-            &prefix,
-            Some(svc_name.into()),
-            FindingDisposition::Translated,
-            "without raw-ports, declared ports are not bound on the host",
-            None,
         ));
     }
 }

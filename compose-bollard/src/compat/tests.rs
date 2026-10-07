@@ -146,6 +146,41 @@ services:
 }
 
 #[test]
+fn short_syntax_ports_do_not_require_raw_ports() {
+    let r = report(
+        r#"
+services:
+  web:
+    image: nginx
+    ports: ["80"]
+    labels:
+      litebin.public: "true"
+  api:
+    image: example/api
+    ports: ["3000", "53/udp"]
+"#,
+    );
+    assert!(r.ok, "findings: {:#?}", r.findings);
+    assert!(!r.required_capabilities.contains(&"raw-ports".to_string()));
+}
+
+#[test]
+fn additional_explicit_mapping_on_public_service_requires_raw_ports() {
+    let r = report(
+        r#"
+services:
+  web:
+    image: nginx
+    ports: ["80", "9090:9090"]
+    labels:
+      litebin.public: "true"
+"#,
+    );
+    assert!(r.ok);
+    assert!(r.required_capabilities.contains(&"raw-ports".to_string()));
+}
+
+#[test]
 fn repo_relative_bind_source_is_flagged() {
     let r = report(
         r#"

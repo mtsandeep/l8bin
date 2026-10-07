@@ -137,6 +137,13 @@ impl DockerManager {
             .collect())
     }
 
+    /// Host ports currently published by running containers (daemon-reported).
+    pub async fn published_host_ports(&self) -> anyhow::Result<std::collections::HashSet<u16>> {
+        let containers =
+            self.docker.list_containers(Some(ListContainersOptions { all: false, ..Default::default() })).await?;
+        Ok(containers.into_iter().filter_map(|c| c.ports).flatten().filter_map(|p| p.public_port).collect())
+    }
+
     /// List all running litebin containers. Returns parsed container info using the
     /// centralized naming convention (`litebin-{project_id}`, `litebin-{project_id}-{service}`, etc.).
     pub async fn list_running_litebin_containers(&self) -> anyhow::Result<Vec<RunningContainer>> {

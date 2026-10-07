@@ -28,7 +28,7 @@ LiteBin does not run `docker compose up`. It parses Compose YAML, maps supported
 |---|---|
 | `docker-observe` | Read host-wide container metadata through LiteBin's endpoint-allowlisted proxy |
 | `host-network` | Run a background service in the Linux host network namespace |
-| `raw-ports` | Publish Compose ports directly on the host |
+| `raw-ports` | Publish explicit `HOST:CONTAINER` Compose ports directly on the host |
 
 Grants are stored in `project_capabilities`. Approve them from:
 
@@ -261,7 +261,7 @@ Denormalized fields on `projects` for the fast health-check path (no JOINs neede
 | `image` / `build` | String or object form |
 | `command` / `entrypoint` | String or list form |
 | `environment` | Map or list form (compose env takes precedence over LiteBin env overrides) |
-| `ports` | List of strings (`"8080"`, `"80:3000"`, `"9090/udp"`). The host side is ignored — LiteBin uses only the container port for routing and (with Allow raw ports enabled) binds it to the same number on the host. See [FAQ: LiteBin-reserved ports](faq.md#litebin-reserved-ports-even-with-allow-raw-ports) for the list of host ports that are always refused. |
+| `ports` | List of strings (`"8080"`, `"80:3000"`, `"9090/udp"`). Container-only entries are never published on the host — services reach each other over the managed network. An explicit `HOST:CONTAINER` mapping publishes that host port (requires the `raw-ports` capability; reserved ports are refused). See [FAQ: LiteBin-reserved ports](faq.md#litebin-reserved-ports-even-with-allow-raw-ports). |
 | `depends_on` | List form or map form with conditions |
 | `volumes` | Supported |
 | `healthcheck` | List form and string form (`CMD`/`CMD-SHELL`) |

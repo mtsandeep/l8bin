@@ -20,6 +20,20 @@ pub(crate) fn managed_proxy_loopback_binding(config: &RunServiceConfig) -> Optio
     })
 }
 
+/// Pinned (non-ephemeral) host ports in the binding map.
+pub(crate) fn pinned_host_ports(port_bindings: &HashMap<String, Option<Vec<PortBinding>>>) -> Vec<u16> {
+    let mut ports: Vec<u16> = port_bindings
+        .values()
+        .flatten()
+        .flatten()
+        .filter_map(|b| b.host_port.as_deref().and_then(|p| p.parse::<u16>().ok()))
+        .filter(|&p| p != 0)
+        .collect();
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
 impl DockerManager {
     /// Run a service container using the unified `RunServiceConfig`.
     /// Returns (container_id, mapped_port). mapped_port is only meaningful for public services.
@@ -68,26 +82,18 @@ impl DockerManager {
             exposed_ports.push(port_key);
         }
 
-        // When allow_raw_ports is set, bind compose-declared ports directly on the host
-        // (e.g., UDP for game servers, TCP for databases). LiteBin-reserved ports are
-        // always refused to avoid conflicts with Caddy/orchestrator/agent.
+        // With allow_raw_ports, explicit HOST:CONTAINER remaps publish on the host
+        // (e.g., UDP for game servers, TCP for databases). Container-only short
+        // syntax never publishes. LiteBin-reserved ports are always refused to
+        // avoid conflicts with Caddy/orchestrator/agent.
         let reserved_ports = litebin_reserved_host_ports();
-        if config.allow_raw_ports
-            && let Some(ref bollard_body) = config.bollard_create_body
-            && let Some(ref compose_exposed) = bollard_body.exposed_ports
-        {
-            for port_spec in compose_exposed {
+        if config.allow_raw_ports {
+            for (port_spec, host_port) in &config.raw_port_host_overrides {
                 // Skip ports already bound (e.g. public HTTP port)
                 if port_bindings.contains_key(port_spec) {
                     continue;
                 }
-                // Honor an explicit compose host-port remap; else bind host = container port.
-                let host_port = config
-                    .raw_port_host_overrides
-                    .get(port_spec)
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| port_spec.split('/').next().unwrap_or("0").to_string());
-                if reserved_ports.contains(&host_port) {
+                if reserved_ports.contains(&host_port.to_string()) {
                     tracing::warn!(
                         service = %config.service_name,
                         project_id = %config.project_id,
@@ -343,6 +349,19 @@ impl DockerManager {
             let _ = self.remove_container(&existing_id).await;
         }
 
+        // Clear error before create when a pinned host port is already published.
+        let pinned = pinned_host_ports(&port_bindings);
+        if !pinned.is_empty() {
+            let in_use = self.published_host_ports().await.unwrap_or_default();
+            if let Some(port) = pinned.iter().find(|p| in_use.contains(p)) {
+                anyhow::bail!(
+                    "service '{}': host port {} is already in use on this node — change the HOST:CONTAINER mapping or expose the service via a route",
+                    config.service_name,
+                    port
+                );
+            }
+        }
+
         let response = self.docker.create_container(Some(options), create_body).await?;
         let container_id = response.id;
 
@@ -511,5 +530,22 @@ impl DockerManager {
         _filtered_binds: Option<&Vec<String>>,
         _image_user: Option<&str>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_host_ports_skips_ephemeral() {
+        let mut bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+        bindings.insert(
+            "3000/tcp".to_string(),
+            Some(vec![PortBinding { host_ip: None, host_port: Some("3000".to_string()) }]),
+        );
+        bindings
+            .insert("80/tcp".to_string(), Some(vec![PortBinding { host_ip: None, host_port: Some("0".to_string()) }]));
+        assert_eq!(pinned_host_ports(&bindings), vec![3000]);
     }
 }

@@ -152,7 +152,7 @@ Risky workload features require explicit grants stored in `project_capabilities`
 
 - `docker-observe` — injects a managed HAProxy sidecar with an endpoint-allowlisted, read-only Docker API policy (never raw `docker.sock`)
 - `host-network` — runs an approved background service in the host network namespace
-- `raw-ports` — publishes Compose ports on the host
+- `raw-ports` — publishes explicit `HOST:CONTAINER` Compose ports on the host
 
 Deployments may *request* capabilities; only the user can *grant* them (dashboard validation step, Settings → Capabilities, or `l8b deploy --grant-capability`). `network_mode: host` requires `host-network`; privileged mode remains unsupported.
 

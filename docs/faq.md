@@ -316,7 +316,7 @@ l8b deploy --project myapp --service api --service worker
 
 ### Only one port is accessible for my service
 
-LiteBin routes traffic to one port per project (the public service's port). Other ports are exposed on the container and accessible for inter-service communication via the Docker network. To expose additional ports externally, enable **Allow raw ports** in the dashboard (Settings → General) — this binds all compose-declared ports directly on the host, including non-HTTP protocols like UDP. See [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake) for caveats.
+LiteBin routes traffic to one port per project (the public service's port). Other ports are exposed on the container and accessible for inter-service communication via the Docker network — container-only `ports:` entries (`"3000"`) are never published on the host. To expose another port externally, either create a route for that internal port, or declare an explicit `HOST:CONTAINER` mapping (`"25565:25565/udp"`) and grant the **raw-ports** capability — LiteBin then binds exactly that host port, including non-HTTP protocols like UDP. See [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake) for caveats.
 
 The public service is detected automatically — no labels or config needed:
 
@@ -327,7 +327,7 @@ The public service is detected automatically — no labels or config needed:
 
 ### LiteBin-reserved ports (even with Allow raw ports)
 
-The host side of your compose `ports:` is always ignored — LiteBin never lets an app choose which host port to bind. When `Allow raw ports` is enabled, LiteBin reads only the *container* port and binds it to the same number on the host (e.g., `ports: - "25565:25565/udp"` works for a Minecraft server).
+With **Allow raw ports** enabled, an explicit `HOST:CONTAINER` mapping binds the host port you chose (e.g., `ports: - "25565:25565/udp"` for a Minecraft server; `"8080:25565/udp"` would bind host 8080). If that host port is already in use on the node, the deploy fails with a clear message — change the mapping or expose the service via a route instead.
 
 The following ports are reserved for LiteBin's own services and are **never bound on the host**, even with `Allow raw ports` enabled:
 
