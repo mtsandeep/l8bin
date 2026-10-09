@@ -1,18 +1,21 @@
 import { DatabaseBackup, Key, SlidersHorizontal } from 'lucide-react';
+import GithubMark from '../GithubMark';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import BackupPanel from './BackupPanel';
 import GeneralPanel from './GeneralPanel';
+import GitHubPanel from './GitHubPanel';
 import TokensPanel from './TokensPanel';
 
 interface Props {
-  section: 'general' | 'tokens' | 'backup';
+  section: 'general' | 'tokens' | 'backup' | 'github';
 }
 
 const SECTIONS = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
   { id: 'tokens', label: 'Access Tokens', icon: Key },
   { id: 'backup', label: 'Backup', icon: DatabaseBackup },
+  { id: 'github', label: 'GitHub', icon: GithubMark },
 ] as const;
 
 export default function SettingsPage({ section }: Props) {
@@ -62,6 +65,8 @@ export default function SettingsPage({ section }: Props) {
             <GeneralPanel />
           ) : section === 'tokens' ? (
             <TokensPanel />
+          ) : section === 'github' ? (
+            <GitHubPanel />
           ) : (
             <BackupPanel />
           )}

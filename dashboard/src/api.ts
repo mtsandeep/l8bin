@@ -1151,3 +1151,247 @@ export async function updateProjectEnv(
   }
   return res.json();
 }
+
+// ── GitHub integration ───────────────────────────────────────────────────────
+
+export interface GitHubConnection {
+  connected: boolean;
+  mode: 'app' | 'pat' | null;
+  login: string | null;
+  status: 'active' | 'pending' | 'degraded' | 'disconnected' | null;
+  status_message: string | null;
+}
+
+export interface GitHubRepo {
+  id: number;
+  full_name: string;
+  description: string | null;
+  private: boolean;
+  default_branch: string;
+  pushed_at: string | null;
+  html_url: string;
+  owner_login: string;
+  owner_avatar: string | null;
+}
+
+export interface GitHubRepoPage {
+  repos: GitHubRepo[];
+  total_count: number | null;
+  page: number;
+}
+
+export interface GitHubRepoDetail {
+  id: number;
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  html_url: string;
+  kind: 'compose' | 'single';
+  compose_file: string | null;
+  dockerfile_present: boolean;
+}
+
+export interface GitHubBranch {
+  name: string;
+  protected: boolean;
+}
+
+export interface GitHubWorkflowInputs {
+  port: number | null;
+  cmd: string | null;
+  dockerfile: string | null;
+  memory_limit_mb: number | null;
+  cpu_limit: number | null;
+  node_id: string | null;
+  compose_services: string[];
+}
+
+export interface ProjectGithubConfig {
+  project_id: string;
+  repo_full_name: string;
+  branch: string;
+  workflow_path: string;
+  deploy_kind: 'single' | 'compose';
+  compose_file: string | null;
+  auto_deploy: boolean;
+  inputs: GitHubWorkflowInputs;
+  last_run_id?: number;
+  last_run_status?: string;
+  last_run_conclusion?: string;
+  last_run_url?: string;
+  last_run_at?: number;
+}
+
+export interface GitHubRun {
+  id: number;
+  run_number: number;
+  status: string | null;
+  conclusion: string | null;
+  head_branch: string | null;
+  head_sha: string | null;
+  html_url: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface GitHubProjectRuns {
+  project_id: string;
+  repo_full_name: string;
+  runs: GitHubRun[];
+}
+
+export interface GitHubBulkRunStatus {
+  project_id: string;
+  repo_full_name: string;
+  status: string | null;
+  conclusion: string | null;
+  run_url: string | null;
+  run_at: number | null;
+}
+
+async function ghFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, { credentials: 'include', ...init });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || data.github_error || `Request failed (${res.status})`);
+  }
+  return res.status === 204 ? (undefined as T) : res.json();
+}
+
+export function fetchGithubConnection(): Promise<GitHubConnection> {
+  return ghFetch('/github/connection');
+}
+
+export function connectGithubPat(token: string): Promise<{ login: string; warnings: string[] }> {
+  return ghFetch('/github/pat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+}
+
+export function disconnectGithub(): Promise<void> {
+  return ghFetch('/github/connection', { method: 'DELETE' });
+}
+
+export function listGithubRepos(page = 1, installationId?: number): Promise<GitHubRepoPage> {
+  const q = installationId ? `&installation_id=${installationId}` : '';
+  return ghFetch(`/github/repos?page=${page}${q}`);
+}
+
+export function getGithubRepoDetail(owner: string, repo: string): Promise<GitHubRepoDetail> {
+  return ghFetch(`/github/repos/${owner}/${repo}`);
+}
+
+export function listGithubBranches(owner: string, repo: string): Promise<GitHubBranch[]> {
+  return ghFetch(`/github/repos/${owner}/${repo}/branches`);
+}
+
+export function getProjectGithubConfig(projectId: string): Promise<ProjectGithubConfig> {
+  return ghFetch(`/projects/${projectId}/github/config`);
+}
+
+export interface LinkGithubPayload {
+  repo_full_name: string;
+  repo_id?: number;
+  installation_id?: number;
+  branch?: string;
+  deploy_kind?: 'single' | 'compose';
+  compose_file?: string | null;
+  auto_deploy?: boolean;
+  port?: number;
+  cmd?: string;
+  dockerfile?: string;
+  memory_limit_mb?: number;
+  cpu_limit?: number;
+  node_id?: string;
+  compose_services?: string[];
+}
+
+export function linkProjectGithub(projectId: string, payload: LinkGithubPayload): Promise<ProjectGithubConfig> {
+  return ghFetch(`/projects/${projectId}/github/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function patchProjectGithub(projectId: string, payload: { auto_deploy: boolean }): Promise<ProjectGithubConfig> {
+  return ghFetch(`/projects/${projectId}/github/config`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function unlinkProjectGithub(projectId: string, removeFiles = true): Promise<void> {
+  return ghFetch(`/projects/${projectId}/github/config?remove_files=${removeFiles}`, { method: 'DELETE' });
+}
+
+export function rotateGithubToken(projectId: string): Promise<{ message: string }> {
+  return ghFetch(`/projects/${projectId}/github/rotate-token`, { method: 'POST' });
+}
+
+export function dispatchGithubDeploy(projectId: string, ref?: string): Promise<{ message: string }> {
+  return ghFetch(`/projects/${projectId}/github/deploy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ref }),
+  });
+}
+
+export function fetchGithubRuns(projectId: string): Promise<GitHubProjectRuns> {
+  return ghFetch(`/projects/${projectId}/github/runs`);
+}
+
+export function fetchGithubBulkStatus(): Promise<{ projects: GitHubBulkRunStatus[] }> {
+  return ghFetch('/github/status');
+}
+
+export interface GitHubInstallation {
+  id: number;
+  account_login: string;
+  account_type: string;
+  account_avatar: string | null;
+  repository_selection: string;
+  status: string;
+}
+
+export function startGithubManifest(name?: string, webhookUrl?: string): Promise<{ manifest: string }> {
+  return ghFetch('/github/manifest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(name ? { name } : {}),
+      ...(webhookUrl ? { webhook_url: webhookUrl } : {}),
+    }),
+  });
+}
+
+export function exchangeGithubManifest(code: string): Promise<{ app_slug: string; install_url: string }> {
+  return ghFetch('/github/manifest/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function listGithubInstallations(): Promise<GitHubInstallation[]> {
+  return ghFetch('/github/installations');
+}
+
+export function connectGithubApp(
+  appId: number,
+  privateKeyPem: string,
+  webhookSecret?: string,
+): Promise<{ app_slug: string; install_url: string }> {
+  return ghFetch('/github/app', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      app_id: appId,
+      private_key_pem: privateKeyPem,
+      ...(webhookSecret ? { webhook_secret: webhookSecret } : {}),
+    }),
+  });
+}

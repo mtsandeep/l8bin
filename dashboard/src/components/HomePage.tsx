@@ -17,6 +17,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { formatBytes, NodeStatus, type Project, ProjectStatus } from '../api';
+import { useGithubStatus } from '../hooks/useGithubStatus';
 import { useHomeData } from '../hooks/useHomeData';
 import { useNodes } from '../hooks/useNodes';
 import { useSettings } from '../hooks/useSettings';
@@ -34,6 +35,7 @@ export default function HomePage() {
   const { projects, stats, systemStats, loading, loadProjectsAndStats } = useHomeData(user, refreshKey);
   const { domain, projectsDir, dnsTarget } = useSettings(user);
   const { nodes } = useNodes(user);
+  const githubStatus = useGithubStatus();
 
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'offline' | null>(null);
   const [search, setSearch] = useState('');
@@ -78,11 +80,12 @@ export default function HomePage() {
   const query = search.trim().toLowerCase();
   const matchesSearch = (p: Project) =>
     p.id.toLowerCase().includes(query) || (p.name ?? '').toLowerCase().includes(query);
-  const filteredProjects = (statusFilter
-    ? statusFilter === 'offline'
-      ? sortedProjects.filter(isOffline)
-      : sortedProjects.filter((p) => p.status === statusFilter)
-    : sortedProjects
+  const filteredProjects = (
+    statusFilter
+      ? statusFilter === 'offline'
+        ? sortedProjects.filter(isOffline)
+        : sortedProjects.filter((p) => p.status === statusFilter)
+      : sortedProjects
   ).filter(matchesSearch);
 
   return (
@@ -332,7 +335,10 @@ export default function HomePage() {
           )}
           <div className="ml-auto flex items-center gap-2">
             <div className="relative">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              <Search
+                size={13}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+              />
               <input
                 type="text"
                 value={search}
@@ -376,7 +382,11 @@ export default function HomePage() {
               <Container size={20} className="text-slate-600" />
             </div>
             <p className="text-sm text-slate-500 mb-4">
-              {query ? `No projects match "${search.trim()}"` : statusFilter ? `No ${statusFilter} projects` : 'No projects yet'}
+              {query
+                ? `No projects match "${search.trim()}"`
+                : statusFilter
+                  ? `No ${statusFilter} projects`
+                  : 'No projects yet'}
             </p>
             {!statusFilter && !query && (
               <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
@@ -411,6 +421,7 @@ export default function HomePage() {
                 projectsDir={projectsDir}
                 domain={domain}
                 dnsTarget={dnsTarget}
+                githubStatus={githubStatus[project.id]}
               />
             ))}
           </div>

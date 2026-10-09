@@ -6,6 +6,7 @@ import HomePage from './components/HomePage';
 import LoginScreen from './components/LoginScreen';
 import NodesPage from './components/NodesPage';
 import ScanImportPage from './components/ScanImportPage';
+import GithubCallbackPage from './components/settings/GithubCallbackPage';
 import SettingsPage from './components/settings/SettingsPage';
 import { ToastProvider } from './components/ToastContext';
 
@@ -43,6 +44,8 @@ function AppContent() {
         <Route path="/settings/general" element={<SettingsPage section="general" key="general" />} />
         <Route path="/settings/tokens" element={<SettingsPage section="tokens" key="tokens" />} />
         <Route path="/settings/backup" element={<SettingsPage section="backup" key="backup" />} />
+        <Route path="/settings/github" element={<SettingsPage section="github" key="github" />} />
+        <Route path="/settings/github/callback" element={<GithubCallbackPage key="github-callback" />} />
         <Route path="/connect" element={<ConnectPage />} />
         <Route path="/" element={<HomePage />} />
       </Routes>

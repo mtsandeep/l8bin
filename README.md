@@ -203,9 +203,11 @@ export L8B_TOKEN=your-token-here
 l8b deploy --project myapp --port 3000
 ```
 
-### Option 3: GitHub Actions
+### Option 3: GitHub
 
-Add a workflow to your repo:
+The dashboard can set all of this up for you: **Settings → GitHub → Connect with GitHub App** (one prefilled click on GitHub, no approval needed — or paste a PAT on LAN boxes), then **Deploy → GitHub repo**, pick a repo and branch. LiteBin writes the workflow and secrets into the repo itself and shows deploy status on the project card, with optional auto-deploy on push.
+
+Prefer wiring it yourself? Add a workflow to your repo:
 
 ```yaml
 name: Deploy

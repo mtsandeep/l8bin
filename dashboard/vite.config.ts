@@ -20,6 +20,7 @@ export default defineConfig({
       '/system': { target: 'http://localhost:5080', changeOrigin: true },
       '/scan': { target: 'http://localhost:5080', changeOrigin: true },
       '/status': { target: 'http://localhost:5080', changeOrigin: true },
+      '/github': { target: 'http://localhost:5080', changeOrigin: true },
     },
   },
 });

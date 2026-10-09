@@ -11,6 +11,7 @@ import {
   Shield,
   X,
 } from 'lucide-react';
+import GithubMark from './GithubMark';
 import { useEffect, useMemo, useState } from 'react';
 import {
   type CapabilityInfo,
@@ -28,6 +29,7 @@ import {
   validateCompose,
 } from '../api';
 import DeployProgressModal from './DeployProgressModal';
+import GitHubRepoBrowser from './GitHubRepoBrowser';
 import ResourceLimitInput from './ResourceLimitInput';
 import { useToast } from './ToastContext';
 
@@ -178,6 +180,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [port, setPort] = useState('80');
   const [composeYaml, setComposeYaml] = useState('');
   const [isBackground, setIsBackground] = useState(false);
+  const [showGithubBrowser, setShowGithubBrowser] = useState(false);
 
   // Validate step state
   const [validateResult, setValidateResult] = useState<ValidateComposeResponse | null>(null);
@@ -430,7 +433,20 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                 />
               </button>
               <span className="text-xs text-slate-400">Compose</span>
+              <span className="text-slate-600">·</span>
+              <button
+                type="button"
+                onClick={() => setShowGithubBrowser(true)}
+                className="text-xs text-violet-400 hover:text-violet-300 transition-colors cursor-pointer flex items-center gap-1"
+              >
+                <GithubMark size={12} />
+                GitHub repo
+              </button>
             </div>
+
+            {showGithubBrowser && (
+              <GitHubRepoBrowser domain={domain} onClose={() => setShowGithubBrowser(false)} onLinked={onDeploy} />
+            )}
 
             <div>
               <span className="block text-xs font-medium text-slate-400 mb-1.5">Project type</span>

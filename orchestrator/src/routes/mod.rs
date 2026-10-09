@@ -7,6 +7,7 @@ pub mod deploy_tokens;
 pub mod device_auth;
 pub mod docs;
 pub mod env;
+pub mod github;
 pub mod global_settings;
 pub mod health;
 pub mod heartbeat;

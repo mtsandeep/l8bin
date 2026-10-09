@@ -45,6 +45,9 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/nodes/image-stats", get(crate::routes::nodes::node_image_stats))
         .route("/meta", get(crate::routes::meta::get_meta))
         .route("/whoami", get(crate::routes::meta::whoami))
+        .route("/github/status", get(crate::routes::github::runs::bulk_status))
+        .route("/projects/{id}/github/config", get(crate::routes::github::project_link::get_config))
+        .route("/projects/{id}/github/runs", get(crate::routes::github::runs::project_runs))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard::require_read));
 
     // Routes - Manage (session OR deploy token with scope >= manage)
@@ -67,6 +70,15 @@ pub(crate) fn build_app(state: AppState) -> Router {
             "/projects/{id}/capabilities/{capability}",
             delete(crate::routes::capabilities::revoke_project_capability),
         )
+        .route("/github/repos", get(crate::routes::github::repos::list_repos))
+        .route("/github/repos/{owner}/{repo}", get(crate::routes::github::repos::repo_detail))
+        .route("/github/repos/{owner}/{repo}/branches", get(crate::routes::github::repos::list_branches))
+        .route("/github/installations", get(crate::routes::github::connect::list_installations))
+        .route("/projects/{id}/github/config", put(crate::routes::github::project_link::put_config))
+        .route("/projects/{id}/github/config", patch(crate::routes::github::project_link::patch_config))
+        .route("/projects/{id}/github/config", delete(crate::routes::github::project_link::delete_config))
+        .route("/projects/{id}/github/rotate-token", post(crate::routes::github::project_link::rotate_token))
+        .route("/projects/{id}/github/deploy", post(crate::routes::github::project_link::deploy_now))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard::require_manage));
 
     // Routes - Admin (session OR deploy token with scope = admin)
@@ -124,6 +136,17 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/deploy-tokens/{id}", delete(crate::routes::deploy_tokens::revoke_token))
         .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
 
+    // Routes - GitHub connection management (session or admin token —
+    // connects instance-level credentials)
+    let github_admin_routes = Router::new()
+        .route("/github/connection", get(crate::routes::github::connect::connection_status))
+        .route("/github/connection", delete(crate::routes::github::connect::disconnect))
+        .route("/github/pat", post(crate::routes::github::connect::connect_pat))
+        .route("/github/app", post(crate::routes::github::connect::connect_app))
+        .route("/github/manifest", post(crate::routes::github::connect::start_manifest))
+        .route("/github/manifest/exchange", post(crate::routes::github::connect::exchange_manifest))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard::require_admin));
+
     Router::new()
         .merge(auth_public)
         .merge(auth_protected)
@@ -132,7 +155,9 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .merge(admin_routes)
         .merge(deploy_routes)
         .merge(token_routes)
+        .merge(github_admin_routes)
         .route("/health", get(crate::routes::health::health_check))
+        .route("/github/webhook", post(crate::routes::github::webhook::github_webhook))
         .route("/openapi.json", get(crate::routes::openapi::openapi_json))
         .route("/docs", get(crate::routes::docs::serve_docs))
         .route("/llms.txt", get(crate::routes::openapi::llms_txt))

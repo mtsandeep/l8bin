@@ -9,6 +9,7 @@ mod config;
 use utoipa::OpenApi;
 mod db;
 mod dns_ledger;
+mod github;
 mod nodes;
 mod openapi;
 mod platform;

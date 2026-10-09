@@ -715,12 +715,12 @@ LiteBin today              LiteBin + WireGuard mesh       Graduate → K8s / Clo
 | 10 | Zero-downtime deploys | Phase 8 | Medium |
 | 11 | Liveness probes | Phase 9 | Low |
 | 12 | Master migration + promote | Phase 2 | Medium |
-| 13 | GitHub App (seamless repo connect) | Future | Medium |
+| 13 | GitHub App (seamless repo connect) | **Done — [github-connect.md](github-connect.md)** | Medium |
 | 14 | Distributed services (1 VPS per service) | Future | Medium |
-| 13 | Project backup (Rustic) | Planned | Medium |
-| 14 | Disaster recovery | Planned | Low |
-| 15 | Auto-update Docker images | Planned | Medium |
-| 16 | Notifications (event outbox + router) | Planned | Low |
+| 15 | Project backup (Rustic) | Planned | Medium |
+| 16 | Disaster recovery | Planned | Low |
+| 17 | Auto-update Docker images | Planned | Medium |
+| 18 | Notifications (event outbox + router) | Planned | Low |
 
 ---
 

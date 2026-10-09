@@ -358,7 +358,9 @@ l8b deploy --project myapp --port 3000
 
 ## GitHub Actions
 
-See [l8bin-action](https://github.com/mtsandeep/l8bin-action) for the reusable composite action:
+The dashboard can manage the whole thing — `Settings → GitHub` connects a GitHub App (or PAT), and Deploy → GitHub repo writes the workflow + secrets into your repo for you ([github-connect.md](planning/github-connect.md)).
+
+To wire it by hand, see [l8bin-action](https://github.com/mtsandeep/l8bin-action) for the reusable composite action:
 
 ```yaml
 - uses: mtsandeep/l8bin-action@v1
@@ -367,7 +369,11 @@ See [l8bin-action](https://github.com/mtsandeep/l8bin-action) for the reusable c
     token: ${{ secrets.L8B_TOKEN }}
     project_id: myapp
     port: 3000
+    # compose: true            # multi-service repos
+    # services: api,worker     # target services only (compose)
 ```
+
+The action reports the deployed URL as its `url` output.
 
 ## Config file location
 

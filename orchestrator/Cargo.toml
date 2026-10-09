@@ -55,6 +55,11 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 sysinfo = "0.33"
 
+# GitHub integration (repo browsing, workflow authoring, Actions API)
+dryoc = "0.6"   # NaCl sealed box for Actions secrets
+base64 = "0.22"
+jsonwebtoken = "9"  # GitHub App RS256 JWT (installation tokens)
+
 # Authentication
 axum-login = "0.18"
 tower-sessions = "0.14"

@@ -20,6 +20,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { GitHubBulkRunStatus } from '../../api';
 import {
   type Node as ApiNode,
   DeployType,
@@ -40,6 +41,8 @@ import { useToast } from '../ToastContext';
 import AppSettingsPopover from './AppSettingsPopover';
 import DeleteConfirmModal from './DeleteConfirmModal';
 import EnvModal from './EnvModal';
+import GitHubBadge from './GitHubBadge';
+import GitHubRunsModal from './GitHubRunsModal';
 import ProjectDetailsModal from './ProjectDetailsModal';
 import StatsGrid from './ProjectStats';
 import RedeployModal from './RedeployModal';
@@ -56,6 +59,7 @@ interface ProjectCardProps {
   projectsDir: string;
   domain: string;
   dnsTarget: string;
+  githubStatus?: GitHubBulkRunStatus;
 }
 
 function shortImage(image: string | null): string {
@@ -72,11 +76,13 @@ export default function ProjectCard({
   projectsDir,
   domain,
   dnsTarget,
+  githubStatus,
 }: ProjectCardProps) {
   const [loading, setLoading] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [showEnv, setShowEnv] = useState(false);
+  const [showGithubRuns, setShowGithubRuns] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [envCopied, setEnvCopied] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -226,6 +232,7 @@ export default function ProjectCard({
                 {project.name || project.id}
               </h3>
               <StatusBadge status={stats?.status || project.status} />
+              {githubStatus && <GitHubBadge status={githubStatus} onClick={() => setShowGithubRuns(true)} />}
               {(services.length > 1 || project.deploy_type === DeployType.Compose) && (
                 <button
                   type="button"
@@ -711,6 +718,10 @@ export default function ProjectCard({
           onRefresh={onRefresh}
           onClose={() => setShowEnv(false)}
         />
+      )}
+
+      {showGithubRuns && (
+        <GitHubRunsModal projectId={project.id} onRefresh={onRefresh} onClose={() => setShowGithubRuns(false)} />
       )}
 
       {showLogs && (
