@@ -17,8 +17,10 @@ use super::connect::gh_error;
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct RepoListQuery {
     pub page: Option<u32>,
-    /// App mode: list this installation's repos. Absent = PAT mode (or default installation).
+    /// App mode: list this installation's repos.
     pub installation_id: Option<i64>,
+    /// PAT mode: list this connection's repos (user repos the token sees).
+    pub connection_id: Option<i64>,
 }
 
 #[utoipa::path(
@@ -37,21 +39,15 @@ pub struct RepoListQuery {
 )]
 pub async fn list_repos(State(state): State<AppState>, Query(params): Query<RepoListQuery>) -> impl IntoResponse {
     let page = params.page.unwrap_or(1).max(1);
-    let result = match params.installation_id {
-        Some(installation_id) => {
-            let client = match github::client_for_installation(&state.db, installation_id).await {
-                Ok(c) => c,
-                Err(e) => return gh_error(e).into_response(),
-            };
-            client.list_installation_repos(page).await
-        }
-        None => {
-            let client = match github::client(&state).await {
-                Ok(c) => c,
-                Err(e) => return gh_error(e).into_response(),
-            };
-            client.list_repos(page).await
-        }
+    let client = match github::client_for_link(&state.db, params.connection_id, params.installation_id).await {
+        Ok(c) => c,
+        Err(e) => return gh_error(e).into_response(),
+    };
+    // Installations return the envelope endpoint; PATs the bare array one.
+    let result = if params.installation_id.is_some() {
+        client.list_installation_repos(page).await
+    } else {
+        client.list_repos(page).await
     };
     match result {
         Ok(page) => (StatusCode::OK, Json(page)).into_response(),
@@ -78,7 +74,15 @@ pub async fn repo_detail(
     State(state): State<AppState>,
     Path((owner, repo)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let client = match github::client(&state).await {
+    // Any usable connection can read public repo metadata; prefer an
+    // installation if one exists (private repos need it).
+    let installation: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM github_installations WHERE status = 'active' LIMIT 1")
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    let client = match github::client_for_link(&state.db, None, installation).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
@@ -107,7 +111,13 @@ pub async fn list_branches(
     State(state): State<AppState>,
     Path((owner, repo)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let client = match github::client(&state).await {
+    let installation: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM github_installations WHERE status = 'active' LIMIT 1")
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    let client = match github::client_for_link(&state.db, None, installation).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };

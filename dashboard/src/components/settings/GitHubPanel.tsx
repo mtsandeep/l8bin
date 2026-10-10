@@ -10,6 +10,7 @@ import {
   FileKey2,
   KeyRound,
   Loader2,
+  Lock,
   Plus,
   Workflow,
   X,
@@ -21,10 +22,14 @@ import {
   disconnectGithub,
   fetchGithubConnection,
   type GitHubConnection,
-  type GitHubInstallation,
+  type GitHubConnectionSummary,
+  type GitHubRepo,
+  listGithubConnections,
   listGithubInstallations,
+  listGithubRepos,
   startGithubManifest,
 } from '../../api';
+import { useIntervalWhileVisible } from '../../hooks/useIntervalWhileVisible';
 import GithubMark from '../GithubMark';
 import { useToast } from '../ToastContext';
 
@@ -184,7 +189,7 @@ function Card({ children }: { children: ReactNode }) {
 
 export default function GitHubPanel() {
   const [connection, setConnection] = useState<GitHubConnection | null>(null);
-  const [installations, setInstallations] = useState<GitHubInstallation[] | 'loading' | 'error'>('loading');
+  const [connections, setConnections] = useState<GitHubConnectionSummary[] | 'loading'>('loading');
   const [view, setView] = useState<View>('choose');
   const [busy, setBusy] = useState(false);
   const { showToast } = useToast();
@@ -205,25 +210,43 @@ export default function GitHubPanel() {
   const [token, setToken] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
 
-  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState<number | null>(null);
+
+  // Installed-account rows: which is expanded + its lazily fetched repos.
+  const [expandedInstall, setExpandedInstall] = useState<number | null>(null);
+  const [installRepos, setInstallRepos] = useState<Record<number, GitHubRepo[] | 'loading' | 'error'>>({});
 
   // "Unfinished setup" hint stays dismissed (across navigation) until the
   // user starts a fresh Connect.
   const [dismissPending, setDismissPending] = useState(() => sessionStorage.getItem('ghPendingDismissed') === '1');
 
+  // GitHub app names are unique per account — default to the first free variant.
+  useEffect(() => {
+    if (!Array.isArray(connections)) return;
+    const taken = new Set(connections.filter((c) => c.mode === 'app').map((c) => (c.label ?? '').toLowerCase()));
+    let name = 'l8bin';
+    for (let i = 2; taken.has(name); i++) name = `l8bin-${i}`;
+    setAppName((cur) => (cur === 'l8bin' || /^l8bin-\d+$/.test(cur) ? name : cur));
+  }, [connections]);
+
+  const toggleInstallRepos = (installationId: number) => {
+    setExpandedInstall((cur) => (cur === installationId ? null : installationId));
+    setInstallRepos((cur) => {
+      if (cur[installationId]) return cur;
+      listGithubRepos(1, installationId)
+        .then((page) => setInstallRepos((c) => ({ ...c, [installationId]: page.repos })))
+        .catch(() => setInstallRepos((c) => ({ ...c, [installationId]: 'error' })));
+      return { ...cur, [installationId]: 'loading' };
+    });
+  };
+
   const refresh = async () => {
     try {
-      const conn = await fetchGithubConnection();
+      // Sync installations server-side first, then read the snapshot.
+      await listGithubInstallations().catch(() => {});
+      const [conn, list] = await Promise.all([fetchGithubConnection(), listGithubConnections()]);
       setConnection(conn);
-      if (conn.mode === 'app' && conn.connected) {
-        try {
-          setInstallations(await listGithubInstallations());
-        } catch {
-          setInstallations('error');
-        }
-      } else {
-        setInstallations('loading');
-      }
+      setConnections(list);
     } catch (e) {
       showToast((e as Error).message, 'error');
     }
@@ -233,6 +256,12 @@ export default function GitHubPanel() {
   useEffect(() => {
     refresh();
   }, []);
+
+  // Keep installations fresh while the panel is open — installing the app on
+  // another account happens on GitHub's side with no redirect back.
+  useIntervalWhileVisible(() => {
+    if (connection?.connected) refresh();
+  }, 10000);
 
   const startAppFlow = async () => {
     setBusy(true);
@@ -296,13 +325,12 @@ export default function GitHubPanel() {
     }
   };
 
-  const doDisconnect = async () => {
+  const doDisconnect = async (connectionId: number) => {
     setBusy(true);
     try {
-      await disconnectGithub();
-      setConfirmDisconnect(false);
-      setView('choose');
-      showToast('GitHub disconnected', 'success');
+      await disconnectGithub(connectionId);
+      setConfirmDisconnect(null);
+      showToast('Connection removed', 'success');
       await refresh();
     } catch (e) {
       showToast((e as Error).message, 'error');
@@ -312,104 +340,241 @@ export default function GitHubPanel() {
   };
 
   const connected = connection?.connected ?? false;
-  const degraded = connection?.status === 'degraded';
-  const appMode = connection?.mode === 'app';
 
   // ── Connected ──────────────────────────────────────────────────────────────
-  if (connection && connected) {
+  // Setup screens take precedence so "+ Add another account" can open them.
+  if (connection && connected && Array.isArray(connections) && view === 'choose') {
+    const activeConnections = connections.filter((c) => c.status !== 'pending');
+    const hasPending = connections.some((c) => c.status === 'pending');
     return (
       <div className="space-y-4">
         <h2 className="text-sm font-semibold text-slate-100">GitHub</h2>
 
-        <Card>
-          <div className="flex items-center gap-2">
-            <GithubMark size={14} className="text-slate-300" />
-            <span className="text-xs font-medium text-slate-200">{connection.login}</span>
-            <span
-              className={`text-xs px-1.5 py-0.5 rounded ${
-                degraded ? 'bg-amber-500/15 text-amber-300' : 'bg-emerald-500/15 text-emerald-300'
-              }`}
-            >
-              {degraded ? 'needs attention' : 'connected'}
-            </span>
-            <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 uppercase">
-              {connection.mode}
-            </span>
-          </div>
-          {degraded && connection.status_message && (
-            <p className="text-xs text-amber-300/90">{connection.status_message}</p>
-          )}
-
-          {appMode && (
-            <div className="space-y-1.5">
-              {installations === 'loading' ? (
-                <p className="text-xs text-slate-500">Loading…</p>
-              ) : installations === 'error' ? (
-                <p className="text-xs text-amber-300/90">Couldn’t load installations.</p>
-              ) : installations.length === 0 ? (
-                <p className="text-xs text-amber-300/90">Not installed on any account yet.</p>
-              ) : (
-                installations.map((inst) => (
-                  <div key={inst.id} className="flex items-center gap-2 text-xs text-slate-400">
-                    {inst.account_avatar ? (
-                      <img src={inst.account_avatar} alt="" className="h-4 w-4 rounded-full" />
-                    ) : (
-                      <GithubMark size={11} />
-                    )}
-                    <span className="text-slate-300">{inst.account_login}</span>
-                    <span>{inst.repository_selection === 'all' ? 'all repos' : 'selected repos'}</span>
-                    {inst.status !== 'active' && <span className="text-amber-300">{inst.status}</span>}
-                  </div>
-                ))
-              )}
-              {connection.login && (
-                <a
-                  href={`https://github.com/apps/${connection.login}/installations/new`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"
-                >
-                  <Plus size={10} />
-                  Add or change repositories
-                  <ExternalLink size={10} />
-                </a>
-              )}
-            </div>
-          )}
-
-          {confirmDisconnect ? (
-            <div className="space-y-2 pt-2 border-t border-slate-700/40">
-              <p className="text-xs text-slate-400">
-                Deploys from GitHub stop. To reconnect this app you’ll re-enter its ID + key — or create a new one.
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={doDisconnect}
-                  disabled={busy}
-                  className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-xs font-medium text-white transition-colors cursor-pointer"
-                >
-                  {busy ? <Loader2 size={11} className="animate-spin" /> : 'Disconnect'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmDisconnect(false)}
-                  className="px-3 py-1.5 rounded-md border border-slate-700/50 hover:border-slate-600 text-xs text-slate-400 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
+        {hasPending && !dismissPending && (
+          <div className="flex items-start gap-2">
+            <p className="text-xs text-amber-300/90 flex-1">
+              Unfinished setup — retry below, or{' '}
+              <button
+                type="button"
+                onClick={() => setView('manual-attach')}
+                className="underline underline-offset-2 hover:text-amber-200 transition-colors cursor-pointer"
+              >
+                attach the app
+              </button>{' '}
+              if GitHub already created it.
+            </p>
             <button
               type="button"
-              onClick={() => setConfirmDisconnect(true)}
-              className="text-xs text-red-400 hover:text-red-300 transition-colors cursor-pointer"
+              onClick={() => {
+                sessionStorage.setItem('ghPendingDismissed', '1');
+                setDismissPending(true);
+              }}
+              aria-label="Dismiss"
+              className="p-0.5 rounded text-amber-300/60 hover:text-amber-200 transition-colors cursor-pointer shrink-0"
             >
-              Disconnect
+              <X size={12} />
             </button>
-          )}
-        </Card>
+          </div>
+        )}
+
+        {activeConnections.map((conn) => {
+          const appMode = conn.mode === 'app';
+          const degraded = conn.status === 'degraded';
+          const installPending = appMode && conn.installations.length === 0;
+          const chipLabel = degraded ? 'needs attention' : installPending ? 'created' : 'connected';
+          return (
+            <Card key={conn.id}>
+              <div className="flex items-center gap-2">
+                <GithubMark size={14} className="text-slate-300" />
+                <span className="text-xs font-medium text-slate-200">{conn.label ?? 'GitHub'}</span>
+                <span
+                  className={`text-xs px-1.5 py-0.5 rounded ${
+                    degraded
+                      ? 'bg-amber-500/15 text-amber-300'
+                      : installPending
+                        ? 'bg-violet-500/15 text-violet-300'
+                        : 'bg-emerald-500/15 text-emerald-300'
+                  }`}
+                >
+                  {chipLabel}
+                </span>
+                <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 uppercase">
+                  {conn.mode}
+                </span>
+              </div>
+              {degraded && conn.status_message && <p className="text-xs text-amber-300/90">{conn.status_message}</p>}
+
+              {appMode &&
+                (installPending ? (
+                  <div className="space-y-3">
+                    <Segments items={['Name it', 'Create on GitHub', 'Pick repos', 'Finish']} current={2} />
+                    <p className="text-xs text-slate-400">
+                      The app is created. One step left — install it on the GitHub account where your repos live, and
+                      pick which ones it may see.
+                    </p>
+                    <a
+                      href={`https://github.com/apps/${conn.label}/installations/new`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center justify-center gap-1.5 w-full py-2.5 rounded-md bg-violet-600 hover:bg-violet-500 text-xs font-medium text-white transition-colors"
+                    >
+                      Install on GitHub
+                      <ExternalLink size={11} />
+                    </a>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {conn.installations.map((inst) => {
+                      const selected = inst.repository_selection !== 'all';
+                      const open = expandedInstall === inst.id;
+                      const repos = installRepos[inst.id];
+                      return (
+                        <div key={inst.id} className="rounded-md border border-slate-700/50 bg-slate-900/60">
+                          <div className="flex items-center gap-3 p-3">
+                            <button
+                              type="button"
+                              disabled={!selected}
+                              onClick={() => toggleInstallRepos(inst.id)}
+                              className={`flex items-center gap-3 flex-1 min-w-0 text-left ${
+                                selected ? 'cursor-pointer' : 'cursor-default'
+                              }`}
+                            >
+                              {inst.account_avatar ? (
+                                <img src={inst.account_avatar} alt="" className="h-8 w-8 rounded-full shrink-0" />
+                              ) : (
+                                <span className="flex items-center justify-center h-8 w-8 rounded-full bg-slate-800 shrink-0">
+                                  <GithubMark size={14} />
+                                </span>
+                              )}
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-sm font-medium text-slate-200 truncate">
+                                  {inst.account_login}
+                                </span>
+                                <span className="block text-xs text-slate-500">
+                                  {selected ? (
+                                    <>
+                                      Show selected repos
+                                      <ChevronDown
+                                        size={11}
+                                        className={`inline-block transition-transform ${open ? 'rotate-180' : ''}`}
+                                      />
+                                    </>
+                                  ) : (
+                                    'Access to all repositories'
+                                  )}
+                                </span>
+                              </span>
+                            </button>
+                            {inst.status !== 'active' && (
+                              <span className="text-xs text-amber-300 shrink-0">{inst.status}</span>
+                            )}
+                            <a
+                              href={`https://github.com/apps/${conn.label}/installations/new`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-violet-400 hover:text-violet-300 transition-colors shrink-0"
+                            >
+                              Change repos
+                            </a>
+                          </div>
+                          {open && (
+                            <div className="px-3 pb-3 space-y-1">
+                              {repos === undefined || repos === 'loading' ? (
+                                <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                                  <Loader2 size={11} className="animate-spin" />
+                                  Loading repositories…
+                                </p>
+                              ) : repos === 'error' ? (
+                                <p className="text-xs text-amber-300/90">Couldn’t load repositories.</p>
+                              ) : (
+                                repos.map((repo) => (
+                                  <a
+                                    key={repo.id}
+                                    href={repo.html_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="flex items-center gap-2 rounded-md border border-slate-700/40 bg-slate-900/50 px-2.5 py-1.5 text-xs text-slate-300 hover:border-violet-500/40 hover:bg-slate-900 hover:text-slate-100 transition-colors"
+                                  >
+                                    {repo.private ? (
+                                      <Lock size={10} className="text-slate-600 shrink-0" />
+                                    ) : (
+                                      <GithubMark size={10} className="text-slate-600 shrink-0" />
+                                    )}
+                                    <span className="truncate flex-1">{repo.full_name}</span>
+                                    <ExternalLink size={10} className="text-slate-600 shrink-0" />
+                                  </a>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+
+              {confirmDisconnect === conn.id ? (
+                <div className="space-y-2 pt-2 border-t border-slate-700/40">
+                  <p className="text-xs text-slate-400">
+                    {appMode
+                      ? 'Deploys from this app stop. To use it again you’ll re-attach its ID + key — or create a new one.'
+                      : 'Deploys from this token stop. Reconnecting is a paste away.'}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => doDisconnect(conn.id)}
+                      disabled={busy}
+                      className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-xs font-medium text-white transition-colors cursor-pointer"
+                    >
+                      {busy ? <Loader2 size={11} className="animate-spin" /> : 'Disconnect'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDisconnect(null)}
+                      className="px-3 py-1.5 rounded-md border border-slate-700/50 hover:border-slate-600 text-xs text-slate-400 transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 text-xs">
+                  {appMode && conn.label && (
+                    <>
+                      <a
+                        href={`https://github.com/settings/apps/${conn.label}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors"
+                      >
+                        Manage the app
+                        <ExternalLink size={10} />
+                      </a>
+                      <span className="text-slate-700">|</span>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDisconnect(conn.id)}
+                    className="text-red-400 hover:text-red-300 transition-colors cursor-pointer"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              )}
+            </Card>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={() => setView('guided')}
+          className="flex items-center justify-center gap-1.5 w-full py-2 rounded-md border border-dashed border-slate-600/70 text-xs text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors cursor-pointer"
+        >
+          <Plus size={12} />
+          Add another GitHub account
+        </button>
       </div>
     );
   }

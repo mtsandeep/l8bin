@@ -61,15 +61,15 @@ async fn persist_last_run(state: &AppState, project_id: &str, latest: Option<&Wo
     security(("session_auth" = [])),
 )]
 pub async fn project_runs(State(state): State<AppState>, Path(project_id): Path<String>) -> impl IntoResponse {
-    let link: Option<(String, String, Option<i64>)> = sqlx::query_as(
-        "SELECT repo_full_name, branch, installation_id FROM project_github_config WHERE project_id = ?",
+    let link: Option<(String, String, Option<i64>, Option<i64>)> = sqlx::query_as(
+        "SELECT repo_full_name, branch, installation_id, connection_id FROM project_github_config WHERE project_id = ?",
     )
     .bind(&project_id)
     .fetch_optional(&state.db)
     .await
     .ok()
     .flatten();
-    let Some((repo_full_name, branch, installation_id)) = link else {
+    let Some((repo_full_name, branch, installation_id, connection_id)) = link else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": format!("project '{project_id}' has no GitHub link")})),
@@ -80,7 +80,7 @@ pub async fn project_runs(State(state): State<AppState>, Path(project_id): Path<
         Ok(v) => v,
         Err(e) => return (e.0, Json(serde_json::json!({"error": e.1}))).into_response(),
     };
-    let client = match github::client_for_link(&state.db, installation_id).await {
+    let client = match github::client_for_link(&state.db, connection_id, installation_id).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
@@ -92,7 +92,7 @@ pub async fn project_runs(State(state): State<AppState>, Path(project_id): Path<
         }
         Err(e) => {
             if matches!(e, GitHubApiError::AuthExpired) {
-                super::connect::mark_degraded(&state, "GitHub rejected the stored credential").await;
+                super::connect::mark_degraded(&state.db, connection_id, "GitHub rejected the stored credential").await;
             }
             gh_error(e).into_response()
         }
@@ -139,8 +139,9 @@ pub async fn bulk_status(State(state): State<AppState>) -> impl IntoResponse {
         return (StatusCode::OK, Json(BulkStatus { projects: guard.1.clone() })).into_response();
     }
 
-    let links: Vec<(String, String, String, Option<i64>)> =
-        sqlx::query_as("SELECT project_id, repo_full_name, branch, installation_id FROM project_github_config ORDER BY updated_at DESC")
+    type LinkRow = (String, String, String, Option<i64>, Option<i64>);
+    let links: Vec<LinkRow> =
+        sqlx::query_as("SELECT project_id, repo_full_name, branch, installation_id, connection_id FROM project_github_config ORDER BY updated_at DESC")
             .fetch_all(&state.db)
             .await
             .unwrap_or_default();
@@ -160,10 +161,9 @@ pub async fn bulk_status(State(state): State<AppState>) -> impl IntoResponse {
     .map(|(pid, s, c, u, at)| (pid, (s, c, u, at)))
     .collect();
 
-    let pat_client = github::client(&state).await.ok();
     let mut out = Vec::with_capacity(links.len());
 
-    for (project_id, repo_full_name, branch, installation_id) in links {
+    for (project_id, repo_full_name, branch, installation_id, connection_id) in links {
         let mut entry = BulkRunStatus {
             status: None,
             conclusion: None,
@@ -172,10 +172,7 @@ pub async fn bulk_status(State(state): State<AppState>) -> impl IntoResponse {
             project_id: project_id.clone(),
             repo_full_name: repo_full_name.clone(),
         };
-        let client = match installation_id {
-            Some(id) => github::client_for_installation(&state.db, id).await.ok(),
-            None => pat_client.clone(),
-        };
+        let client = github::client_for_link(&state.db, connection_id, installation_id).await.ok();
         if let (Some(client), Ok((owner, repo))) = (&client, split_repo(&repo_full_name))
             && let Ok(runs) = client.list_workflow_runs(&owner, &repo, workflow::WORKFLOW_FILE, Some(&branch), 1).await
             && let Some(run) = runs.first()

@@ -17,9 +17,10 @@ import { useToast } from './ToastContext';
 interface Props {
   repo: GitHubRepo;
   domain: string;
-  /** App mode: installation the repo lives under (undefined in PAT mode).
-   *  Defaulted so the form also works without a preceding browser (tests). */
+  /** App mode: installation the repo lives under (undefined in PAT mode). */
   installationId?: number;
+  /** PAT mode: connection serving this repo. */
+  connectionId?: number;
   onBack: () => void;
   onClose: () => void;
   onLinked: () => void;
@@ -32,7 +33,15 @@ function sanitizeProjectId(raw: string): string {
     .slice(0, 63);
 }
 
-export default function GitHubDeployForm({ repo, domain, installationId, onBack, onClose, onLinked }: Props) {
+export default function GitHubDeployForm({
+  repo,
+  domain,
+  installationId,
+  connectionId,
+  onBack,
+  onClose,
+  onLinked,
+}: Props) {
   const [owner, repoName] = useMemo(() => repo.full_name.split('/'), [repo.full_name]);
   const [detail, setDetail] = useState<GitHubRepoDetail | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
@@ -99,6 +108,7 @@ export default function GitHubDeployForm({ repo, domain, installationId, onBack,
         repo_full_name: repo.full_name,
         repo_id: repo.id,
         installation_id: installationId,
+        connection_id: connectionId,
         branch,
         deploy_kind: deployKind,
         compose_file: detail?.compose_file ?? null,

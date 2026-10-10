@@ -52,21 +52,27 @@ struct AccountPayload {
 
 /// POST /github/webhook — public, verified by X-Hub-Signature-256.
 pub async fn github_webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> impl IntoResponse {
-    let secret: Option<(Option<String>,)> =
-        sqlx::query_as::<_, (Option<String>,)>("SELECT webhook_secret FROM github_connection WHERE id = 1")
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    let Some((Some(secret),)) = secret else {
-        return (StatusCode::NOT_FOUND, "no GitHub App connection").into_response();
-    };
+    // Each app connection has its own webhook secret — verify against all.
+    let secrets: Vec<(i64, String)> = sqlx::query_as::<_, (i64, Option<String>)>(
+        "SELECT id, webhook_secret FROM github_connection WHERE webhook_secret IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|(id, s)| s.filter(|v| !v.is_empty()).map(|v| (id, v)))
+    .collect();
+    if secrets.is_empty() {
+        return (StatusCode::NOT_FOUND, "no GitHub App webhook configured").into_response();
+    }
 
     let presented = headers.get("x-hub-signature-256").and_then(|v| v.to_str().ok()).unwrap_or_default();
-    if !signature_matches(&secret, &body, presented) {
+    let connection_id =
+        secrets.iter().find(|(_, secret)| signature_matches(secret, &body, presented)).map(|(id, _)| *id);
+    let Some(connection_id) = connection_id else {
         tracing::warn!(len = body.len(), "rejected GitHub webhook with bad signature");
         return (StatusCode::UNAUTHORIZED, "bad signature").into_response();
-    }
+    };
 
     let event = headers.get("x-github-event").and_then(|v| v.to_str().ok()).unwrap_or("");
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
@@ -87,14 +93,16 @@ pub async fn github_webhook(State(state): State<AppState>, headers: HeaderMap, b
                 _ => return (StatusCode::OK, "ignored").into_response(),
             };
             if let Err(e) = sqlx::query(
-                "INSERT INTO github_installations (id, account_login, account_type, account_avatar, repository_selection, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "INSERT INTO github_installations (id, connection_id, account_login, account_type, account_avatar, repository_selection, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(id) DO UPDATE SET
+                    connection_id = excluded.connection_id,
                     account_login = excluded.account_login, account_type = excluded.account_type,
                     account_avatar = excluded.account_avatar, repository_selection = excluded.repository_selection,
                     status = excluded.status, updated_at = excluded.updated_at",
             )
             .bind(evt.installation.id)
+            .bind(connection_id)
             .bind(&evt.installation.account.login)
             .bind(evt.installation.account.account_type.clone().unwrap_or_else(|| "User".into()))
             .bind(&evt.installation.account.avatar_url)

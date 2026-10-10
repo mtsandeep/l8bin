@@ -1270,12 +1270,16 @@ export function connectGithubPat(token: string): Promise<{ login: string; warnin
   });
 }
 
-export function disconnectGithub(): Promise<void> {
-  return ghFetch('/github/connection', { method: 'DELETE' });
+export function disconnectGithub(connectionId: number): Promise<void> {
+  return ghFetch(`/github/connections/${connectionId}`, { method: 'DELETE' });
 }
 
-export function listGithubRepos(page = 1, installationId?: number): Promise<GitHubRepoPage> {
-  const q = installationId ? `&installation_id=${installationId}` : '';
+export function listGithubRepos(page = 1, installationId?: number, connectionId?: number): Promise<GitHubRepoPage> {
+  const q = installationId
+    ? `&installation_id=${installationId}`
+    : connectionId
+      ? `&connection_id=${connectionId}`
+      : '';
   return ghFetch(`/github/repos?page=${page}${q}`);
 }
 
@@ -1295,6 +1299,7 @@ export interface LinkGithubPayload {
   repo_full_name: string;
   repo_id?: number;
   installation_id?: number;
+  connection_id?: number;
   branch?: string;
   deploy_kind?: 'single' | 'compose';
   compose_file?: string | null;
@@ -1350,11 +1355,25 @@ export function fetchGithubBulkStatus(): Promise<{ projects: GitHubBulkRunStatus
 
 export interface GitHubInstallation {
   id: number;
+  connection_id: number;
   account_login: string;
   account_type: string;
   account_avatar: string | null;
   repository_selection: string;
   status: string;
+}
+
+export interface GitHubConnectionSummary {
+  id: number;
+  mode: 'app' | 'pat';
+  label: string | null;
+  status: 'active' | 'pending' | 'degraded' | 'disconnected';
+  status_message: string | null;
+  installations: GitHubInstallation[];
+}
+
+export function listGithubConnections(): Promise<GitHubConnectionSummary[]> {
+  return ghFetch('/github/connections');
 }
 
 export function startGithubManifest(name?: string, webhookUrl?: string): Promise<{ manifest: string }> {

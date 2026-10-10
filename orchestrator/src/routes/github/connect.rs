@@ -46,79 +46,124 @@ fn db_err(e: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("database error: {e}")})))
 }
 
-async fn load_connection(
-    state: &AppState,
-) -> Result<
-    Option<(
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<i64>,
-        Option<String>,
-    )>,
-    (StatusCode, Json<serde_json::Value>),
-> {
-    sqlx::query_as::<
-        _,
-        (
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<i64>,
-            Option<String>,
-        ),
-    >(
-        "SELECT mode, pat_login, app_slug, status, status_message, pat_token, app_id, private_key_pem
-         FROM github_connection WHERE id = 1",
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct ConnectionSummary {
+    pub id: i64,
+    pub mode: String,
+    /// App slug or PAT login.
+    pub label: Option<String>,
+    pub status: String,
+    pub status_message: Option<String>,
+    pub installations: Vec<InstallationSummary>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/github/connections",
+    responses(
+        (status = 200, description = "All GitHub connections (apps + PATs) with their installations", body = [ConnectionSummary]),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "github",
+    security(("session_auth" = [])),
+)]
+pub async fn list_connections(State(state): State<AppState>) -> impl IntoResponse {
+    let conns = match github::list_connections(&state.db).await {
+        Ok(c) => c,
+        Err(e) => return gh_error(e).into_response(),
+    };
+    let installations = load_installations(&state.db).await;
+    let out: Vec<ConnectionSummary> = conns
+        .into_iter()
+        .map(|c| ConnectionSummary {
+            id: c.id,
+            mode: c.mode.clone(),
+            label: c.label.clone().or_else(|| if c.mode == "pat" { c.pat_login.clone() } else { c.app_slug.clone() }),
+            status: c.status.clone(),
+            status_message: c.status_message.clone(),
+            installations: installations.iter().filter(|i| i.connection_id == c.id).cloned().collect(),
+        })
+        .collect();
+    (StatusCode::OK, Json(out)).into_response()
+}
+
+/// DB snapshot of installations (per-connection), reused by the list endpoint.
+pub(crate) async fn load_installations(db: &sqlx::SqlitePool) -> Vec<InstallationSummary> {
+    sqlx::query_as::<_, (i64, i64, String, String, Option<String>, String, String)>(
+        "SELECT id, connection_id, account_login, account_type, account_avatar, repository_selection, status
+         FROM github_installations ORDER BY id",
     )
-    .fetch_optional(&state.db)
+    .fetch_all(db)
     .await
-    .map_err(db_err)
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(id, connection_id, account_login, account_type, account_avatar, repository_selection, status)| {
+        InstallationSummary {
+            id,
+            connection_id,
+            account_login,
+            account_type,
+            account_avatar,
+            repository_selection,
+            status,
+        }
+    })
+    .collect()
 }
 
 #[utoipa::path(
     get,
     path = "/github/connection",
     responses(
-        (status = 200, description = "Connection status (connected=false when never configured or a manifest flow is still pending)", body = ConnectionStatus),
+        (status = 200, description = "Aggregate status across all connections", body = ConnectionStatus),
         (status = 500, description = "Internal server error"),
     ),
     tag = "github",
     security(("session_auth" = [])),
 )]
 pub async fn connection_status(State(state): State<AppState>) -> impl IntoResponse {
-    match load_connection(&state).await {
-        Ok(None) => {
-            Json(ConnectionStatus { connected: false, mode: None, login: None, status: None, status_message: None })
-                .into_response()
-        }
-        Ok(Some((mode, pat_login, app_slug, status, status_message, pat_token, app_id, private_key_pem))) => {
-            // Credentials must actually exist — a started-but-unfinished
-            // manifest flow has mode='app' with no key, and must not read as
-            // connected (the user should see the Connect button again).
-            let has_creds = match mode.as_str() {
-                "pat" => pat_token.is_some_and(|t| !t.is_empty()),
-                "app" => app_id.is_some() && private_key_pem.is_some_and(|p| !p.is_empty()),
-                _ => false,
-            };
-            let connected = has_creds && status.as_deref() != Some("disconnected");
-            Json(ConnectionStatus {
-                connected,
-                mode: Some(mode.clone()),
-                login: if mode == "pat" { pat_login } else { app_slug },
-                status,
-                status_message,
-            })
-            .into_response()
-        }
-        Err(e) => e.into_response(),
+    let conns = match github::list_connections(&state.db).await {
+        Ok(c) => c,
+        Err(e) => return gh_error(e).into_response(),
+    };
+    if conns.is_empty() {
+        return Json(ConnectionStatus {
+            connected: false,
+            mode: None,
+            login: None,
+            status: None,
+            status_message: None,
+        })
+        .into_response();
     }
+    // Credentials must actually exist — a started-but-unfinished manifest flow
+    // must not read as connected.
+    let active = conns.iter().find(|c| c.has_credentials() && c.status != "disconnected");
+    let pending = conns.iter().find(|c| c.status == "pending");
+    match (active, pending) {
+        (Some(c), _) => Json(ConnectionStatus {
+            connected: true,
+            mode: Some(c.mode.clone()),
+            login: if c.mode == "pat" { c.pat_login.clone() } else { c.app_slug.clone() },
+            status: Some(c.status.clone()),
+            status_message: c.status_message.clone(),
+        }),
+        (None, Some(p)) => Json(ConnectionStatus {
+            connected: false,
+            mode: Some(p.mode.clone()),
+            login: None,
+            status: Some("pending".into()),
+            status_message: None,
+        }),
+        (None, None) => Json(ConnectionStatus {
+            connected: false,
+            mode: conns.first().map(|c| c.mode.clone()),
+            login: None,
+            status: conns.first().map(|c| c.status.clone()),
+            status_message: conns.first().and_then(|c| c.status_message.clone()),
+        }),
+    }
+    .into_response()
 }
 
 #[utoipa::path(
@@ -204,20 +249,36 @@ pub async fn connect_pat(
 
     let now = chrono::Utc::now().timestamp();
     let created_by = auth_session.user.as_ref().map(|u| u.username.clone());
+    // One row per GitHub login: reconnecting a known account refreshes it.
     let res = sqlx::query(
-        "INSERT INTO github_connection (id, mode, pat_token, pat_login, status, status_message, created_by, created_at, updated_at)
-         VALUES (1, 'pat', ?, ?, 'active', NULL, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-            mode = 'pat', pat_token = excluded.pat_token, pat_login = excluded.pat_login,
-            status = 'active', status_message = NULL, created_by = excluded.created_by,
-            pending_manifest = NULL,
-            updated_at = excluded.updated_at",
+        "UPDATE github_connection
+         SET pat_token = ?, pat_login = ?, label = ?, status = 'active', status_message = NULL,
+             created_by = ?, pending_manifest = NULL, updated_at = ?
+         WHERE mode = 'pat' AND pat_login = ?",
     )
+    .bind(&token)
+    .bind(&user.login)
+    .bind(&user.login)
+    .bind(&created_by)
+    .bind(now)
+    .bind(&user.login)
+    .execute(&state.db)
+    .await;
+    if let Err(e) = res {
+        return db_err(e).into_response();
+    }
+    let res = sqlx::query(
+        "INSERT INTO github_connection (label, mode, pat_token, pat_login, status, created_by, created_at, updated_at)
+         SELECT ?, 'pat', ?, ?, 'active', ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM github_connection WHERE mode = 'pat' AND pat_login = ?)",
+    )
+    .bind(&user.login)
     .bind(&token)
     .bind(&user.login)
     .bind(&created_by)
     .bind(now)
     .bind(now)
+    .bind(&user.login)
     .execute(&state.db)
     .await;
     if let Err(e) = res {
@@ -230,64 +291,78 @@ pub async fn connect_pat(
 
 #[utoipa::path(
     delete,
-    path = "/github/connection",
+    path = "/github/connections/{id}",
+    params(("id" = i64, Path, description = "Connection ID")),
     responses(
-        (status = 204, description = "Disconnected; all GitHub link tokens revoked"),
+        (status = 204, description = "Connection removed; its link tokens revoked"),
+        (status = 404, description = "No such connection"),
         (status = 500, description = "Internal server error"),
     ),
     tag = "github",
     security(("session_auth" = [])),
 )]
-pub async fn disconnect(State(state): State<AppState>) -> impl IntoResponse {
-    let now = chrono::Utc::now().timestamp();
-
-    // Revoke every link token, then clear credentials. Config rows stay so a
-    // reconnect can relink without re-picking repos (the old tokens are dead).
-    if let Err(e) = sqlx::query(
-        "DELETE FROM deploy_tokens WHERE id IN (SELECT deploy_token_id FROM project_github_config WHERE deploy_token_id IS NOT NULL)",
-    )
-    .execute(&state.db)
-    .await
-    {
-        return db_err(e).into_response();
-    }
-    if let Err(e) = sqlx::query(
-        "UPDATE github_connection SET
-            status = 'disconnected', status_message = 'disconnected by user',
-            pat_token = NULL, pat_login = NULL,
-            private_key_pem = NULL, client_id = NULL, client_secret = NULL, webhook_secret = NULL,
-            app_id = NULL, app_slug = NULL, pending_manifest = NULL,
-            updated_at = ? WHERE id = 1",
-    )
-    .bind(now)
-    .execute(&state.db)
-    .await
-    {
-        return db_err(e).into_response();
-    }
-    if let Err(e) = sqlx::query("UPDATE project_github_config SET deploy_token_id = NULL, updated_at = ?")
-        .bind(now)
-        .execute(&state.db)
+pub async fn disconnect(
+    State(state): State<AppState>,
+    axum::extract::Path(conn_id): axum::extract::Path<i64>,
+) -> impl IntoResponse {
+    let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM github_connection WHERE id = ?")
+        .bind(conn_id)
+        .fetch_optional(&state.db)
         .await
+        .ok()
+        .flatten();
+    if exists.is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no such connection"}))).into_response();
+    }
+
+    // Links served by this connection are dead without its credentials:
+    // revoke their tokens and drop the link rows (projects keep running).
+    if let Err(e) = sqlx::query(
+        "DELETE FROM deploy_tokens WHERE id IN (
+            SELECT deploy_token_id FROM project_github_config WHERE connection_id = ? AND deploy_token_id IS NOT NULL)",
+    )
+    .bind(conn_id)
+    .execute(&state.db)
+    .await
     {
         return db_err(e).into_response();
     }
+    let _ =
+        sqlx::query("DELETE FROM project_github_config WHERE connection_id = ?").bind(conn_id).execute(&state.db).await;
+    let _ =
+        sqlx::query("DELETE FROM github_installations WHERE connection_id = ?").bind(conn_id).execute(&state.db).await;
+    if let Err(e) = sqlx::query("DELETE FROM github_connection WHERE id = ?").bind(conn_id).execute(&state.db).await {
+        return db_err(e).into_response();
+    }
 
-    tracing::info!("GitHub disconnected");
+    tracing::info!(connection = conn_id, "GitHub connection removed");
     (StatusCode::NO_CONTENT, "").into_response()
 }
 
-/// Mark the connection degraded (bad token, uninstalled app). Called by
+/// Mark a connection degraded (bad token, uninstalled app). Called by
 /// link/run handlers on GitHubApiError::AuthExpired.
-pub(crate) async fn mark_degraded(state: &AppState, message: &str) {
+pub(crate) async fn mark_degraded(db: &sqlx::SqlitePool, connection_id: Option<i64>, message: &str) {
     let now = chrono::Utc::now().timestamp();
-    if let Err(e) =
-        sqlx::query("UPDATE github_connection SET status = 'degraded', status_message = ?, updated_at = ? WHERE id = 1")
+    let res = match connection_id {
+        Some(id) => {
+            sqlx::query(
+                "UPDATE github_connection SET status = 'degraded', status_message = ?, updated_at = ? WHERE id = ?",
+            )
             .bind(message)
             .bind(now)
-            .execute(&state.db)
+            .bind(id)
+            .execute(db)
             .await
-    {
+        }
+        None => {
+            sqlx::query("UPDATE github_connection SET status = 'degraded', status_message = ?, updated_at = ?")
+                .bind(message)
+                .bind(now)
+                .execute(db)
+                .await
+        }
+    };
+    if let Err(e) = res {
         tracing::warn!(error = %e, "failed to mark github connection degraded");
     }
 }
@@ -392,15 +467,46 @@ pub async fn start_manifest(
     let manifest = github::manifest::manifest_json(&name, &dashboard_url, webhook_override.as_deref());
 
     let now = chrono::Utc::now().timestamp();
+
+    // A name already attached here means GitHub would reject it anyway
+    // ("name already in use" on that account) — fail fast with the reason.
+    let taken: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM github_connection WHERE mode = 'app' AND label = ? AND status != 'pending'")
+            .bind(&name)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    if taken.is_some() {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!("an app named '{name}' is already connected — GitHub app names are unique per account; pick another name")
+            })),
+        )
+            .into_response();
+    }
+
+    // One pending row at a time: retrying an unfinished setup reuses it.
     let pending = serde_json::json!({ "name": name, "created_at": now }).to_string();
-    // 'pending' until the manifest code is exchanged for real credentials; an
-    // abandoned flow must not read as connected.
     let res = sqlx::query(
-        "INSERT INTO github_connection (id, mode, pat_token, pending_manifest, status, created_at, updated_at)
-         VALUES (1, 'app', NULL, ?, 'pending', ?, ?)
-         ON CONFLICT(id) DO UPDATE SET mode = 'app', pending_manifest = excluded.pending_manifest,
-            status = 'pending', status_message = NULL, updated_at = excluded.updated_at",
+        "UPDATE github_connection SET label = ?, pending_manifest = ?, status = 'pending', status_message = NULL, updated_at = ?
+         WHERE status = 'pending'",
     )
+    .bind(&name)
+    .bind(&pending)
+    .bind(now)
+    .execute(&state.db)
+    .await;
+    if let Err(e) = res {
+        return db_err(e).into_response();
+    }
+    let res = sqlx::query(
+        "INSERT INTO github_connection (label, mode, pending_manifest, status, created_at, updated_at)
+         SELECT ?, 'app', ?, 'pending', ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM github_connection WHERE status = 'pending')",
+    )
+    .bind(&name)
     .bind(&pending)
     .bind(now)
     .bind(now)
@@ -429,19 +535,32 @@ pub async fn exchange_manifest(
     State(state): State<AppState>,
     Json(payload): Json<ManifestExchangeRequest>,
 ) -> impl IntoResponse {
-    // Correlate with the manifest we issued (10-minute window).
-    let pending: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT pending_manifest FROM github_connection WHERE id = 1")
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    let is_fresh = pending
-        .and_then(|(p,)| p)
-        .and_then(|p| serde_json::from_str::<serde_json::Value>(&p).ok())
+    // The freshest pending manifest row is the one being exchanged.
+    let pending: Option<(i64, Option<String>)> = sqlx::query_as(
+        "SELECT id, pending_manifest FROM github_connection WHERE status = 'pending' ORDER BY updated_at DESC LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some((pending_id, pending_json)) = pending else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "manifest flow expired — start again from Settings → GitHub"})),
+        )
+            .into_response();
+    };
+    let is_fresh = pending_json
+        .as_deref()
+        .and_then(|p| serde_json::from_str::<serde_json::Value>(p).ok())
         .and_then(|v| v.get("created_at").and_then(|t| t.as_i64()))
         .is_some_and(|t| chrono::Utc::now().timestamp() - t < 600);
     if !is_fresh {
+        // Stale pending row: drop it so it doesn't read as an unfinished setup.
+        let _ = sqlx::query("DELETE FROM github_connection WHERE id = ? AND status = 'pending'")
+            .bind(pending_id)
+            .execute(&state.db)
+            .await;
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "manifest flow expired — start again from Settings → GitHub"})),
@@ -458,7 +577,8 @@ pub async fn exchange_manifest(
             // report success instead of a confusing 404.
             let existing: Option<(Option<String>,)> = sqlx::query_as(
                 "SELECT app_slug FROM github_connection
-                 WHERE id = 1 AND mode = 'app' AND app_id IS NOT NULL AND private_key_pem IS NOT NULL",
+                 WHERE mode = 'app' AND app_id IS NOT NULL AND private_key_pem IS NOT NULL
+                 ORDER BY updated_at DESC LIMIT 1",
             )
             .fetch_optional(&state.db)
             .await
@@ -476,26 +596,35 @@ pub async fn exchange_manifest(
                     )
                         .into_response()
                 }
-                _ => (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({
-                        "error": "GitHub doesn't recognize this code — it expired or was already used. Start Connect again (your app list is unaffected)."
-                    })),
-                )
-                    .into_response(),
+                _ => {
+                    let _ = sqlx::query("DELETE FROM github_connection WHERE id = ? AND status = 'pending'")
+                        .bind(pending_id)
+                        .execute(&state.db)
+                        .await;
+                    (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({
+                            "error": "GitHub doesn't recognize this code — it expired or was already used. Start Connect again (your app list is unaffected)."
+                        })),
+                    )
+                        .into_response()
+                }
             };
         }
         Err(e) => return gh_error(e).into_response(),
     };
 
+    // Same app re-created (name reuse after delete) replaces its old row;
+    // otherwise the pending row becomes the new connection.
     let now = chrono::Utc::now().timestamp();
     let res = sqlx::query(
         "UPDATE github_connection SET
-            app_id = ?, app_slug = ?, client_id = ?, client_secret = ?, private_key_pem = ?,
+            label = ?, app_id = ?, app_slug = ?, client_id = ?, client_secret = ?, private_key_pem = ?,
             webhook_secret = ?, pat_token = NULL, pat_login = NULL, pending_manifest = NULL,
             status = 'active', status_message = NULL, updated_at = ?
-         WHERE id = 1",
+         WHERE id = ?",
     )
+    .bind(&app.slug)
     .bind(app.id)
     .bind(&app.slug)
     .bind(&app.client_id)
@@ -503,6 +632,7 @@ pub async fn exchange_manifest(
     .bind(&app.pem)
     .bind(&app.webhook_secret)
     .bind(now)
+    .bind(pending_id)
     .execute(&state.db)
     .await;
     if let Err(e) = res {
@@ -522,9 +652,11 @@ pub async fn exchange_manifest(
 
 // ── Installations (app mode) ─────────────────────────────────────────────────
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Serialize, utoipa::ToSchema, Clone)]
 pub struct InstallationSummary {
     pub id: i64,
+    /// Owning app connection.
+    pub connection_id: i64,
     pub account_login: String,
     pub account_type: String,
     pub account_avatar: Option<String>,
@@ -579,22 +711,38 @@ pub async fn connect_app(
     };
 
     let now = chrono::Utc::now().timestamp();
+    // Re-attaching a known app refreshes its row; a new App ID is a new
+    // connection (apps from several GitHub accounts coexist).
     let res = sqlx::query(
-        "INSERT INTO github_connection
-            (id, mode, app_id, app_slug, private_key_pem, webhook_secret, status, created_at, updated_at)
-         VALUES (1, 'app', ?, ?, ?, ?, 'active', ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-            mode = 'app', app_id = excluded.app_id, app_slug = excluded.app_slug,
-            private_key_pem = excluded.private_key_pem, webhook_secret = excluded.webhook_secret,
-            pat_token = NULL, pat_login = NULL, pending_manifest = NULL,
-            status = 'active', status_message = NULL, updated_at = excluded.updated_at",
+        "UPDATE github_connection
+         SET label = ?, app_slug = ?, private_key_pem = ?, webhook_secret = ?,
+             status = 'active', status_message = NULL, pending_manifest = NULL, updated_at = ?
+         WHERE mode = 'app' AND app_id = ?",
     )
+    .bind(&info.slug)
+    .bind(&info.slug)
+    .bind(&creds.private_key_pem)
+    .bind(payload.webhook_secret.as_deref().filter(|s| !s.is_empty()))
+    .bind(now)
+    .bind(info.id)
+    .execute(&state.db)
+    .await;
+    if let Err(e) = res {
+        return db_err(e).into_response();
+    }
+    let res = sqlx::query(
+        "INSERT INTO github_connection (label, mode, app_id, app_slug, private_key_pem, webhook_secret, status, created_at, updated_at)
+         SELECT ?, 'app', ?, ?, ?, ?, 'active', ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM github_connection WHERE mode = 'app' AND app_id = ?)",
+    )
+    .bind(&info.slug)
     .bind(info.id)
     .bind(&info.slug)
     .bind(&creds.private_key_pem)
     .bind(payload.webhook_secret.as_deref().filter(|s| !s.is_empty()))
     .bind(now)
     .bind(now)
+    .bind(info.id)
     .execute(&state.db)
     .await;
     if let Err(e) = res {
@@ -623,53 +771,80 @@ pub async fn connect_app(
     security(("session_auth" = [])),
 )]
 pub async fn list_installations(State(state): State<AppState>) -> impl IntoResponse {
-    let Some(app) = github::app_credentials(&state.db).await.ok().flatten() else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "no GitHub App connection — use the manifest flow or a PAT"})),
-        )
-            .into_response();
-    };
-
-    let installations = match github::auth::list_installations(&app).await {
-        Ok(list) => list,
+    let conns = match github::list_connections(&state.db).await {
+        Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
-
-    // Mirror into our table (webhook events keep it fresh between polls).
-    let now = chrono::Utc::now().timestamp();
-    for inst in &installations {
-        let status = if inst.suspended_by.is_some() { "suspended" } else { "active" };
-        let _ = sqlx::query(
-            "INSERT INTO github_installations (id, account_login, account_type, account_avatar, repository_selection, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET
-                account_login = excluded.account_login, account_type = excluded.account_type,
-                account_avatar = excluded.account_avatar, repository_selection = excluded.repository_selection,
-                status = excluded.status, updated_at = excluded.updated_at",
-        )
-        .bind(inst.id)
-        .bind(&inst.account.login)
-        .bind(inst.account.account_type.clone().unwrap_or_else(|| "User".into()))
-        .bind(&inst.account.avatar_url)
-        .bind(inst.repository_selection.clone().unwrap_or_else(|| "selected".into()))
-        .bind(status)
-        .bind(now)
-        .bind(now)
-        .execute(&state.db)
-        .await;
+    let apps: Vec<_> = conns.iter().filter_map(|c| c.app_credentials().map(|a| (c.id, a))).collect();
+    if apps.is_empty() {
+        return (StatusCode::OK, Json(Vec::<InstallationSummary>::new())).into_response();
     }
 
-    let out: Vec<InstallationSummary> = installations
-        .into_iter()
-        .map(|inst| InstallationSummary {
-            id: inst.id,
-            account_login: inst.account.login,
-            account_type: inst.account.account_type.unwrap_or_else(|| "User".into()),
-            account_avatar: inst.account.avatar_url,
-            repository_selection: inst.repository_selection.unwrap_or_else(|| "selected".into()),
-            status: if inst.suspended_by.is_some() { "suspended".into() } else { "active".into() },
-        })
-        .collect();
-    (StatusCode::OK, Json(out)).into_response()
+    let now = chrono::Utc::now().timestamp();
+    // Reconciliation: for each connection whose sync succeeded, remember what
+    // GitHub reported so rows GitHub no longer lists (uninstalled on their
+    // side, no webhook to tell us) can be dropped.
+    let mut synced_connections: Vec<i64> = Vec::new();
+    let mut seen_installations: Vec<i64> = Vec::new();
+    for (conn_id, app) in &apps {
+        let installations = match github::auth::list_installations(app).await {
+            Ok(list) => list,
+            Err(e) => {
+                tracing::warn!(connection = conn_id, error = %e, "failed to sync installations");
+                continue;
+            }
+        };
+        synced_connections.push(*conn_id);
+        for inst in &installations {
+            seen_installations.push(inst.id);
+            let status = if inst.suspended_by.is_some() { "suspended" } else { "active" };
+            let _ = sqlx::query(
+                "INSERT INTO github_installations (id, connection_id, account_login, account_type, account_avatar, repository_selection, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                    connection_id = excluded.connection_id,
+                    account_login = excluded.account_login, account_type = excluded.account_type,
+                    account_avatar = excluded.account_avatar, repository_selection = excluded.repository_selection,
+                    status = excluded.status, updated_at = excluded.updated_at",
+            )
+            .bind(inst.id)
+            .bind(conn_id)
+            .bind(&inst.account.login)
+            .bind(inst.account.account_type.clone().unwrap_or_else(|| "User".into()))
+            .bind(&inst.account.avatar_url)
+            .bind(inst.repository_selection.clone().unwrap_or_else(|| "selected".into()))
+            .bind(status)
+            .bind(now)
+            .bind(now)
+            .execute(&state.db)
+            .await;
+        }
+    }
+
+    // Drop stale rows for successfully synced connections. Links pointing at a
+    // removed installation degrade to a clear relink error on next use; the
+    // projects themselves are untouched.
+    if !synced_connections.is_empty() {
+        let conn_ph = vec!["?"; synced_connections.len()].join(",");
+        // An empty seen-list with a successful sync means the app genuinely
+        // has no installations left — delete all its rows, which is correct.
+        let (sql, ids): (String, Vec<i64>) = if seen_installations.is_empty() {
+            (format!("DELETE FROM github_installations WHERE connection_id IN ({conn_ph})"), synced_connections.clone())
+        } else {
+            let seen_ph = vec!["?"; seen_installations.len()].join(",");
+            (
+                format!(
+                    "DELETE FROM github_installations WHERE connection_id IN ({conn_ph}) AND id NOT IN ({seen_ph})"
+                ),
+                synced_connections.iter().chain(seen_installations.iter()).copied().collect(),
+            )
+        };
+        let mut q = sqlx::query(&sql);
+        for id in ids {
+            q = q.bind(id);
+        }
+        let _ = q.execute(&state.db).await;
+    }
+
+    (StatusCode::OK, Json(load_installations(&state.db).await)).into_response()
 }

@@ -12,8 +12,6 @@ pub mod workflow;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
-use crate::AppState;
-
 pub const API_BASE: &str = "https://api.github.com";
 pub const USER_AGENT: &str = "litebin-orchestrator";
 
@@ -155,46 +153,114 @@ impl GitHubClient {
     }
 }
 
-/// App credentials when the connection is in app mode.
-pub async fn app_credentials(db: &SqlitePool) -> Result<Option<auth::AppCredentials>, GitHubApiError> {
-    let row: Option<(String, Option<i64>, Option<String>)> =
-        sqlx::query_as("SELECT mode, app_id, private_key_pem FROM github_connection WHERE id = 1")
-            .fetch_optional(db)
-            .await
-            .map_err(|e| GitHubApiError::Api { status: 500, message: e.to_string() })?;
-    let Some((mode, app_id, pem)) = row else { return Ok(None) };
-    if mode != "app" {
-        return Ok(None);
+/// One GitHub connection row: a GitHub App (per owning account) or a PAT.
+#[derive(Debug, Clone)]
+pub struct ConnectionRow {
+    pub id: i64,
+    pub label: Option<String>,
+    pub mode: String,
+    pub pat_token: Option<String>,
+    pub pat_login: Option<String>,
+    pub app_id: Option<i64>,
+    pub app_slug: Option<String>,
+    pub private_key_pem: Option<String>,
+    pub status: String,
+    pub status_message: Option<String>,
+}
+
+impl ConnectionRow {
+    /// Real app credentials only when the app flow actually completed.
+    pub fn app_credentials(&self) -> Option<auth::AppCredentials> {
+        if self.mode != "app" {
+            return None;
+        }
+        match (self.app_id, self.private_key_pem.as_deref().filter(|p| !p.is_empty())) {
+            (Some(app_id), Some(private_key_pem)) => {
+                Some(auth::AppCredentials { app_id, private_key_pem: private_key_pem.to_string() })
+            }
+            _ => None,
+        }
     }
-    match (app_id, pem.filter(|p| !p.is_empty())) {
-        (Some(app_id), Some(private_key_pem)) => Ok(Some(auth::AppCredentials { app_id, private_key_pem })),
-        _ => Err(GitHubApiError::AuthExpired),
+
+    /// Credentials exist (a usable PAT or a completed app).
+    pub fn has_credentials(&self) -> bool {
+        if self.mode == "pat" {
+            return self.pat_token.as_deref().is_some_and(|t| !t.is_empty());
+        }
+        self.app_credentials().is_some()
     }
 }
 
-/// Default client for the connection: PAT directly, or the first active
-/// installation in app mode (repo browsing without an explicit pick).
-pub async fn client_for_connection(db: &SqlitePool) -> Result<GitHubClient, GitHubApiError> {
-    let row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT mode, pat_token FROM github_connection WHERE id = 1")
+const CONNECTION_COLUMNS: &str =
+    "id, label, mode, pat_token, pat_login, app_id, app_slug, private_key_pem, status, status_message";
+
+type ConnectionTuple = (
+    i64,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<String>,
+);
+
+fn row_from(t: ConnectionTuple) -> ConnectionRow {
+    ConnectionRow {
+        id: t.0,
+        label: t.1,
+        mode: t.2,
+        pat_token: t.3,
+        pat_login: t.4,
+        app_id: t.5,
+        app_slug: t.6,
+        private_key_pem: t.7,
+        status: t.8,
+        status_message: t.9,
+    }
+}
+
+pub async fn list_connections(db: &SqlitePool) -> Result<Vec<ConnectionRow>, GitHubApiError> {
+    let rows: Vec<ConnectionTuple> =
+        sqlx::query_as(&format!("SELECT {CONNECTION_COLUMNS} FROM github_connection ORDER BY id"))
+            .fetch_all(db)
+            .await
+            .map_err(|e| GitHubApiError::Api { status: 500, message: e.to_string() })?;
+    Ok(rows.into_iter().map(row_from).collect())
+}
+
+pub async fn connection_by_id(db: &SqlitePool, id: i64) -> Result<Option<ConnectionRow>, GitHubApiError> {
+    let row: Option<ConnectionTuple> =
+        sqlx::query_as(&format!("SELECT {CONNECTION_COLUMNS} FROM github_connection WHERE id = ?"))
+            .bind(id)
             .fetch_optional(db)
             .await
             .map_err(|e| GitHubApiError::Api { status: 500, message: e.to_string() })?;
-    let Some((mode, pat)) = row else { return Err(not_connected()) };
-    match (mode.as_str(), pat) {
-        ("pat", pat) => {
-            let token = pat.filter(|t| !t.is_empty()).ok_or_else(|| GitHubApiError::AuthExpired)?;
+    Ok(row.map(row_from))
+}
+
+/// Client for a connection: PAT directly, or the connection's first active
+/// installation in app mode.
+pub async fn client_for_connection_id(db: &SqlitePool, id: i64) -> Result<GitHubClient, GitHubApiError> {
+    let conn = connection_by_id(db, id).await?.ok_or_else(not_connected)?;
+    match conn.mode.as_str() {
+        "pat" => {
+            let token = conn.pat_token.filter(|t| !t.is_empty()).ok_or_else(|| GitHubApiError::AuthExpired)?;
             Ok(GitHubClient::pat(token))
         }
-        ("app", _) => {
+        "app" => {
             // Credentials first: a pending manifest flow (no key yet) must read
             // as "reconnect", not as "app not installed".
-            let app = app_credentials(db).await?.ok_or_else(|| GitHubApiError::AuthExpired)?;
-            let installation: Option<(i64,)> =
-                sqlx::query_as("SELECT id FROM github_installations WHERE status = 'active' ORDER BY id LIMIT 1")
-                    .fetch_optional(db)
-                    .await
-                    .map_err(|e| GitHubApiError::Api { status: 500, message: e.to_string() })?;
+            let app = conn.app_credentials().ok_or_else(|| GitHubApiError::AuthExpired)?;
+            let installation: Option<(i64,)> = sqlx::query_as(
+                "SELECT id FROM github_installations WHERE connection_id = ? AND status = 'active' ORDER BY id LIMIT 1",
+            )
+            .bind(id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| GitHubApiError::Api { status: 500, message: e.to_string() })?;
             let Some((installation_id,)) = installation else {
                 return Err(GitHubApiError::Api {
                     status: 503,
@@ -203,32 +269,45 @@ pub async fn client_for_connection(db: &SqlitePool) -> Result<GitHubClient, GitH
             };
             GitHubClient::installation(&app, installation_id).await
         }
-        (other, _) => Err(GitHubApiError::Api {
+        other => Err(GitHubApiError::Api {
             status: 501,
             message: format!("GitHub connection mode '{other}' is not available yet"),
         }),
     }
 }
 
-/// Client scoped to a specific installation (app mode repo pick).
+/// Client scoped to a specific installation — resolves the owning app
+/// connection through github_installations.connection_id.
 pub async fn client_for_installation(db: &SqlitePool, installation_id: i64) -> Result<GitHubClient, GitHubApiError> {
-    let app = app_credentials(db).await?.ok_or_else(|| GitHubApiError::Api {
+    let conn_id: Option<i64> = sqlx::query_scalar("SELECT connection_id FROM github_installations WHERE id = ?")
+        .bind(installation_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| GitHubApiError::Api { status: 500, message: e.to_string() })?
+        .flatten();
+    let conn_id = conn_id.ok_or_else(|| GitHubApiError::Api {
         status: 503,
-        message: "GitHub connection is not in GitHub App mode".into(),
+        message: "the app was uninstalled from this GitHub account — relink the repo from the deploy dialog".into(),
     })?;
+    let app = connection_by_id(db, conn_id)
+        .await?
+        .and_then(|c| c.app_credentials())
+        .ok_or_else(|| GitHubApiError::AuthExpired)?;
     GitHubClient::installation(&app, installation_id).await
 }
 
 /// Client for a linked repo: installation-scoped when the link carries one,
-/// PAT otherwise.
-pub async fn client_for_link(db: &SqlitePool, installation_id: Option<i64>) -> Result<GitHubClient, GitHubApiError> {
+/// else the link's own connection (PAT).
+pub async fn client_for_link(
+    db: &SqlitePool,
+    connection_id: Option<i64>,
+    installation_id: Option<i64>,
+) -> Result<GitHubClient, GitHubApiError> {
     match installation_id {
-        Some(id) => client_for_installation(db, id).await,
-        None => client_for_connection(db).await,
+        Some(inst_id) => client_for_installation(db, inst_id).await,
+        None => match connection_id {
+            Some(conn_id) => client_for_connection_id(db, conn_id).await,
+            None => Err(not_connected()),
+        },
     }
-}
-
-/// Convenience wrapper for handlers.
-pub async fn client(state: &AppState) -> Result<GitHubClient, GitHubApiError> {
-    client_for_connection(&state.db).await
 }

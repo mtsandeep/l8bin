@@ -112,6 +112,7 @@ use utoipa::OpenApi;
         crate::routes::env::update_project_env,
         // GitHub
         crate::routes::github::connect::connection_status,
+        crate::routes::github::connect::list_connections,
         crate::routes::github::connect::connect_pat,
         crate::routes::github::connect::connect_app,
         crate::routes::github::connect::disconnect,
@@ -237,6 +238,7 @@ use utoipa::OpenApi;
             crate::routes::health::SystemStatsResponse,
             // GitHub
             crate::routes::github::connect::ConnectionStatus,
+            crate::routes::github::connect::ConnectionSummary,
             crate::routes::github::connect::PatRequest,
             crate::routes::github::connect::PatConnected,
             crate::routes::github::connect::AppCredentialsRequest,

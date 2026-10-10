@@ -35,6 +35,8 @@ pub struct LinkRequest {
     pub repo_id: Option<i64>,
     /// App mode: installation the repo lives under (PAT mode: none).
     pub installation_id: Option<i64>,
+    /// PAT mode: connection serving this repo.
+    pub connection_id: Option<i64>,
     /// Empty/omitted = repo default branch.
     pub branch: Option<String>,
     /// "single" (default) | "compose".
@@ -101,6 +103,7 @@ struct LinkRow {
     auto_deploy: i64,
     deploy_token_id: Option<String>,
     installation_id: Option<i64>,
+    connection_id: Option<i64>,
 }
 
 fn row_to_response(row: LinkRow) -> ProjectGithubConfigResponse {
@@ -122,12 +125,24 @@ fn row_to_response(row: LinkRow) -> ProjectGithubConfigResponse {
     }
 }
 
-const LINK_COLUMNS: &str = "project_id, repo_full_name, branch, workflow_path, deploy_kind, compose_file, workflow_inputs, auto_deploy, deploy_token_id, installation_id";
+const LINK_COLUMNS: &str = "project_id, repo_full_name, branch, workflow_path, deploy_kind, compose_file, workflow_inputs, auto_deploy, deploy_token_id, installation_id, connection_id";
 
 async fn load_link(state: &AppState, project_id: &str) -> Result<LinkRow, (StatusCode, Json<serde_json::Value>)> {
     let row = sqlx::query_as::<
         _,
-        (String, String, String, String, String, Option<String>, Option<String>, i64, Option<String>, Option<i64>),
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+        ),
     >(format!("SELECT {LINK_COLUMNS} FROM project_github_config WHERE project_id = ?").as_str())
     .bind(project_id)
     .fetch_optional(&state.db)
@@ -147,6 +162,7 @@ async fn load_link(state: &AppState, project_id: &str) -> Result<LinkRow, (Statu
             auto_deploy,
             deploy_token_id,
             installation_id,
+            connection_id,
         )| LinkRow {
             project_id,
             repo_full_name,
@@ -158,6 +174,7 @@ async fn load_link(state: &AppState, project_id: &str) -> Result<LinkRow, (Statu
             auto_deploy,
             deploy_token_id,
             installation_id,
+            connection_id,
         },
     )
     .ok_or((
@@ -204,9 +221,13 @@ fn dashboard_url(state: &AppState) -> String {
 }
 
 /// Mark the connection degraded on auth failures, then map the error.
-async fn gh_error_degraded(state: &AppState, e: GitHubApiError) -> (StatusCode, Json<serde_json::Value>) {
+async fn gh_error_degraded(
+    state: &AppState,
+    connection_id: Option<i64>,
+    e: GitHubApiError,
+) -> (StatusCode, Json<serde_json::Value>) {
     if matches!(e, GitHubApiError::AuthExpired) {
-        mark_degraded(state, "GitHub rejected the stored credential").await;
+        mark_degraded(&state.db, connection_id, "GitHub rejected the stored credential").await;
     }
     gh_error(e)
 }
@@ -258,7 +279,7 @@ pub async fn put_config(
         Ok(v) => v,
         Err(e) => return (e.0, Json(serde_json::json!({"error": e.1}))).into_response(),
     };
-    let client = match github::client_for_link(&state.db, body.installation_id).await {
+    let client = match github::client_for_link(&state.db, body.connection_id, body.installation_id).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
@@ -278,7 +299,7 @@ pub async fn put_config(
     // Resolve branch + repo id (one API call), defaulting branch to the repo default.
     let detail = match client.repo_detail(&owner, &repo).await {
         Ok(d) => d,
-        Err(e) => return gh_error_degraded(&state, e).await.into_response(),
+        Err(e) => return gh_error_degraded(&state, body.connection_id, e).await.into_response(),
     };
     let branch = body.branch.clone().filter(|b| !b.is_empty()).unwrap_or(detail.default_branch);
     let repo_id = body.repo_id.or(Some(detail.id));
@@ -340,7 +361,7 @@ pub async fn put_config(
 
     if let Err(e) = link_result {
         let _ = sqlx::query("DELETE FROM deploy_tokens WHERE id = ?").bind(&token_id).execute(&state.db).await;
-        return gh_error_degraded(&state, e).await.into_response();
+        return gh_error_degraded(&state, body.connection_id, e).await.into_response();
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -358,7 +379,7 @@ pub async fn put_config(
     if let Err(e) = sqlx::query(
         "INSERT INTO project_github_config
             (project_id, repo_full_name, repo_id, branch, workflow_path, deploy_kind, compose_file,
-             workflow_inputs, auto_deploy, deploy_token_id, installation_id, created_at, updated_at)
+             workflow_inputs, auto_deploy, deploy_token_id, installation_id, connection_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(project_id) DO UPDATE SET
             repo_full_name = excluded.repo_full_name, repo_id = excluded.repo_id,
@@ -377,6 +398,8 @@ pub async fn put_config(
     .bind(&inputs_json)
     .bind(body.auto_deploy.unwrap_or(false) as i64)
     .bind(&token_id)
+    .bind(body.installation_id)
+    .bind(body.connection_id)
     .bind(now)
     .bind(now)
     .execute(&state.db)
@@ -444,7 +467,8 @@ pub async fn patch_config(
         Ok(v) => v,
         Err(e) => return (e.0, Json(serde_json::json!({"error": e.1}))).into_response(),
     };
-    let client = match github::client_for_link(&state.db, row.installation_id).await {
+    let connection_for_error = row.connection_id;
+    let client = match github::client_for_link(&state.db, row.connection_id, row.installation_id).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
@@ -452,7 +476,7 @@ pub async fn patch_config(
         row.workflow_inputs.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
 
     if let Err(e) = rewrite_workflow(&client, &owner, &repo, &row, &inputs, body.auto_deploy).await {
-        return gh_error_degraded(&state, e).await.into_response();
+        return gh_error_degraded(&state, connection_for_error, e).await.into_response();
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -525,7 +549,7 @@ pub async fn delete_config(
     // Best-effort repo cleanup — repo gone (404) is success. The project
     // itself is untouched: unlink only removes the automation.
     if params.remove_files.unwrap_or(true)
-        && let Ok(client) = github::client(&state).await
+        && let Ok(client) = github::client_for_link(&state.db, row.connection_id, row.installation_id).await
     {
         let _ = client.delete_secret(&owner, &repo, "L8B_TOKEN").await;
         let _ = client.delete_secret(&owner, &repo, "L8B_SERVER").await;
@@ -570,7 +594,8 @@ pub async fn rotate_token(State(state): State<AppState>, Path(project_id): Path<
         Ok(v) => v,
         Err(e) => return (e.0, Json(serde_json::json!({"error": e.1}))).into_response(),
     };
-    let client = match github::client_for_link(&state.db, row.installation_id).await {
+    let connection_for_error = row.connection_id;
+    let client = match github::client_for_link(&state.db, row.connection_id, row.installation_id).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
@@ -590,7 +615,7 @@ pub async fn rotate_token(State(state): State<AppState>, Path(project_id): Path<
     // Secret first so a run in flight never loses auth mid-swap.
     if let Err(e) = client.put_secret(&owner, &repo, "L8B_TOKEN", &token_plaintext).await {
         let _ = sqlx::query("DELETE FROM deploy_tokens WHERE id = ?").bind(&token_id).execute(&state.db).await;
-        return gh_error_degraded(&state, e).await.into_response();
+        return gh_error_degraded(&state, connection_for_error, e).await.into_response();
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -640,7 +665,8 @@ pub async fn deploy_now(
         Ok(v) => v,
         Err(e) => return (e.0, Json(serde_json::json!({"error": e.1}))).into_response(),
     };
-    let client = match github::client_for_link(&state.db, row.installation_id).await {
+    let connection_for_error = row.connection_id;
+    let client = match github::client_for_link(&state.db, row.connection_id, row.installation_id).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
@@ -648,7 +674,7 @@ pub async fn deploy_now(
     let git_ref = body.and_then(|Json(b)| b.git_ref).filter(|r| !r.is_empty()).unwrap_or_else(|| row.branch.clone());
 
     if let Err(e) = client.dispatch_workflow(&owner, &repo, workflow::WORKFLOW_FILE, &git_ref).await {
-        return gh_error_degraded(&state, e).await.into_response();
+        return gh_error_degraded(&state, connection_for_error, e).await.into_response();
     }
 
     tracing::info!(project = %project_id, repo = %row.repo_full_name, r#ref = %git_ref, "GitHub deploy dispatched");

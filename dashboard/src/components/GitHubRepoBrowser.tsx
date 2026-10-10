@@ -1,6 +1,6 @@
 import { Loader2, Lock, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { type GitHubInstallation, type GitHubRepo, listGithubInstallations, listGithubRepos } from '../api';
+import { type GitHubConnectionSummary, type GitHubRepo, listGithubConnections, listGithubRepos } from '../api';
 import GitHubDeployForm from './GitHubDeployForm';
 import GithubMark from './GithubMark';
 
@@ -26,25 +26,35 @@ export default function GitHubRepoBrowser({ domain, onClose, onLinked }: Props) 
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<GitHubRepo | null>(null);
-  // App mode: account picker (installations). undefined = still resolving,
-  // null = PAT mode (nothing to pick).
-  const [installations, setInstallations] = useState<GitHubInstallation[] | null | undefined>(undefined);
-  const [installationId, setInstallationId] = useState<number | undefined>(undefined);
+  // Account picker across connections: app installations + PAT connections.
+  // Selection is {installation} or {connection} (PAT).
+  type Pick = { installationId?: number; connectionId?: number };
+  const [connections, setConnections] = useState<GitHubConnectionSummary[] | null | undefined>(undefined);
+  const [pick, setPick] = useState<Pick>({});
+
+  // Flatten: one entry per installation, plus one per PAT connection.
+  const entries: Array<Pick & { key: string; label: string }> = [];
+  for (const conn of connections ?? []) {
+    if (conn.mode === 'app') {
+      for (const inst of conn.installations) {
+        entries.push({ installationId: inst.id, key: `i-${inst.id}`, label: inst.account_login });
+      }
+    } else {
+      entries.push({ connectionId: conn.id, key: `c-${conn.id}`, label: `${conn.label ?? 'token'} (token)` });
+    }
+  }
 
   useEffect(() => {
-    listGithubInstallations()
-      .then((list) => {
-        setInstallations(list);
-        if (list.length > 0) setInstallationId(list[0].id);
-      })
-      .catch(() => setInstallations(null)); // PAT mode — nothing to pick
+    listGithubConnections()
+      .then(setConnections)
+      .catch(() => setConnections(null));
   }, []);
 
   const load = async (targetPage: number, replace: boolean) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await listGithubRepos(targetPage, installationId);
+      const res = await listGithubRepos(targetPage, pick.installationId, pick.connectionId);
       setRepos((prev) => (replace ? res.repos : [...prev, ...res.repos]));
       setHasMore(res.repos.length === 100);
       setPage(targetPage);
@@ -56,14 +66,22 @@ export default function GitHubRepoBrowser({ domain, onClose, onLinked }: Props) 
     }
   };
 
-  // (Re)load the first repo page whenever the mode resolves or the picked
-  // account changes.
+  // (Re)load the first repo page when connections resolve or the pick changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload on mode/account change
   useEffect(() => {
-    if (installations === undefined) return; // still resolving app vs PAT mode
-    if (installations !== null && installationId === undefined) return; // app mode: waiting for default pick
+    if (connections === undefined) return; // still resolving
+    if (!pick.installationId && !pick.connectionId) {
+      // Default to the first entry once resolved; the state change re-runs
+      // this effect and loads.
+      if (entries.length > 0) {
+        const first = entries[0];
+        setPick({ installationId: first.installationId, connectionId: first.connectionId });
+      }
+      return;
+    }
     load(1, true);
-  }, [installations, installationId]);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: reload on mode/account change
+  }, [connections, pick]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -78,7 +96,8 @@ export default function GitHubRepoBrowser({ domain, onClose, onLinked }: Props) 
       <GitHubDeployForm
         repo={selected}
         domain={domain}
-        installationId={installationId}
+        installationId={pick.installationId}
+        connectionId={pick.connectionId}
         onBack={() => setSelected(null)}
         onClose={onClose}
         onLinked={() => {
@@ -119,17 +138,23 @@ export default function GitHubRepoBrowser({ domain, onClose, onLinked }: Props) 
           </div>
         </div>
 
-        {installations && installations.length > 1 && (
+        {entries.length > 1 && (
           <div className="px-5 py-2 border-b border-slate-700/50 shrink-0 flex items-center gap-2">
             <span className="text-xs text-slate-500 uppercase">Account</span>
             <select
-              value={installationId ?? ''}
-              onChange={(e) => setInstallationId(Number(e.target.value))}
+              value={
+                pick.installationId ? `i-${pick.installationId}` : pick.connectionId ? `c-${pick.connectionId}` : ''
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v.startsWith('i-')) setPick({ installationId: Number(v.slice(2)) });
+                else if (v.startsWith('c-')) setPick({ connectionId: Number(v.slice(2)) });
+              }}
               className="flex-1 px-2 py-1 bg-slate-900/50 border border-slate-700/50 rounded text-xs text-slate-200 focus:outline-none focus:border-violet-500/50 cursor-pointer"
             >
-              {installations.map((inst) => (
-                <option key={inst.id} value={inst.id}>
-                  {inst.account_login}
+              {entries.map((e) => (
+                <option key={e.key} value={e.key}>
+                  {e.label}
                 </option>
               ))}
             </select>

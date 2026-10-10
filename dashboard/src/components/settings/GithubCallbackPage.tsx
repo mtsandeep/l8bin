@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { exchangeGithubManifest, type GitHubInstallation, listGithubInstallations } from '../../api';
+import { exchangeGithubManifest, listGithubConnections, listGithubInstallations } from '../../api';
 
 /**
  * Manifest-flow landing: GitHub redirects here with ?code= after the user
@@ -14,6 +14,7 @@ export default function GithubCallbackPage() {
   const code = params.get('code');
   const [phase, setPhase] = useState<'exchanging' | 'install' | 'error'>('exchanging');
   const [installUrl, setInstallUrl] = useState<string | null>(null);
+  const [manageUrl, setManageUrl] = useState<string | null>(null);
   const [appSlug, setAppSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Manifest codes are single-use: never exchange twice for one landing
@@ -44,6 +45,7 @@ export default function GithubCallbackPage() {
         const res = await exchangeGithubManifest(code);
         setAppSlug(res.app_slug);
         setInstallUrl(res.install_url);
+        setManageUrl(`https://github.com/settings/apps/${res.app_slug}`);
         setPhase('install');
       } catch (e) {
         setError((e as Error).message);
@@ -52,13 +54,16 @@ export default function GithubCallbackPage() {
     })();
   }, []);
 
-  // Poll for the installation appearing (user completed the install flow).
+  // Poll for THIS app's installation appearing (user completed the install).
+  // Scoped by slug — other apps' installations must not satisfy the wait.
   useEffect(() => {
-    if (phase !== 'install') return;
+    if (phase !== 'install' || !appSlug) return;
     const id = setInterval(async () => {
       try {
-        const installations: GitHubInstallation[] = await listGithubInstallations();
-        if (installations.some((i) => i.status === 'active')) {
+        const [installations, connections] = await Promise.all([listGithubInstallations(), listGithubConnections()]);
+        const conn = connections.find((c) => c.mode === 'app' && c.label === appSlug);
+        const done = !!conn && installations.some((i) => i.connection_id === conn.id && i.status === 'active');
+        if (done) {
           clearInterval(id);
           navigate('/settings/github', { state: { refresh: Date.now() } });
         }
@@ -67,11 +72,11 @@ export default function GithubCallbackPage() {
       }
     }, 3000);
     return () => clearInterval(id);
-  }, [phase, navigate]);
+  }, [phase, appSlug, navigate]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 flex items-center justify-center p-6">
-      <div className="w-full max-w-md rounded-lg border border-slate-700/50 bg-slate-800 p-6 space-y-4">
+      <div className="w-full max-w-md rounded-lg border border-slate-700/50 bg-slate-900/40 p-5 space-y-4">
         {phase === 'exchanging' && (
           <>
             <div className="flex justify-center">
@@ -84,13 +89,28 @@ export default function GithubCallbackPage() {
         {phase === 'install' && (
           <>
             <div className="flex items-center gap-2">
-              <CheckCircle2 size={14} className="text-emerald-400" />
-              <p className="text-xs text-slate-200 font-medium">GitHub App “{appSlug}” created</p>
+              <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+              <h2 className="text-sm font-semibold text-emerald-300">
+                Created Your Own Private GitHub App “{appSlug}”
+              </h2>
             </div>
-            <p className="text-xs text-slate-500">
-              One more step — install it on your GitHub account and pick which repositories it may see. This page will
-              continue automatically once the install completes.
+
+            <p className="text-xs text-slate-400">
+              Next: install it on the GitHub account where your repos live.
             </p>
+
+            {/* Screenshot of GitHub's install screen so it looks familiar. */}
+            <div className="space-y-2">
+              <img
+                src="/github-app-install.png"
+                alt="GitHub app install screen: choose all or select repositories, then press Install"
+                className="w-full rounded-md shadow-lg shadow-black/40 ring-1 ring-slate-700/60"
+              />
+              <p className="text-xs text-slate-500">
+                Pick which repositories it may see, then press <span className="text-slate-300">Install</span>.
+              </p>
+            </div>
+
             {installUrl && (
               <a
                 href={installUrl}
@@ -102,17 +122,31 @@ export default function GithubCallbackPage() {
                 <ExternalLink size={11} />
               </a>
             )}
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <Loader2 size={11} className="animate-spin" />
-              waiting for installation…
+            {manageUrl && (
+              <a
+                href={manageUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                Manage the app
+                <ExternalLink size={10} />
+              </a>
+            )}
+
+            <div className="flex items-center justify-between text-xs">
+              <span className="flex items-center gap-1.5 text-slate-500">
+                <Loader2 size={11} className="animate-spin" />
+                waiting for installation…
+              </span>
+              <button
+                type="button"
+                onClick={() => navigate('/settings/github')}
+                className="text-slate-500 hover:text-slate-400 transition-colors cursor-pointer"
+              >
+                Skip — later
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate('/settings/github')}
-              className="w-full text-xs text-slate-500 hover:text-slate-400 transition-colors cursor-pointer"
-            >
-              Skip — I’ll install later
-            </button>
           </>
         )}
 
