@@ -84,7 +84,7 @@ pub async fn project_runs(State(state): State<AppState>, Path(project_id): Path<
         Err(e) => return gh_error(e).into_response(),
     };
 
-    match client.list_workflow_runs(&owner, &repo, workflow::WORKFLOW_FILE, Some(&branch), 10).await {
+    match client.list_workflow_runs(&owner, &repo, &workflow::workflow_file(&project_id), Some(&branch), 10).await {
         Ok(runs) => {
             persist_last_run(&state, &project_id, runs.first()).await;
             (StatusCode::OK, Json(ProjectRuns { project_id, repo_full_name, runs })).into_response()
@@ -172,7 +172,8 @@ pub async fn bulk_status(State(state): State<AppState>) -> impl IntoResponse {
         };
         let client = github::client_for_link(&state.db, connection_id, installation_id).await.ok();
         if let (Some(client), Ok((owner, repo))) = (&client, split_repo(&repo_full_name))
-            && let Ok(runs) = client.list_workflow_runs(&owner, &repo, workflow::WORKFLOW_FILE, Some(&branch), 1).await
+            && let Ok(runs) =
+                client.list_workflow_runs(&owner, &repo, &workflow::workflow_file(&project_id), Some(&branch), 1).await
             && let Some(run) = runs.first()
         {
             persist_last_run(&state, &project_id, Some(run)).await;

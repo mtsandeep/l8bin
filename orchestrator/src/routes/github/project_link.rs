@@ -353,12 +353,12 @@ pub async fn put_config(
 
     // Secrets first, then the workflow file; roll the token back on failure.
     let link_result = async {
-        client.put_secret(&owner, &repo, "L8B_SERVER", &dashboard_url(&state)).await?;
-        client.put_secret(&owner, &repo, "L8B_TOKEN", &token_plaintext).await?;
+        client.put_secret(&owner, &repo, workflow::SERVER_SECRET, &dashboard_url(&state)).await?;
+        client.put_secret(&owner, &repo, &workflow::token_secret(&project_id), &token_plaintext).await?;
         // Skip the commit when the rendered workflow is unchanged — GitHub's
         // contents API would happily commit identical content again.
         let rendered = spec.render();
-        if client.file_content(&owner, &repo, workflow::WORKFLOW_PATH, &branch).await?.as_deref()
+        if client.file_content(&owner, &repo, &workflow::workflow_path(&project_id), &branch).await?.as_deref()
             == Some(rendered.as_str())
         {
             return Ok(());
@@ -372,8 +372,10 @@ pub async fn put_config(
             .chars()
             .take(100)
             .collect::<String>();
-        let sha = client.file_sha(&owner, &repo, workflow::WORKFLOW_PATH, &branch).await?;
-        client.put_file(&owner, &repo, workflow::WORKFLOW_PATH, &branch, &commit_message, &rendered, sha).await?;
+        let sha = client.file_sha(&owner, &repo, &workflow::workflow_path(&project_id), &branch).await?;
+        client
+            .put_file(&owner, &repo, &workflow::workflow_path(&project_id), &branch, &commit_message, &rendered, sha)
+            .await?;
         Ok::<(), GitHubApiError>(())
     }
     .await;
@@ -412,7 +414,7 @@ pub async fn put_config(
     .bind(format!("{owner}/{repo}"))
     .bind(repo_id)
     .bind(&branch)
-    .bind(workflow::WORKFLOW_PATH)
+    .bind(workflow::workflow_path(&project_id))
     .bind(if deploy_kind == DeployKind::Compose { "compose" } else { "single" })
     .bind(&body.compose_file)
     .bind(&inputs_json)
@@ -444,10 +446,10 @@ pub async fn put_config(
     (
         StatusCode::OK,
         Json(ProjectGithubConfigResponse {
+            workflow_path: workflow::workflow_path(&project_id),
             project_id,
             repo_full_name: format!("{owner}/{repo}"),
             branch,
-            workflow_path: workflow::WORKFLOW_PATH.to_string(),
             deploy_kind: if deploy_kind == DeployKind::Compose { "compose" } else { "single" }.to_string(),
             compose_file: body.compose_file,
             auto_deploy: body.auto_deploy.unwrap_or(false),
@@ -575,8 +577,20 @@ pub async fn delete_config(
     if params.remove_files.unwrap_or(true)
         && let Ok(client) = github::client_for_link(&state.db, row.connection_id, row.installation_id).await
     {
-        let _ = client.delete_secret(&owner, &repo, "L8B_TOKEN").await;
-        let _ = client.delete_secret(&owner, &repo, "L8B_SERVER").await;
+        let _ = client.delete_secret(&owner, &repo, &workflow::token_secret(&project_id)).await;
+        // L8B_SERVER is shared by every project linked to this repo — drop it
+        // only when this was the last one.
+        let other_links: Option<(i64,)> =
+            sqlx::query_as("SELECT COUNT(*) FROM project_github_config WHERE repo_full_name = ? AND project_id != ?")
+                .bind(&row.repo_full_name)
+                .bind(&project_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+        if other_links.map(|(n,)| n).unwrap_or(0) == 0 {
+            let _ = client.delete_secret(&owner, &repo, workflow::SERVER_SECRET).await;
+        }
         let _ = client.delete_file(&owner, &repo, &row.workflow_path, &row.branch).await;
     }
 
@@ -637,7 +651,7 @@ pub async fn rotate_token(State(state): State<AppState>, Path(project_id): Path<
         };
 
     // Secret first so in-flight runs keep auth.
-    if let Err(e) = client.put_secret(&owner, &repo, "L8B_TOKEN", &token_plaintext).await {
+    if let Err(e) = client.put_secret(&owner, &repo, &workflow::token_secret(&project_id), &token_plaintext).await {
         let _ = sqlx::query("DELETE FROM deploy_tokens WHERE id = ?").bind(&token_id).execute(&state.db).await;
         return gh_error_degraded(&state, connection_for_error, e).await.into_response();
     }
@@ -697,7 +711,7 @@ pub async fn deploy_now(
 
     let git_ref = body.and_then(|Json(b)| b.git_ref).filter(|r| !r.is_empty()).unwrap_or_else(|| row.branch.clone());
 
-    if let Err(e) = client.dispatch_workflow(&owner, &repo, workflow::WORKFLOW_FILE, &git_ref).await {
+    if let Err(e) = client.dispatch_workflow(&owner, &repo, &workflow::workflow_file(&project_id), &git_ref).await {
         return gh_error_degraded(&state, connection_for_error, e).await.into_response();
     }
 

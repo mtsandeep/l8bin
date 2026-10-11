@@ -32,10 +32,23 @@ pub enum DeployKind {
 /// Pin by minor tag to avoid migrating generated files.
 pub const ACTION_REF: &str = "mtsandeep/l8bin-action@v0.2.0";
 pub const WORKFLOW_NAME: &str = "LiteBin Deploy";
-/// Bare filename — the form GitHub's dispatch/runs endpoints expect.
-pub const WORKFLOW_FILE: &str = "litebin-deploy.yml";
-/// Full repo path — where the file is committed (only .github/workflows/ counts).
-pub const WORKFLOW_PATH: &str = ".github/workflows/litebin-deploy.yml";
+/// Repo-level secret shared by every project linked to the repo.
+pub const SERVER_SECRET: &str = "L8B_SERVER";
+
+/// Bare filename (dispatch/runs endpoints) — one workflow per project per repo.
+pub fn workflow_file(project_id: &str) -> String {
+    format!("litebin-{project_id}-deploy.yml")
+}
+
+/// Full repo path where the file is committed (only .github/workflows/ counts).
+pub fn workflow_path(project_id: &str) -> String {
+    format!(".github/workflows/{}", workflow_file(project_id))
+}
+
+/// Per-project token secret: uppercase, hyphens to underscores.
+pub fn token_secret(project_id: &str) -> String {
+    format!("L8B_TOKEN_{}", project_id.to_ascii_uppercase().replace('-', "_"))
+}
 
 /// YAML-double-quote a scalar.
 fn q(s: &str) -> String {
@@ -52,6 +65,12 @@ impl WorkflowSpec {
         if self.auto_deploy {
             y.push_str("  push:\n");
             y.push_str(&format!("    branches: [{}]\n", q(&self.branch)));
+            // Deploy only when the project's own content changes; the workflow
+            // file itself is excluded so re-links never self-trigger.
+            match self.path.as_deref().filter(|p| !p.is_empty() && *p != ".") {
+                Some(folder) => y.push_str(&format!("    paths: [{}]\n", q(&format!("{folder}/**")))),
+                None => y.push_str(&format!("    paths-ignore: [{}]\n", q(&workflow_path(&self.project_id)))),
+            }
         }
         y.push_str("\nconcurrency:\n");
         y.push_str(&format!("  group: litebin-{}-${{{{ github.ref }}}}\n", self.project_id));
@@ -67,7 +86,7 @@ impl WorkflowSpec {
         y.push_str(&format!("        uses: {ACTION_REF}\n"));
         y.push_str("        with:\n");
         y.push_str("          server: ${{ secrets.L8B_SERVER }}\n");
-        y.push_str("          token: ${{ secrets.L8B_TOKEN }}\n");
+        y.push_str(&format!("          token: ${{{{ secrets.{} }}}}\n", token_secret(&self.project_id)));
         y.push_str(&format!("          project_id: {}\n", q(&self.project_id)));
         if let Some(path) = self.path.as_deref().filter(|p| !p.is_empty() && *p != ".") {
             y.push_str(&format!("          path: {}\n", q(path)));
@@ -141,9 +160,30 @@ mod tests {
     fn renders_auto_deploy_push_trigger() {
         let mut s = spec();
         s.auto_deploy = true;
+        s.path = Some("landing".into());
         let y = s.render();
         assert!(y.contains("push:\n"));
         assert!(y.contains("branches: [\"main\"]"));
+        // folder links deploy only when the folder's content changes
+        assert!(y.contains("paths: [\"landing/**\"]"));
+        assert!(y.contains("token: ${{ secrets.L8B_TOKEN_MYAPP }}"));
+    }
+
+    #[test]
+    fn root_auto_deploy_excludes_only_its_own_workflow_file() {
+        let mut s = spec();
+        s.auto_deploy = true;
+        let y = s.render();
+        assert!(y.contains(&format!("paths-ignore: [\"{}\"]", workflow_path("myapp"))));
+        assert!(!y.contains("paths: ["));
+    }
+
+    #[test]
+    fn per_project_naming() {
+        assert_eq!(workflow_file("landing"), "litebin-landing-deploy.yml");
+        assert_eq!(workflow_path("landing"), ".github/workflows/litebin-landing-deploy.yml");
+        assert_eq!(token_secret("landing"), "L8B_TOKEN_LANDING");
+        assert_eq!(token_secret("my-app"), "L8B_TOKEN_MY_APP");
     }
 
     #[test]

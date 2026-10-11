@@ -170,15 +170,13 @@ export default function GitHubDeployForm({
 
       showToast(`Linked ${repo.full_name} → ${project.id}`, 'success');
 
-      if (autoDeploy) {
-        showToast('Deploy triggered by the workflow commit — watch the GitHub icon on the project card', 'success');
-      } else {
-        try {
-          await dispatchGithubDeploy(project.id);
-          showToast('Deploy dispatched — watch the GitHub icon on the project card', 'success');
-        } catch (e) {
-          showToast(`Linked, but first deploy failed to dispatch: ${(e as Error).message}`, 'error');
-        }
+      // The workflow file is outside its own push path filter, so the link
+      // commit never self-triggers — always dispatch the first deploy.
+      try {
+        await dispatchGithubDeploy(project.id);
+        showToast('Deploy dispatched — watch the GitHub icon on the project card', 'success');
+      } catch (e) {
+        showToast(`Linked, but first deploy failed to dispatch: ${(e as Error).message}`, 'error');
       }
       onLinked();
     } catch (e) {
