@@ -110,7 +110,7 @@ pub struct BulkRunStatus {
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct BulkStatus {
-    /// Cached snapshots for projects whose runs could not be refreshed.
+    /// Latest run per linked project (cached snapshot when GitHub was unreachable).
     pub projects: Vec<BulkRunStatus>,
 }
 

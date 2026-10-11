@@ -29,7 +29,7 @@ pub enum DeployKind {
     Compose,
 }
 
-/// Pin by minor tag to avoid migrating generated files.
+/// Pin the exact action version; bump deliberately (managed files reference it).
 pub const ACTION_REF: &str = "mtsandeep/l8bin-action@v0.2.0";
 pub const WORKFLOW_NAME: &str = "LiteBin Deploy";
 /// Repo-level secret shared by every project linked to the repo.

@@ -65,16 +65,6 @@ pub struct ProjectGithubConfigResponse {
     pub compose_file: Option<String>,
     pub auto_deploy: bool,
     pub inputs: WorkflowInputs,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_run_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_run_status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_run_conclusion: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_run_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_run_at: Option<i64>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -120,11 +110,6 @@ fn row_to_response(row: LinkRow) -> ProjectGithubConfigResponse {
         compose_file: row.compose_file,
         auto_deploy: row.auto_deploy != 0,
         inputs,
-        last_run_id: None,
-        last_run_status: None,
-        last_run_conclusion: None,
-        last_run_url: None,
-        last_run_at: None,
     }
 }
 
@@ -248,8 +233,6 @@ async fn gh_error_degraded(
     security(("session_auth" = [])),
 )]
 pub async fn get_config(State(state): State<AppState>, Path(project_id): Path<String>) -> impl IntoResponse {
-    // last_run_* denormalized columns are read by the runs endpoint; keep this
-    // handler to the link config itself.
     match load_link(&state, &project_id).await {
         Ok(row) => (StatusCode::OK, Json(row_to_response(row))).into_response(),
         Err(e) => e.into_response(),
@@ -454,11 +437,6 @@ pub async fn put_config(
             compose_file: body.compose_file,
             auto_deploy: body.auto_deploy.unwrap_or(false),
             inputs,
-            last_run_id: None,
-            last_run_status: None,
-            last_run_conclusion: None,
-            last_run_url: None,
-            last_run_at: None,
         }),
     )
         .into_response()

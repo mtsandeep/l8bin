@@ -4,6 +4,7 @@ import { fetchDeployLogs, fetchLogs, ProjectStatus, type ServiceInfo } from '../
 import { useIntervalWhileVisible } from '../hooks/useIntervalWhileVisible';
 
 /** Strip ANSI / CSI escape sequences so colored terminal logs render as plain text. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the ESC control char is the thing being matched
 const ANSI_RE = /\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 
 function stripAnsi(text: string): string {

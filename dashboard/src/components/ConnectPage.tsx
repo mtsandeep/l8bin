@@ -146,6 +146,7 @@ export default function ConnectPage() {
                     <span className="text-sm font-mono font-semibold text-slate-500 tracking-widest">L8B-</span>
                     {cells.map((c, i) => (
                       <input
+                        // biome-ignore lint/suspicious/noArrayIndexKey: fixed 5-cell PIN grid, position is the identity
                         key={i}
                         ref={(el) => {
                           cellRefs.current[i] = el;

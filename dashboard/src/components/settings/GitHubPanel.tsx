@@ -345,7 +345,6 @@ export default function GitHubPanel() {
     );
   }
 
-  // Setup screens take precedence over the connected view.
   // Setup screens take precedence so "+ Add another account" can open them.
   if (connection && connected && Array.isArray(connections) && view === 'choose') {
     const activeConnections = connections.filter((c) => c.status !== 'pending');

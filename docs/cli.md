@@ -358,7 +358,7 @@ l8b deploy --project myapp --port 3000
 
 ## GitHub Actions
 
-The dashboard can manage the whole thing — `Settings → GitHub` connects a GitHub App (or PAT), and Deploy → GitHub repo writes the workflow + secrets into your repo for you ([github-connect.md](planning/github-connect.md)).
+The dashboard can manage the whole thing — `Settings → GitHub` connects a GitHub App (or PAT), and Deploy → GitHub repo writes the workflow + secrets into your repo for you ([github-connect.md](github-connect.md)).
 
 To wire it by hand, see [l8bin-action](https://github.com/mtsandeep/l8bin-action) for the reusable composite action:
 

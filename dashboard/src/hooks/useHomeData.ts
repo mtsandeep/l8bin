@@ -33,6 +33,7 @@ export function useHomeData(user: { username: string; is_admin: boolean } | null
     if (user) loadProjectsAndStats();
   }, 5000);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is a location-state counter, not a reactive input
   useEffect(() => {
     if (user) loadProjectsAndStats();
   }, [loadProjectsAndStats, user, refreshKey]);

@@ -1217,11 +1217,6 @@ export interface ProjectGithubConfig {
   compose_file: string | null;
   auto_deploy: boolean;
   inputs: GitHubWorkflowInputs;
-  last_run_id?: number;
-  last_run_status?: string;
-  last_run_conclusion?: string;
-  last_run_url?: string;
-  last_run_at?: number;
 }
 
 export interface GitHubRun {

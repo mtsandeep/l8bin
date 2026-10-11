@@ -113,7 +113,7 @@ function findingsByService(findings: CompatibilityFinding[]): ServiceFindings[] 
     cards.push({ service: null, sections: project });
   }
   for (const service of [...services.keys()].sort()) {
-    cards.push({ service, sections: services.get(service)! });
+    cards.push({ service, sections: services.get(service) ?? emptyFindingSections() });
   }
   return cards;
 }
@@ -152,6 +152,7 @@ function ServiceFindingCard({ card }: { card: ServiceFindings }) {
               </div>
               <ul className="mt-1 space-y-1">
                 {lines.map((line, index) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: static report lines, never reordered
                   <li key={index} className={`text-[11px] leading-relaxed pl-2 border-l ${style.line}`}>
                     {line}
                   </li>
@@ -706,6 +707,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                                     )}
                                     <ul className="space-y-0.5">
                                       {bucket.lines.map((r, i) => (
+                                        // biome-ignore lint/suspicious/noArrayIndexKey: static warning lines, never reordered
                                         <li key={i} className="text-[10px] text-amber-300/70">
                                           {r}
                                         </li>

@@ -101,8 +101,7 @@ export default function GitHubDeployForm({
     return () => clearTimeout(t);
   }, [owner, repoName, repoPath, installationId, connectionId]);
 
-  // Live check: the deploy dialog only creates — an existing ID must be
-  // reworded/changed or linked from that project's settings instead.
+  // The deploy dialog only creates; existing projects are linked from their own settings.
   useEffect(() => {
     if (fixedProjectId) return;
     const id = projectId.trim();
@@ -170,8 +169,7 @@ export default function GitHubDeployForm({
 
       showToast(`Linked ${repo.full_name} → ${project.id}`, 'success');
 
-      // The workflow file is outside its own push path filter, so the link
-      // commit never self-triggers — always dispatch the first deploy.
+      // The link commit never self-triggers (path filter) — dispatch the first deploy.
       try {
         await dispatchGithubDeploy(project.id);
         showToast('Deploy dispatched — watch the GitHub icon on the project card', 'success');
@@ -246,8 +244,7 @@ export default function GitHubDeployForm({
               {idTaken && !fixedProjectId && (
                 <p className="text-xs text-amber-300/90 mt-1 flex items-start gap-1.5">
                   <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-                  Project ID already exists! Check project card settings to link repo to existing
-                  projects.
+                  Project ID already exists! Check project card settings to link repo to existing projects.
                 </p>
               )}
             </div>
@@ -424,7 +421,10 @@ export default function GitHubDeployForm({
                 <div className="flex items-center gap-2 text-xs">
                   <GithubMark size={11} className="text-slate-600 shrink-0" />
                   <span className="text-slate-300 truncate">
-                    Commit <span className="font-mono">.github/workflows/litebin-deploy.yml</span>
+                    Commit{' '}
+                    <span className="font-mono">
+                      {`.github/workflows/litebin-${(fixedProjectId ?? projectId).trim()}-deploy.yml`}
+                    </span>
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -435,7 +435,9 @@ export default function GitHubDeployForm({
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   <KeyRound size={11} className="text-slate-600 shrink-0" />
                   Set secrets <span className="font-mono">L8B_SERVER</span>,{' '}
-                  <span className="font-mono">L8B_TOKEN</span>
+                  <span className="font-mono">
+                    {`L8B_TOKEN_${(fixedProjectId ?? projectId).trim().toUpperCase().replace(/-/g, '_')}`}
+                  </span>
                 </div>
               </div>
             </div>

@@ -16,6 +16,7 @@ function timeAgoStr(iso: string | null): string {
   if (!iso) return '';
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (secs < 3600) return `${Math.max(1, Math.floor(secs / 60))}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
   if (secs < 86400 * 30) return `${Math.floor(secs / 86400)}d ago`;
   return new Date(iso).toLocaleDateString();
 }
@@ -76,7 +77,6 @@ export default function GitHubRepoBrowser({ domain, fixedProjectId, onClose, onL
       return;
     }
     load(1, true);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: reload on mode/account change
   }, [connections, pick]);
 
   const filtered = useMemo(() => {

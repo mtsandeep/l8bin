@@ -16,7 +16,7 @@ CREATE TABLE github_connection_v2 (
     -- PAT mode (repo + workflow scopes)
     pat_token TEXT,
     pat_login TEXT,
-    -- Pending manifest flow (JSON {name, nonce, created_at}) for callback exchange
+    -- Pending manifest flow (JSON {name, created_at}) for callback exchange
     pending_manifest TEXT,
     status TEXT NOT NULL DEFAULT 'active',          -- active | pending | degraded | disconnected
     status_message TEXT,

@@ -691,123 +691,121 @@ export default function SettingsPopover({
                 <Loader2 size={16} className="animate-spin text-slate-500" />
               </div>
             ) : (
-              <>
-                {(() => {
-                  const requested = capabilities.filter((c) => c.requested_reason);
-                  const grantedExtra = capabilities.filter((c) => c.granted && !c.requested_reason);
-                  const catalog = capabilities.filter((c) => !c.requested_reason && !c.granted);
-                  const q = capabilitySearch.trim().toLowerCase();
-                  const catalogFiltered = q
-                    ? catalog.filter(
-                        (c) =>
-                          c.label.toLowerCase().includes(q) ||
-                          c.id.toLowerCase().includes(q) ||
-                          c.description.toLowerCase().includes(q),
-                      )
-                    : catalog;
+              (() => {
+                const requested = capabilities.filter((c) => c.requested_reason);
+                const grantedExtra = capabilities.filter((c) => c.granted && !c.requested_reason);
+                const catalog = capabilities.filter((c) => !c.requested_reason && !c.granted);
+                const q = capabilitySearch.trim().toLowerCase();
+                const catalogFiltered = q
+                  ? catalog.filter(
+                      (c) =>
+                        c.label.toLowerCase().includes(q) ||
+                        c.id.toLowerCase().includes(q) ||
+                        c.description.toLowerCase().includes(q),
+                    )
+                  : catalog;
 
-                  const renderCap = (cap: ProjectCapabilityStatus, opts?: { showReason?: boolean }) => (
-                    <div key={cap.id} className="bg-slate-900/50 rounded px-2.5 py-2 space-y-1.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs text-slate-200 font-medium">{cap.label}</span>
-                            {cap.granted ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/15 text-emerald-400">
-                                Granted
-                              </span>
-                            ) : cap.requested_reason ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-amber-500/15 text-amber-400">
-                                Needed
-                              </span>
-                            ) : null}
-                          </div>
-                          <p className="text-[11px] text-slate-400 mt-0.5">{cap.description}</p>
-                          {opts?.showReason && cap.requested_reason && (
-                            <p className="text-[10px] text-amber-300/80 mt-1">{cap.requested_reason}</p>
-                          )}
-                          {cap.risk && <p className="text-[10px] text-amber-400/80 mt-1">{cap.risk}</p>}
-                          {cap.requires_recreate && (
-                            <p className="text-[10px] text-slate-500 mt-1">Requires recreate to apply</p>
-                          )}
+                const renderCap = (cap: ProjectCapabilityStatus, opts?: { showReason?: boolean }) => (
+                  <div key={cap.id} className="bg-slate-900/50 rounded px-2.5 py-2 space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs text-slate-200 font-medium">{cap.label}</span>
+                          {cap.granted ? (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/15 text-emerald-400">
+                              Granted
+                            </span>
+                          ) : cap.requested_reason ? (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-amber-500/15 text-amber-400">
+                              Needed
+                            </span>
+                          ) : null}
                         </div>
-                        {cap.granted ? (
-                          <button
-                            type="button"
-                            onClick={() => handleRevokeCapability(cap)}
-                            disabled={capabilityActionId === cap.id}
-                            className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-slate-700 text-slate-300 hover:bg-red-500/20 hover:text-red-300 transition-colors disabled:opacity-50 cursor-pointer"
-                          >
-                            {capabilityActionId === cap.id ? <Loader2 size={11} className="animate-spin" /> : 'Revoke'}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleGrantCapability(cap)}
-                            disabled={capabilityActionId === cap.id}
-                            className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
-                          >
-                            {capabilityActionId === cap.id ? <Loader2 size={11} className="animate-spin" /> : 'Grant'}
-                          </button>
+                        <p className="text-[11px] text-slate-400 mt-0.5">{cap.description}</p>
+                        {opts?.showReason && cap.requested_reason && (
+                          <p className="text-[10px] text-amber-300/80 mt-1">{cap.requested_reason}</p>
+                        )}
+                        {cap.risk && <p className="text-[10px] text-amber-400/80 mt-1">{cap.risk}</p>}
+                        {cap.requires_recreate && (
+                          <p className="text-[10px] text-slate-500 mt-1">Requires recreate to apply</p>
                         )}
                       </div>
+                      {cap.granted ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRevokeCapability(cap)}
+                          disabled={capabilityActionId === cap.id}
+                          className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-slate-700 text-slate-300 hover:bg-red-500/20 hover:text-red-300 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {capabilityActionId === cap.id ? <Loader2 size={11} className="animate-spin" /> : 'Revoke'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleGrantCapability(cap)}
+                          disabled={capabilityActionId === cap.id}
+                          className="shrink-0 px-2 py-1 rounded text-[10px] font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {capabilityActionId === cap.id ? <Loader2 size={11} className="animate-spin" /> : 'Grant'}
+                        </button>
+                      )}
                     </div>
-                  );
+                  </div>
+                );
 
-                  return (
-                    <div className="space-y-3">
+                return (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
+                        Needed by Compose
+                      </p>
+                      {requested.length === 0 ? (
+                        <p className="text-[11px] text-slate-500 px-0.5">
+                          This project does not currently request any capabilities.
+                        </p>
+                      ) : (
+                        requested.map((cap) => renderCap(cap, { showReason: true }))
+                      )}
+                    </div>
+
+                    {grantedExtra.length > 0 && (
                       <div className="space-y-2">
                         <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
-                          Needed by Compose
+                          Granted (not requested by current compose)
                         </p>
-                        {requested.length === 0 ? (
-                          <p className="text-[11px] text-slate-500 px-0.5">
-                            This project does not currently request any capabilities.
-                          </p>
-                        ) : (
-                          requested.map((cap) => renderCap(cap, { showReason: true }))
-                        )}
+                        {grantedExtra.map((cap) => renderCap(cap))}
                       </div>
+                    )}
 
-                      {grantedExtra.length > 0 && (
-                        <div className="space-y-2">
-                          <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
-                            Granted (not requested by current compose)
-                          </p>
-                          {grantedExtra.map((cap) => renderCap(cap))}
+                    {catalog.length > 0 && (
+                      <details
+                        open={capabilityCatalogOpen}
+                        onToggle={(e) => setCapabilityCatalogOpen((e.target as HTMLDetailsElement).open)}
+                        className="rounded border border-slate-700/50 bg-slate-900/30"
+                      >
+                        <summary className="px-2.5 py-2 text-[11px] text-slate-400 cursor-pointer select-none">
+                          Browse other capabilities
+                          <span className="ml-1 opacity-60">({catalog.length})</span>
+                        </summary>
+                        <div className="px-2.5 pb-2.5 space-y-2 border-t border-slate-700/40 pt-2">
+                          <input
+                            type="search"
+                            value={capabilitySearch}
+                            onChange={(e) => setCapabilitySearch(e.target.value)}
+                            placeholder="Search capabilities…"
+                            className="w-full px-2 py-1.5 rounded bg-slate-900/60 border border-slate-700/50 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50"
+                          />
+                          {catalogFiltered.length === 0 ? (
+                            <p className="text-[11px] text-slate-500">No matches</p>
+                          ) : (
+                            catalogFiltered.map((cap) => renderCap(cap))
+                          )}
                         </div>
-                      )}
-
-                      {catalog.length > 0 && (
-                        <details
-                          open={capabilityCatalogOpen}
-                          onToggle={(e) => setCapabilityCatalogOpen((e.target as HTMLDetailsElement).open)}
-                          className="rounded border border-slate-700/50 bg-slate-900/30"
-                        >
-                          <summary className="px-2.5 py-2 text-[11px] text-slate-400 cursor-pointer select-none">
-                            Browse other capabilities
-                            <span className="ml-1 opacity-60">({catalog.length})</span>
-                          </summary>
-                          <div className="px-2.5 pb-2.5 space-y-2 border-t border-slate-700/40 pt-2">
-                            <input
-                              type="search"
-                              value={capabilitySearch}
-                              onChange={(e) => setCapabilitySearch(e.target.value)}
-                              placeholder="Search capabilities…"
-                              className="w-full px-2 py-1.5 rounded bg-slate-900/60 border border-slate-700/50 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50"
-                            />
-                            {catalogFiltered.length === 0 ? (
-                              <p className="text-[11px] text-slate-500">No matches</p>
-                            ) : (
-                              catalogFiltered.map((cap) => renderCap(cap))
-                            )}
-                          </div>
-                        </details>
-                      )}
-                    </div>
-                  );
-                })()}
-              </>
+                      </details>
+                    )}
+                  </div>
+                );
+              })()
             )}
           </div>
         )}

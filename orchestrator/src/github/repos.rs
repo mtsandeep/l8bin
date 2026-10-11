@@ -63,7 +63,6 @@ pub struct RepoDetail {
 #[derive(Debug, Deserialize)]
 struct GhBranch {
     name: String,
-    #[allow(dead_code)]
     protected: bool,
 }
 
