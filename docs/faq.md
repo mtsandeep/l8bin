@@ -15,6 +15,7 @@
 - [Volumes & Persistent Data](#volumes--persistent-data)
 - [Custom Routes Not Working](#custom-routes-not-working)
 - [Docker Images & Disk Space](#docker-images--disk-space)
+- [Memory Usage](#memory-usage)
 
 For a comprehensive view of how LiteBin handles failures at every layer, see [Failure Model](failure-model.md). For why these architectural choices were made, see [Design Decisions](decisions.md).
 
@@ -549,3 +550,25 @@ docker image prune
 # Prune ALL unused images (not just dangling)
 docker image prune -a
 ```
+
+---
+
+## Memory Usage
+
+### How much RAM does LiteBin itself use?
+
+The platform (orchestrator + dashboard + Caddy proxy) idles at ~45MB on a small VPS — the landing page's memory card is live telemetry from the 512MB VPS that serves it. A 512MB VPS runs the platform plus several sleeping apps comfortably.
+
+### Why does my server show more than 58MB?
+
+Most likely you're on a host with 2GB+ RAM. There, the proxy (Caddy) runs with Go's default heap policy and floats to ~60MB — it uses spare memory as headroom to do less GC work. That's by design, not a leak; on hosts under 2GB RAM LiteBin caps the proxy heap automatically (`GOMEMLIMIT=35MiB`). The orchestrator itself idles around 34MB even on a 9-project master.
+
+On very small boxes also note: if the host has swap, the kernel parks cold pages in swap opportunistically, so per-process RSS understates real usage — check RSS+swap together, or just `docker stats`.
+
+Measured numbers per host size, plus how to reproduce them: [memory-footprint.md](memory-footprint.md).
+
+### Can I tune it?
+
+- Orchestrator and agent images ship allocator tuning (`_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2`) so freed memory returns to the OS promptly. Override per host by setting that variable in the `.env` your compose loads.
+- Deploys briefly spike ~20MB and settle back within seconds; a platform restart always returns the stack to its idle footprint.
+

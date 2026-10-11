@@ -67,7 +67,7 @@ document.querySelectorAll('.bar-fill[data-w]').forEach(el => {
     if (cid && cval) countUp(cid, cval, 1200);
   }, 300);
 });
-setTimeout(() => countUp('mv-total', 43.4, 1200), 300);
+setTimeout(() => countUp('mv-total', 47, 1200), 300);
 
 // Scroll fade-in
 const fadeObs = new IntersectionObserver(entries => {
@@ -273,8 +273,8 @@ if (glitchEl) {
   const history = [];
   const HIST_MAX = 90;
 
-  const STATIC_VALS = { 'mv-0': 9.4, 'mv-1': 1.5, 'mv-2': 32.8, 'mv-total': 43.7 };
-  const STATIC_WIDTHS = { 'mv-0': '16%', 'mv-1': '3%', 'mv-2': '57%' };
+  const STATIC_VALS = { 'mv-0': 16, 'mv-1': 2, 'mv-2': 29, 'mv-total': 47 };
+  const STATIC_WIDTHS = { 'mv-0': '28%', 'mv-1': '3%', 'mv-2': '50%' };
 
   // One place decides the status chip's text, dot and colour per state.
   const CHIP_CLASSES = ['border-zinc-700', 'text-zinc-500', 'border-amber-500/30', 'text-amber-400', 'border-emerald-500/30', 'text-emerald-400'];

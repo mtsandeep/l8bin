@@ -485,6 +485,36 @@ compose_up() {
   echo "$out" | grep -E 'Container|Started|Stopped|Recreated|Creating|Removing|Warning|Error' || true
 }
 
+# (Re)generate the orchestrator Dockerfile.
+write_orchestrator_dockerfile() {
+  local install_dir="$1"
+  cat > "${install_dir}/orchestrator/Dockerfile" <<'ORCH_DOCKERFILE'
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV _RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2
+COPY litebin-orchestrator /app/litebin-orchestrator
+RUN chmod +x /app/litebin-orchestrator
+WORKDIR /app
+RUN mkdir -p /app/data
+CMD ["/app/litebin-orchestrator"]
+ORCH_DOCKERFILE
+}
+
+write_agent_dockerfile() {
+  local install_dir="$1"
+  cat > "${install_dir}/agent/Dockerfile" <<'AGENT_DOCKERFILE'
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV _RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2
+COPY litebin-agent /usr/local/bin/litebin-agent
+RUN chmod +x /usr/local/bin/litebin-agent
+WORKDIR /etc/litebin
+RUN mkdir -p /etc/litebin/data
+EXPOSE 8443
+CMD ["/usr/local/bin/litebin-agent"]
+AGENT_DOCKERFILE
+}
+
 # True if the container was created at/after the given epoch.
 container_created_since() {
   local name="$1" epoch="$2" created
@@ -742,15 +772,7 @@ install_master() {
   install_dashboard_package "$install_dir" "$release_url"
 
   # Generate orchestrator Dockerfile
-  cat > "${install_dir}/orchestrator/Dockerfile" <<'ORCH_DOCKERFILE'
-FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY litebin-orchestrator /app/litebin-orchestrator
-RUN chmod +x /app/litebin-orchestrator
-WORKDIR /app
-RUN mkdir -p /app/data
-CMD ["/app/litebin-orchestrator"]
-ORCH_DOCKERFILE
+  write_orchestrator_dockerfile "${install_dir}"
 
   # -- Interactive prompts ------------------------------------------------
   echo ""
@@ -1294,16 +1316,7 @@ AGENT_CADDYFILE
   chmod +x "${install_dir}/agent/litebin-agent"
 
   # Generate agent Dockerfile
-  cat > "${install_dir}/agent/Dockerfile" <<'AGENT_DOCKERFILE'
-FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY litebin-agent /usr/local/bin/litebin-agent
-RUN chmod +x /usr/local/bin/litebin-agent
-WORKDIR /etc/litebin
-RUN mkdir -p /etc/litebin/data
-EXPOSE 8443
-CMD ["/usr/local/bin/litebin-agent"]
-AGENT_DOCKERFILE
+  write_agent_dockerfile "${install_dir}"
 
   # -- Interactive prompts -----------------------------------------------
   echo ""
@@ -1548,6 +1561,8 @@ update_master() {
     "orchestrator ${target_release} (${arch})"
   chmod +x "${install_dir}/orchestrator/litebin-orchestrator"
 
+  write_orchestrator_dockerfile "${install_dir}"
+
   # Download new dashboard
   install_dashboard_package "$install_dir" "$target_release"
 
@@ -1725,6 +1740,8 @@ update_agent() {
     "${install_dir}/agent/litebin-agent" \
     "agent ${target_release} (${arch})"
   chmod +x "${install_dir}/agent/litebin-agent"
+
+  write_agent_dockerfile "${install_dir}"
 
   # Confirm restart
   echo ""

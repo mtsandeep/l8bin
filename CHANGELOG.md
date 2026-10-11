@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Orchestrator and agent RSS no longer sits at the allocation high-water mark** — jemalloc now runs with `narenas:2` and a 1s dirty decay (`_RJEM_MALLOC_CONF` baked into both the installer-generated and source Dockerfiles, override per host); a 9-project master drops from 77MB to 34MB idle. Methodology and per-host numbers: [docs/memory-footprint.md](docs/memory-footprint.md).
+
 ## [0.4.5] - 2026-10-11
 
 ### Added

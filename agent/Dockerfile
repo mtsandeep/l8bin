@@ -36,6 +36,9 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 
 COPY --from=builder /build/target/release/litebin-agent /usr/local/bin/litebin-agent
 
+# Keep RSS near live usage: fewer arenas + fast page return (override per host via env)
+ENV _RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2
+
 EXPOSE 8443
 
 CMD ["/usr/local/bin/litebin-agent"]
