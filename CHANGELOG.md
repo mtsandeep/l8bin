@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-10-11
+
 ### Added
 - **GitHub connect & deploy-from-repo** — Settings → GitHub connects your own private GitHub App (one-click prefilled creation via the manifest flow — no GitHub review, owned by your account) or a personal access token, then Deploy → GitHub repo lists your repos: pick one, choose branch and subfolder, and LiteBin commits the deploy workflow into the repo and writes the `L8B_SERVER`/token secrets itself — nothing to wire by hand. Build and deploy run on GitHub-hosted runners through the existing `l8b` pipeline; the project card shows a GitHub status icon with run history, Deploy now, auto-deploy toggle, token rotation, and unlink. Existing projects link a repo from the card's settings instead of the deploy dialog, which only creates new projects.
 - **Multiple GitHub accounts** — private apps only install on their owning account, so LiteBin keeps one connection per app (or PAT); connections coexist with independent installations, per-account repo lists, and per-connection disconnect. Installations stay in sync by polling and webhook — uninstalling on GitHub flips the card back to "install" automatically.
