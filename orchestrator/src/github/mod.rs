@@ -1,7 +1,4 @@
-//! GitHub API client for the connect-and-deploy integration: repo browsing,
-//! workflow-file authoring, Actions secrets/dispatch/runs. Connection
-//! credentials live in the `github_connection` singleton row (App or PAT);
-//! this module only speaks the GitHub REST API.
+//! GitHub REST client for the connect-and-deploy integration.
 
 pub mod actions;
 pub mod auth;
@@ -95,8 +92,7 @@ fn not_connected() -> GitHubApiError {
     GitHubApiError::Api { status: 503, message: "GitHub is not connected — connect it in Settings → GitHub".into() }
 }
 
-/// Minimal REST wrapper. One client per request handler; tokens are resolved
-/// at construction (PAT directly, installation token via the auth cache).
+/// Minimal REST wrapper; the token is resolved at construction.
 #[derive(Clone)]
 pub struct GitHubClient {
     http: reqwest::Client,
@@ -141,7 +137,7 @@ impl GitHubClient {
         Ok(resp.json::<T>().await?)
     }
 
-    /// Fire-and-status (no body): dispatches and secret puts return 201/204.
+    /// Fire-and-status (no body).
     async fn empty(&self, rb: reqwest::RequestBuilder) -> Result<(), GitHubApiError> {
         let resp = rb.send().await?;
         let status = resp.status();
@@ -241,8 +237,7 @@ pub async fn connection_by_id(db: &SqlitePool, id: i64) -> Result<Option<Connect
     Ok(row.map(row_from))
 }
 
-/// Client for a connection: PAT directly, or the connection's first active
-/// installation in app mode.
+/// PAT directly, or the connection's first active installation.
 pub async fn client_for_connection_id(db: &SqlitePool, id: i64) -> Result<GitHubClient, GitHubApiError> {
     let conn = connection_by_id(db, id).await?.ok_or_else(not_connected)?;
     match conn.mode.as_str() {
@@ -251,8 +246,6 @@ pub async fn client_for_connection_id(db: &SqlitePool, id: i64) -> Result<GitHub
             Ok(GitHubClient::pat(token))
         }
         "app" => {
-            // Credentials first: a pending manifest flow (no key yet) must read
-            // as "reconnect", not as "app not installed".
             let app = conn.app_credentials().ok_or_else(|| GitHubApiError::AuthExpired)?;
             let installation: Option<(i64,)> = sqlx::query_as(
                 "SELECT id FROM github_installations WHERE connection_id = ? AND status = 'active' ORDER BY id LIMIT 1",
@@ -276,8 +269,7 @@ pub async fn client_for_connection_id(db: &SqlitePool, id: i64) -> Result<GitHub
     }
 }
 
-/// Client scoped to a specific installation — resolves the owning app
-/// connection through github_installations.connection_id.
+/// Client for an installation, resolved via github_installations.connection_id.
 pub async fn client_for_installation(db: &SqlitePool, installation_id: i64) -> Result<GitHubClient, GitHubApiError> {
     let conn_id: Option<i64> = sqlx::query_scalar("SELECT connection_id FROM github_installations WHERE id = ?")
         .bind(installation_id)
@@ -296,8 +288,7 @@ pub async fn client_for_installation(db: &SqlitePool, installation_id: i64) -> R
     GitHubClient::installation(&app, installation_id).await
 }
 
-/// Client for a linked repo: installation-scoped when the link carries one,
-/// else the link's own connection (PAT).
+/// Installation-scoped when the link carries one, else its connection (PAT).
 pub async fn client_for_link(
     db: &SqlitePool,
     connection_id: Option<i64>,

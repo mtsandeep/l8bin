@@ -150,6 +150,39 @@ pub async fn set_domain(raw: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `set-dashboard-subdomain <label>` subcommand.
+///
+/// Persists the dashboard label into the settings DB; restart the orchestrator
+/// afterwards. Intended usage:
+///
+/// ```text
+/// docker exec -it litebin-orchestrator /app/litebin-orchestrator set-dashboard-subdomain <label>
+/// ```
+pub async fn set_dashboard_subdomain(raw: &str) -> anyhow::Result<()> {
+    let config = Config::from_env()?;
+    let db = db::init_pool(&config.database_url).await?;
+
+    let label = crate::platform::normalize_subdomain_label(raw).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    println!("litebin orchestrator — set dashboard subdomain");
+    println!();
+
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'dashboard_subdomain'").fetch_optional(&db).await?;
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES ('dashboard_subdomain', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(&label)
+    .execute(&db)
+    .await?;
+    println!("dashboard_subdomain: {} -> {}", old.as_deref().unwrap_or("(unset)"), label);
+
+    let domain = setting_or(&db, "domain", config.domain.clone()).await;
+    println!("Dashboard will be at https://{label}.{domain} after restart.");
+    println!("Restart now:  docker compose restart orchestrator");
+    Ok(())
+}
+
 async fn setting_or(db: &sqlx::SqlitePool, key: &str, fallback: String) -> String {
     sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
         .bind(key)

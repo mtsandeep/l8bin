@@ -1,7 +1,7 @@
 import { DatabaseBackup, Key, SlidersHorizontal } from 'lucide-react';
-import GithubMark from '../GithubMark';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import GithubMark from '../GithubMark';
 import BackupPanel from './BackupPanel';
 import GeneralPanel from './GeneralPanel';
 import GitHubPanel from './GitHubPanel';

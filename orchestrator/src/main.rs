@@ -96,9 +96,19 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Some("set-dashboard-subdomain") => {
+            let label = std::env::args().nth(2);
+            match label {
+                Some(l) => return cli::set_dashboard_subdomain(&l).await,
+                None => {
+                    eprintln!("usage: litebin-orchestrator set-dashboard-subdomain <label>");
+                    std::process::exit(2);
+                }
+            }
+        }
         Some(other) if !other.starts_with('-') => {
             eprintln!("unknown subcommand: {other}");
-            eprintln!("available subcommands: reset-password, set-domain");
+            eprintln!("available subcommands: reset-password, set-domain, set-dashboard-subdomain");
             eprintln!("run with no arguments to start the orchestrator server");
             std::process::exit(2);
         }

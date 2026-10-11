@@ -76,21 +76,23 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
             Auto-stop and request-driven auto-start are not available for background projects.
           </p>
         ) : null}
-        {!project.is_background && <label className="flex items-center justify-between gap-2 cursor-pointer">
-          <span className="text-xs text-slate-300">Auto-stop when idle</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoStop}
-            aria-describedby={autoStopWarningId}
-            onClick={() => setAutoStop(!autoStop)}
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStop ? 'bg-violet-500' : 'bg-slate-600'}`}
-          >
-            <span
-              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStop ? 'translate-x-3.5' : 'translate-x-0.5'}`}
-            />
-          </button>
-        </label>}
+        {!project.is_background && (
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <span className="text-xs text-slate-300">Auto-stop when idle</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoStop}
+              aria-describedby={autoStopWarningId}
+              onClick={() => setAutoStop(!autoStop)}
+              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStop ? 'bg-violet-500' : 'bg-slate-600'}`}
+            >
+              <span
+                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStop ? 'translate-x-3.5' : 'translate-x-0.5'}`}
+              />
+            </button>
+          </label>
+        )}
         {!project.is_background && (
           <p id={autoStopWarningId} className="text-[11px] leading-relaxed text-slate-400">
             Auto-stop stops every service in this project. Disable it for scheduled jobs, queue workers, or other tasks
@@ -109,20 +111,22 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
             />
           </div>
         )}
-        {!project.is_background && <label className="flex items-center justify-between gap-2 cursor-pointer">
-          <span className="text-xs text-slate-300">Auto-start on visit</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoStart}
-            onClick={() => setAutoStart(!autoStart)}
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStart ? 'bg-violet-500' : 'bg-slate-600'}`}
-          >
-            <span
-              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStart ? 'translate-x-3.5' : 'translate-x-0.5'}`}
-            />
-          </button>
-        </label>}
+        {!project.is_background && (
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <span className="text-xs text-slate-300">Auto-start on visit</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoStart}
+              onClick={() => setAutoStart(!autoStart)}
+              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer ${autoStart ? 'bg-violet-500' : 'bg-slate-600'}`}
+            >
+              <span
+                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoStart ? 'translate-x-3.5' : 'translate-x-0.5'}`}
+              />
+            </button>
+          </label>
+        )}
       </div>
     </div>
   );

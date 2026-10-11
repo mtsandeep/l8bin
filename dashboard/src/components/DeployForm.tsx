@@ -11,7 +11,6 @@ import {
   Shield,
   X,
 } from 'lucide-react';
-import GithubMark from './GithubMark';
 import { useEffect, useMemo, useState } from 'react';
 import {
   type CapabilityInfo,
@@ -30,6 +29,7 @@ import {
 } from '../api';
 import DeployProgressModal from './DeployProgressModal';
 import GitHubRepoBrowser from './GitHubRepoBrowser';
+import GithubMark from './GithubMark';
 import ResourceLimitInput from './ResourceLimitInput';
 import { useToast } from './ToastContext';
 
@@ -444,10 +444,6 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
               </button>
             </div>
 
-            {showGithubBrowser && (
-              <GitHubRepoBrowser domain={domain} onClose={() => setShowGithubBrowser(false)} onLinked={onDeploy} />
-            )}
-
             <div>
               <span className="block text-xs font-medium text-slate-400 mb-1.5">Project type</span>
               <div className="grid grid-cols-2 gap-2">
@@ -630,6 +626,17 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
               )}
             </button>
           </form>
+        )}
+
+        {showGithubBrowser && (
+          <GitHubRepoBrowser
+            domain={domain}
+            onClose={() => setShowGithubBrowser(false)}
+            onLinked={() => {
+              onDeploy();
+              onClose();
+            }}
+          />
         )}
 
         {/* Validate step (compose only) */}

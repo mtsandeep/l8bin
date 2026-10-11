@@ -3,11 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { exchangeGithubManifest, listGithubConnections, listGithubInstallations } from '../../api';
 
-/**
- * Manifest-flow landing: GitHub redirects here with ?code= after the user
- * confirms the prefilled app registration. We exchange it, then walk the
- * user through installing the app on their account.
- */
+/** Manifest-flow landing: exchange ?code=, then guide the install. */
 export default function GithubCallbackPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -17,9 +13,6 @@ export default function GithubCallbackPage() {
   const [manageUrl, setManageUrl] = useState<string | null>(null);
   const [appSlug, setAppSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Manifest codes are single-use: never exchange twice for one landing
-  // (StrictMode fires effects twice in dev; refresh replays the code too —
-  // the server tolerates that, but no reason to burn a second request).
   const exchanged = useRef(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on landing; code/params are read once
@@ -27,8 +20,6 @@ export default function GithubCallbackPage() {
     if (exchanged.current) return;
     exchanged.current = true;
 
-    // GitHub redirects with ?error=… when the manifest flow fails or is
-    // cancelled on their side — no code to exchange then.
     const ghError = params.get('error_description') ?? params.get('error');
     if (ghError) {
       setError(ghError);
@@ -54,8 +45,6 @@ export default function GithubCallbackPage() {
     })();
   }, []);
 
-  // Poll for THIS app's installation appearing (user completed the install).
-  // Scoped by slug — other apps' installations must not satisfy the wait.
   useEffect(() => {
     if (phase !== 'install' || !appSlug) return;
     const id = setInterval(async () => {
@@ -67,9 +56,7 @@ export default function GithubCallbackPage() {
           clearInterval(id);
           navigate('/settings/github', { state: { refresh: Date.now() } });
         }
-      } catch {
-        // Not installed yet — keep waiting.
-      }
+      } catch {}
     }, 3000);
     return () => clearInterval(id);
   }, [phase, appSlug, navigate]);
@@ -95,9 +82,7 @@ export default function GithubCallbackPage() {
               </h2>
             </div>
 
-            <p className="text-xs text-slate-400">
-              Next: install it on the GitHub account where your repos live.
-            </p>
+            <p className="text-xs text-slate-400">Next: install it on the GitHub account where your repos live.</p>
 
             {/* Screenshot of GitHub's install screen so it looks familiar. */}
             <div className="space-y-2">

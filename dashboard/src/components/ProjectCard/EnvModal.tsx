@@ -183,8 +183,7 @@ export default function EnvModal({ projectId, status, onRefresh, onClose }: EnvM
               <Loader2 size={20} className="animate-spin text-slate-500" />
             </div>
           ) : view === 'bulk' ? (
-            (
-              <div className="space-y-3">
+            <div className="space-y-3">
               <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-slate-800/40 border border-slate-700/50">
                 <EyeOff size={14} className="text-slate-500 shrink-0 mt-0.5" />
                 <p className="text-[11px] text-slate-400">
@@ -243,7 +242,6 @@ export default function EnvModal({ projectId, status, onRefresh, onClose }: EnvM
                 </button>
               </div>
             </div>
-            )
           ) : (
             <>
               <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-slate-800/40 border border-slate-700/50">

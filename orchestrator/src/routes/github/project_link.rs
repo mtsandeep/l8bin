@@ -1,6 +1,4 @@
-//! Per-project GitHub links: the config PUT writes the generated workflow +
-//! repo secrets and mints a project-scoped deploy token (all-or-nothing);
-//! PATCH retoggles auto-deploy by rewriting the workflow; DELETE unlinks.
+//! Per-project GitHub links: link/unlink, auto-deploy toggle, dispatch, rotate.
 
 use axum::{
     Json,
@@ -17,7 +15,7 @@ use crate::github::{self, GitHubApiError};
 use super::connect::{gh_error, mark_degraded};
 use super::{mint_project_token, split_repo};
 
-/// Workflow inputs persisted alongside the link (JSON in `workflow_inputs`).
+/// Workflow inputs persisted as JSON in `workflow_inputs`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct WorkflowInputs {
     pub port: Option<u16>,
@@ -26,6 +24,7 @@ pub struct WorkflowInputs {
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
     pub node_id: Option<String>,
+    pub path: Option<String>,
     pub compose_services: Vec<String>,
 }
 
@@ -49,6 +48,10 @@ pub struct LinkRequest {
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
     pub node_id: Option<String>,
+    /// Subdirectory of the repo the app lives in (empty = repo root).
+    pub path: Option<String>,
+    /// Commit message for the workflow file; defaults when empty.
+    pub commit_message: Option<String>,
     pub compose_services: Option<Vec<String>>,
 }
 
@@ -183,7 +186,7 @@ async fn load_link(state: &AppState, project_id: &str) -> Result<LinkRow, (Statu
     ))
 }
 
-/// 404-mapped project lookup (owner id returned for token minting).
+/// Project lookup; returns the owner id for token minting.
 async fn load_project(state: &AppState, project_id: &str) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
     let row: Option<(String,)> = sqlx::query_as("SELECT user_id FROM projects WHERE id = ?")
         .bind(project_id)
@@ -210,17 +213,18 @@ fn spec_from(row: &LinkRow, inputs: &WorkflowInputs, auto_deploy: bool) -> Workf
         memory_mb: inputs.memory_limit_mb,
         cpu: inputs.cpu_limit,
         node_id: inputs.node_id.clone(),
+        path: inputs.path.clone(),
         compose_services: inputs.compose_services.clone(),
     }
 }
 
-/// Dashboard-facing server URL for the generated workflow's L8B_SERVER secret.
+/// The workflow's L8B_SERVER value.
 fn dashboard_url(state: &AppState) -> String {
     let p = state.platform.snapshot();
     format!("https://{}.{}", p.dashboard_subdomain, p.domain)
 }
 
-/// Mark the connection degraded on auth failures, then map the error.
+/// Mark degraded on auth failures, then map the error.
 async fn gh_error_degraded(
     state: &AppState,
     connection_id: Option<i64>,
@@ -281,7 +285,10 @@ pub async fn put_config(
     };
     let client = match github::client_for_link(&state.db, body.connection_id, body.installation_id).await {
         Ok(c) => c,
-        Err(e) => return gh_error(e).into_response(),
+        Err(e) => {
+            tracing::warn!(project = %project_id, repo = %body.repo_full_name, error = %e, "github link failed: no usable credential");
+            return gh_error(e).into_response();
+        }
     };
 
     let deploy_kind = match body.deploy_kind.as_deref() {
@@ -297,9 +304,12 @@ pub async fn put_config(
     };
 
     // Resolve branch + repo id (one API call), defaulting branch to the repo default.
-    let detail = match client.repo_detail(&owner, &repo).await {
+    let detail = match client.repo_detail(&owner, &repo, body.path.as_deref()).await {
         Ok(d) => d,
-        Err(e) => return gh_error_degraded(&state, body.connection_id, e).await.into_response(),
+        Err(e) => {
+            tracing::warn!(project = %project_id, repo = %body.repo_full_name, error = %e, "github link failed: repo detail");
+            return gh_error_degraded(&state, body.connection_id, e).await.into_response();
+        }
     };
     let branch = body.branch.clone().filter(|b| !b.is_empty()).unwrap_or(detail.default_branch);
     let repo_id = body.repo_id.or(Some(detail.id));
@@ -311,6 +321,7 @@ pub async fn put_config(
         memory_limit_mb: body.memory_limit_mb,
         cpu_limit: body.cpu_limit,
         node_id: body.node_id,
+        path: body.path.as_deref().filter(|p| !p.is_empty() && *p != ".").map(str::to_string),
         compose_services: body.compose_services.unwrap_or_default(),
     };
     let spec = WorkflowSpec {
@@ -324,6 +335,7 @@ pub async fn put_config(
         memory_mb: inputs.memory_limit_mb,
         cpu: inputs.cpu_limit,
         node_id: inputs.node_id.clone(),
+        path: inputs.path.clone(),
         compose_services: inputs.compose_services.clone(),
     };
 
@@ -339,27 +351,35 @@ pub async fn put_config(
         }
     };
 
-    // Secrets first, then the workflow file. Any failure ⇒ roll the token back.
+    // Secrets first, then the workflow file; roll the token back on failure.
     let link_result = async {
         client.put_secret(&owner, &repo, "L8B_SERVER", &dashboard_url(&state)).await?;
         client.put_secret(&owner, &repo, "L8B_TOKEN", &token_plaintext).await?;
-        let sha = client.file_sha(&owner, &repo, workflow::WORKFLOW_FILE, &branch).await?;
-        client
-            .put_file(
-                &owner,
-                &repo,
-                workflow::WORKFLOW_FILE,
-                &branch,
-                "LiteBin: update deploy workflow",
-                &spec.render(),
-                sha,
-            )
-            .await?;
+        // Skip the commit when the rendered workflow is unchanged — GitHub's
+        // contents API would happily commit identical content again.
+        let rendered = spec.render();
+        if client.file_content(&owner, &repo, workflow::WORKFLOW_PATH, &branch).await?.as_deref()
+            == Some(rendered.as_str())
+        {
+            return Ok(());
+        }
+        let commit_message = body
+            .commit_message
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .unwrap_or("LiteBin: add deploy workflow")
+            .chars()
+            .take(100)
+            .collect::<String>();
+        let sha = client.file_sha(&owner, &repo, workflow::WORKFLOW_PATH, &branch).await?;
+        client.put_file(&owner, &repo, workflow::WORKFLOW_PATH, &branch, &commit_message, &rendered, sha).await?;
         Ok::<(), GitHubApiError>(())
     }
     .await;
 
     if let Err(e) = link_result {
+        tracing::warn!(project = %project_id, repo = %body.repo_full_name, error = %e, "github link failed: secrets/workflow write");
         let _ = sqlx::query("DELETE FROM deploy_tokens WHERE id = ?").bind(&token_id).execute(&state.db).await;
         return gh_error_degraded(&state, body.connection_id, e).await.into_response();
     }
@@ -380,7 +400,7 @@ pub async fn put_config(
         "INSERT INTO project_github_config
             (project_id, repo_full_name, repo_id, branch, workflow_path, deploy_kind, compose_file,
              workflow_inputs, auto_deploy, deploy_token_id, installation_id, connection_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(project_id) DO UPDATE SET
             repo_full_name = excluded.repo_full_name, repo_id = excluded.repo_id,
             branch = excluded.branch, deploy_kind = excluded.deploy_kind,
@@ -392,7 +412,7 @@ pub async fn put_config(
     .bind(format!("{owner}/{repo}"))
     .bind(repo_id)
     .bind(&branch)
-    .bind(workflow::WORKFLOW_FILE)
+    .bind(workflow::WORKFLOW_PATH)
     .bind(if deploy_kind == DeployKind::Compose { "compose" } else { "single" })
     .bind(&body.compose_file)
     .bind(&inputs_json)
@@ -413,7 +433,7 @@ pub async fn put_config(
             .into_response();
     }
 
-    // Drop the superseded token from an earlier link of this project.
+    // Drop the superseded token.
     if let Some(Some(old)) = old_token
         && old != token_id
     {
@@ -427,7 +447,7 @@ pub async fn put_config(
             project_id,
             repo_full_name: format!("{owner}/{repo}"),
             branch,
-            workflow_path: workflow::WORKFLOW_FILE.to_string(),
+            workflow_path: workflow::WORKFLOW_PATH.to_string(),
             deploy_kind: if deploy_kind == DeployKind::Compose { "compose" } else { "single" }.to_string(),
             compose_file: body.compose_file,
             auto_deploy: body.auto_deploy.unwrap_or(false),
@@ -504,6 +524,11 @@ async fn rewrite_workflow(
     auto_deploy: bool,
 ) -> Result<(), GitHubApiError> {
     let spec = spec_from(row, inputs, auto_deploy);
+    let rendered = spec.render();
+    // Skip no-op commits on auto-deploy toggles back to the same state.
+    if client.file_content(owner, repo, &row.workflow_path, &row.branch).await?.as_deref() == Some(rendered.as_str()) {
+        return Ok(());
+    }
     let sha = client.file_sha(owner, repo, &row.workflow_path, &row.branch).await?;
     client
         .put_file(
@@ -546,8 +571,7 @@ pub async fn delete_config(
         Err(e) => return (e.0, Json(serde_json::json!({"error": e.1}))).into_response(),
     };
 
-    // Best-effort repo cleanup — repo gone (404) is success. The project
-    // itself is untouched: unlink only removes the automation.
+    // Best-effort repo cleanup; 404 is success.
     if params.remove_files.unwrap_or(true)
         && let Ok(client) = github::client_for_link(&state.db, row.connection_id, row.installation_id).await
     {
@@ -612,7 +636,7 @@ pub async fn rotate_token(State(state): State<AppState>, Path(project_id): Path<
             }
         };
 
-    // Secret first so a run in flight never loses auth mid-swap.
+    // Secret first so in-flight runs keep auth.
     if let Err(e) = client.put_secret(&owner, &repo, "L8B_TOKEN", &token_plaintext).await {
         let _ = sqlx::query("DELETE FROM deploy_tokens WHERE id = ?").bind(&token_id).execute(&state.db).await;
         return gh_error_degraded(&state, connection_for_error, e).await.into_response();

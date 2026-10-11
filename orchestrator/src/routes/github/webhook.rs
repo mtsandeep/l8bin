@@ -1,7 +1,4 @@
-//! GitHub App webhook receiver: HMAC-verified installation lifecycle events.
-//! Push auto-deploy needs no webhook (GitHub runs the generated workflow
-//! itself); this keeps installations + connection status fresh when the user
-//! installs, suspends, or uninstalls the app.
+//! Webhook receiver: HMAC-verified installation lifecycle events.
 
 use axum::{
     body::Bytes,
@@ -16,7 +13,7 @@ use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Constant-time-ish comparison of the hex signature against our MAC.
+/// Verify the hex signature against our MAC.
 fn signature_matches(secret: &str, raw: &[u8], presented: &str) -> bool {
     let Some(presented) = presented.strip_prefix("sha256=") else { return false };
     let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
@@ -52,7 +49,7 @@ struct AccountPayload {
 
 /// POST /github/webhook — public, verified by X-Hub-Signature-256.
 pub async fn github_webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> impl IntoResponse {
-    // Each app connection has its own webhook secret — verify against all.
+    // Each app has its own secret — verify against all.
     let secrets: Vec<(i64, String)> = sqlx::query_as::<_, (i64, Option<String>)>(
         "SELECT id, webhook_secret FROM github_connection WHERE webhook_secret IS NOT NULL",
     )

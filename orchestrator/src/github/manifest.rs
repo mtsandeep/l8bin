@@ -1,27 +1,11 @@
-//! GitHub App Manifest flow: build a prefilled app definition (POSTed to
-//! github.com/settings/apps/new as the documented `manifest` form field) and
-//! exchange the callback code for the app's credentials (id, slug, client
-//! secret, private key, webhook secret).
+//! GitHub App Manifest flow: prefilled app definition + code exchange.
 
 use serde::Deserialize;
 
 use super::{API_BASE, GitHubApiError, USER_AGENT};
 
-/// Manifest keys are strict: anything outside the documented set (name, url,
-/// hook_attributes, redirect_url, callback_urls, setup_url, description,
-/// public, default_events, default_permissions, request_oauth_on_install,
-/// setup_on_update) makes GitHub silently drop the whole prefill.
-///
-/// Permissions the deploy flow needs:
-/// - metadata:read  — repo browsing (implicit baseline, declared for clarity)
-/// - contents:write — commit the generated workflow file
-/// - workflows:write— author files under .github/workflows/ (OAuth apps can't)
-/// - actions:write  — dispatch workflows, read runs
-/// - secrets:write  — write L8B_SERVER / L8B_TOKEN repo secrets
-///
-/// No `default_events`: `installation` (un)install events are delivered to
-/// Apps automatically, and repo add/remove is covered by live polling of
-/// GET /app/installations. Subscribing explicitly fails validation.
+/// Manifest keys are strict — unknown keys make GitHub drop the prefill.
+/// No default_events: installation events are automatic, repos are polled.
 pub fn manifest_json(name: &str, dashboard_url: &str, webhook_override: Option<&str>) -> serde_json::Value {
     let mut manifest = serde_json::json!({
         "name": name,
@@ -39,11 +23,8 @@ pub fn manifest_json(name: &str, dashboard_url: &str, webhook_override: Option<&
             "secrets": "write"
         }
     });
-    // An explicit override wins (the user chose it in the advanced view);
-    // otherwise GitHub validates webhook reachability at registration —
-    // local-only dashboards (localhost / private IPs) register without one.
-    // Installation status falls back to polling /github/installations, which
-    // is already what the panel and callback page drive.
+    // Explicit override wins; otherwise omit the webhook on local-only hosts
+    // (GitHub rejects unreachable webhooks — polling covers them).
     let webhook_url = webhook_override
         .map(str::to_string)
         .or_else(|| webhook_reachable(dashboard_url).then(|| format!("{dashboard_url}/github/webhook")));
@@ -53,8 +34,7 @@ pub fn manifest_json(name: &str, dashboard_url: &str, webhook_override: Option<&
     manifest
 }
 
-/// Over-broad on purpose: omitting the webhook is harmless (polling covers
-/// it), registering with an unreachable one is a hard GitHub validation error.
+/// Over-broad on purpose: a missing webhook is harmless, an unreachable one is a hard error.
 fn webhook_reachable(dashboard_url: &str) -> bool {
     let host = dashboard_url
         .trim_start_matches("https://")
@@ -96,8 +76,7 @@ pub struct ConvertedApp {
     pub webhook_secret: Option<String>,
 }
 
-/// Exchange the single-use manifest code for the app credentials.
-/// Note the plural path: /app-manifests/ — the singular form is a 404.
+/// Exchange the single-use manifest code. Plural path — the singular form 404s.
 pub async fn exchange_code(code: &str) -> Result<ConvertedApp, GitHubApiError> {
     let resp = reqwest::Client::new()
         .post(format!("{API_BASE}/app-manifests/{code}/conversions"))
@@ -117,9 +96,7 @@ pub async fn exchange_code(code: &str) -> Result<ConvertedApp, GitHubApiError> {
 mod tests {
     use super::*;
 
-    /// Every key must be in GitHub's documented manifest schema — an unknown
-    /// key (e.g. `hook_url` instead of `hook_attributes`) makes GitHub render
-    /// the registration form with NO prefill.
+    /// Unknown keys make GitHub render the form with no prefill.
     #[test]
     fn manifest_uses_only_documented_keys() {
         let m = manifest_json("l8bin", "https://l8b.example.com", None);

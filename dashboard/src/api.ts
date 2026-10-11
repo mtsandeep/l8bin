@@ -1152,7 +1152,7 @@ export async function updateProjectEnv(
   return res.json();
 }
 
-// ── GitHub integration ───────────────────────────────────────────────────────
+// ── GitHub integration ──
 
 export interface GitHubConnection {
   connected: boolean;
@@ -1203,6 +1203,8 @@ export interface GitHubWorkflowInputs {
   memory_limit_mb: number | null;
   cpu_limit: number | null;
   node_id: string | null;
+  /** Subdirectory of the repo the app lives in (null = repo root). */
+  path: string | null;
   compose_services: string[];
 }
 
@@ -1283,12 +1285,32 @@ export function listGithubRepos(page = 1, installationId?: number, connectionId?
   return ghFetch(`/github/repos?page=${page}${q}`);
 }
 
-export function getGithubRepoDetail(owner: string, repo: string): Promise<GitHubRepoDetail> {
-  return ghFetch(`/github/repos/${owner}/${repo}`);
+export function getGithubRepoDetail(
+  owner: string,
+  repo: string,
+  path?: string,
+  installationId?: number,
+  connectionId?: number,
+): Promise<GitHubRepoDetail> {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  if (installationId) params.set('installation_id', String(installationId));
+  if (connectionId) params.set('connection_id', String(connectionId));
+  const q = params.size > 0 ? `?${params.toString()}` : '';
+  return ghFetch(`/github/repos/${owner}/${repo}${q}`);
 }
 
-export function listGithubBranches(owner: string, repo: string): Promise<GitHubBranch[]> {
-  return ghFetch(`/github/repos/${owner}/${repo}/branches`);
+export function listGithubBranches(
+  owner: string,
+  repo: string,
+  installationId?: number,
+  connectionId?: number,
+): Promise<GitHubBranch[]> {
+  const params = new URLSearchParams();
+  if (installationId) params.set('installation_id', String(installationId));
+  if (connectionId) params.set('connection_id', String(connectionId));
+  const q = params.size > 0 ? `?${params.toString()}` : '';
+  return ghFetch(`/github/repos/${owner}/${repo}/branches${q}`);
 }
 
 export function getProjectGithubConfig(projectId: string): Promise<ProjectGithubConfig> {
@@ -1310,6 +1332,8 @@ export interface LinkGithubPayload {
   memory_limit_mb?: number;
   cpu_limit?: number;
   node_id?: string;
+  path?: string;
+  commit_message?: string;
   compose_services?: string[];
 }
 

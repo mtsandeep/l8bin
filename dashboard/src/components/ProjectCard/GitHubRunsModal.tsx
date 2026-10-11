@@ -21,16 +21,17 @@ interface Props {
 
 function runState(run: GitHubRun): { label: string; text: string; bg: string } {
   if (run.status === 'completed') {
-    return run.conclusion === 'success'
-      ? { label: 'success', text: 'text-emerald-400', bg: 'bg-emerald-400' }
-      : { label: run.conclusion ?? 'failed', text: 'text-red-400', bg: 'bg-red-400' };
+    if (run.conclusion === 'success') return { label: 'success', text: 'text-emerald-400', bg: 'bg-emerald-400' };
+    if (run.conclusion === 'cancelled') return { label: 'cancelled', text: 'text-slate-400', bg: 'bg-slate-400' };
+    return { label: run.conclusion ?? 'failed', text: 'text-red-400', bg: 'bg-red-400' };
   }
   return { label: run.status ?? 'queued', text: 'text-violet-400', bg: 'bg-violet-400' };
 }
 
 export default function GitHubRunsModal({ projectId, onRefresh, onClose }: Props) {
   const [repo, setRepo] = useState<string | null>(null);
-  const [runs, setRuns] = useState<GitHubRun[]>([]);
+  const [runs, setRuns] = useState<GitHubRun[] | null>(null);
+  const [runsError, setRunsError] = useState<string | null>(null);
   const [autoDeploy, setAutoDeploy] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [unlinkConfirm, setUnlinkConfirm] = useState(false);
@@ -45,7 +46,9 @@ export default function GitHubRunsModal({ projectId, onRefresh, onClose }: Props
       }
       const res = await fetchGithubRuns(projectId);
       setRuns(res.runs);
+      setRunsError(null);
     } catch (e) {
+      setRunsError((e as Error).message);
       showToast((e as Error).message, 'error');
     }
   };
@@ -95,7 +98,6 @@ export default function GitHubRunsModal({ projectId, onRefresh, onClose }: Props
         </div>
 
         <div className="p-5 space-y-4 overflow-y-auto">
-          {/* Actions */}
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
@@ -127,10 +129,18 @@ export default function GitHubRunsModal({ projectId, onRefresh, onClose }: Props
             </div>
           </div>
 
-          {/* Runs */}
           <div className="space-y-1.5">
-            {runs.length === 0 && <p className="text-xs text-slate-500 text-center py-4">No runs yet.</p>}
-            {runs.map((run) => {
+            {runs === null && !runsError && (
+              <p className="text-xs text-slate-500 text-center py-4 flex items-center justify-center gap-1.5">
+                <Loader2 size={11} className="animate-spin" />
+                Loading deployments…
+              </p>
+            )}
+            {runsError && <p className="text-xs text-amber-300/90 text-center py-4">{runsError}</p>}
+            {runs !== null && !runsError && runs.length === 0 && (
+              <p className="text-xs text-slate-500 text-center py-4">No runs yet.</p>
+            )}
+            {runs?.slice(0, 10).map((run) => {
               const state = runState(run);
               return (
                 <a
@@ -157,7 +167,6 @@ export default function GitHubRunsModal({ projectId, onRefresh, onClose }: Props
             })}
           </div>
 
-          {/* Maintenance */}
           <div className="flex items-center gap-3 pt-2 border-t border-slate-700/40">
             <button
               type="button"

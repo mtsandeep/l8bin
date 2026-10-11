@@ -1,5 +1,4 @@
-//! GitHub connection lifecycle: status, PAT connect, App manifest flow,
-//! installations, disconnect.
+//! GitHub connection lifecycle.
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use axum_login::AuthSession;
@@ -23,9 +22,7 @@ pub struct PatRequest {
     pub token: String,
 }
 
-/// Reattach to an existing GitHub App (App ID + private key from the app's
-/// settings page). The manifest flow always mints a NEW app; this is the
-/// reconnect path after a dashboard-side disconnect.
+/// Reattach to an existing GitHub App (manifest flow always mints a new one).
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct AppCredentialsRequest {
     pub app_id: i64,
@@ -87,7 +84,7 @@ pub async fn list_connections(State(state): State<AppState>) -> impl IntoRespons
     (StatusCode::OK, Json(out)).into_response()
 }
 
-/// DB snapshot of installations (per-connection), reused by the list endpoint.
+/// DB snapshot of installations.
 pub(crate) async fn load_installations(db: &sqlx::SqlitePool) -> Vec<InstallationSummary> {
     sqlx::query_as::<_, (i64, i64, String, String, Option<String>, String, String)>(
         "SELECT id, connection_id, account_login, account_type, account_avatar, repository_selection, status
@@ -136,8 +133,7 @@ pub async fn connection_status(State(state): State<AppState>) -> impl IntoRespon
         })
         .into_response();
     }
-    // Credentials must actually exist — a started-but-unfinished manifest flow
-    // must not read as connected.
+    // A pending manifest flow must not read as connected.
     let active = conns.iter().find(|c| c.has_credentials() && c.status != "disconnected");
     let pending = conns.iter().find(|c| c.status == "pending");
     match (active, pending) {
@@ -249,7 +245,7 @@ pub async fn connect_pat(
 
     let now = chrono::Utc::now().timestamp();
     let created_by = auth_session.user.as_ref().map(|u| u.username.clone());
-    // One row per GitHub login: reconnecting a known account refreshes it.
+    // One row per GitHub login.
     let res = sqlx::query(
         "UPDATE github_connection
          SET pat_token = ?, pat_login = ?, label = ?, status = 'active', status_message = NULL,
@@ -315,8 +311,7 @@ pub async fn disconnect(
         return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no such connection"}))).into_response();
     }
 
-    // Links served by this connection are dead without its credentials:
-    // revoke their tokens and drop the link rows (projects keep running).
+    // Links served by this connection are dead — revoke and drop them.
     if let Err(e) = sqlx::query(
         "DELETE FROM deploy_tokens WHERE id IN (
             SELECT deploy_token_id FROM project_github_config WHERE connection_id = ? AND deploy_token_id IS NOT NULL)",
@@ -339,8 +334,7 @@ pub async fn disconnect(
     (StatusCode::NO_CONTENT, "").into_response()
 }
 
-/// Mark a connection degraded (bad token, uninstalled app). Called by
-/// link/run handlers on GitHubApiError::AuthExpired.
+/// Mark a connection degraded on auth failures.
 pub(crate) async fn mark_degraded(db: &sqlx::SqlitePool, connection_id: Option<i64>, message: &str) {
     let now = chrono::Utc::now().timestamp();
     let res = match connection_id {
@@ -395,8 +389,7 @@ pub struct ManifestExchangeResponse {
     pub install_url: String,
 }
 
-/// Guided-flow input: name (default "l8bin") and an optional webhook override
-/// for users who unchecked "automated" and want to point events elsewhere.
+/// Guided-flow input: name + optional webhook override.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct ManifestStartRequest {
     /// GitHub App display name. Default "l8bin". Max 34 chars, letters,
@@ -468,8 +461,7 @@ pub async fn start_manifest(
 
     let now = chrono::Utc::now().timestamp();
 
-    // A name already attached here means GitHub would reject it anyway
-    // ("name already in use" on that account) — fail fast with the reason.
+    // Names are unique per GitHub account — fail fast with the reason.
     let taken: Option<(i64,)> =
         sqlx::query_as("SELECT id FROM github_connection WHERE mode = 'app' AND label = ? AND status != 'pending'")
             .bind(&name)
@@ -487,7 +479,7 @@ pub async fn start_manifest(
             .into_response();
     }
 
-    // One pending row at a time: retrying an unfinished setup reuses it.
+    // One pending row at a time.
     let pending = serde_json::json!({ "name": name, "created_at": now }).to_string();
     let res = sqlx::query(
         "UPDATE github_connection SET label = ?, pending_manifest = ?, status = 'pending', status_message = NULL, updated_at = ?
@@ -535,7 +527,7 @@ pub async fn exchange_manifest(
     State(state): State<AppState>,
     Json(payload): Json<ManifestExchangeRequest>,
 ) -> impl IntoResponse {
-    // The freshest pending manifest row is the one being exchanged.
+    // Exchange the freshest pending row.
     let pending: Option<(i64, Option<String>)> = sqlx::query_as(
         "SELECT id, pending_manifest FROM github_connection WHERE status = 'pending' ORDER BY updated_at DESC LIMIT 1",
     )
@@ -571,10 +563,8 @@ pub async fn exchange_manifest(
     let app = match github::manifest::exchange_code(payload.code.trim()).await {
         Ok(a) => a,
         Err(GitHubApiError::NotFound) => {
-            // Manifest codes are single-use. A repeat landing on the callback
-            // (refresh, second tab, dev-mode double effect) re-exchanges a
-            // consumed code — if the winning exchange already stored the app,
-            // report success instead of a confusing 404.
+            // Single-use code replayed (refresh/double effect): success if the
+            // winning exchange already stored the app.
             let existing: Option<(Option<String>,)> = sqlx::query_as(
                 "SELECT app_slug FROM github_connection
                  WHERE mode = 'app' AND app_id IS NOT NULL AND private_key_pem IS NOT NULL
@@ -711,8 +701,7 @@ pub async fn connect_app(
     };
 
     let now = chrono::Utc::now().timestamp();
-    // Re-attaching a known app refreshes its row; a new App ID is a new
-    // connection (apps from several GitHub accounts coexist).
+    // Known app refreshes its row; a new App ID is a new connection.
     let res = sqlx::query(
         "UPDATE github_connection
          SET label = ?, app_slug = ?, private_key_pem = ?, webhook_secret = ?,
@@ -781,9 +770,7 @@ pub async fn list_installations(State(state): State<AppState>) -> impl IntoRespo
     }
 
     let now = chrono::Utc::now().timestamp();
-    // Reconciliation: for each connection whose sync succeeded, remember what
-    // GitHub reported so rows GitHub no longer lists (uninstalled on their
-    // side, no webhook to tell us) can be dropped.
+    // Reconcile: drop rows GitHub no longer reports (uninstalled, no webhook).
     let mut synced_connections: Vec<i64> = Vec::new();
     let mut seen_installations: Vec<i64> = Vec::new();
     for (conn_id, app) in &apps {
@@ -821,13 +808,10 @@ pub async fn list_installations(State(state): State<AppState>) -> impl IntoRespo
         }
     }
 
-    // Drop stale rows for successfully synced connections. Links pointing at a
-    // removed installation degrade to a clear relink error on next use; the
-    // projects themselves are untouched.
+    // Drop stale rows for synced connections only.
     if !synced_connections.is_empty() {
         let conn_ph = vec!["?"; synced_connections.len()].join(",");
-        // An empty seen-list with a successful sync means the app genuinely
-        // has no installations left — delete all its rows, which is correct.
+        // Empty seen-list = no installations left; delete all its rows.
         let (sql, ids): (String, Vec<i64>) = if seen_installations.is_empty() {
             (format!("DELETE FROM github_installations WHERE connection_id IN ({conn_ph})"), synced_connections.clone())
         } else {

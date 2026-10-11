@@ -99,15 +99,17 @@ export default function ServiceSettingsPopover({
         />
       </div>
 
-      {!isBackground && <div>
-        <span className="text-[10px] text-slate-500 block mb-1">Port</span>
-        <input
-          type="text"
-          value={service.port ? `${service.mapped_port ?? ''}:${service.port}` : '—'}
-          readOnly
-          className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1 text-[11px] text-slate-500 font-mono cursor-default"
-        />
-      </div>}
+      {!isBackground && (
+        <div>
+          <span className="text-[10px] text-slate-500 block mb-1">Port</span>
+          <input
+            type="text"
+            value={service.port ? `${service.mapped_port ?? ''}:${service.port}` : '—'}
+            readOnly
+            className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1 text-[11px] text-slate-500 font-mono cursor-default"
+          />
+        </div>
+      )}
 
       <ResourceLimitInput
         label="Memory limit"
@@ -162,7 +164,9 @@ export default function ServiceSettingsPopover({
 
       <div className="flex items-start gap-1.5 text-[10px] text-slate-500">
         <Info size={10} className="mt-0.5 shrink-0" />
-        <span>{isBackground ? 'Image is managed via compose.yaml' : 'Image and port are managed via compose.yaml'}</span>
+        <span>
+          {isBackground ? 'Image is managed via compose.yaml' : 'Image and port are managed via compose.yaml'}
+        </span>
       </div>
     </div>
   );

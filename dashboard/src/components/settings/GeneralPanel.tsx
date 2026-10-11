@@ -655,7 +655,7 @@ export default function GeneralPanel() {
                       setDomainPreflightResult(null);
                       setDomainAck(false);
                     }}
-                    placeholder="apps.example.com"
+                    placeholder="example.com"
                     className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
                   />
                 </div>

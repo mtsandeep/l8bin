@@ -1,5 +1,4 @@
-//! GitHub App server auth: RS256 JWT from the app private key, plus a cached
-//! mint of per-installation access tokens (1 h TTL, refreshed at ~50 min).
+//! GitHub App auth: RS256 JWT + cached installation tokens (1 h TTL).
 
 use std::sync::OnceLock;
 
@@ -49,7 +48,7 @@ struct InstallationTokenResponse {
 /// Fetch (or reuse) an installation access token.
 pub async fn installation_token(app: &AppCredentials, installation_id: i64) -> Result<String, GitHubApiError> {
     let now = chrono::Utc::now().timestamp();
-    // Refresh 10 min early so a slow request never rides an expiring token.
+    // Refresh 10 min early.
     if let Some(entry) = token_cache().get(&installation_id)
         && now < entry.expires_at - 600
     {

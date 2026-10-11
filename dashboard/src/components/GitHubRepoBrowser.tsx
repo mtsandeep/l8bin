@@ -6,6 +6,8 @@ import GithubMark from './GithubMark';
 
 interface Props {
   domain: string;
+  /** Link mode: bind the picked repo to this existing project. */
+  fixedProjectId?: string;
   onClose: () => void;
   onLinked?: () => void;
 }
@@ -18,7 +20,7 @@ function timeAgoStr(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-export default function GitHubRepoBrowser({ domain, onClose, onLinked }: Props) {
+export default function GitHubRepoBrowser({ domain, fixedProjectId, onClose, onLinked }: Props) {
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -26,13 +28,10 @@ export default function GitHubRepoBrowser({ domain, onClose, onLinked }: Props) 
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<GitHubRepo | null>(null);
-  // Account picker across connections: app installations + PAT connections.
-  // Selection is {installation} or {connection} (PAT).
   type Pick = { installationId?: number; connectionId?: number };
   const [connections, setConnections] = useState<GitHubConnectionSummary[] | null | undefined>(undefined);
   const [pick, setPick] = useState<Pick>({});
 
-  // Flatten: one entry per installation, plus one per PAT connection.
   const entries: Array<Pick & { key: string; label: string }> = [];
   for (const conn of connections ?? []) {
     if (conn.mode === 'app') {
@@ -66,13 +65,10 @@ export default function GitHubRepoBrowser({ domain, onClose, onLinked }: Props) 
     }
   };
 
-  // (Re)load the first repo page when connections resolve or the pick changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload on mode/account change
   useEffect(() => {
-    if (connections === undefined) return; // still resolving
+    if (connections === undefined) return;
     if (!pick.installationId && !pick.connectionId) {
-      // Default to the first entry once resolved; the state change re-runs
-      // this effect and loads.
       if (entries.length > 0) {
         const first = entries[0];
         setPick({ installationId: first.installationId, connectionId: first.connectionId });
@@ -98,6 +94,7 @@ export default function GitHubRepoBrowser({ domain, onClose, onLinked }: Props) 
         domain={domain}
         installationId={pick.installationId}
         connectionId={pick.connectionId}
+        fixedProjectId={fixedProjectId}
         onBack={() => setSelected(null)}
         onClose={onClose}
         onLinked={() => {

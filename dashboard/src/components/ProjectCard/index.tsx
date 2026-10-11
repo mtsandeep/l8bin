@@ -35,6 +35,7 @@ import {
   stopProject,
   timeAgo,
 } from '../../api';
+import GitHubRepoBrowser from '../GitHubRepoBrowser';
 import LogViewer from '../LogViewer';
 import StatusBadge from '../StatusBadge';
 import { useToast } from '../ToastContext';
@@ -83,6 +84,7 @@ export default function ProjectCard({
   const [showLogs, setShowLogs] = useState(false);
   const [showEnv, setShowEnv] = useState(false);
   const [showGithubRuns, setShowGithubRuns] = useState(false);
+  const [showGithubLink, setShowGithubLink] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [envCopied, setEnvCopied] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -232,7 +234,6 @@ export default function ProjectCard({
                 {project.name || project.id}
               </h3>
               <StatusBadge status={stats?.status || project.status} />
-              {githubStatus && <GitHubBadge status={githubStatus} onClick={() => setShowGithubRuns(true)} />}
               {(services.length > 1 || project.deploy_type === DeployType.Compose) && (
                 <button
                   type="button"
@@ -253,8 +254,9 @@ export default function ProjectCard({
                 </button>
               )}
             </div>
-            {!project.is_background && (
-              <div className="flex items-center gap-1 ml-auto flex-shrink-0">
+            <div className="flex items-center gap-3 ml-auto flex-shrink-0">
+              {githubStatus && <GitHubBadge status={githubStatus} onClick={() => setShowGithubRuns(true)} />}
+              {!project.is_background && (
                 <a
                   href={`https://${project.custom_domain || `${project.id}.${domain}`}`}
                   target="_blank"
@@ -264,8 +266,8 @@ export default function ProjectCard({
                 >
                   <ExternalLink size={14} />
                 </a>
-              </div>
-            )}
+              )}
+            </div>
             {/* Services popover — below the title row */}
             {showServicesPopover && (
               <div
@@ -467,6 +469,14 @@ export default function ProjectCard({
                 onCustomDomainChange={setCustomDomainInput}
                 onSettingsErrorChange={setSettingsError}
                 onCustomDomainSavingChange={setCustomDomainSaving}
+                onLinkGithub={() => {
+                  setOpenPopover(null);
+                  setShowGithubLink(true);
+                }}
+                onOpenGithubRuns={() => {
+                  setOpenPopover(null);
+                  setShowGithubRuns(true);
+                }}
                 onRefresh={onRefresh}
                 onClose={() => {
                   setOpenPopover(null);
@@ -717,6 +727,15 @@ export default function ProjectCard({
           status={project.status}
           onRefresh={onRefresh}
           onClose={() => setShowEnv(false)}
+        />
+      )}
+
+      {showGithubLink && (
+        <GitHubRepoBrowser
+          domain={domain}
+          fixedProjectId={project.id}
+          onClose={() => setShowGithubLink(false)}
+          onLinked={onRefresh}
         />
       )}
 

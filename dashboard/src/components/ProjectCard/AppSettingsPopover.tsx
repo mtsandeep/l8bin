@@ -150,26 +150,28 @@ export default function AppSettingsPopover({
             />
           )}
         </div>
-        {!project.is_background && <div>
-          <span className="text-xs text-slate-400 block mb-1.5">App port</span>
-          {isCompose ? (
-            <input
-              type="number"
-              value={appPort}
-              readOnly
-              className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1.5 text-xs text-slate-500 font-mono cursor-default"
-            />
-          ) : (
-            <input
-              type="number"
-              min={1}
-              max={65535}
-              value={appPort}
-              onChange={(e) => setAppPort(Number(e.target.value))}
-              className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
-            />
-          )}
-        </div>}
+        {!project.is_background && (
+          <div>
+            <span className="text-xs text-slate-400 block mb-1.5">App port</span>
+            {isCompose ? (
+              <input
+                type="number"
+                value={appPort}
+                readOnly
+                className="w-full bg-slate-800 border border-slate-700/50 rounded px-2 py-1.5 text-xs text-slate-500 font-mono cursor-default"
+              />
+            ) : (
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={appPort}
+                onChange={(e) => setAppPort(Number(e.target.value))}
+                className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+              />
+            )}
+          </div>
+        )}
         {!isCompose && (
           <div>
             <span className="text-xs text-slate-400 block mb-1.5">Command override</span>

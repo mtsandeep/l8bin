@@ -1,5 +1,4 @@
-//! Deploy status: per-project workflow-run history (proxied, newest first)
-//! and a bulk latest-run snapshot for the home page badges.
+//! Deploy status: per-project run history + bulk badge snapshot.
 
 use std::collections::HashMap;
 
@@ -31,7 +30,7 @@ fn gh_time_to_unix(ts: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(ts).ok().map(|t| t.timestamp())
 }
 
-/// Opportunistically refresh the denormalized last-run columns.
+/// Refresh the denormalized last-run columns.
 async fn persist_last_run(state: &AppState, project_id: &str, latest: Option<&WorkflowRun>) {
     let Some(run) = latest else { return };
     let now = chrono::Utc::now().timestamp();
@@ -115,8 +114,7 @@ pub struct BulkStatus {
     pub projects: Vec<BulkRunStatus>,
 }
 
-/// Response cache for the badge poll: multiple tabs hit this every 30 s and
-/// each refresh fans out to GitHub per linked project.
+/// Response cache: badge polls fan out to GitHub per linked project.
 static BULK_CACHE: std::sync::OnceLock<std::sync::Mutex<(std::time::Instant, Vec<BulkRunStatus>)>> =
     std::sync::OnceLock::new();
 const BULK_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(20);

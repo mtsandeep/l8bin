@@ -1,5 +1,4 @@
-//! Repo browsing and contents authoring: list repos (PAT), repo detail with
-//! compose/Dockerfile detection, branches, and workflow-file CRUD.
+//! Repo browsing, detection, and workflow-file CRUD.
 
 use serde::{Deserialize, Serialize};
 
@@ -80,9 +79,7 @@ struct GhContentEntry {
 }
 
 impl GitHubClient {
-    /// PAT mode: repos the token can deploy (owner + collaborator), most recently pushed first.
-    /// `/user/repos` returns a bare array (the {total_count, repositories} envelope is
-    /// installation/search mode — M2).
+    /// PAT mode: bare-array endpoint, most recently pushed first.
     pub async fn list_repos(&self, page: u32) -> Result<RepoPage, GitHubApiError> {
         let list: Vec<GhRepo> = self
             .json(self.get(&format!("/user/repos?per_page=100&page={page}&sort=pushed&affiliation=owner,collaborator")))
@@ -104,8 +101,7 @@ impl GitHubClient {
         Ok(RepoPage { repos, total_count: None, page })
     }
 
-    /// App mode: repos the (installation-scoped) client can see. Unlike
-    /// `/user/repos`, this endpoint returns the {total_count, repositories} envelope.
+    /// App mode: envelope endpoint ({total_count, repositories}).
     pub async fn list_installation_repos(&self, page: u32) -> Result<RepoPage, GitHubApiError> {
         #[derive(Deserialize)]
         struct Envelope {
@@ -134,11 +130,16 @@ impl GitHubClient {
         Ok(RepoPage { repos, total_count, page })
     }
 
-    /// Repo metadata + root-level detection of compose files and Dockerfiles.
-    pub async fn repo_detail(&self, owner: &str, repo: &str) -> Result<RepoDetail, GitHubApiError> {
+    /// Repo metadata + compose/Dockerfile detection at the given folder.
+    pub async fn repo_detail(&self, owner: &str, repo: &str, path: Option<&str>) -> Result<RepoDetail, GitHubApiError> {
         let r: GhRepo = self.json(self.get(&format!("/repos/{owner}/{repo}"))).await?;
-        let entries: Vec<GhContentEntry> =
-            self.json(self.get(&format!("/repos/{owner}/{repo}/contents/?ref={}", r.default_branch))).await?;
+        let folder = path.filter(|p| !p.is_empty() && *p != ".").unwrap_or("");
+        let contents_path = if folder.is_empty() {
+            format!("/repos/{owner}/{repo}/contents/?ref={}", r.default_branch)
+        } else {
+            format!("/repos/{owner}/{repo}/contents/{folder}?ref={}", r.default_branch)
+        };
+        let entries: Vec<GhContentEntry> = self.json(self.get(&contents_path)).await?;
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         let compose_file = COMPOSE_CANDIDATES.iter().copied().find(|c| names.contains(c)).map(|c| c.to_string());
         let dockerfile_present = names.iter().any(|n| n.starts_with("Dockerfile"));
@@ -158,6 +159,42 @@ impl GitHubClient {
         let branches: Vec<GhBranch> =
             self.json(self.get(&format!("/repos/{owner}/{repo}/branches?per_page=100"))).await?;
         Ok(branches.into_iter().map(|b| BranchSummary { name: b.name, protected: b.protected }).collect())
+    }
+
+    /// Decoded content of a file on a branch, or None when it does not exist.
+    /// Used to skip no-op commits (GitHub's contents API commits identical
+    /// content otherwise).
+    pub async fn file_content(
+        &self,
+        owner: &str,
+        repo: &str,
+        path: &str,
+        branch: &str,
+    ) -> Result<Option<String>, GitHubApiError> {
+        #[derive(Deserialize)]
+        struct Content {
+            content: Option<String>,
+            encoding: Option<String>,
+        }
+        let c: Content = match self
+            .json::<Content>(self.get(&format!("/repos/{owner}/{repo}/contents/{path}?ref={branch}")))
+            .await
+        {
+            Ok(c) => c,
+            Err(GitHubApiError::NotFound) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        use base64::Engine as _;
+        match (c.content, c.encoding.as_deref()) {
+            (Some(b64), Some("base64")) => {
+                let cleaned: String = b64.chars().filter(|ch| !ch.is_whitespace()).collect();
+                match base64::engine::general_purpose::STANDARD.decode(cleaned) {
+                    Ok(bytes) => Ok(String::from_utf8(bytes).ok()),
+                    Err(e) => Err(GitHubApiError::Api { status: 502, message: format!("invalid file content: {e}") }),
+                }
+            }
+            _ => Ok(None),
+        }
     }
 
     /// SHA of a file on a branch, or None when it does not exist (404).
@@ -186,8 +223,7 @@ impl GitHubClient {
         }
     }
 
-    /// Create or update a file on a branch (contents API). `sha` updates, None creates.
-    /// Writing under `.github/workflows/` requires the PAT `workflow` scope / App `workflows:write`.
+    /// Create (`sha` None) or update a file; workflows/ needs the workflow scope.
     #[allow(clippy::too_many_arguments)] // contents-API call shape; a struct would obscure it
     pub async fn put_file(
         &self,

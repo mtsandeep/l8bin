@@ -1,7 +1,5 @@
-//! The generated GitHub Actions workflow, rendered by the orchestrator and
-//! committed into the linked repo. Managed file: LiteBin rewrites it on every
-//! config change (the banner says so) and auto-deploy is just the `on: push`
-//! block being present or absent.
+//! The generated workflow, committed into the linked repo. Managed file:
+//! auto-deploy is just the `on: push` block being present.
 
 /// Everything the workflow needs; overlaps the project link config.
 #[derive(Debug, Clone, PartialEq)]
@@ -19,6 +17,8 @@ pub struct WorkflowSpec {
     pub memory_mb: Option<i64>,
     pub cpu: Option<f64>,
     pub node_id: Option<String>,
+    /// Subdirectory of the repo the app lives in (None = repo root).
+    pub path: Option<String>,
     /// Compose mode: target services (empty = all).
     pub compose_services: Vec<String>,
 }
@@ -29,11 +29,13 @@ pub enum DeployKind {
     Compose,
 }
 
-/// Pin by minor tag: dashboard-generated workflows get fixes without schema
-/// churn; major bumps would need a migration of generated files.
+/// Pin by minor tag to avoid migrating generated files.
 pub const ACTION_REF: &str = "mtsandeep/l8bin-action@v0.2.0";
 pub const WORKFLOW_NAME: &str = "LiteBin Deploy";
+/// Bare filename — the form GitHub's dispatch/runs endpoints expect.
 pub const WORKFLOW_FILE: &str = "litebin-deploy.yml";
+/// Full repo path — where the file is committed (only .github/workflows/ counts).
+pub const WORKFLOW_PATH: &str = ".github/workflows/litebin-deploy.yml";
 
 /// YAML-double-quote a scalar.
 fn q(s: &str) -> String {
@@ -67,6 +69,9 @@ impl WorkflowSpec {
         y.push_str("          server: ${{ secrets.L8B_SERVER }}\n");
         y.push_str("          token: ${{ secrets.L8B_TOKEN }}\n");
         y.push_str(&format!("          project_id: {}\n", q(&self.project_id)));
+        if let Some(path) = self.path.as_deref().filter(|p| !p.is_empty() && *p != ".") {
+            y.push_str(&format!("          path: {}\n", q(path)));
+        }
         match self.deploy_kind {
             DeployKind::Single => {
                 y.push_str(&format!("          port: '{}'\n", self.port.unwrap_or(3000)));
@@ -114,6 +119,7 @@ mod tests {
             memory_mb: Some(512),
             cpu: Some(0.5),
             node_id: None,
+            path: None,
             compose_services: vec![],
         }
     }
@@ -149,6 +155,16 @@ mod tests {
         assert!(y.contains("compose: 'true'"));
         assert!(y.contains("services: \"web,api\""));
         assert!(!y.contains("port:"));
+    }
+
+    #[test]
+    fn renders_subfolder_path() {
+        let mut s = spec();
+        s.path = Some("apps/web".into());
+        let y = s.render();
+        assert!(y.contains("path: \"apps/web\""));
+        // default spec (no path) omits the input entirely
+        assert!(!spec().render().contains("path:"));
     }
 
     #[test]

@@ -1,10 +1,13 @@
 import { ExternalLink, Loader2, Plus, Route, Settings, Trash2, X as XIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   createProjectRoute,
   deleteProjectRoute,
+  fetchGithubConnection,
   fetchProjectCapabilities,
   fetchProjectRoutes,
+  getProjectGithubConfig,
   grantProjectCapabilities,
   type Project,
   type ProjectCapabilityStatus,
@@ -14,6 +17,7 @@ import {
   type ServiceInfo,
   updateProjectSettings,
 } from '../../api';
+import GithubMark from '../GithubMark';
 import { useToast } from '../ToastContext';
 
 interface SettingsPopoverProps {
@@ -31,6 +35,8 @@ interface SettingsPopoverProps {
   onCustomDomainChange: (v: string) => void;
   onSettingsErrorChange: (v: string | null) => void;
   onCustomDomainSavingChange: (v: boolean) => void;
+  onLinkGithub: () => void;
+  onOpenGithubRuns: () => void;
   onRefresh: () => void;
   onClose: () => void;
 }
@@ -50,6 +56,8 @@ export default function SettingsPopover({
   onCustomDomainChange,
   onSettingsErrorChange,
   onCustomDomainSavingChange,
+  onLinkGithub,
+  onOpenGithubRuns,
   onRefresh,
   onClose,
 }: SettingsPopoverProps) {
@@ -72,6 +80,30 @@ export default function SettingsPopover({
   const [capabilityActionId, setCapabilityActionId] = useState<string | null>(null);
   const [capabilityCatalogOpen, setCapabilityCatalogOpen] = useState(false);
   const [capabilitySearch, setCapabilitySearch] = useState('');
+
+  const navigate = useNavigate();
+  const [githubRepo, setGithubRepo] = useState<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    getProjectGithubConfig(project.id)
+      .then((cfg) => setGithubRepo(cfg.repo_full_name))
+      .catch(() => setGithubRepo(null));
+  }, [project.id]);
+
+  const handleLinkGithub = async () => {
+    try {
+      const conn = await fetchGithubConnection();
+      if (conn.connected) {
+        onLinkGithub();
+      } else {
+        onClose();
+        navigate('/settings/github');
+      }
+    } catch {
+      onClose();
+      navigate('/settings/github');
+    }
+  };
 
   const ref = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
@@ -424,6 +456,33 @@ export default function SettingsPopover({
                 </div>
               </div>
             )}
+
+            <div className="border-t border-slate-700/50 pt-3 space-y-2">
+              <div className="text-xs text-slate-400">GitHub repo</div>
+              {githubRepo === undefined ? (
+                <div className="text-[11px] text-slate-500">Checking…</div>
+              ) : githubRepo ? (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-slate-300 font-mono truncate">{githubRepo}</span>
+                  <button
+                    type="button"
+                    onClick={onOpenGithubRuns}
+                    className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors cursor-pointer shrink-0"
+                  >
+                    Runs
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleLinkGithub}
+                  className="w-full py-1.5 rounded text-xs font-medium bg-slate-700 border border-slate-600 text-slate-200 hover:bg-slate-600 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <GithubMark size={12} />
+                  Link a repo
+                </button>
+              )}
+            </div>
           </div>
         )}
 

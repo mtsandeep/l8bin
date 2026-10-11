@@ -167,9 +167,7 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
 
   // ── Step 2: Selection ──────────────────────────────────────────────────────
   const toggleSelect = (idx: number) =>
-    setGroups((gs) =>
-      gs.map((g, i) => (i === idx && !g.hasDockerSocket ? { ...g, selected: !g.selected } : g)),
-    );
+    setGroups((gs) => gs.map((g, i) => (i === idx && !g.hasDockerSocket ? { ...g, selected: !g.selected } : g)));
 
   const toggleAll = () => {
     const importable = groups.filter((g) => !g.hasDockerSocket);
@@ -362,9 +360,7 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
                     ) : (
                       <Square size={13} />
                     )}
-                    {groups.filter((g) => !g.hasDockerSocket).every((g) => g.selected)
-                      ? 'Deselect all'
-                      : 'Select all'}
+                    {groups.filter((g) => !g.hasDockerSocket).every((g) => g.selected) ? 'Deselect all' : 'Select all'}
                   </button>
                 </div>
               </div>

@@ -33,7 +33,6 @@ import { useIntervalWhileVisible } from '../../hooks/useIntervalWhileVisible';
 import GithubMark from '../GithubMark';
 import { useToast } from '../ToastContext';
 
-/** Full-replacement screens — no nested accordions. */
 type View = 'choose' | 'guided' | 'manual-setup' | 'manual-attach' | 'pat';
 
 const inputClass =
@@ -44,16 +43,12 @@ const buttonBase =
 
 const buttonPrimary = `${buttonBase} w-full`;
 
-/** Chevron-ribbon stepper: interlocking arrow segments, numbered inside.
- *  Segments before `current` are done (✓), `current` is highlighted. */
 function Segments({ items, current = 0 }: { items: string[]; current?: number }) {
   return (
     <div className="flex w-full">
       {items.map((label, i) => {
         const done = i < current;
         const active = i === current;
-        // Every segment points right; later segments also notch left so the
-        // pieces interlock like a ribbon.
         const clip =
           i === 0
             ? 'polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)'
@@ -82,8 +77,6 @@ function Segments({ items, current = 0 }: { items: string[]; current?: number })
   );
 }
 
-/** Quiet "what's this?" toggle — the details never block the primary action.
- *  Controlled via open/onToggle when the parent needs to know (Customize). */
 function Disclosure({
   summary,
   children,
@@ -113,8 +106,6 @@ function Disclosure({
   );
 }
 
-/** Plain label + value + copy row (no field chrome) — used inside the
- *  dashed reference box on the manual screen and under Customize. */
 function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -212,15 +203,13 @@ export default function GitHubPanel() {
 
   const [confirmDisconnect, setConfirmDisconnect] = useState<number | null>(null);
 
-  // Installed-account rows: which is expanded + its lazily fetched repos.
   const [expandedInstall, setExpandedInstall] = useState<number | null>(null);
   const [installRepos, setInstallRepos] = useState<Record<number, GitHubRepo[] | 'loading' | 'error'>>({});
 
-  // "Unfinished setup" hint stays dismissed (across navigation) until the
-  // user starts a fresh Connect.
   const [dismissPending, setDismissPending] = useState(() => sessionStorage.getItem('ghPendingDismissed') === '1');
 
-  // GitHub app names are unique per account — default to the first free variant.
+  const [loaded, setLoaded] = useState(false);
+
   useEffect(() => {
     if (!Array.isArray(connections)) return;
     const taken = new Set(connections.filter((c) => c.mode === 'app').map((c) => (c.label ?? '').toLowerCase()));
@@ -242,13 +231,15 @@ export default function GitHubPanel() {
 
   const refresh = async () => {
     try {
-      // Sync installations server-side first, then read the snapshot.
+      // Sync installations server-side, then read the snapshot.
       await listGithubInstallations().catch(() => {});
       const [conn, list] = await Promise.all([fetchGithubConnection(), listGithubConnections()]);
       setConnection(conn);
       setConnections(list);
     } catch (e) {
       showToast((e as Error).message, 'error');
+    } finally {
+      setLoaded(true);
     }
   };
 
@@ -257,8 +248,7 @@ export default function GitHubPanel() {
     refresh();
   }, []);
 
-  // Keep installations fresh while the panel is open — installing the app on
-  // another account happens on GitHub's side with no redirect back.
+  // Keep installations fresh while the panel is open.
   useIntervalWhileVisible(() => {
     if (connection?.connected) refresh();
   }, 10000);
@@ -341,7 +331,21 @@ export default function GitHubPanel() {
 
   const connected = connection?.connected ?? false;
 
-  // ── Connected ──────────────────────────────────────────────────────────────
+  // Hold a neutral state until the first fetch settles — no screen flashing.
+  if (!loaded) {
+    return (
+      <div className="space-y-4">
+        <h2 className="text-sm font-semibold text-slate-100">GitHub</h2>
+        <Card>
+          <div className="flex justify-center py-6">
+            <Loader2 size={16} className="animate-spin text-slate-500" />
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // Setup screens take precedence over the connected view.
   // Setup screens take precedence so "+ Add another account" can open them.
   if (connection && connected && Array.isArray(connections) && view === 'choose') {
     const activeConnections = connections.filter((c) => c.status !== 'pending');
@@ -579,7 +583,7 @@ export default function GitHubPanel() {
     );
   }
 
-  // ── Choose ─────────────────────────────────────────────────────────────────
+  // Choose a connection path.
   if (view === 'choose') {
     return (
       <div className="space-y-4">
@@ -665,7 +669,7 @@ export default function GitHubPanel() {
     );
   }
 
-  // ── Guided ─────────────────────────────────────────────────────────────────
+  // Guided flow: name the app, then continue on GitHub.
   if (view === 'guided') {
     return (
       <div className="space-y-4">
@@ -727,7 +731,7 @@ export default function GitHubPanel() {
     );
   }
 
-  // ── Manual: create ─────────────────────────────────────────────────────────
+  // Manual flow, step 1: create the app on GitHub.
   if (view === 'manual-setup') {
     return (
       <div className="space-y-4">
@@ -749,7 +753,6 @@ export default function GitHubPanel() {
             , use:
           </p>
 
-          {/* Reference values for GitHub's form — dashed box says "take these". */}
           <div className="rounded-md border border-dashed border-slate-600/70 p-3 space-y-1.5">
             <CopyRow label="Name" value="l8bin" />
             <CopyRow label="Homepage" value={dashboardUrl} />
@@ -770,7 +773,7 @@ export default function GitHubPanel() {
     );
   }
 
-  // ── Manual: attach ─────────────────────────────────────────────────────────
+  // Manual flow, step 2: attach the created app.
   if (view === 'manual-attach') {
     return (
       <div className="space-y-4">
@@ -841,7 +844,7 @@ export default function GitHubPanel() {
     );
   }
 
-  // ── PAT ────────────────────────────────────────────────────────────────────
+  // PAT connection.
   return (
     <div className="space-y-4">
       <Card>

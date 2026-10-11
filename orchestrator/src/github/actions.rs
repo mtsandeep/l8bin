@@ -43,9 +43,7 @@ struct GhRunList {
 }
 
 impl GitHubClient {
-    /// Encrypt a secret value with the repo's public key (sealed box) and PUT it.
-    /// See https://docs.github.com/en/rest/actions/secrets — value must be
-    /// libsodium `crypto_box_seal` encrypted, base64 encoded.
+    /// Sealed-box encrypt with the repo's public key, then PUT.
     pub async fn put_secret(&self, owner: &str, repo: &str, name: &str, value: &str) -> Result<(), GitHubApiError> {
         use base64::Engine as _;
         use dryoc::dryocbox::DryocBox;
@@ -84,7 +82,7 @@ impl GitHubClient {
         }
     }
 
-    /// Trigger the generated workflow on `ref` (branch). Returns once GitHub accepts (204).
+    /// Trigger the generated workflow on `ref`.
     pub async fn dispatch_workflow(
         &self,
         owner: &str,
@@ -141,9 +139,7 @@ mod tests {
     use base64::Engine as _;
     use dryoc::dryocbox::DryocBox;
 
-    /// The sealed-box format GitHub expects: seal with the recipient public key,
-    /// base64 it, then unseal with the recipient secret key must return the
-    /// original secret (mirrors put_secret's encryption half).
+    /// Sealed-box roundtrip, mirroring put_secret's encryption half.
     #[test]
     fn sealed_box_roundtrip() {
         let keypair = dryoc::keypair::KeyPair::gen_with_defaults();

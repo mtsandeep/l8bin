@@ -1,4 +1,4 @@
-//! Repo browsing endpoints (PAT mode in M1; installation repos join in M2).
+//! Repo browsing endpoints.
 
 use axum::{
     Json,
@@ -55,15 +55,26 @@ pub async fn list_repos(State(state): State<AppState>, Query(params): Query<Repo
     }
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct RepoDetailQuery {
+    /// Subfolder to scan for compose/Dockerfile detection (repo root when empty).
+    pub path: Option<String>,
+    /// App mode: scope to this installation (the one the repo was browsed under).
+    pub installation_id: Option<i64>,
+    /// PAT mode: scope to this connection.
+    pub connection_id: Option<i64>,
+}
+
 #[utoipa::path(
     get,
     path = "/github/repos/{owner}/{repo}",
     params(
         ("owner" = String, Path, description = "Repo owner (user or org)"),
         ("repo" = String, Path, description = "Repo name"),
+        ("path" = Option<String>, Query, description = "Subfolder for detection (root when omitted)"),
     ),
     responses(
-        (status = 200, description = "Repo detail with compose/Dockerfile detection", body = RepoDetail),
+        (status = 200, description = "Repo detail with compose/Dockerfile detection at the given folder", body = RepoDetail),
         (status = 404, description = "Repo not found"),
         (status = 503, description = "GitHub not connected"),
     ),
@@ -73,20 +84,14 @@ pub async fn list_repos(State(state): State<AppState>, Query(params): Query<Repo
 pub async fn repo_detail(
     State(state): State<AppState>,
     Path((owner, repo)): Path<(String, String)>,
+    Query(params): Query<RepoDetailQuery>,
 ) -> impl IntoResponse {
-    // Any usable connection can read public repo metadata; prefer an
-    // installation if one exists (private repos need it).
-    let installation: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM github_installations WHERE status = 'active' LIMIT 1")
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    let client = match github::client_for_link(&state.db, None, installation).await {
+    let client = match github::client_for_link(&state.db, params.connection_id, params.installation_id).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
-    match client.repo_detail(&owner, &repo).await {
+    let path = params.path.as_deref().filter(|p| !p.trim().is_empty()).map(str::to_string);
+    match client.repo_detail(&owner, &repo, path.as_deref()).await {
         Ok(detail) => (StatusCode::OK, Json(detail)).into_response(),
         Err(e) => gh_error(e).into_response(),
     }
@@ -110,14 +115,9 @@ pub async fn repo_detail(
 pub async fn list_branches(
     State(state): State<AppState>,
     Path((owner, repo)): Path<(String, String)>,
+    Query(params): Query<RepoDetailQuery>,
 ) -> impl IntoResponse {
-    let installation: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM github_installations WHERE status = 'active' LIMIT 1")
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    let client = match github::client_for_link(&state.db, None, installation).await {
+    let client = match github::client_for_link(&state.db, params.connection_id, params.installation_id).await {
         Ok(c) => c,
         Err(e) => return gh_error(e).into_response(),
     };
