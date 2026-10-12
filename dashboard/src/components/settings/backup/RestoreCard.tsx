@@ -4,7 +4,6 @@ import {
   formatBytes,
   restoreBackup,
   restoreBackupLocal,
-  timeAgo,
   type BackupStatus,
 } from "../../../api";
 import SettingsCard from "../SettingsCard";
@@ -69,6 +68,19 @@ export default function RestoreCard({
   const namedPoint = timestamp.trim()
     ? status.points.find((p) => p.timestamp === timestamp.trim())
     : undefined;
+  // A requested time newer than the last write resolves to the last write
+  // (litestream semantics) — surface that instead of implying data at that moment.
+  const requestedMs = timestamp.trim()
+    ? new Date(timestamp.trim()).getTime()
+    : null;
+  const lastWriteMs = status.last_sync
+    ? new Date(status.last_sync).getTime()
+    : null;
+  const resolvesToLastWrite =
+    requestedMs != null &&
+    lastWriteMs != null &&
+    requestedMs > lastWriteMs &&
+    !namedPoint;
 
   return (
     <SettingsCard icon={RotateCcw} title="Restore">
@@ -151,17 +163,9 @@ export default function RestoreCard({
               style={{ colorScheme: "dark" }}
             />
           )}
-          {hasData &&
-            !pickCovered(RESTORE_PICKS[RESTORE_PICKS.length - 1].ms) && (
-              <p className="text-xs text-slate-600 mt-1.5">
-                Unavailable points activate as backup history builds up (backup
-                started {timeAgo(Math.floor((oldestMs ?? 0) / 1000))}).
-              </p>
-            )}
           {!hasData && (
             <p className="text-xs text-slate-600 mt-1.5">
-              Restore points activate as soon as the first backup data lands —
-              usually within a minute of enabling.
+              Available after the first sync (~1 minute).
             </p>
           )}
         </div>
@@ -172,6 +176,9 @@ export default function RestoreCard({
             {namedPoint
               ? `"${namedPoint.name}" (${selectedLabel})`
               : selectedLabel}
+            {resolvesToLastWrite && status.last_sync
+              ? ` — resolves to the latest state (${fmtTs(status.last_sync)})`
+              : ""}
           </span>{" "}
           — everything after that point is discarded.
         </p>
@@ -263,9 +270,11 @@ export default function RestoreCard({
                 Replace the current database with{" "}
                 {namedPoint
                   ? `the point "${namedPoint.name}" (${fmtTs(namedPoint.timestamp)})`
-                  : timestamp.trim()
-                    ? `the backup as of ${fmtTs(timestamp.trim())}`
-                    : "the backup's latest state"}
+                  : resolvesToLastWrite && status.last_sync
+                    ? `the latest backup state (${fmtTs(status.last_sync)})`
+                    : timestamp.trim()
+                      ? `the backup as of ${fmtTs(timestamp.trim())}`
+                      : "the backup's latest state"}
                 ?
               </p>
               <ul className="text-xs text-slate-400 list-disc list-inside mb-3 space-y-1">

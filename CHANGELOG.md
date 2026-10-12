@@ -15,6 +15,8 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Configuring an S3/R2 destination crash-looped the sidecar** — litestream 0.5 rejects multiple replicas per database ("multiple replicas on a single database are no longer supported"); the sidecar now runs the single-replica config above and the stale local LTX store is cleared on switch.
 - The Litestream backup sidecar now carries the platform's compose labels, so Docker Desktop groups it with the other litebin containers instead of listing it loose.
+- **Restores self-heal after the swap** — the orchestrator REINDEXes and quick-checks the database at boot after applying a restore; litestream 0.5.17 point-in-time restores can carry stale PK index pages (upstream #1164, repro'd on 0.5.17; REINDEX fully repairs).
+- The restore picker states its semantics (latest state at or before the chosen time) and shows the resolved moment when the chosen time is newer than the last write (e.g. after a disable gap).
 
 ## [0.4.6] - 2026-10-11
 

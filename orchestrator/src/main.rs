@@ -141,12 +141,29 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Apply a pending backup restore (from POST /backup/restore) before opening the DB
+    let mut restored_this_boot = false;
     if let Some(data_dir) = backup::resolve_data_dir(&config.database_url) {
-        backup::apply_pending_restore(&data_dir);
+        restored_this_boot = backup::apply_pending_restore(&data_dir);
     }
 
     // Init database
     let db = db::init_pool(&config.database_url).await?;
+
+    // Self-heal litestream's stale-index-page restore bug (upstream #1164): rebuild
+    // indexes and verify after any restore swap.
+    if restored_this_boot {
+        if let Err(e) = sqlx::query("REINDEX").execute(&db).await {
+            tracing::error!(error = %e, "post-restore REINDEX failed");
+        } else {
+            match sqlx::query_scalar::<_, String>("PRAGMA quick_check").fetch_all(&db).await {
+                Ok(rows) if rows.iter().all(|r| r == "ok") => {
+                    tracing::info!("post-restore REINDEX applied, quick_check ok")
+                }
+                Ok(rows) => tracing::error!(results = ?rows, "post-restore quick_check failed"),
+                Err(e) => tracing::warn!(error = %e, "post-restore quick_check could not run"),
+            }
+        }
+    }
 
     // Ensure projects directory exists
     std::fs::create_dir_all("projects")?;

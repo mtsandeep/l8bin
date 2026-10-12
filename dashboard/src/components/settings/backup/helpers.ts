@@ -47,11 +47,10 @@ export function s3Provider(endpoint: string | null): string {
 }
 
 export const RESTORE_PICKS = [
-  { id: "10m", label: "10 min ago", ms: 10 * 60_000 },
-  { id: "1h", label: "1 hour ago", ms: 3_600_000 },
-  { id: "6h", label: "6 hours ago", ms: 21_600_000 },
-  { id: "12h", label: "12 hours ago", ms: 43_200_000 },
-  { id: "24h", label: "24 hours ago", ms: 86_400_000 },
+  { id: "1h", label: "1h ago", ms: 3_600_000 },
+  { id: "12h", label: "12h ago", ms: 12 * 3_600_000 },
+  { id: "1d", label: "1d ago", ms: 86_400_000 },
+  { id: "1w", label: "1w ago", ms: 7 * 86_400_000 },
 ] as const;
 
 export type RestorePickId =

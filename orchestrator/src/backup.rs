@@ -151,11 +151,11 @@ pub fn write_litestream_yml(data_dir: &Path, s3: &S3Config) -> std::io::Result<(
 /// Apply a pending restore produced by `litestream restore -o litebin.db.restored`.
 /// Must run before the DB pool is opened. The previous db (plus its -wal/-shm) is
 /// kept beside it as `litebin.db.pre-restore*` — a one-shot safety copy that the
-/// next restore overwrites.
-pub fn apply_pending_restore(data_dir: &Path) {
+/// next restore overwrites. Returns true when a swap happened.
+pub fn apply_pending_restore(data_dir: &Path) -> bool {
     let restored = data_dir.join("litebin.db.restored");
     if !restored.exists() {
-        return;
+        return false;
     }
 
     let db = data_dir.join("litebin.db");
@@ -173,7 +173,7 @@ pub fn apply_pending_restore(data_dir: &Path) {
             {
                 tracing::error!(error = %e, "restore: could not move {} aside", from.display());
                 let _ = std::fs::remove_file(&restored);
-                return;
+                return false;
             }
         }
     }
@@ -190,10 +190,12 @@ pub fn apply_pending_restore(data_dir: &Path) {
                 pre_restore = %pre.display(),
                 "applied pending database restore from backup"
             );
+            true
         }
         Err(e) => {
             tracing::error!(error = %e, "restore: could not move restored db into place");
             let _ = std::fs::remove_file(&restored);
+            false
         }
     }
 }

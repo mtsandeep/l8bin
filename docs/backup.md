@@ -60,7 +60,9 @@ The orchestrator runs *from* the database it would restore, so restore is a two-
      litebin.db.restored → litebin.db
 ```
 
-The dashboard polls `/backup/status` until the orchestrator is back. Every restore checkpoints the live WAL first, and the replaced database is kept as `litebin.db.pre-restore` — "Undo last restore" stages it back through the same swap (undoing again flips back). Stale `-wal`/`-shm` files are deleted with the swap; a revert may stage its own WAL alongside (`litebin.db.restored-wal`).
+The dashboard polls `/backup/status` until the orchestrator is back. Every restore checkpoints the live WAL first, and the replaced database is kept as `litebin.db.pre-restore` — "Undo last restore" stages it back through the same swap (undoing again flips back). Stale `-wal`/`-shm` files are deleted with the swap; a revert may stage its own WAL alongside (`litebin.db.restored-wal`). After any swap the orchestrator runs `REINDEX` + `PRAGMA quick_check` at boot — litestream point-in-time restores can carry stale PK index pages (upstream [#1164](https://github.com/benbjohnson/litestream/issues/1164), repro'd on 0.5.17), and rebuilding indexes repairs them.
+
+A requested time newer than the last write (e.g. after a disable gap) resolves to the last write — litestream semantics; the dashboard shows the resolved moment.
 
 ## Manual Backups
 
