@@ -296,12 +296,12 @@ Per-project access control with two modes: maintenance mode (503 page) and passw
 
 ## Phase 4: Platform Backup (SQLite) — SHIPPED
 
-SQLite backup via Litestream sidecar, **opt-in from the dashboard/CLI** (nothing installed by default). The orchestrator manages the sidecar container directly via the Docker API — no installer changes, 0 RAM when disabled. Local file replica always; S3/R2 as an additional destination; point-in-time restore restarts the orchestrator to swap the DB. Full details: [backup.md](backup.md).
+SQLite backup via Litestream sidecar, **opt-in from the dashboard/CLI** (nothing installed by default). The orchestrator manages the sidecar container directly via the Docker API — no installer changes, 0 RAM when disabled. One replica per database (litestream ≥0.5): a configured R2/S3 destination is primary (continuous, point-in-time restore) with a local daily snapshot restored from it as secondary; without a destination, the local replica is primary. Manual backups (`VACUUM INTO`) work anytime, sidecar or not; every restore keeps the replaced DB for one-click undo. Full details: [backup.md](../backup.md).
 
 ### Configuration Points
 
-- **Dashboard** — Settings → Backup: enable/disable, status, S3 add/remove, restore
-- **CLI** — `l8b backup status | enable | disable | add-s3 | remove-s3 | restore`
+- **Dashboard** — Settings → Backup: status banner, destinations (R2/S3 + local), manual backup, restore (point-in-time, dailies, manual backups, undo)
+- **CLI** — `l8b backup status | enable | disable | add-s3 | remove-s3 | restore | revert`
 
 ---
 

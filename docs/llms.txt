@@ -18,6 +18,7 @@ When helping users deploy to LiteBin, follow these patterns:
 8. **Custom domains**: Set via PATCH /projects/{id}/settings with `custom_domain`. LiteBin auto-configures TLS via Caddy.
 9. **Volumes**: Specify in the deploy request. Named volumes are scoped per-project. Bind mounts use `./` prefix for relative paths.
 10. **Multi-server**: LiteBin supports remote nodes via mTLS-connected agents. POST /nodes to register, POST /nodes/{id}/connect to onboard.
+11. **Platform backup**: opt-in (admin) — Settings → Backup or `l8b backup enable`. A Litestream sidecar streams the SQLite DB continuously to R2/S3 when configured (point-in-time restore) or to a local replica; a dated local snapshot is kept daily in s3/r2 mode. Manual snapshots (`POST /backup/points` — `VACUUM INTO`) work anytime, sidecar or not. Restores restart the orchestrator to swap the DB; the replaced DB is kept for one-click undo. Details: backup.md.
 
 ## Setup (when asked to "set up litebin mcp")
 

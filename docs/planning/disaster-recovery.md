@@ -29,12 +29,12 @@ LiteBin does not do high availability. If you need HA, use Kubernetes. What Lite
 
 ## Prerequisites
 
-This plan depends on two backup systems already planned:
+This plan depends on two backup systems:
 
-| Backup System | Covers | Planned In |
+| Backup System | Covers | Status |
 |---|---|---|
-| Litestream (Platform Backup) | Master SQLite DB (project configs, node configs, routes, settings) | Phase 3 (backup.md) |
-| Rustic (Project Backup) | Agent project data (Docker volumes, compose files, image vault) | project-backup.md |
+| Litestream (Platform Backup) | Master SQLite DB (project configs, node configs, routes, settings) | Shipped — [backup.md](../backup.md) |
+| Rustic (Project Backup) | Agent project data (Docker volumes, compose files, image vault) | Planned — [project-backup.md](project-backup.md) |
 
 Without S3/R2 configured in Litestream, master recovery is limited to local file backup (same server — useless if the server is dead). **S3/R2 is a prerequisite for real DR.**
 

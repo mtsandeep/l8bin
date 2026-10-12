@@ -2,7 +2,7 @@
 
 LiteBin's platform data — the SQLite database containing all project configs, node configs, routes, and settings — is backed up via [Litestream](https://litestream.io/).
 
-**Status: shipped.** Backup is opt-in from the dashboard (Settings → Backup) or CLI. No custom backup code — LiteBin generates the config and manages the sidecar container.
+Backup is opt-in from the dashboard (Settings → Backup) or CLI — nothing is installed until enabled. LiteBin generates the litestream config and manages the sidecar container; the data model (single replica, daily local copies, manual snapshots) is LiteBin's own.
 
 ## How It Works
 
@@ -81,6 +81,9 @@ l8b backup add-s3 --endpoint https://<id>.r2.cloudflarestorage.com --bucket my-b
                   --access-key AKIA... --secret-key ...
 l8b backup remove-s3 --yes
 l8b backup restore [--timestamp 2026-10-06T10:30:00Z] --yes
+l8b backup restore --from-local 2026-10-12 --yes      # local daily snapshot
+l8b backup restore --point 7 --yes                    # manual backup by id
+l8b backup revert --yes                               # undo the last restore
 ```
 
 ## Resource Impact
@@ -99,7 +102,7 @@ Zero containers and zero RAM for installs that never enable backup.
 | Sidecar lifecycle, exec, restart, mount detection | `litebin-common/src/docker/container/sidecar.rs` |
 | yml generation, restore swap, replica status, boot reconcile | `orchestrator/src/backup.rs` |
 | HTTP endpoints | `orchestrator/src/routes/backup.rs` |
-| Dashboard Backup tab | `dashboard/src/components/GlobalSettingsModal.tsx` |
+| Dashboard Backup page | `dashboard/src/components/settings/BackupPanel.tsx` + `settings/backup/` |
 | CLI | `cli/src/commands/backup.rs` |
 | Tests | `orchestrator/src/backup.rs` (unit), `orchestrator/src/tests/backup_tests.rs` (HTTP) |
 
@@ -107,4 +110,4 @@ Zero containers and zero RAM for installs that never enable backup.
 
 ## Not Covered Here
 
-Project data (Docker volumes, uploaded images, compose files) is a separate plan: [project-backup.md](project-backup.md). Disaster recovery (dead-master restore from S3) builds on this: [disaster-recovery.md](disaster-recovery.md).
+Project data (Docker volumes, uploaded images, compose files) is a separate plan: [project-backup.md](planning/project-backup.md). Disaster recovery (dead-master restore from S3) builds on this: [disaster-recovery.md](planning/disaster-recovery.md).
