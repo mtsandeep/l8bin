@@ -1,7 +1,7 @@
 //! Litestream backup sidecar: config generation, restore swap, and replica status.
 //!
 //! Backup is opt-in (dashboard/CLI `enable`), master-only. The orchestrator owns
-//! `/app/data/litestream.yml` and manages the `litebin-litestream` sidecar container
+//! `/app/data/litestream.yml` and manages the `litebin-backup` sidecar container
 //! directly via the Docker API — no compose involvement.
 
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::routes::global_settings::get_setting;
 
-pub const SIDECAR_CONTAINER_NAME: &str = "litebin-litestream";
+pub const SIDECAR_CONTAINER_NAME: &str = "litebin-backup";
 pub const LITESTREAM_IMAGE: &str = "litestream/litestream:0.5.17";
 
 pub const SETTING_BACKUP_ENABLED: &str = "backup_enabled";
@@ -71,6 +71,7 @@ pub fn sidecar_spec(network: &str, bind: &str) -> litebin_common::docker::Sideca
         cmd: vec!["replicate".into(), "-config".into(), SIDECAR_CONFIG_PATH.into()],
         network: network.to_string(),
         label: "backup".into(),
+        service: "backup".into(),
     }
 }
 

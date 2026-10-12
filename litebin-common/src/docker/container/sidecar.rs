@@ -8,9 +8,10 @@ use futures_util::StreamExt;
 
 use super::super::DockerManager;
 
-/// Result of an `exec_container` call: (exit code, combined stdout+stderr).
+/// Result of an `exec_container` call.
 pub struct ExecOutput {
     pub exit_code: i64,
+    /// Combined stdout+stderr.
     pub output: String,
 }
 
@@ -24,12 +25,12 @@ pub struct SidecarSpec {
     pub network: String,
     /// Value for the `litebin.sidecar` label (e.g. `backup`).
     pub label: String,
+    /// Compose service label — groups the sidecar with the platform's containers.
+    pub service: String,
 }
 
 impl DockerManager {
-    /// Find the volume name (or host path, for binds) backing a mount destination on
-    /// this container, so a sidecar can share the same storage. Returns None when not
-    /// running in a container or the mount is absent (dev mode).
+    /// Volume name (or host path, for bind mounts) backing `destination` on this container.
     pub async fn detect_mount_bind_source(&self, destination: &str) -> Option<String> {
         let hostname = std::fs::read_to_string("/etc/hostname").ok()?.trim().to_string();
         let inspect = self.docker.inspect_container(&hostname, None).await.ok()?;
@@ -42,15 +43,13 @@ impl DockerManager {
         None
     }
 
-    /// Restart a container by id or name. Unlike the recreate-based restart used for
-    /// project services, this keeps the container identity (sidecars are not rebuilt).
+    /// Restarts in place, keeping container identity — project services are recreated instead.
     pub async fn restart_container(&self, container: &str) -> anyhow::Result<()> {
         self.docker.restart_container(container, Some(RestartContainerOptions { t: Some(10), signal: None })).await?;
         Ok(())
     }
 
-    /// Run a command inside a container and wait for it to finish.
-    /// Returns the exit code and combined stdout+stderr output.
+    /// Run a command inside a container, waiting for it to finish.
     pub async fn exec_container(&self, container: &str, cmd: &[&str]) -> anyhow::Result<ExecOutput> {
         let exec = self
             .docker
@@ -88,13 +87,18 @@ impl DockerManager {
         Ok(ExecOutput { exit_code, output })
     }
 
+    /// The orchestrator container's compose project.
+    async fn self_compose_project(&self) -> Option<String> {
+        let hostname = std::fs::read_to_string("/etc/hostname").ok()?.trim().to_string();
+        let inspect = self.docker.inspect_container(&hostname, None).await.ok()?;
+        inspect.config?.labels?.get("com.docker.compose.project").cloned()
+    }
+
     /// Ensure an orchestrator-managed sidecar container exists and is running.
-    /// Idempotent: pulls the image and creates the container only when missing.
-    /// Returns true if the container was created, false if it already existed.
+    /// Idempotent — returns true when the container was created this call.
     pub async fn ensure_sidecar_container(&self, spec: &SidecarSpec) -> anyhow::Result<bool> {
         if let Some(existing) = self.find_container_by_name(&spec.name).await? {
-            // Exists — make sure it's running (survives host reboots via restart policy,
-            // but manual stops are corrected here too).
+            // Restart policy covers reboots; this corrects manual stops.
             let running = self.is_container_running(&existing).await?;
             if !running {
                 self.docker.start_container(&existing, None::<StartContainerOptions>).await?;
@@ -106,6 +110,12 @@ impl DockerManager {
 
         let mut labels = HashMap::new();
         labels.insert("litebin.sidecar".to_string(), spec.label.clone());
+        if let Some(project) = self.self_compose_project().await {
+            labels.insert("com.docker.compose.project".to_string(), project);
+            labels.insert("com.docker.compose.service".to_string(), spec.service.clone());
+            labels.insert("com.docker.compose.container-number".to_string(), "1".to_string());
+            labels.insert("com.docker.compose.oneoff".to_string(), "False".to_string());
+        }
 
         let create_body = ContainerCreateBody {
             image: Some(spec.image.clone()),

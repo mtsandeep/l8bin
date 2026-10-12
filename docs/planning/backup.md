@@ -8,7 +8,7 @@ LiteBin's platform data — the SQLite database containing all project configs, 
 
 ```
 ┌─────────────────────────────┐      ┌──────────────────────────────┐
-│  litebin-orchestrator       │      │  litebin-litestream (sidecar)│
+│  litebin-orchestrator       │      │  litebin-backup (sidecar)    │
 │                             │      │                              │
 │  /app/data/litebin.db  ◄────┼──────┼─  /data/litebin.db (ro use)  │
 │  /app/data/litestream.yml ──┼─────►│  /data/litestream.yml (cfg)  │

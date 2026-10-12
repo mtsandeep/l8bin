@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Backup sidecar container renamed to `litebin-backup`.
+
+### Fixed
+- The Litestream backup sidecar now carries the platform's compose labels, so Docker Desktop groups it with the other litebin containers instead of listing it loose.
+
 ## [0.4.6] - 2026-10-11
 
 ### Fixed
