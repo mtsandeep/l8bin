@@ -331,6 +331,8 @@ async fn main() -> anyhow::Result<()> {
         )?),
     };
 
+    backup::spawn_daily_snapshots(state.db.clone(), state.config.clone(), state.docker.clone());
+
     // Periodic GC of expired upload sessions + orphaned staging dirs.
     {
         let gc_store = state.upload_store.clone();

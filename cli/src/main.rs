@@ -381,6 +381,18 @@ enum BackupAction {
         /// Point-in-time to restore to (RFC 3339, e.g. 2026-10-06T10:30:00Z)
         #[arg(long)]
         timestamp: Option<String>,
+        /// Restore a local daily snapshot by date (YYYY-MM-DD) instead — bypasses R2/S3
+        #[arg(long)]
+        from_local: Option<String>,
+        /// Restore a saved point by id (see `l8b backup status`) instead
+        #[arg(long)]
+        point: Option<i64>,
+        /// Skip confirmation (required in CI/JSON mode)
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Undo the last applied restore (orchestrator restarts to apply)
+    Revert {
         /// Skip confirmation (required in CI/JSON mode)
         #[arg(long)]
         yes: bool,
@@ -640,15 +652,18 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             BackupAction::RemoveS3 { yes } => {
                 commands::backup::remove_s3(yes, cli.server.as_deref(), cli.token.as_deref(), ci_mode, out).await?;
             }
-            BackupAction::Restore { timestamp, yes } => {
+            BackupAction::Restore { timestamp, from_local, point, yes } => {
                 commands::backup::restore(
-                    commands::backup::RestoreArgs { timestamp, yes },
+                    commands::backup::RestoreArgs { timestamp, from_local, point, yes },
                     cli.server.as_deref(),
                     cli.token.as_deref(),
                     ci_mode,
                     out,
                 )
                 .await?;
+            }
+            BackupAction::Revert { yes } => {
+                commands::backup::revert(yes, cli.server.as_deref(), cli.token.as_deref(), ci_mode, out).await?;
             }
         },
         Commands::List => {

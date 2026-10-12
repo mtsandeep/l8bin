@@ -5,9 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Undo last restore** — every restore checkpoints the live WAL and keeps the replaced database as `litebin.db.pre-restore`; "Undo last restore" (Restore section, shown only when one exists) stages it back through the same boot swap, so undoing again flips back and forth (`POST /backup/revert-restore`, `l8b backup revert`).
+- **Manual backup — snapshot the live database anytime** — a `VACUUM INTO` snapshot (consistent, lock-free in WAL mode) into `backups/points/`, so it restores even after a destination switch, with backup disabled, or with no sidecar. Dashboard: "Manual backup" button in the status header (name defaults to the current date-time, asked in a modal); backups are listed under Restore with size, restore, and delete (`POST /backup/restore-point`, `l8b backup restore --point <id>`); deleting removes the snapshot.
+- **R2/S3 is the primary backup destination; local becomes a secondary daily copy** — litestream ≥0.5 allows a single replica per database, so configuring R2/S3 points the sidecar at it (continuous, point-in-time restore) and the server keeps a dated local snapshot restored from R2/S3 daily (30 retained; a snapshot that can't be taken is the "destination may be broken" alarm, surfaced as a stale local-daily in Settings → Backup and `l8b backup status`). Without R2/S3, local continuous backup is unchanged. The normal Restore always prefers R2/S3; local snapshots restore via an explicit bypass option (dashboard "Restore locally", `l8b backup restore --from-local YYYY-MM-DD`). Destinations show primary/secondary + continuous/daily badges, provider chip (R2/S3, URL on hover), and file/size/coverage stats for both.
 - Backup sidecar container renamed to `litebin-backup`.
 
 ### Fixed
+- **Configuring an S3/R2 destination crash-looped the sidecar** — litestream 0.5 rejects multiple replicas per database ("multiple replicas on a single database are no longer supported"); the sidecar now runs the single-replica config above and the stale local LTX store is cleared on switch.
 - The Litestream backup sidecar now carries the platform's compose labels, so Docker Desktop groups it with the other litebin containers instead of listing it loose.
 
 ## [0.4.6] - 2026-10-11

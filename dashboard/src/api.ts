@@ -208,6 +208,14 @@ export interface BackupPoint {
   id: number;
   name: string;
   timestamp: string;
+  size_bytes: number;
+  available: boolean;
+}
+
+export interface DailySnapshot {
+  date: string;
+  timestamp: string;
+  size_bytes: number;
 }
 
 export interface BackupStatus {
@@ -218,7 +226,11 @@ export interface BackupStatus {
   last_sync: string | null;
   db_size_bytes: number | null;
   replica: BackupReplicaInfo | null;
+  coverage_start: string | null;
+  dailies: DailySnapshot[];
   points: BackupPoint[];
+  /** When the kept pre-restore database was last live (RFC 3339) — null = no undo. */
+  revertible_to: string | null;
   s3: BackupS3Status;
 }
 
@@ -383,6 +395,21 @@ export function deleteBackupPoint(id: number): Promise<BackupActionResponse> {
 
 export function restoreBackup(timestamp?: string): Promise<BackupActionResponse> {
   return backupAction('/backup/restore', 'POST', { timestamp: timestamp || null });
+}
+
+/** Restore a local daily snapshot by date (YYYY-MM-DD) — bypasses R2/S3. */
+export function restoreBackupLocal(date: string): Promise<BackupActionResponse> {
+  return backupAction('/backup/restore-local', 'POST', { date });
+}
+
+/** Restore a named point from its local snapshot file. */
+export function restoreBackupPoint(pointId: number): Promise<BackupActionResponse> {
+  return backupAction('/backup/restore-point', 'POST', { point_id: pointId });
+}
+
+/** Undo the last applied restore (stages litebin.db.pre-restore back in). */
+export function revertBackupRestore(): Promise<BackupActionResponse> {
+  return backupAction('/backup/revert-restore', 'POST');
 }
 
 export async function syncDnsRecords(): Promise<{

@@ -12,6 +12,9 @@ use serde::Serialize;
 use crate::routes::global_settings::get_setting;
 
 pub const SIDECAR_CONTAINER_NAME: &str = "litebin-backup";
+/// When the s3/r2 destination was first configured (RFC 3339) — restore-coverage
+/// floor for the remote replica.
+pub const SETTING_S3_SINCE: &str = "backup_s3_since";
 pub const LITESTREAM_IMAGE: &str = "litestream/litestream:0.5.17";
 
 pub const SETTING_BACKUP_ENABLED: &str = "backup_enabled";
@@ -99,25 +102,27 @@ struct ReplicaConfig {
     retention: Option<String>,
 }
 
-/// Generate litestream.yml content: local file replica always, S3 replica when configured.
+/// Generate litestream.yml content. Litestream ≥0.5 allows one replica per
+/// database: the s3/r2 destination when configured, else the local file replica.
 pub fn generate_litestream_yml(s3: &S3Config) -> String {
-    let mut replicas = vec![ReplicaConfig {
-        url: SIDECAR_REPLICA_URL.to_string(),
-        access_key_id: None,
-        secret_access_key: None,
-        endpoint: None,
-        retention: Some("720h".into()), // 30 days — the platform DB is small
-    }];
-    if s3.is_configured() {
-        replicas.push(ReplicaConfig {
+    let replica = if s3.is_configured() {
+        ReplicaConfig {
             url: format!("s3://{}/{}", s3.bucket.trim_end_matches('/'), s3.prefix.trim_matches('/')),
             access_key_id: Some(s3.access_key_id.clone()),
             secret_access_key: Some(s3.secret_access_key.clone()),
             endpoint: Some(s3.endpoint.clone()),
             retention: Some("720h".into()),
-        });
-    }
-    let yml = LitestreamYml { dbs: vec![DbConfig { path: SIDECAR_DB_PATH.to_string(), replicas }] };
+        }
+    } else {
+        ReplicaConfig {
+            url: SIDECAR_REPLICA_URL.to_string(),
+            access_key_id: None,
+            secret_access_key: None,
+            endpoint: None,
+            retention: Some("720h".into()), // 30 days — the platform DB is small
+        }
+    };
+    let yml = LitestreamYml { dbs: vec![DbConfig { path: SIDECAR_DB_PATH.to_string(), replicas: vec![replica] }] };
     serde_yaml::to_string(&yml).expect("litestream yml serializes")
 }
 
@@ -129,6 +134,16 @@ pub fn write_litestream_yml(data_dir: &Path, s3: &S3Config) -> std::io::Result<(
     let path = data_dir.join("litestream.yml");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(content.as_str()) {
         std::fs::write(&path, &content)?;
+        // A replica switch invalidates litestream's local staging state and the old
+        // file-replica store — clearing both forces a fresh full snapshot.
+        let staging = data_dir.join(".litebin.db-litestream");
+        if staging.exists() {
+            std::fs::remove_dir_all(&staging)?;
+        }
+        let local_store = data_dir.join("backups").join("litebin.db");
+        if local_store.exists() {
+            std::fs::remove_dir_all(&local_store)?;
+        }
     }
     Ok(())
 }
@@ -163,12 +178,19 @@ pub fn apply_pending_restore(data_dir: &Path) {
         }
     }
 
-    // The restored file is a plain snapshot — no WAL applies to it.
+    // The restored file is a plain snapshot — no WAL applies to it, unless the
+    // restore staged one (revert), in which case it becomes the live WAL.
     match std::fs::rename(&restored, &db) {
-        Ok(()) => tracing::info!(
-            pre_restore = %pre.display(),
-            "applied pending database restore from backup"
-        ),
+        Ok(()) => {
+            let restored_wal = data_dir.join("litebin.db.restored-wal");
+            if restored_wal.exists() {
+                let _ = std::fs::rename(&restored_wal, data_dir.join("litebin.db-wal"));
+            }
+            tracing::info!(
+                pre_restore = %pre.display(),
+                "applied pending database restore from backup"
+            );
+        }
         Err(e) => {
             tracing::error!(error = %e, "restore: could not move restored db into place");
             let _ = std::fs::remove_file(&restored);
@@ -222,7 +244,7 @@ pub struct ReplicaInfo {
     pub last_write: Option<String>,
 }
 
-fn system_time_to_rfc3339(t: SystemTime) -> Option<String> {
+pub(crate) fn system_time_to_rfc3339(t: SystemTime) -> Option<String> {
     let secs = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
     chrono::DateTime::from_timestamp(secs as i64, 0).map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
 }
@@ -241,6 +263,146 @@ pub fn replica_info(replica_dir: &Path) -> Option<ReplicaInfo> {
         .or(store_created)
         .and_then(system_time_to_rfc3339);
     Some(ReplicaInfo { coverage_start, file_count, size_bytes, last_write: newest.and_then(system_time_to_rfc3339) })
+}
+
+/// Local daily snapshots retained alongside the s3/r2 destination.
+const DAILY_RETENTION_DAYS: u64 = 30;
+
+/// A dated local snapshot restored from the s3/r2 replica.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct DailySnapshot {
+    /// File-name date, UTC (YYYY-MM-DD).
+    pub date: String,
+    /// When the snapshot was taken (RFC 3339, file mtime).
+    pub timestamp: String,
+    pub size_bytes: u64,
+}
+
+/// List local daily snapshots, newest first.
+pub fn daily_snapshots(data_dir: &Path) -> Vec<DailySnapshot> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(data_dir.join("backups").join("daily")) else { return out };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(date) = name.strip_prefix("litebin-").and_then(|n| n.strip_suffix(".db")) else { continue };
+        let Ok(md) = entry.metadata() else { continue };
+        let timestamp = md.modified().ok().and_then(system_time_to_rfc3339).unwrap_or_default();
+        out.push(DailySnapshot { date: date.to_string(), timestamp, size_bytes: md.len() });
+    }
+    out.sort_by(|a, b| b.date.cmp(&a.date));
+    out
+}
+
+/// Snapshot file backing a named restore point.
+pub fn point_file(data_dir: &Path, id: i64) -> PathBuf {
+    data_dir.join("backups").join("points").join(format!("point-{id}.db"))
+}
+
+/// Take a named restore point: a `VACUUM INTO` snapshot of the live DB kept as a
+/// local file, so points survive replica switches and disabled backup. Returns
+/// (id, RFC 3339 timestamp, size).
+pub async fn take_named_point(
+    db: &sqlx::SqlitePool,
+    data_dir: &Path,
+    name: &str,
+) -> anyhow::Result<(i64, String, u64)> {
+    let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let id: i64 = sqlx::query("INSERT INTO backup_points (name, timestamp) VALUES (?, ?)")
+        .bind(name)
+        .bind(&timestamp)
+        .execute(db)
+        .await?
+        .last_insert_rowid();
+    let file = point_file(data_dir, id);
+    std::fs::create_dir_all(file.parent().expect("point dir has a parent"))?;
+    if let Err(e) = sqlx::query("VACUUM INTO ?").bind(file.to_string_lossy().to_string()).execute(db).await {
+        let _ = sqlx::query("DELETE FROM backup_points WHERE id = ?").bind(id).execute(db).await;
+        anyhow::bail!("point snapshot failed: {e}");
+    }
+    let size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+    tracing::info!(point = id, name = %name, size_bytes, "backup: named restore point saved");
+    Ok((id, timestamp, size_bytes))
+}
+
+/// Snapshot the current s3/r2 replica state into a dated local file — the
+/// just-in-case copy, and daily proof the remote replica is restorable.
+pub async fn take_daily_snapshot(
+    docker: &litebin_common::docker::DockerManager,
+    data_dir: &Path,
+) -> anyhow::Result<()> {
+    let sidecar = docker
+        .find_container_by_name(SIDECAR_CONTAINER_NAME)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("backup sidecar not found"))?;
+    let daily_dir = data_dir.join("backups").join("daily");
+    std::fs::create_dir_all(&daily_dir)?;
+    let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let out = format!("/data/backups/daily/litebin-{date}.db");
+    let cmd = vec!["litestream", "restore", "-config", SIDECAR_CONFIG_PATH, "-o", &out, "-force", SIDECAR_DB_PATH];
+    let exec = tokio::time::timeout(std::time::Duration::from_secs(300), docker.exec_container(&sidecar, &cmd))
+        .await
+        .map_err(|_| anyhow::anyhow!("daily snapshot timed out"))??;
+    if exec.exit_code != 0 {
+        anyhow::bail!("daily snapshot failed: {}", exec.output);
+    }
+    enforce_daily_retention(&daily_dir);
+    tracing::info!(date = %date, "backup: local daily snapshot restored from s3/r2");
+    Ok(())
+}
+
+fn enforce_daily_retention(daily_dir: &Path) {
+    let cutoff = SystemTime::now().checked_sub(std::time::Duration::from_secs(DAILY_RETENTION_DAYS * 86_400));
+    let Ok(entries) = std::fs::read_dir(daily_dir) else { return };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(md) = entry.metadata() else { continue };
+        if md.is_file() {
+            files.push((md.modified().ok(), entry.path()));
+        }
+    }
+    let newest = files
+        .iter()
+        .max_by_key(|(t, _)| t.map(|t| t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default()))
+        .map(|(_, p)| p.clone());
+    for (mtime, path) in files {
+        if newest.as_deref() == Some(path.as_path()) {
+            continue;
+        }
+        if mtime.zip(cutoff).map(|(t, c)| t < c).unwrap_or(false) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+/// Background loop: daily local snapshot while backup is enabled and an s3/r2
+/// destination is configured (retries on failure; re-checks settings hourly).
+pub fn spawn_daily_snapshots(
+    db: sqlx::SqlitePool,
+    config: std::sync::Arc<crate::config::Config>,
+    docker: std::sync::Arc<litebin_common::docker::DockerManager>,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        loop {
+            let enabled = get_setting(&db, SETTING_BACKUP_ENABLED).await.ok().flatten().as_deref() == Some("1");
+            let s3_configured = !setting_or_default(&db, SETTING_S3_ENDPOINT).await.is_empty()
+                && !setting_or_default(&db, SETTING_S3_BUCKET).await.is_empty();
+            let Some(data_dir) = resolve_data_dir(&config.database_url) else {
+                return;
+            };
+            if !enabled || !s3_configured {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                continue;
+            }
+            match take_daily_snapshot(&docker, &data_dir).await {
+                Ok(()) => tokio::time::sleep(std::time::Duration::from_secs(86_400)).await,
+                Err(e) => {
+                    tracing::warn!(error = %e, "backup: daily local snapshot failed — retrying in 10m");
+                    tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                }
+            }
+        }
+    });
 }
 
 async fn setting_or_default(db: &sqlx::SqlitePool, key: &str) -> String {
@@ -285,6 +447,30 @@ pub async fn reconcile(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn named_point_is_a_valid_snapshot() {
+        let dir = std::env::temp_dir().join(format!("l8b-point-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let opts = sqlx::sqlite::SqliteConnectOptions::new().filename(dir.join("t.db")).create_if_missing(true);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().connect_with(opts).await.unwrap();
+        sqlx::query("CREATE TABLE backup_points (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, timestamp TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE t(x INTEGER)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO t VALUES (42)").execute(&pool).await.unwrap();
+
+        let (id, _ts, size) = take_named_point(&pool, &dir, "before-migration").await.unwrap();
+        assert!(size > 0);
+        assert!(point_file(&dir, id).is_file());
+
+        // The snapshot must open as a database containing the live data.
+        let snap_opts = sqlx::sqlite::SqliteConnectOptions::new().filename(point_file(&dir, id));
+        let snap = sqlx::sqlite::SqlitePoolOptions::new().connect_with(snap_opts).await.unwrap();
+        let x: i64 = sqlx::query_scalar("SELECT x FROM t").fetch_one(&snap).await.unwrap();
+        assert_eq!(x, 42);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn yml_local_only() {
         let yml = generate_litestream_yml(&S3Config::default());
@@ -306,6 +492,7 @@ mod tests {
         assert!(yml.contains("endpoint: https://acct.r2.cloudflarestorage.com"));
         assert!(yml.contains("access-key-id: AKIA"));
         assert!(yml.contains("secret-access-key: s3cr3t"));
+        assert!(!yml.contains("file://"));
     }
 
     #[test]

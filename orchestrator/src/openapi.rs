@@ -95,6 +95,9 @@ use utoipa::OpenApi;
         crate::routes::backup::backup_create_point,
         crate::routes::backup::backup_delete_point,
         crate::routes::backup::backup_restore,
+        crate::routes::backup::backup_restore_local,
+        crate::routes::backup::backup_restore_point,
+        crate::routes::backup::backup_revert_restore,
         // Volumes
         crate::routes::volumes::delete_volume,
         crate::routes::volumes::delete_all_volumes,

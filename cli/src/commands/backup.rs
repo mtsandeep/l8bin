@@ -36,13 +36,22 @@ fn print_status(status: &serde_json::Value) {
     let s3 = &status["s3"];
     if s3["configured"].as_bool().unwrap_or(false) {
         println!(
-            "replicas:    local + s3://{}{} ({})",
+            "destination: s3://{}{} ({})",
             s3["bucket"].as_str().unwrap_or_default(),
             s3["prefix"].as_str().map(|p| format!("/{p}")).unwrap_or_default(),
             s3["endpoint"].as_str().unwrap_or_default()
         );
+        if let Some(daily) = status["dailies"].as_array().and_then(|d| d.first()) {
+            println!(
+                "local daily: {} ({})",
+                daily["date"].as_str().unwrap_or("?"),
+                daily["timestamp"].as_str().unwrap_or("?")
+            );
+        } else {
+            println!("local daily: none yet");
+        }
     } else {
-        println!("replicas:    local only");
+        println!("destination: local (this server)");
     }
     if let Some(replica) = status["replica"].as_object() {
         let coverage = replica["coverage_start"].as_str().unwrap_or("—");
@@ -53,12 +62,26 @@ fn print_status(status: &serde_json::Value) {
     if let Some(db_bytes) = status["db_size_bytes"].as_u64() {
         println!("live db:     {db_bytes} bytes");
     }
+    if let Some(to) = status["revertible_to"].as_str() {
+        println!("undo:        available (to {to})");
+    }
     if let Some(points) = status["points"].as_array()
         && !points.is_empty()
     {
-        println!("named points:");
+        println!("manual backups:");
         for pt in points {
-            println!("  {:<24} {}", pt["name"].as_str().unwrap_or("?"), pt["timestamp"].as_str().unwrap_or("?"));
+            let size = if pt["available"].as_bool().unwrap_or(false) {
+                format!("{} bytes", pt["size_bytes"].as_u64().unwrap_or(0))
+            } else {
+                "snapshot missing".into()
+            };
+            println!(
+                "  #{:<3} {:<24} {} ({})",
+                pt["id"].as_i64().unwrap_or(0),
+                pt["name"].as_str().unwrap_or("?"),
+                pt["timestamp"].as_str().unwrap_or("?"),
+                size
+            );
         }
     }
 }
@@ -186,6 +209,8 @@ pub(crate) async fn remove_s3(
 
 pub(crate) struct RestoreArgs {
     pub timestamp: Option<String>,
+    pub from_local: Option<String>,
+    pub point: Option<i64>,
     pub yes: bool,
 }
 
@@ -197,6 +222,51 @@ pub(crate) async fn restore(
     ci_mode: &CiMode,
     out: &Out,
 ) -> Result<()> {
+    let (client, server) = target(server_flag, token_flag)?;
+
+    if let Some(point_id) = args.point {
+        let label = format!("Restore saved point {point_id}? Everything written since it was taken is discarded");
+        if !confirm_or_yes(&label, args.yes, ci_mode, out)? {
+            out.note("Aborted.");
+            return Ok(());
+        }
+        auth::api_post_json(&client, &server, "/backup/restore-point", &serde_json::json!({ "point_id": point_id }))
+            .await
+            .map_err(map_admin_err)?;
+        #[derive(Serialize)]
+        struct PointRestoreResult {
+            restarting: bool,
+            point_id: i64,
+        }
+        out.ok(&PointRestoreResult { restarting: true, point_id });
+        if !out.json {
+            println!("Point restore staged — the orchestrator is restarting to apply it (a few seconds).");
+        }
+        return Ok(());
+    }
+
+    if let Some(date) = args.from_local.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        let label =
+            format!("Restore the local daily snapshot from {date}? (bypasses R2/S3; everything since is discarded)");
+        if !confirm_or_yes(&label, args.yes, ci_mode, out)? {
+            out.note("Aborted.");
+            return Ok(());
+        }
+        auth::api_post_json(&client, &server, "/backup/restore-local", &serde_json::json!({ "date": date }))
+            .await
+            .map_err(map_admin_err)?;
+        #[derive(Serialize)]
+        struct LocalRestoreResult {
+            restarting: bool,
+            date: String,
+        }
+        out.ok(&LocalRestoreResult { restarting: true, date: date.to_string() });
+        if !out.json {
+            println!("Local daily restore staged — the orchestrator is restarting to apply it (a few seconds).");
+        }
+        return Ok(());
+    }
+
     let when = args.timestamp.as_deref().map(str::trim).filter(|t| !t.is_empty());
     let label = match when {
         Some(t) => format!("Restore the database to {t}? Everything written since is discarded"),
@@ -207,7 +277,6 @@ pub(crate) async fn restore(
         return Ok(());
     }
 
-    let (client, server) = target(server_flag, token_flag)?;
     auth::api_post_json(&client, &server, "/backup/restore", &serde_json::json!({ "timestamp": when }))
         .await
         .map_err(map_admin_err)?;
@@ -222,6 +291,39 @@ pub(crate) async fn restore(
     if !out.json {
         println!("Restore staged — the orchestrator is restarting to apply it (a few seconds).");
         println!("The previous database is kept as litebin.db.pre-restore on the server.");
+    }
+    Ok(())
+}
+
+/// `l8b backup revert` — undo the last applied restore.
+pub(crate) async fn revert(
+    yes: bool,
+    server_flag: Option<&str>,
+    token_flag: Option<&str>,
+    ci_mode: &CiMode,
+    out: &Out,
+) -> Result<()> {
+    if !confirm_or_yes(
+        "Undo the last restore? The database returns to the state right before it (everything since is discarded)",
+        yes,
+        ci_mode,
+        out,
+    )? {
+        out.note("Aborted.");
+        return Ok(());
+    }
+    let (client, server) = target(server_flag, token_flag)?;
+    auth::api_post_json(&client, &server, "/backup/revert-restore", &serde_json::json!({}))
+        .await
+        .map_err(map_admin_err)?;
+
+    #[derive(Serialize)]
+    struct RevertResult {
+        restarting: bool,
+    }
+    out.ok(&RevertResult { restarting: true });
+    if !out.json {
+        println!("Undo staged — the orchestrator is restarting to apply it (a few seconds).");
     }
     Ok(())
 }

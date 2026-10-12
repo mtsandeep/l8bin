@@ -21,13 +21,17 @@ pub struct BackupS3Status {
     pub prefix: Option<String>,
 }
 
-/// A user-named restore point — a bookmark on the continuous restore window.
+/// A user-named restore point — a `VACUUM INTO` snapshot of the live database,
+/// kept as a local file so it survives replica switches and disabled backup.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BackupPoint {
     pub id: i64,
     pub name: String,
-    /// Bookmarked moment (RFC 3339) — passed to `litestream restore -timestamp`.
+    /// When the point was taken (RFC 3339).
     pub timestamp: String,
+    pub size_bytes: u64,
+    /// Snapshot file present. Rows from before the file-based points have none.
+    pub available: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -42,10 +46,17 @@ pub struct BackupStatus {
     pub last_sync: Option<String>,
     /// Live database size in bytes.
     pub db_size_bytes: Option<u64>,
-    /// Local replica store summary — None until litestream creates it.
+    /// Active replica store summary (local file store, or the s3/r2 staging store).
     pub replica: Option<crate::backup::ReplicaInfo>,
+    /// Earliest restorable moment (RFC 3339) across the active replica.
+    pub coverage_start: Option<String>,
+    /// Local daily snapshots (s3/r2 mode), newest first.
+    pub dailies: Vec<crate::backup::DailySnapshot>,
     /// User-named restore points, newest first.
     pub points: Vec<BackupPoint>,
+    /// When the kept pre-restore database was last live (RFC 3339) — the undo
+    /// target. None when no restore has been applied.
+    pub revertible_to: Option<String>,
     pub s3: BackupS3Status,
 }
 
@@ -62,6 +73,17 @@ pub struct BackupS3Request {
 pub struct BackupRestoreRequest {
     /// Point-in-time restore (RFC 3339). Latest snapshot when omitted.
     pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BackupRestoreLocalRequest {
+    /// Daily snapshot date (YYYY-MM-DD).
+    pub date: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BackupRestorePointRequest {
+    pub point_id: i64,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -95,7 +117,15 @@ async fn load_points(state: &AppState) -> Result<Vec<BackupPoint>, (StatusCode, 
     .fetch_all(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(rows.into_iter().map(|(id, name, timestamp)| BackupPoint { id, name, timestamp }).collect())
+    let data_dir = backup::resolve_data_dir(&state.config.database_url);
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, timestamp)| {
+            let file = data_dir.as_deref().map(|dir| backup::point_file(dir, id));
+            let size_bytes = file.as_deref().and_then(|f| std::fs::metadata(f).ok()).map(|m| m.len()).unwrap_or(0);
+            BackupPoint { id, name, timestamp, size_bytes, available: size_bytes > 0 }
+        })
+        .collect())
 }
 
 async fn load_status(state: &AppState) -> Result<BackupStatus, (StatusCode, String)> {
@@ -114,11 +144,34 @@ async fn load_status(state: &AppState) -> Result<BackupStatus, (StatusCode, Stri
         _ => false,
     };
 
-    let replica_dir = data_dir.as_deref().map(|dir| dir.join("backups").join("litebin.db"));
-    let replica = replica_dir.as_deref().and_then(backup::replica_info);
+    // Active-replica stats: the local file store, or litestream's staging store for
+    // the s3/r2 replica (same LTX chain it uploads from).
+    let replica = match data_dir.as_deref() {
+        Some(dir) if s3.is_configured() => backup::replica_info(&dir.join(".litebin.db-litestream")),
+        Some(dir) => backup::replica_info(&dir.join("backups").join("litebin.db")),
+        None => None,
+    };
     let last_sync = replica.as_ref().and_then(|r| r.last_write.clone());
     let db_size_bytes =
         data_dir.as_deref().and_then(|dir| std::fs::metadata(dir.join("litebin.db")).ok()).map(|m| m.len());
+
+    let s3_since = if s3.is_configured() {
+        get_setting(&state.db, backup::SETTING_S3_SINCE).await?.filter(|v| !v.is_empty())
+    } else {
+        None
+    };
+    let coverage_start = replica.as_ref().and_then(|r| r.coverage_start.clone()).or(s3_since);
+    let dailies = if s3.is_configured() {
+        data_dir.as_deref().map(backup::daily_snapshots).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let revertible_to = data_dir.as_deref().and_then(|dir| {
+        std::fs::metadata(dir.join("litebin.db.pre-restore"))
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(backup::system_time_to_rfc3339)
+    });
 
     Ok(BackupStatus {
         enabled,
@@ -128,7 +181,10 @@ async fn load_status(state: &AppState) -> Result<BackupStatus, (StatusCode, Stri
         last_sync,
         db_size_bytes,
         replica,
+        coverage_start,
+        dailies,
         points: load_points(state).await?,
+        revertible_to,
         s3: BackupS3Status {
             configured: s3.is_configured(),
             endpoint: (!s3.endpoint.is_empty()).then_some(s3.endpoint),
@@ -154,6 +210,15 @@ async fn sync_sidecar_config(state: &AppState) -> Result<(), (StatusCode, String
 
 fn internal(e: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+/// Checkpoint the live WAL so the db file moved aside at swap time is self-contained.
+async fn checkpoint_live_db(state: &AppState) -> Result<(), (StatusCode, String)> {
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("checkpoint: {e}")))?;
+    Ok(())
 }
 
 #[utoipa::path(
@@ -245,6 +310,10 @@ pub async fn backup_add_s3(
     upsert_setting(&state.db, SETTING_S3_PREFIX, &prefix).await?;
     upsert_setting(&state.db, SETTING_S3_ACCESS_KEY, payload.access_key_id.trim()).await?;
     upsert_setting(&state.db, SETTING_S3_SECRET_KEY, payload.secret_access_key.trim()).await?;
+    if get_setting(&state.db, backup::SETTING_S3_SINCE).await?.is_none_or(|v| v.is_empty()) {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        upsert_setting(&state.db, backup::SETTING_S3_SINCE, &now).await?;
+    }
 
     sync_sidecar_config(&state).await?;
     Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: false }))
@@ -260,8 +329,14 @@ pub async fn backup_add_s3(
 pub async fn backup_remove_s3(
     State(state): State<AppState>,
 ) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
-    for key in [SETTING_S3_ENDPOINT, SETTING_S3_BUCKET, SETTING_S3_PREFIX, SETTING_S3_ACCESS_KEY, SETTING_S3_SECRET_KEY]
-    {
+    for key in [
+        SETTING_S3_ENDPOINT,
+        SETTING_S3_BUCKET,
+        SETTING_S3_PREFIX,
+        SETTING_S3_ACCESS_KEY,
+        SETTING_S3_SECRET_KEY,
+        backup::SETTING_S3_SINCE,
+    ] {
         upsert_setting(&state.db, key, "").await?;
     }
     sync_sidecar_config(&state).await?;
@@ -275,7 +350,7 @@ pub async fn backup_remove_s3(
     responses(
         (status = 200, body = BackupActionResponse),
         (status = 400, description = "invalid name"),
-        (status = 409, description = "no backup data yet"),
+        (status = 409, description = "in-memory database"),
     ),
     tag = "backup",
     security(("session_auth" = []))
@@ -288,22 +363,9 @@ pub async fn backup_create_point(
     if name.is_empty() || name.len() > 64 {
         return Err((StatusCode::BAD_REQUEST, "name must be 1-64 characters".into()));
     }
-
-    // The point must land inside the restore window — require existing replica data.
     let data_dir = backup::resolve_data_dir(&state.config.database_url)
         .ok_or((StatusCode::CONFLICT, "backup unavailable: in-memory database".into()))?;
-    let has_data = backup::replica_info(&data_dir.join("backups").join("litebin.db")).is_some_and(|r| r.file_count > 0);
-    if !has_data {
-        return Err((StatusCode::CONFLICT, "no backup data yet — wait for the first sync".into()));
-    }
-
-    sqlx::query("INSERT INTO backup_points (name, timestamp) VALUES (?, ?)")
-        .bind(&name)
-        .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-        .execute(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
+    backup::take_named_point(&state.db, &data_dir, &name).await.map_err(internal)?;
     Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: false }))
 }
 
@@ -328,6 +390,9 @@ pub async fn backup_delete_point(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "backup point not found".into()));
+    }
+    if let Some(dir) = backup::resolve_data_dir(&state.config.database_url) {
+        let _ = std::fs::remove_file(backup::point_file(&dir, id));
     }
     Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: false }))
 }
@@ -383,13 +448,136 @@ pub async fn backup_restore(
         return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("litestream restore failed: {}", exec.output)));
     }
 
-    // The restored snapshot lands beside the live DB; the swap happens at boot.
-    // Exit after the response flushes — the restart policy brings us back.
+    checkpoint_live_db(&state).await?;
+    stage_restart();
+    Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: true }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/backup/revert-restore",
+    responses(
+        (status = 200, body = BackupActionResponse),
+        (status = 404, description = "no restore to undo"),
+    ),
+    tag = "backup",
+    security(("session_auth" = []))
+)]
+/// Undo the last applied restore — stage `litebin.db.pre-restore` back in.
+pub async fn backup_revert_restore(
+    State(state): State<AppState>,
+) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
+    let data_dir = backup::resolve_data_dir(&state.config.database_url)
+        .ok_or((StatusCode::CONFLICT, "backup unavailable: in-memory database".into()))?;
+    let pre = data_dir.join("litebin.db.pre-restore");
+    if !pre.is_file() {
+        return Err((StatusCode::NOT_FOUND, "no restore to undo (litebin.db.pre-restore not found)".into()));
+    }
+
+    checkpoint_live_db(&state).await?;
+    std::fs::copy(&pre, data_dir.join("litebin.db.restored"))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("copy pre-restore: {e}")))?;
+    let pre_wal = data_dir.join("litebin.db.pre-restore-wal");
+    if pre_wal.is_file() {
+        let _ = std::fs::copy(&pre_wal, data_dir.join("litebin.db.restored-wal"));
+    }
+    tracing::info!("revert staged — restarting orchestrator to undo the last restore");
+    stage_restart();
+    Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: true }))
+}
+
+/// Exit after the response flushes — the restart policy brings us back and the
+/// boot swap applies the staged restore.
+fn stage_restart() {
     tokio::spawn(async {
         tokio::time::sleep(Duration::from_secs(1)).await;
         tracing::info!("restore staged — restarting orchestrator to apply");
         std::process::exit(0);
     });
+}
 
-    Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: true }))
+#[utoipa::path(
+    post,
+    path = "/backup/restore-local",
+    request_body = BackupRestoreLocalRequest,
+    responses(
+        (status = 200, body = BackupActionResponse),
+        (status = 400, description = "invalid date"),
+        (status = 404, description = "no snapshot for that date"),
+    ),
+    tag = "backup",
+    security(("session_auth" = []))
+)]
+/// Restore from a local daily snapshot (bypasses the s3/r2 replica).
+pub async fn backup_restore_local(
+    State(state): State<AppState>,
+    Json(payload): Json<BackupRestoreLocalRequest>,
+) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
+    let date = payload.date.trim();
+    let valid = date.len() == 10
+        && date.as_bytes()[4] == b'-'
+        && date.as_bytes()[7] == b'-'
+        && date.bytes().enumerate().all(|(i, b)| b.is_ascii_digit() || (i == 4 || i == 7) && b == b'-');
+    if !valid {
+        return Err((StatusCode::BAD_REQUEST, "date must be YYYY-MM-DD".into()));
+    }
+
+    let data_dir = backup::resolve_data_dir(&state.config.database_url)
+        .ok_or((StatusCode::CONFLICT, "backup unavailable: in-memory database".into()))?;
+    let src = data_dir.join("backups").join("daily").join(format!("litebin-{date}.db"));
+    if !src.is_file() {
+        return Err((StatusCode::NOT_FOUND, format!("no local daily snapshot for {date}")));
+    }
+    stage_file_restore(&state, &src).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/backup/restore-point",
+    request_body = BackupRestorePointRequest,
+    responses(
+        (status = 200, body = BackupActionResponse),
+        (status = 404, description = "point or its snapshot file not found"),
+    ),
+    tag = "backup",
+    security(("session_auth" = []))
+)]
+/// Restore a named point from its local snapshot file.
+pub async fn backup_restore_point(
+    State(state): State<AppState>,
+    Json(payload): Json<BackupRestorePointRequest>,
+) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM backup_points WHERE id = ?")
+        .bind(payload.point_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let Some(name) = name else {
+        return Err((StatusCode::NOT_FOUND, "backup point not found".into()));
+    };
+
+    let data_dir = backup::resolve_data_dir(&state.config.database_url)
+        .ok_or((StatusCode::CONFLICT, "backup unavailable: in-memory database".into()))?;
+    let src = backup::point_file(&data_dir, payload.point_id);
+    if !src.is_file() {
+        return Err((StatusCode::NOT_FOUND, format!("snapshot file for point \"{name}\" is missing")));
+    }
+    stage_file_restore(&state, &src).await
+}
+
+/// Copy a snapshot file next to the live DB as the pending restore; the swap
+/// happens at boot. Exits after the response flushes — the restart policy
+/// brings us back.
+async fn stage_file_restore(
+    state: &AppState,
+    src: &std::path::Path,
+) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
+    checkpoint_live_db(state).await?;
+    let data_dir = backup::resolve_data_dir(&state.config.database_url)
+        .ok_or((StatusCode::CONFLICT, "backup unavailable: in-memory database".into()))?;
+    let dest = data_dir.join("litebin.db.restored");
+    std::fs::copy(src, &dest).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("copy snapshot: {e}")))?;
+
+    stage_restart();
+    Ok(Json(BackupActionResponse { status: load_status(state).await?, restarting: true }))
 }
