@@ -41,6 +41,12 @@ fn print_status(status: &serde_json::Value) {
             s3["prefix"].as_str().map(|p| format!("/{p}")).unwrap_or_default(),
             s3["endpoint"].as_str().unwrap_or_default()
         );
+        if let Some(h) = status["destination_health"].as_object()
+            && h["ok"].as_bool() == Some(false)
+        {
+            let since = h["failing_since"].as_str().unwrap_or("?");
+            println!("destination health: ERROR — {} (failing since {since})", h["detail"].as_str().unwrap_or("?"),);
+        }
         if let Some(daily) = status["dailies"].as_array().and_then(|d| d.first()) {
             println!(
                 "local daily: {} ({})",
@@ -149,6 +155,7 @@ pub(crate) struct AddS3Args {
     pub prefix: Option<String>,
     pub access_key: String,
     pub secret_key: String,
+    pub yes: bool,
 }
 
 #[derive(Serialize)]
@@ -174,14 +181,36 @@ pub(crate) async fn add_s3(
         "access_key_id": args.access_key.trim(),
         "secret_access_key": args.secret_key.trim(),
     });
-    let v = auth::api_post_json(&client, &server, "/backup/s3", &body).await.map_err(map_admin_err)?;
+    let mut v = auth::api_post_json(&client, &server, "/backup/s3", &body).await.map_err(map_admin_err)?;
+    if v["existing_files"].as_bool().unwrap_or(false) {
+        let label = "Destination already holds backup files; start a new backup alongside them?";
+        if !args.yes && !confirm_or_yes(label, false, ci_mode, out)? {
+            out.note("Aborted.");
+            return Ok(());
+        }
+        v = auth::api_post_json(
+            &client,
+            &server,
+            "/backup/s3",
+            &serde_json::json!({
+                "endpoint": args.endpoint.trim(),
+                "bucket": args.bucket.trim(),
+                "prefix": args.prefix.as_deref().map(str::trim).filter(|p| !p.is_empty()),
+                "access_key_id": args.access_key.trim(),
+                "secret_access_key": args.secret_key.trim(),
+                "confirm_existing": true,
+            }),
+        )
+        .await
+        .map_err(map_admin_err)?;
+    }
     let result = AddS3Result {
         s3_configured: v["status"]["s3"]["configured"].as_bool().unwrap_or(false),
         last_sync: v["status"]["last_sync"].as_str().map(str::to_string),
     };
     out.ok(&result);
     if !out.json {
-        println!("S3 replica saved — litestream restarted.");
+        println!("Backup destination saved — litestream restarted.");
     }
     Ok(())
 }

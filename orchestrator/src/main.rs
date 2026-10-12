@@ -64,6 +64,8 @@ pub struct AppState {
     pub domain_jobs: Arc<DashMap<String, platform::DomainJob>>,
     /// Chunked upload store + staging for local-node and relay uploads.
     pub upload_store: Arc<litebin_common::upload::UploadStore>,
+    /// Live s3/r2 destination health (probe- and sidecar-error-driven).
+    pub destination_health: Arc<std::sync::RwLock<Option<backup::DestinationHealth>>>,
 }
 
 #[tokio::main]
@@ -346,9 +348,16 @@ async fn main() -> anyhow::Result<()> {
             "data/uploads",
             litebin_common::upload::DEFAULT_CHUNK_SIZE,
         )?),
+        destination_health: Arc::new(std::sync::RwLock::new(None)),
     };
 
     backup::spawn_daily_snapshots(state.db.clone(), state.config.clone(), state.docker.clone());
+    backup::spawn_destination_probes(
+        state.db.clone(),
+        state.config.clone(),
+        state.docker.clone(),
+        state.destination_health.clone(),
+    );
 
     // Periodic GC of expired upload sessions + orphaned staging dirs.
     {

@@ -147,6 +147,39 @@ impl DockerManager {
         Ok(true)
     }
 
+    /// Watch a container's logs (following from now), sending each line to `tx`.
+    /// Reconnects every 10s when the stream ends (restart/removal).
+    pub fn spawn_log_watcher(&self, container: String, tx: tokio::sync::mpsc::UnboundedSender<String>) {
+        let docker = self.docker.clone();
+        tokio::spawn(async move {
+            loop {
+                let since = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i32)
+                    .unwrap_or(0);
+                let options = bollard::query_parameters::LogsOptions {
+                    follow: true,
+                    stdout: true,
+                    stderr: true,
+                    since,
+                    tail: "0".to_string(),
+                    ..Default::default()
+                };
+                let mut stream = docker.logs(&container, Some(options));
+                while let Some(item) = stream.next().await {
+                    match item {
+                        Ok(LogOutput::StdOut { message }) | Ok(LogOutput::StdErr { message }) => {
+                            let _ = tx.send(String::from_utf8_lossy(&message).into_owned());
+                        }
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+        });
+    }
+
     /// Stop and remove a sidecar container by exact name (idempotent).
     pub async fn remove_sidecar_container(&self, name: &str) -> anyhow::Result<()> {
         if let Some(existing) = self.find_container_by_name(name).await? {

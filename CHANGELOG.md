@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file.
 - The Litestream backup sidecar now carries the platform's compose labels, so Docker Desktop groups it with the other litebin containers instead of listing it loose.
 - **Restores self-heal after the swap** — the orchestrator REINDEXes and quick-checks the database at boot after applying a restore; litestream 0.5.17 point-in-time restores can carry stale PK index pages (upstream #1164, repro'd on 0.5.17; REINDEX fully repairs).
 - The restore picker states its semantics (latest state at or before the chosen time) and shows the resolved moment when the chosen time is newer than the last write (e.g. after a disable gap).
+- **Destination health indicator** — sidecar ERROR lines mark the destination failing in real time (shown as "not working · failing since <time>" in the banner, on the destination card, and in `l8b backup status`); litestream's own success lines clear it on recovery, and a 15-minute probe verifies quietly-broken destinations. The banner shows capture recency (Last write) and coverage; no invented sync timestamps.
+- **Saving an R2/S3 destination is validated first** — credentials and reachability are probed via the sidecar before anything is saved (typos surface immediately instead of in logs), and if the prefix already holds backup files you're told and asked to continue (a new backup runs alongside; old files are never touched). Pure credential rotations on the same bucket/prefix now resume the existing store instead of resetting it.
 
 ## [0.4.6] - 2026-10-11
 

@@ -357,6 +357,9 @@ enum BackupAction {
         /// S3 endpoint (e.g. https://<account_id>.r2.cloudflarestorage.com)
         #[arg(long)]
         endpoint: String,
+        /// Proceed even if the destination already holds backup files (required in CI/JSON mode)
+        #[arg(long)]
+        yes: bool,
         /// Bucket name
         #[arg(long)]
         bucket: String,
@@ -639,9 +642,9 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             BackupAction::Disable { yes } => {
                 commands::backup::disable(yes, cli.server.as_deref(), cli.token.as_deref(), ci_mode, out).await?;
             }
-            BackupAction::AddS3 { endpoint, bucket, prefix, access_key, secret_key } => {
+            BackupAction::AddS3 { endpoint, bucket, prefix, access_key, secret_key, yes } => {
                 commands::backup::add_s3(
-                    commands::backup::AddS3Args { endpoint, bucket, prefix, access_key, secret_key },
+                    commands::backup::AddS3Args { endpoint, bucket, prefix, access_key, secret_key, yes },
                     ci_mode,
                     cli.server.as_deref(),
                     cli.token.as_deref(),

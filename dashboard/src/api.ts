@@ -231,6 +231,12 @@ export interface BackupStatus {
   points: BackupPoint[];
   /** When the kept pre-restore database was last live (RFC 3339) — null = no undo. */
   revertible_to: string | null;
+  destination_health: {
+    ok: boolean;
+    checked_at: string;
+    failing_since: string | null;
+    detail: string | null;
+  } | null;
   s3: BackupS3Status;
 }
 
@@ -377,8 +383,11 @@ export interface BackupS3Config {
   secret_access_key: string;
 }
 
-export function addBackupS3(config: BackupS3Config): Promise<BackupActionResponse> {
-  return backupAction('/backup/s3', 'POST', config);
+export function addBackupS3(
+  config: BackupS3Config,
+  confirmExisting = false,
+): Promise<BackupActionResponse & { existing_files?: boolean }> {
+  return backupAction('/backup/s3', 'POST', { ...config, confirm_existing: confirmExisting });
 }
 
 export function removeBackupS3(): Promise<BackupActionResponse> {

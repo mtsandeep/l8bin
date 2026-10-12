@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Cloud,
   CloudBackup,
   DatabaseBackup,
@@ -40,6 +41,7 @@ export default function DestinationsCard({
   const { showToast } = useToast();
 
   const [formOpen, setFormOpen] = useState(false);
+  const [existingNotice, setExistingNotice] = useState(false);
   const [endpoint, setEndpoint] = useState("");
   const [bucket, setBucket] = useState("");
   const [prefix, setPrefix] = useState("");
@@ -89,11 +91,21 @@ export default function DestinationsCard({
               </span>
             </div>
             <div className="flex items-center justify-between gap-1 mt-2 pt-2 border-t border-cyan-700/20">
-              <span
-                title={`${status.s3.endpoint}/${status.s3.prefix}/`}
-                className="text-[11px] text-slate-500 cursor-help truncate"
-              >
-                {s3Provider(status.s3.endpoint)}
+              <span className="flex items-center gap-2 min-w-0">
+                <span
+                  title={`${status.s3.endpoint}/${status.s3.prefix}/`}
+                  className="text-[11px] text-slate-500 cursor-help truncate"
+                >
+                  {s3Provider(status.s3.endpoint)}
+                </span>
+                {status.destination_health && !status.destination_health.ok && (
+                  <span
+                    title={`${status.destination_health.detail ?? "probe failed"} — update Credentials if you rotated the keys in the provider console`}
+                    className="inline-flex items-center gap-1 text-[11px] text-amber-400 shrink-0"
+                  >
+                    <AlertTriangle size={11} /> not working
+                  </span>
+                )}
               </span>
               <div className="flex items-center gap-1 shrink-0">
                 <button
@@ -288,6 +300,10 @@ export default function DestinationsCard({
                       access_key_id: accessKey,
                       secret_access_key: secretKey,
                     });
+                    if (res.existing_files) {
+                      setExistingNotice(true);
+                      return;
+                    }
                     onStatus(res.status);
                     setAccessKey("");
                     setSecretKey("");
@@ -315,6 +331,66 @@ export default function DestinationsCard({
           </div>
         ) : null}
       </div>
+
+      {/* Destination already holds files */}
+      {existingNotice && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl">
+            <div className="flex items-center gap-2 mb-3">
+              <Cloud size={16} className="text-cyan-300" />
+              <h3 className="text-sm font-semibold text-slate-100">
+                Destination contains existing files
+              </h3>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              This destination already holds backup files (from a previous setup
+              or another server). LiteBin starts a new backup alongside them;
+              the old files stay untouched. Remove them from the bucket console
+              if not wanted.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setExistingNotice(false)}
+                disabled={busy !== null}
+                className="flex-1 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  run("s3", async () => {
+                    const res = await addBackupS3(
+                      {
+                        endpoint,
+                        bucket,
+                        prefix: prefix || undefined,
+                        access_key_id: accessKey,
+                        secret_access_key: secretKey,
+                      },
+                      true,
+                    );
+                    setExistingNotice(false);
+                    onStatus(res.status);
+                    setAccessKey("");
+                    setSecretKey("");
+                    setFormOpen(false);
+                    showToast(
+                      "Destination saved; backup now streams to R2/S3",
+                      "success",
+                    );
+                  })
+                }
+                disabled={busy !== null}
+                className="flex-1 py-2 rounded-md text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {busy === "s3" ? "Saving…" : "Continue"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </SettingsCard>
   );
 }

@@ -27,6 +27,7 @@ Backup is opt-in from the dashboard (Settings → Backup) or CLI — nothing is 
 - **The orchestrator owns `litestream.yml`** (at `/app/data/litestream.yml`, shared via the volume). Generated from DB `settings` rows at boot and on every config change. The DB is the single source of truth — `install.sh` never writes it, and updates never clobber user config.
 - **One replica per database** (litestream ≥0.5 constraint): without R2/S3 the sidecar streams to the local file replica (30-day retention); once an R2/S3 destination is configured, the sidecar streams there instead (continuous, point-in-time restore).
 - **In R2/S3 mode the local copy is a daily snapshot** taken by the orchestrator (`litestream restore` into `/data/backups/daily/litebin-YYYY-MM-DD.db`, 30 retained) — the bypass restore option, and daily proof the destination is restorable. A failed snapshot retries every 10 minutes and surfaces as a stale local-daily in the status.
+- **Destination health**: sidecar ERROR lines mark the destination failing in real time (`failing_since` in `/backup/status`'s `destination_health`), litestream's periodic success lines clear it, and a 15-minute probe catches quiet breakage — the banner shows "not working · failing since <time>" (e.g. credentials rotated in the provider console but not updated here).
 - **Master-only.** Agents hold no platform state.
 
 ## Settings Keys
@@ -39,7 +40,7 @@ Stored in the `settings` table: `backup_enabled`, `backup_s3_endpoint`, `backup_
 GET    /backup/status    → { enabled, available, sidecar_installed, sidecar_running, last_sync, coverage_start, dailies[], replica, s3: { configured, endpoint, bucket, prefix } }
 POST   /backup/enable    → create + start sidecar (first enable pulls the image, ~30s)
 POST   /backup/disable   → stop + remove sidecar (replicas kept)
-POST   /backup/s3        → { endpoint, bucket, prefix?, access_key_id, secret_access_key } — regenerates yml, restarts sidecar
+POST   /backup/s3        → { endpoint, bucket, prefix?, access_key_id, secret_access_key, confirm_existing? } — validates the destination first (probe via the sidecar: credentials + already-has-files), then regenerates yml and restarts the sidecar. Credential-only updates resume the same store; a target change (bucket/prefix/endpoint/mode) starts a fresh one.
 DELETE /backup/s3        → clear S3 config, regenerate yml, restart sidecar
 POST   /backup/restore   → { timestamp? } — point-in-time (RFC 3339) or latest
 POST   /backup/restore-local → { date } — restore of a local daily snapshot (YYYY-MM-DD)

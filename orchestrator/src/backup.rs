@@ -126,26 +126,235 @@ pub fn generate_litestream_yml(s3: &S3Config) -> String {
     serde_yaml::to_string(&yml).expect("litestream yml serializes")
 }
 
+/// The replica's remote identity — everything except credentials.
+fn replica_target(s3: &S3Config) -> (String, Option<String>) {
+    if s3.is_configured() {
+        (format!("s3://{}/{}", s3.bucket.trim_end_matches('/'), s3.prefix.trim_matches('/')), Some(s3.endpoint.clone()))
+    } else {
+        (SIDECAR_REPLICA_URL.to_string(), None)
+    }
+}
+
+/// Same destination (endpoint/bucket/prefix) — a credential-only update.
+pub fn same_destination(a: &S3Config, b: &S3Config) -> bool {
+    replica_target(a) == replica_target(b)
+}
+
+/// Read the replica target from an existing litestream.yml.
+fn yml_replica_target(content: &str) -> Option<(String, Option<String>)> {
+    let yml: serde_yaml::Value = serde_yaml::from_str(content).ok()?;
+    let replica = yml.get("dbs")?.as_sequence()?.first()?.get("replicas")?.as_sequence()?.first()?;
+    let url = replica.get("url")?.as_str()?.to_string();
+    let endpoint = replica.get("endpoint").and_then(|v| v.as_str()).map(str::to_string);
+    Some((url, endpoint))
+}
+
 /// Write litestream.yml into the data dir (shared with the sidecar). Idempotent —
 /// only touches the file when content changes. Also ensures the backups dir exists.
+/// Litestream's local staging state is cleared only when the replica TARGET changed
+/// (mode/bucket/prefix/endpoint) — credential-only updates resume the same store.
 pub fn write_litestream_yml(data_dir: &Path, s3: &S3Config) -> std::io::Result<()> {
     std::fs::create_dir_all(data_dir.join("backups"))?;
     let content = generate_litestream_yml(s3);
     let path = data_dir.join("litestream.yml");
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(content.as_str()) {
+    let old = std::fs::read_to_string(&path).ok();
+    if old.as_deref() != Some(content.as_str()) {
+        let target_changed = old
+            .as_deref()
+            .and_then(yml_replica_target)
+            .map(|old_target| old_target != replica_target(s3))
+            .unwrap_or(true);
         std::fs::write(&path, &content)?;
-        // A replica switch invalidates litestream's local staging state and the old
-        // file-replica store — clearing both forces a fresh full snapshot.
-        let staging = data_dir.join(".litebin.db-litestream");
-        if staging.exists() {
-            std::fs::remove_dir_all(&staging)?;
-        }
-        let local_store = data_dir.join("backups").join("litebin.db");
-        if local_store.exists() {
-            std::fs::remove_dir_all(&local_store)?;
+        if target_changed {
+            // A replica switch invalidates litestream's local staging state and the
+            // old file-replica store — clearing both forces a fresh full snapshot.
+            let staging = data_dir.join(".litebin.db-litestream");
+            if staging.exists() {
+                std::fs::remove_dir_all(&staging)?;
+            }
+            let local_store = data_dir.join("backups").join("litebin.db");
+            if local_store.exists() {
+                std::fs::remove_dir_all(&local_store)?;
+            }
         }
     }
     Ok(())
+}
+
+/// Result of probing an s3/r2 destination before saving its config.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DestinationProbe {
+    /// Credentials work; the prefix already holds backup files.
+    Existing,
+    /// Credentials work; the prefix is empty (fresh destination).
+    Empty,
+    /// Probe failed — raw litestream output explains why (bad creds, bucket, network).
+    Failed(String),
+}
+
+/// Classify a `litestream restore` probe by exit code + output. Conservative:
+/// unknown errors are Failed with the raw output rather than a guess.
+fn classify_probe(exit_code: i64, output: &str) -> DestinationProbe {
+    if exit_code == 0 {
+        return DestinationProbe::Existing;
+    }
+    let lower = output.to_lowercase();
+    let empty_markers = ["no database state", "no snapshots", "no restore points", "no ltx files"];
+    let auth_markers =
+        ["accessdenied", "invalidaccesskeyid", "signaturedoesnotmatch", "unauthorized", "forbidden", "403"];
+    if empty_markers.iter().any(|m| lower.contains(m)) {
+        return DestinationProbe::Empty;
+    }
+    if auth_markers.iter().any(|m| lower.contains(m)) {
+        return DestinationProbe::Failed("credentials rejected by the destination".into());
+    }
+    DestinationProbe::Failed(output.trim().to_string())
+}
+
+/// Probe an s3/r2 destination from the running sidecar with a throwaway config:
+/// validates the credentials and reports whether the prefix already holds files.
+pub async fn probe_destination(
+    docker: &litebin_common::docker::DockerManager,
+    data_dir: &Path,
+    s3: &S3Config,
+) -> anyhow::Result<DestinationProbe> {
+    let sidecar = docker
+        .find_container_by_name(SIDECAR_CONTAINER_NAME)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("backup sidecar is not running"))?;
+
+    let tmp_config = data_dir.join("preflight-litestream.yml");
+    let tmp_db = data_dir.join("preflight-probe.db");
+    std::fs::write(&tmp_config, generate_litestream_yml(s3))?;
+    let cmd = vec![
+        "litestream",
+        "restore",
+        "-config",
+        "/data/preflight-litestream.yml",
+        "-o",
+        "/data/preflight-probe.db",
+        "-force",
+        SIDECAR_DB_PATH,
+    ];
+    let exec = tokio::time::timeout(std::time::Duration::from_secs(60), docker.exec_container(&sidecar, &cmd)).await;
+    let _ = std::fs::remove_file(&tmp_config);
+    let _ = std::fs::remove_file(&tmp_db);
+    let exec = exec.map_err(|_| anyhow::anyhow!("destination probe timed out"))??;
+    Ok(classify_probe(exec.exit_code, &exec.output))
+}
+
+/// Last destination health probe (kept in memory; None before the first check).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct DestinationHealth {
+    pub ok: bool,
+    /// Last probe time (RFC 3339) — internal, feeds the health dot.
+    pub checked_at: String,
+    /// First persistent failure (RFC 3339, from sidecar error logs) — the
+    /// "failing since" shown to users. None while healthy.
+    pub failing_since: Option<String>,
+    /// Failure detail (auth error, unreachable, sidecar down).
+    pub detail: Option<String>,
+}
+
+/// Keeps DestinationHealth current: sidecar ERROR lines mark failures in real
+/// time (see the watcher below); a 15-minute probe catches quiet breakage.
+pub fn spawn_destination_probes(
+    db: sqlx::SqlitePool,
+    config: std::sync::Arc<crate::config::Config>,
+    docker: std::sync::Arc<litebin_common::docker::DockerManager>,
+    health: std::sync::Arc<std::sync::RwLock<Option<DestinationHealth>>>,
+) {
+    tokio::spawn(async move {
+        // Sidecar ERROR lines mark the destination failing (recording when it
+        // started) and trigger an immediate probe; litestream's periodic success
+        // lines (retention/compaction, every ~15-30s) clear it on recovery. Both
+        // debounced to once a minute.
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        {
+            let docker = docker.clone();
+            let notify = notify.clone();
+            let health = health.clone();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            docker.spawn_log_watcher(SIDECAR_CONTAINER_NAME.to_string(), tx);
+            tokio::spawn(async move {
+                let mut last_error = std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(120))
+                    .unwrap_or_else(std::time::Instant::now);
+                let mut last_recover = last_error;
+                while let Some(line) = rx.recv().await {
+                    if line.contains("level=ERROR") {
+                        if last_error.elapsed() >= std::time::Duration::from_secs(60) {
+                            last_error = std::time::Instant::now();
+                            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                            let mut guard = health.write().expect("destination health lock");
+                            let failing_since = guard.as_ref().and_then(|h| h.failing_since.clone()).unwrap_or(now);
+                            *guard = Some(DestinationHealth {
+                                ok: false,
+                                checked_at: guard.as_ref().map(|h| h.checked_at.clone()).unwrap_or_default(),
+                                failing_since: Some(failing_since),
+                                detail: Some("litestream reported errors".into()),
+                            });
+                            drop(guard);
+                            notify.notify_one();
+                        }
+                    } else if (line.contains("l0 retention enforced") || line.contains("compaction complete"))
+                        && last_recover.elapsed() >= std::time::Duration::from_secs(60)
+                    {
+                        last_recover = std::time::Instant::now();
+                        let mut guard = health.write().expect("destination health lock");
+                        if guard.as_ref().is_some_and(|h| !h.ok) {
+                            *guard = Some(DestinationHealth {
+                                ok: true,
+                                checked_at: guard.as_ref().map(|h| h.checked_at.clone()).unwrap_or_default(),
+                                failing_since: None,
+                                detail: None,
+                            });
+                            tracing::info!("backup: destination recovered (sidecar reports healthy operations)");
+                        }
+                    }
+                }
+            });
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+        loop {
+            let enabled = get_setting(&db, SETTING_BACKUP_ENABLED).await.ok().flatten().as_deref() == Some("1");
+            let s3 = S3Config {
+                endpoint: setting_or_default(&db, SETTING_S3_ENDPOINT).await,
+                bucket: setting_or_default(&db, SETTING_S3_BUCKET).await,
+                prefix: setting_or_default(&db, SETTING_S3_PREFIX).await,
+                access_key_id: setting_or_default(&db, SETTING_S3_ACCESS_KEY).await,
+                secret_access_key: setting_or_default(&db, SETTING_S3_SECRET_KEY).await,
+            };
+            if !enabled || !s3.is_configured() {
+                *health.write().expect("destination health lock") = None;
+                tokio::time::sleep(std::time::Duration::from_secs(900)).await;
+                continue;
+            }
+            let checked_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let (ok, detail) = match resolve_data_dir(&config.database_url) {
+                Some(data_dir) => match probe_destination(&docker, &data_dir, &s3).await {
+                    Ok(DestinationProbe::Existing) | Ok(DestinationProbe::Empty) => (true, None),
+                    Ok(DestinationProbe::Failed(d)) => (false, Some(d)),
+                    Err(e) => (false, Some(e.to_string())),
+                },
+                None => (false, Some("in-memory database".to_string())),
+            };
+            tracing::debug!(ok, detail = ?detail, "backup: destination health probe");
+            if !ok {
+                tracing::warn!(detail = ?detail, "backup: destination health probe failed");
+            }
+            let failing_since = {
+                let guard = health.read().expect("destination health lock");
+                if ok { None } else { guard.as_ref().and_then(|h| h.failing_since.clone()) }
+            };
+            *health.write().expect("destination health lock") =
+                Some(DestinationHealth { ok, checked_at, failing_since, detail });
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(900)) => {}
+                _ = notify.notified() => {}
+            }
+        }
+    });
 }
 
 /// Apply a pending restore produced by `litestream restore -o litebin.db.restored`.
@@ -471,6 +680,43 @@ mod tests {
         assert_eq!(x, 42);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn credential_rotation_keeps_staging() {
+        let dir = std::env::temp_dir().join(format!("l8b-rot-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let s3 = |key: &str| S3Config {
+            endpoint: "https://acct.r2.cloudflarestorage.com".into(),
+            bucket: "buck".into(),
+            prefix: "p".into(),
+            access_key_id: key.into(),
+            secret_access_key: "s".into(),
+        };
+        write_litestream_yml(&dir, &s3("AKIA1")).unwrap();
+        std::fs::create_dir_all(dir.join(".litebin.db-litestream")).unwrap();
+
+        write_litestream_yml(&dir, &s3("AKIA2")).unwrap();
+        assert!(dir.join(".litebin.db-litestream").exists(), "rotation must not clear staging");
+
+        let mut moved = s3("AKIA2");
+        moved.bucket = "other".into();
+        write_litestream_yml(&dir, &moved).unwrap();
+        assert!(!dir.join(".litebin.db-litestream").exists(), "target change must clear staging");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn probe_classification() {
+        assert_eq!(classify_probe(0, ""), DestinationProbe::Existing);
+        assert_eq!(classify_probe(1, "Error: no database state found"), DestinationProbe::Empty);
+        assert_eq!(classify_probe(1, "no snapshots found for path"), DestinationProbe::Empty);
+        assert_eq!(
+            classify_probe(1, "AccessDenied: ..."),
+            DestinationProbe::Failed("credentials rejected by the destination".into())
+        );
+        assert_eq!(classify_probe(1, "NoSuchBucket: buck"), DestinationProbe::Failed("NoSuchBucket: buck".into()));
     }
 
     #[test]

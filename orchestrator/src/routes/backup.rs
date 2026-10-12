@@ -57,6 +57,8 @@ pub struct BackupStatus {
     /// When the kept pre-restore database was last live (RFC 3339) — the undo
     /// target. None when no restore has been applied.
     pub revertible_to: Option<String>,
+    /// Last s3/r2 destination health probe (None before the first check).
+    pub destination_health: Option<crate::backup::DestinationHealth>,
     pub s3: BackupS3Status,
 }
 
@@ -67,6 +69,19 @@ pub struct BackupS3Request {
     pub prefix: Option<String>,
     pub access_key_id: String,
     pub secret_access_key: String,
+    /// Proceed even though the destination prefix already holds backup files
+    /// (LiteBin starts a new backup alongside them; old files are left alone).
+    #[serde(default)]
+    pub confirm_existing: bool,
+}
+
+/// Response for `POST /backup/s3` — `existing_files` is set when the destination
+/// prefix already holds files and nothing was saved (re-submit to proceed).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BackupS3Response {
+    pub status: BackupStatus,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub existing_files: bool,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -166,6 +181,7 @@ async fn load_status(state: &AppState) -> Result<BackupStatus, (StatusCode, Stri
     } else {
         Vec::new()
     };
+    let destination_health = state.destination_health.read().expect("destination health lock").clone();
     let revertible_to = data_dir.as_deref().and_then(|dir| {
         std::fs::metadata(dir.join("litebin.db.pre-restore"))
             .ok()
@@ -185,6 +201,7 @@ async fn load_status(state: &AppState) -> Result<BackupStatus, (StatusCode, Stri
         dailies,
         points: load_points(state).await?,
         revertible_to,
+        destination_health,
         s3: BackupS3Status {
             configured: s3.is_configured(),
             endpoint: (!s3.endpoint.is_empty()).then_some(s3.endpoint),
@@ -281,9 +298,9 @@ pub async fn backup_disable(State(state): State<AppState>) -> Result<Json<Backup
     path = "/backup/s3",
     request_body = BackupS3Request,
     responses(
-        (status = 200, body = BackupActionResponse),
-        (status = 400, description = "invalid S3 config"),
-        (status = 409, description = "backup not enabled"),
+        (status = 200, body = BackupS3Response),
+        (status = 400, description = "invalid config or destination probe failed"),
+        (status = 409, description = "backup not enabled / sidecar not running"),
     ),
     tag = "backup",
     security(("session_auth" = []))
@@ -291,7 +308,7 @@ pub async fn backup_disable(State(state): State<AppState>) -> Result<Json<Backup
 pub async fn backup_add_s3(
     State(state): State<AppState>,
     Json(payload): Json<BackupS3Request>,
-) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
+) -> Result<Json<BackupS3Response>, (StatusCode, String)> {
     let endpoint = payload.endpoint.trim().to_string();
     let bucket = payload.bucket.trim().to_string();
     if endpoint.is_empty() || bucket.is_empty() {
@@ -305,6 +322,38 @@ pub async fn backup_add_s3(
     }
     let prefix = payload.prefix.unwrap_or_else(|| "litebin/".into()).trim().trim_matches('/').to_string();
 
+    // Validate the destination before saving anything: probe via the running sidecar.
+    let data_dir = backup::resolve_data_dir(&state.config.database_url)
+        .ok_or((StatusCode::CONFLICT, "backup unavailable: in-memory database".into()))?;
+    match state.docker.find_container_by_name(SIDECAR_CONTAINER_NAME).await {
+        Ok(Some(id)) if state.docker.is_container_running(&id).await.unwrap_or(false) => {}
+        _ => return Err((StatusCode::CONFLICT, "backup sidecar is not running".into())),
+    }
+    let candidate = backup::S3Config {
+        endpoint: endpoint.clone(),
+        bucket: bucket.clone(),
+        prefix: prefix.clone(),
+        access_key_id: payload.access_key_id.trim().to_string(),
+        secret_access_key: payload.secret_access_key.trim().to_string(),
+    };
+    let existing = match backup::probe_destination(&state.docker, &data_dir, &candidate).await {
+        Ok(backup::DestinationProbe::Existing) => true,
+        Ok(backup::DestinationProbe::Empty) => false,
+        Ok(backup::DestinationProbe::Failed(detail)) => {
+            tracing::warn!(detail = %detail, "backup: destination probe failed");
+            return Err((StatusCode::BAD_REQUEST, format!("destination check failed: {detail}")));
+        }
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("destination probe: {e}"))),
+    };
+    // A credential-only update on the same destination resumes the existing store —
+    // the files found there are its own, no "alongside" decision needed.
+    let current = load_s3(&state).await?;
+    let rotation = backup::same_destination(&current, &candidate);
+    tracing::info!(existing, rotation, endpoint = %endpoint, bucket = %bucket, prefix = %prefix, "backup: destination save preflight");
+    if existing && !rotation && !payload.confirm_existing {
+        return Ok(Json(BackupS3Response { status: load_status(&state).await?, existing_files: true }));
+    }
+
     upsert_setting(&state.db, SETTING_S3_ENDPOINT, &endpoint).await?;
     upsert_setting(&state.db, SETTING_S3_BUCKET, &bucket).await?;
     upsert_setting(&state.db, SETTING_S3_PREFIX, &prefix).await?;
@@ -316,7 +365,10 @@ pub async fn backup_add_s3(
     }
 
     sync_sidecar_config(&state).await?;
-    Ok(Json(BackupActionResponse { status: load_status(&state).await?, restarting: false }))
+    let checked_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    *state.destination_health.write().expect("destination health lock") =
+        Some(backup::DestinationHealth { ok: true, checked_at, failing_since: None, detail: None });
+    Ok(Json(BackupS3Response { status: load_status(&state).await?, existing_files: existing }))
 }
 
 #[utoipa::path(
