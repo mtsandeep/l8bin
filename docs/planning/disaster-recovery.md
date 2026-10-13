@@ -1,3 +1,5 @@
+> **Status: PARTIAL — DB restore shipped (backup.md); server/agent recovery and install.sh --restore not started** · verified 2026-10-13
+
 # Disaster Recovery
 
 ## Philosophy
@@ -33,7 +35,7 @@ This plan depends on two backup systems:
 
 | Backup System | Covers | Status |
 |---|---|---|
-| Litestream (Platform Backup) | Master SQLite DB (project configs, node configs, routes, settings) | Shipped — [backup.md](../backup.md) |
+| Litestream (Platform Backup) | Master SQLite DB (project configs, node configs, routes, settings) | Shipped — [backup.md](../topics/backup.md) |
 | Rustic (Project Backup) | Agent project data (Docker volumes, compose files, image vault) | Planned — [project-backup.md](project-backup.md) |
 
 Without S3/R2 configured in Litestream, master recovery is limited to local file backup (same server — useless if the server is dead). **S3/R2 is a prerequisite for real DR.**

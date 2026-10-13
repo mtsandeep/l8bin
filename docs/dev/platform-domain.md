@@ -35,7 +35,7 @@ flowchart LR
 | `routing_mode`, CF token/zone | existing | DB (startup reads DB) | Existing |
 | Infra (`PORT`, certs, `DATABASE_URL`, …) | `.env` | env forever | none |
 
-Module: [`orchestrator/src/platform.rs`](../orchestrator/src/platform.rs) — `PlatformHandle` / `PlatformSettings` / domain job types. Runtime code reads `state.platform.*`; `config.domain` survives only at startup/seed — there are no stale runtime reads.
+Module: [`orchestrator/src/platform.rs`](../../orchestrator/src/platform.rs) — `PlatformHandle` / `PlatformSettings` / domain job types. Runtime code reads `state.platform.*`; `config.domain` survives only at startup/seed — there are no stale runtime reads.
 
 ## Change-flow defaults
 
@@ -56,11 +56,11 @@ Two paths, for when the dashboard is reachable or not:
 
 ## DNS record ledger
 
-Every Cloudflare record LiteBin creates is recorded in the `dns_records` table (name → Cloudflare record ID; [`orchestrator/src/dns_ledger.rs`](../orchestrator/src/dns_ledger.rs)). All deletion decisions — stale-record cleanup during syncs, domain-change cleanup, and "Remove Cloudflare & Cleanup DNS" — are made from this ledger, never by suffix-sweeping the zone: records you created yourself (e.g. `mail.{domain}` at a zone apex) are never touched. Records created before the ledger existed are backfilled on the first sync (the read-only suffix listing provides their IDs). A "record does not exist" (81047) response drops the stale row silently.
+Every Cloudflare record LiteBin creates is recorded in the `dns_records` table (name → Cloudflare record ID; [`orchestrator/src/dns_ledger.rs`](../../orchestrator/src/dns_ledger.rs)). All deletion decisions — stale-record cleanup during syncs, domain-change cleanup, and "Remove Cloudflare & Cleanup DNS" — are made from this ledger, never by suffix-sweeping the zone: records you created yourself (e.g. `mail.{domain}` at a zone apex) are never touched. Records created before the ledger existed are backfilled on the first sync (the read-only suffix listing provides their IDs). A "record does not exist" (81047) response drops the stale row silently.
 
 ## API surface
 
-Routes in [`orchestrator/src/routes/global_settings/`](../orchestrator/src/routes/global_settings/) (`mod.rs`, `domain_job.rs`, `dns_ops.rs`), admin scope:
+Routes in [`orchestrator/src/routes/global_settings/`](../../orchestrator/src/routes/global_settings) (`mod.rs`, `domain_job.rs`, `dns_ops.rs`), admin scope:
 
 | Method | Path | Role |
 |---|---|---|
@@ -75,18 +75,18 @@ Apply steps, in order: `persist` → `routes` (rebuild master routes) → `agent
 
 ## Frontend
 
-[`dashboard/src/components/GlobalSettingsModal.tsx`](../dashboard/src/components/GlobalSettingsModal.tsx) — domain read-only + Change modal (type-to-confirm, preflight errors/warnings + ack checkbox, 800 ms progress polling, per-step status, retry from failed step, final dashboard URL + "sign in again"). Tryout banner. Save never sends `domain`.
+[`dashboard/src/components/settings/GeneralPanel.tsx`](../../dashboard/src/components/settings/GeneralPanel.tsx) — domain read-only + Change modal (type-to-confirm, preflight errors/warnings + ack checkbox, 800 ms progress polling, per-step status, retry from failed step, final dashboard URL + "sign in again"). Tryout banner. Save never sends `domain`.
 
 ## Install tryout
 
-[`install.sh`](../install.sh) master prompts: detect public IP (ipify → checkip → icanhazip) → "Domain or subdomain ready?" — **Yes** → domain + dashboard/poke + routing + CF prompts; **No** → `DOMAIN={ip-dashed}.sslip.io`, `master_proxy` forced, CF prompts skipped, tryout warnings shown.
+[`install.sh`](../../install.sh) master prompts: detect public IP (ipify → checkip → icanhazip) → "Domain or subdomain ready?" — **Yes** → domain + dashboard/poke + routing + CF prompts; **No** → `DOMAIN={ip-dashed}.sslip.io`, `master_proxy` forced, CF prompts skipped, tryout warnings shown.
 
 ## Key call sites (use `state.platform.*`, not `config.domain`)
 
-- [`orchestrator/src/routing_helpers.rs`](../orchestrator/src/routing_helpers.rs)
-- [`orchestrator/src/routes/nodes/connect.rs`](../orchestrator/src/routes/nodes/connect.rs) (`reregister_online_agents`)
-- [`orchestrator/src/nodes/heartbeat.rs`](../orchestrator/src/nodes/heartbeat.rs)
-- deploy ([`routes/deploy/`](../orchestrator/src/routes/deploy/)) / waker / caddy / janitor / reconciliation / activity
+- [`orchestrator/src/routing_helpers.rs`](../../orchestrator/src/routing_helpers.rs)
+- [`orchestrator/src/routes/nodes/connect.rs`](../../orchestrator/src/routes/nodes/connect.rs) (`reregister_online_agents`)
+- [`orchestrator/src/nodes/heartbeat.rs`](../../orchestrator/src/nodes/heartbeat.rs)
+- deploy ([`routes/deploy/`](../../orchestrator/src/routes/deploy)) / waker / caddy / janitor / reconciliation / activity
 
 ## Not built (future)
 

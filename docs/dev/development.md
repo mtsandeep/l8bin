@@ -291,7 +291,7 @@ curl -fsSL https://l8b.in | bash -s certs
 
 Creates on the master: Root CA, master `server.pem` / `server-key.pem`, and one shared `agent.pem` / `agent-key.pem` distributed to every agent.
 
-For local/dev experiments, `bash setup/generate-certs.sh` can still mint certs under `certs/`; prefer the installer path above for real multi-server setups. See [Multi-Server Setup](multi-server.md).
+For local/dev experiments, `bash setup/generate-certs.sh` can still mint certs under `certs/`; prefer the installer path above for real multi-server setups. See [Multi-Server Setup](../topics/multi-server.md).
 
 ---
 
@@ -310,7 +310,7 @@ Copy `.env.example` to `.env` for a full list. Key variables:
 | `DEFAULT_AUTO_STOP_MINS` | `15` | Idle auto-stop timeout |
 | `JANITOR_INTERVAL_SECS` | `300` | Janitor cleanup interval |
 
-See [Configuration](configuration.md) for the full reference.
+See [Configuration](../topics/configuration.md) for the full reference.
 
 ---
 
@@ -368,11 +368,34 @@ bash setup/generate-certs.sh
 
 ---
 
+## Agent API (Typed Wire Contract)
+
+The orchestrator ↔ agent internal protocol is defined once, in code, and shared by both sides: every request/response body is a struct in [`litebin-common/src/agent_api.rs`](../../litebin-common/src/agent_api.rs), and the orchestrator sends/receives them through the typed [`AgentClient`](../../orchestrator/src/nodes/client.rs). Renaming a field breaks compilation on the other side instead of failing at runtime in production.
+
+| Piece | Where | Role |
+|---|---|---|
+| DTOs + endpoint path constants | `litebin-common/src/agent_api.rs` | One struct per internal endpoint, used by BOTH crates; wire-format tests pin the serialized field names |
+| `AgentClient` + `AgentClientError` | `orchestrator/src/nodes/client.rs` | One typed method per endpoint; centralizes URL building and the 503/502/500 error convention |
+| `build_batch_run_payload` | `orchestrator/src/routes/manage/multi_service/helpers.rs` | Single implementation of the batch-run payload (service resource overrides + global defaults read once), shared by start/recreate/deploy/stage |
+| Agent handlers | `agent/src/routes/*` | Extract/respond with the shared DTOs directly (local struct definitions re-export from `agent_api`) |
+
+`AgentClient::resolve(state, node_id)` performs the DB lookup + client pool lookup + base-URL derivation that was previously repeated at every call site.
+
+**Error convention:** `Transport` → 503 (agent unreachable), `Status { code, body }` → 502 (agent answered non-success), `Parse` → 500 (response didn't match the DTO). Call sites with special semantics match variants directly (e.g. reconciliation treats `Status` with 404 as "container gone"; the waker falls back to recreate when `/containers/start` fails).
+
+**Compatibility rules:**
+- Field names and serde attributes in `agent_api` **are** the wire format — don't change them without a `protocol_version` bump (see `types::HealthReport`).
+- Requests: `Option` fields serialize as `null` when `None`; the agent's deserialization treats absent and `null` identically.
+- Responses: fields with `skip_serializing_if` also carry `serde(default)` so clients tolerate their absence.
+- The unit tests at the bottom of `agent_api.rs` pin the serialized shapes for the high-traffic endpoints; keep them passing.
+- `/caddy/sync` request bodies stay raw `serde_json::Value` — the Caddy config is dynamic JSON by design; only the transport is typed.
+
+---
+
 ## Further Reading
 
-- [Architecture](architecture.md) — system overview and component responsibilities
-- [Configuration](configuration.md) — all environment variables
+- [Architecture](../architecture/architecture.md) — system overview and component responsibilities
+- [Configuration](../topics/configuration.md) — all environment variables
 - [Release Process](release.md) — versioning and publishing releases
-- [Local Testing](local-testing.md) — testing the install/update flow locally
-- [API Reference](api-reference.md) — orchestrator API endpoints
-- [CLI Reference](cli.md) — `l8b` command documentation
+- [API Reference](../reference/api-reference.md) — orchestrator API endpoints
+- [CLI Guide](../reference/cli.md) — `l8b` command documentation

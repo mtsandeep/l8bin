@@ -53,7 +53,7 @@ sops -d env.prod | l8b env push myapp --stdin --apply
 ```
 
 API: `GET /projects/{id}/env` (read scope, masked + `pending_apply` flag) and
-`PUT /projects/{id}/env` (manage scope) — see [api-reference.md](api-reference.md).
+`PUT /projects/{id}/env` (manage scope) — see [api-reference.md](../reference/api-reference.md).
 Storage stays the node-local `projects/<id>/.env` described below; changes
 apply on the next container start (recreate).
 

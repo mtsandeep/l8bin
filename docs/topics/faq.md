@@ -17,7 +17,7 @@
 - [Docker Images & Disk Space](#docker-images--disk-space)
 - [Memory Usage](#memory-usage)
 
-For a comprehensive view of how LiteBin handles failures at every layer, see [Failure Model](failure-model.md). For why these architectural choices were made, see [Design Decisions](decisions.md).
+For a comprehensive view of how LiteBin handles failures at every layer, see [Failure Model](../architecture/failure-model.md). For why these architectural choices were made, see [Design Decisions](../architecture/decisions.md).
 
 ---
 
@@ -565,7 +565,7 @@ Most likely you're on a host with 2GB+ RAM. There, the proxy (Caddy) runs with G
 
 On very small boxes also note: if the host has swap, the kernel parks cold pages in swap opportunistically, so per-process RSS understates real usage — check RSS+swap together, or just `docker stats`.
 
-Measured numbers per host size, plus how to reproduce them: [memory-footprint.md](memory-footprint.md).
+Measured numbers per host size, plus how to reproduce them: [memory-footprint.md](../dev/memory-footprint.md).
 
 ### Can I tune it?
 

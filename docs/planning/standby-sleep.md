@@ -1,3 +1,5 @@
+> **Status: NOT STARTED** · verified 2026-10-13
+
 # Standby Sleep (Pressure-Based Eviction)
 
 ## Context

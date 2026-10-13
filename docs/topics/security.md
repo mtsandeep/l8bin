@@ -188,7 +188,7 @@ Agent → orchestrator wake reports use two security layers:
 
 ## Further Reading
 
-- [Architecture](architecture.md) — full system overview, network topology, database schema
-- [Design Decisions](decisions.md) — why mTLS over other auth approaches, why Docker hardening choices
-- [Failure Model](failure-model.md) — how security-related failures (cert mismatch, agent unreachable) are handled
+- [Architecture](../architecture/architecture.md) — full system overview, network topology, database schema
+- [Design Decisions](../architecture/decisions.md) — why mTLS over other auth approaches, why Docker hardening choices
+- [Failure Model](../architecture/failure-model.md) — how security-related failures (cert mismatch, agent unreachable) are handled
 - [Multi-Server Setup](multi-server.md) — certificate architecture, mTLS setup, on-demand TLS

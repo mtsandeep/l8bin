@@ -1,6 +1,8 @@
 # Roadmap
 
-Planned features beyond the current release. Ordered by priority and dependency.
+Planned features beyond the current release. Ordered by priority and dependency. Plans either ship — their docs graduate into `docs/` — or get deleted; nothing is archived.
+
+**Last updated: 2026-10-13** — shipped items moved into "What We Have Today"; statuses re-verified against the codebase.
 
 ---
 
@@ -37,10 +39,20 @@ Planned features beyond the current release. Ordered by priority and dependency.
 - Project capabilities (Docker observation, permission-gated host networking, and raw ports)
 - Janitor (auto-stop idle projects)
 - Crash recovery via auto-wake
+- Runtime env var editing (dashboard modal + `l8b env`; values write-only) — was a Quick Win
+- Adopt foreign containers as projects (scan + import)
+- Platform SQLite backup via Litestream sidecar (opt-in), S3/R2 destination, named restore points, manual backups, restore undo ([backup.md](../topics/backup.md)) — was Phase 4
+- GitHub App / PAT connect with repo browsing and deploy-from-repo ([github-connect.md](../topics/github-connect.md)) — was item 13
+
+### Agents & AI
+- `l8b` as an agent-facing CLI (`init`, `doctor`, `setup`, `domain`, `env`, device-flow `login`)
+- Stdio MCP server exposing l8b as tools ([ai-native.md](../topics/ai-native.md))
+- Drop-in `AGENTS.md` template (`l8b init --agents`)
 
 ### Observability
 - Metrics (CPU/memory/disk per project)
 - Basic log streaming per service (10MB stored)
+- Memory footprint tuning (jemalloc; ~33 MB idle master — [memory-footprint.md](../dev/memory-footprint.md))
 
 ---
 
@@ -296,7 +308,7 @@ Per-project access control with two modes: maintenance mode (503 page) and passw
 
 ## Phase 4: Platform Backup (SQLite) — SHIPPED
 
-SQLite backup via Litestream sidecar, **opt-in from the dashboard/CLI** (nothing installed by default). The orchestrator manages the sidecar container directly via the Docker API — no installer changes, 0 RAM when disabled. One replica per database (litestream ≥0.5): a configured R2/S3 destination is primary (continuous, point-in-time restore) with a local daily snapshot restored from it as secondary; without a destination, the local replica is primary. Manual backups (`VACUUM INTO`) work anytime, sidecar or not; every restore keeps the replaced DB for one-click undo. Full details: [backup.md](../backup.md).
+SQLite backup via Litestream sidecar, **opt-in from the dashboard/CLI** (nothing installed by default). The orchestrator manages the sidecar container directly via the Docker API — no installer changes, 0 RAM when disabled. One replica per database (litestream ≥0.5): a configured R2/S3 destination is primary (continuous, point-in-time restore) with a local daily snapshot restored from it as secondary; without a destination, the local replica is primary. Manual backups (`VACUUM INTO`) work anytime, sidecar or not; every restore keeps the replaced DB for one-click undo. Full details: [backup.md](../topics/backup.md).
 
 ### Configuration Points
 
@@ -418,15 +430,9 @@ Currently logs are stored up to 10MB per service. Full streaming via WebSocket f
 - API: WebSocket endpoint for log streaming
 - Optional: log aggregation (send to external Loki/ELK)
 
-### Environment Variable Dashboard Editor
+### Environment Variable Dashboard Editor — SHIPPED
 
-Per-project env var management via dashboard. Currently env vars are set at deploy time only.
-
-- Dashboard: env var editor in project settings (read/write `.env*` on agent)
-- CLI: `l8b env set myapp KEY=value`
-- No redeploy needed for env changes (container restart only)
-
-> **Note:** `.env*` files are never transferred over the network (core LiteBin principle). The dashboard editor writes directly to the agent's filesystem via API.
+Dashboard env modal + `GET/PUT /projects/{id}/env` + `l8b env list/push`. Values are write-only (masked previews only); changes apply on the next container start or recreate.
 
 ### Notifications
 
@@ -701,32 +707,33 @@ LiteBin today              LiteBin + WireGuard mesh       Graduate → K8s / Clo
 
 ### Implementation Order
 
-| # | Feature | Phase | Complexity |
-|---|---------|-------|------------|
-| 1 | Full real-time log streaming | Quick Win | Low |
-| 2 | Environment variable editor | Quick Win | Low |
-| 3 | Preview environments | Phase 1 | Medium |
-| 4 | App migration + duplication | Phase 2 | Medium |
-| 5 | Access control (maintenance + password) | Phase 3 | Low |
-| 6 | Platform backup (Litestream) | Phase 4 | Low |
-| 7 | One-click apps | Phase 5 | Low |
-| 8 | Deploy history + rollback | Phase 6 | Medium |
-| 9 | Eject (Litebin Eject) | Phase 7 | Medium |
-| 10 | Zero-downtime deploys | Phase 8 | Medium |
-| 11 | Liveness probes | Phase 9 | Low |
-| 12 | Master migration + promote | Phase 2 | Medium |
-| 13 | GitHub App (seamless repo connect) | **Done — [github-connect.md](../github-connect.md)** | Medium |
-| 14 | Distributed services (1 VPS per service) | Future | Medium |
-| 15 | Project backup (Rustic) | Planned | Medium |
-| 16 | Disaster recovery | Planned | Low |
-| 17 | Auto-update Docker images | Planned | Medium |
-| 18 | Notifications (event outbox + router) | Planned | Low |
+| # | Feature | Phase | Complexity | Status |
+|---|---------|-------|------------|--------|
+| 1 | Full real-time log streaming | Quick Win | Low | Planned |
+| 2 | Environment variable editor | Quick Win | Low | **Done** |
+| 3 | Preview environments | Phase 1 | Medium | Planned |
+| 4 | App migration + duplication | Phase 2 | Medium | Planned ([migration.md](migration.md)) |
+| 5 | Access control (maintenance + password) | Phase 3 | Low | Planned ([access-control.md](access-control.md)) |
+| 6 | Platform backup (Litestream) | Phase 4 | Low | **Done** — [backup.md](../topics/backup.md) |
+| 7 | One-click apps | Phase 5 | Low | Planned ([template-catalog.md](template-catalog.md)) |
+| 8 | Deploy history + rollback | Phase 6 | Medium | Planned |
+| 9 | Eject (Litebin Eject) | Phase 7 | Medium | Planned |
+| 10 | Zero-downtime deploys | Phase 8 | Medium | Planned |
+| 11 | Liveness probes | Phase 9 | Low | Planned |
+| 12 | Master migration + promote | Phase 2 | Medium | Planned |
+| 13 | GitHub App (seamless repo connect) | — | Medium | **Done** — [github-connect.md](../topics/github-connect.md) |
+| 14 | Distributed services (1 VPS per service) | Future | Medium | Planned |
+| 15 | Project backup (Rustic) | — | Medium | Planned ([project-backup.md](project-backup.md)) |
+| 16 | Disaster recovery | — | Low | Partial ([disaster-recovery.md](disaster-recovery.md); DB restore shipped) |
+| 17 | Auto-update Docker images | — | Medium | Planned ([auto-update.md](auto-update.md)) |
+| 18 | Notifications (event outbox + router) | — | Low | Planned ([notifications.md](notifications.md)) |
+| 19 | Multi-subdomain routing (per-service subdomains) | — | Low | Planned (from the old post-MVP plan) |
 
 ---
 
 ## Future Considerations
 
-- **Security hardening** — core-network isolation, per-project networks for single-service apps, read-only FS docs, seccomp/AppArmor profiles, userns-remap, audit logging, disk quotas. Not on the active roadmap; captured with cost/benefit analysis in [security-hardening.md](security-hardening.md). The current baseline (volume translation + `cap_drop ALL` + multi-service per-project networks) is sufficient for litebin's compromised-app containment threat model.
+- **Security hardening** — core-network isolation, per-project networks for single-service apps, read-only FS docs, seccomp/AppArmor profiles, userns-remap, audit logging, disk quotas. Not on the active roadmap. The current baseline (volume translation + `cap_drop ALL` + multi-service per-project networks) is sufficient for litebin's compromised-app containment threat model.
 
 ---
 
@@ -742,4 +749,4 @@ As features grow, the CLI has 40+ planned commands across all planning docs. Thi
 
 To resolve: audit all planned CLI commands from planning docs, categorize as CLI / API-only, and add the `l8b api` wrapper. Not blocking any feature work.
 
-**Update (AI-native — shipped):** the premise was revised and implemented — coding agents are a primary CLI consumer, and the agent-facing verbs (`list`, `logs`, `stop`, `start`, `restart`, `url`, `delete`, `env`, plus `init`, `doctor`, `setup`, `domain`, `mcp`) are built, along with a stdio MCP server and device-flow pairing. See [docs/ai-native.md](../ai-native.md). The `l8b api` wrapper was never built; the MCP tools cover the long tail for agents.
+**Update (AI-native — shipped):** the premise was revised and implemented — coding agents are a primary CLI consumer, and the agent-facing verbs (`list`, `logs`, `stop`, `start`, `restart`, `url`, `delete`, `env`, plus `init`, `doctor`, `setup`, `domain`, `mcp`) are built, along with a stdio MCP server and device-flow pairing. See [docs/ai-native.md](../topics/ai-native.md). The `l8b api` wrapper was never built; the MCP tools cover the long tail for agents.

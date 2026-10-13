@@ -1,3 +1,5 @@
+> **Status: TODO list — publishing l8bin-mcp to registries** · verified 2026-10-13
+
 # Publishing l8bin-mcp
 
 npm publishing is automated: `publish-npm.yml` runs when the Release workflow
@@ -19,7 +21,7 @@ Reuse these across every registry form:
 - **Short description**: LiteBin is a self-hosted PaaS for side projects. This
   MCP server gives coding agents deploy, logs, health checks and runtime
   secrets as first-class tools over stdio.
-- **Long description**: 14 tools (deploy, status with wait/healthy, list, logs,
+- **Long description**: 15 tools (deploy, status with wait/healthy, list, logs,
   env_list, env_push, url, stop, start, restart, domain_set, domain_remove,
   confirm-gated delete, doctor). Scoped tokens (read → deploy → manage →
   admin, optionally locked to a single project), write-only secrets, revocable

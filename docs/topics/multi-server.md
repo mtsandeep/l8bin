@@ -16,7 +16,7 @@ curl -fsSL https://l8b.in | bash -s agent
 ```
 
 This installs the agent binary, generates mTLS certs (signed by the master's Root CA), and starts:
-- **Agent app** — API server on port 8443 (mTLS, orchestrator-only)
+- **Agent app** — API server on container port 8443 (mTLS, orchestrator-only); the installer publishes it on host port **5083**
 - **Agent Caddy sidecar** — Reverse proxy on ports 80/443 (handles app traffic)
 
 ## Routing Modes
@@ -85,7 +85,7 @@ After initial registration and config push from the orchestrator, an agent can o
 ## Communication Paths
 
 ```
-                    mTLS (port 8443)
+                    mTLS (port 5083)
 Orchestrator ←------------------------→ Agent API
    (API, heartbeats,              (container ops,
     config push)                   wake reports)
@@ -101,7 +101,7 @@ Agent Caddy ←------------------------→ Agent API
     sleeping containers)            returns loading page)
 ```
 
-- **Port 8443 (mTLS)**: Orchestrator ↔ Agent API only. Requires client certificate signed by the Root CA. Never handles user traffic.
+- **Port 5083 → 8443 (mTLS)**: Orchestrator ↔ Agent API only (host 5083 maps to the agent container's 8443). Requires client certificate signed by the Root CA. Never handles user traffic. Open 5083 in the OS/cloud firewall.
 - **Port 80/443 (HTTPS)**: User-facing traffic. In master_proxy mode, master Caddy proxies to agent Caddy here.
 - **Port 8444 (HTTP, internal only)**: Agent Caddy ↔ Agent wake handler and on-demand TLS permission endpoint. Plain HTTP, no TLS — only reachable from the Docker network, not exposed on the host. Serves two purposes:
   1. Wake trigger for sleeping containers (cloudflare_dns mode)
@@ -114,7 +114,7 @@ Understanding the full request lifecycle is important for debugging. Here's what
 ### Deploy Flow
 
 ```
-Dashboard → Orchestrator API → mTLS (8443) → Agent API → Docker
+Dashboard → Orchestrator API → mTLS (5083) → Agent API → Docker
                                                      ↓
                                               Container starts
                                                      ↓
@@ -125,7 +125,7 @@ Dashboard → Orchestrator API → mTLS (8443) → Agent API → Docker
                                               (adds route: host → agent_ip:443)
 ```
 
-1. User deploys via dashboard/CLI → orchestrator sends `POST /containers/run` to agent over mTLS (port 8443)
+1. User deploys via dashboard/CLI → orchestrator sends `POST /containers/run` to agent over mTLS (port 5083)
 2. Agent pulls image, creates and starts the container on `litebin-network`
 3. Agent calls `rebuild_local_caddy()` — lists all running containers, builds Caddy JSON with routes + inline TLS cert (via `load_pem`), pushes to agent Caddy's admin API
 4. Orchestrator syncs routes to master Caddy — adds route for `{project_id}.{domain}` → `{agent_ip}:443` with TLS transport (CA-verified)
@@ -172,7 +172,7 @@ Key details:
 Root CA (ca.pem) — generated once on master, trusted by all parties
 ├── Master identity (server.pem + server-key.pem) — orchestrator → agent connections
 ├── Agent identity (agent.pem + agent-key.pem) — used two ways:
-│   ├── Agent API TLS on port 8443/5083 (loaded from /certs/ volume mount)
+│   ├── Agent API TLS on container port 8443, published as host 5083 (loaded from /certs/ volume mount)
 │   └── Agent Caddy TLS (embedded inline via load_pem in Caddy JSON)
 └── All certs are ECDSA P-256, 10-year validity, agent SAN=DNS:agent
 ```
@@ -181,7 +181,7 @@ How certs are used:
 
 | Component | Cert Files | How Loaded |
 |---|---|---|
-| Agent API (Axum, port 8443) | `/certs/agent.pem` + `/certs/agent-key.pem` + `/certs/ca.pem` | File read at startup from volume mount |
+| Agent API (Axum, container port 8443 / host 5083) | `/certs/agent.pem` + `/certs/agent-key.pem` + `/certs/ca.pem` | File read at startup from volume mount |
 | Agent Caddy (port 443) | Same agent.pem + agent-key.pem | Embedded inline in Caddy JSON via `load_pem` (pushed via admin API) |
 | Orchestrator → agent | `/certs/server.pem` + key (orchestrator); `/certs/ca.pem` to verify agent | mTLS from orchestrator; Caddy may also reference `ca.pem` via `root_ca_pem_files` |
 
@@ -288,9 +288,9 @@ The agent reports its IP in every `/health` response. The orchestrator only writ
 
 ## Further Reading
 
-- [Architecture](architecture.md) — full system overview, component responsibilities, database schema
-- [Design Decisions](decisions.md) — why these routing modes exist and the tradeoffs
-- [Failure Model](failure-model.md) — how failures are handled in each routing mode
-- [Waker](waker.md) — detailed wake-on-request flow diagrams for both modes
+- [Architecture](../architecture/architecture.md) — full system overview, component responsibilities, database schema
+- [Design Decisions](../architecture/decisions.md) — why these routing modes exist and the tradeoffs
+- [Failure Model](../architecture/failure-model.md) — how failures are handled in each routing mode
+- [Scale-to-Zero](../architecture/scale-to-zero.md) — wake-on-request and idle auto-stop flows, both modes
 - [Security](security.md) — threat model and mTLS architecture
 - [Troubleshooting FAQ](faq.md) — common issues with mTLS certs, agent connectivity, firewalls

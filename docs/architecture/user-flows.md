@@ -61,6 +61,95 @@ User clicks Redeploy. Same service selection modal as Recreate. Selected service
 ### S12. Delete a project
 User clicks Delete. All containers removed, project network removed, DB rows deleted, Caddy routes removed.
 
+### S13. Edit runtime env in the dashboard
+User opens the env modal. Values are write-only (masked previews only). Saving writes the node-local `.env`; `pending_apply` shows until the next start/recreate applies it.
+
+---
+
+## GitHub Deploy Flows
+
+### G1. Connect a GitHub App (manifest flow)
+Dashboard starts the one-time manifest URL → user creates the (unreviewed, account-owned) app on GitHub → callback exchanges the code for credentials. Multiple app connections coexist (one per account).
+
+### G2. Connect with a personal access token
+User pastes a PAT. One connection per token; repo browsing and deploys run against it.
+
+### G3. Link a repo to a project
+User picks repo, branch, and subfolder. LiteBin commits the deploy workflow into the repo and writes the `L8B_SERVER` + per-project `L8B_TOKEN_<ID>` secrets itself. Existing projects link from the card's settings.
+
+### G4. Push to the linked folder triggers auto-deploy
+GitHub Actions builds and pushes the image, then calls the deploy API. The `paths:` filter scopes triggers to the linked folder (root links ignore only the workflow file). Unchanged re-links skip no-op commits.
+
+### G5. Deploy now from the dashboard
+Card's Deploy-now dispatches the workflow; run status and history show on the project card.
+
+### G6. Unlink a project
+Token revoked; workflow file and repo secrets removed best-effort (optional).
+
+### G7. Rotate a project's GitHub token
+Repo secret is overwritten first, then the old deploy token is revoked — no window where deploys fail.
+
+### G8. App uninstalled on GitHub
+Polling + webhook flip the connection back to the "install" state automatically.
+
+---
+
+## AI Agent Flows
+
+### AG1. Device-flow pairing
+Agent (`l8b login` or MCP `setup`) gets a short-lived code → user approves at `/connect` in an authenticated browser, choosing scope (and optional project binding) → the agent's next poll receives the token exactly once. Multiple pairings coexist; codes expire.
+
+### AG2. Agent deploy loop
+`deploy` → `status --wait --healthy` (exit 0 only when serving 2xx) → `logs` → `env push --apply` → `restart`. Every step is non-interactive and machine-readable (`--json`); failures carry a recovery hint.
+
+### AG3. MCP tool session
+`npx l8bin-mcp` exposes `l8b` as tools. The `setup` tool reports state (`unconfigured | needs_binding | pairing_pending | configured`, …) with the exact next call; unauthenticated tool failures hint `setup` instead of `login`.
+
+### AG4. Runtime env handled by an agent
+`env list` returns keys with masked previews only (values are write-only); `env push` writes the node-local `.env` and reports `pending_apply` until the next container start/recreate.
+
+### AG5. Scope enforcement
+Token scopes are a cumulative ladder (`read < deploy < manage < admin`); project-bound tokens only reach their project's paths (plus `/meta`, `/whoami`). Admin tokens are mintable only from a session.
+
+---
+
+## Backup Flows
+
+### B1. Enable backup
+Dashboard/CLI starts the Litestream sidecar (opt-in; 0 RAM when off). Local file replica runs immediately.
+
+### B2. Add an S3/R2 destination
+Credentials and reachability are probed via the running sidecar before saving. The destination becomes the primary (continuous, point-in-time) replica; the server keeps a dated local snapshot restored from it daily (30 retained).
+
+### B3. Point-in-time restore
+Restore is staged and the orchestrator restarts to swap the database in. The replaced database is kept as `litebin.db.pre-restore`.
+
+### B4. Undo the last restore
+One click stages the kept pre-restore database back through the same boot swap. Repeatable (flip-flops between the two states).
+
+### B5. Manual backup / named restore point
+`VACUUM INTO` snapshot taken anytime (sidecar or not, any replica mode); restorable by name; deleting a point removes only its snapshot file.
+
+### B6. Restore from a local daily snapshot
+Explicit bypass of the S3/R2 replica for when the destination is unreachable.
+
+### B7. Restore self-heals
+On boot after applying a restore, the orchestrator REINDEXes and quick-checks the database (litestream 0.5 point-in-time restores can carry stale PK index pages).
+
+### B8. Disable backup
+Sidecar stopped; replica data kept for re-enable.
+
+---
+
+## Scan & Import Flows
+
+### SC1. Scan for foreign containers
+Dashboard scans local or per-node Docker for non-LiteBin containers; groups them by compose project labels.
+
+### SC2. Adopt a group as a project
+Import writes DB rows, resolves or reconstructs compose.yaml, rewrites relative bind mounts to absolute paths, imports containers into LiteBin management (local or via agent), and optionally sets up routing.
+
+
 ---
 
 ## Wake / Auto-Start Flows
@@ -222,7 +311,10 @@ Janitor checks `last_active_at`. Activity tracker updates this on each request. 
 
 ## Further Reading
 
-- [Multi-Service Architecture](multi-service.md) — per-project networks, dependency levels, health checks, unified start_services
-- [Waker](waker.md) — detailed wake-on-request flow diagrams
+- [Multi-Service Architecture](../topics/multi-service.md) — per-project networks, dependency levels, health checks, unified start_services
+- [Scale-to-Zero](scale-to-zero.md) — wake-on-request and idle auto-stop flows
 - [Architecture](architecture.md) — full system overview, component responsibilities
 - [Failure Model](failure-model.md) — how every component handles failures and recovery
+- [Backup](../topics/backup.md) — replica model, restore semantics
+- [GitHub Connect](../topics/github-connect.md) — app/PAT connect, workflow and secret management
+- [AI-Native](../topics/ai-native.md) — agent operability, pairing, scopes, MCP

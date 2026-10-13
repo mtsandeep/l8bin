@@ -1,3 +1,5 @@
+> **Status: NOT STARTED — roadmap item 18** · verified 2026-10-13
+
 # Notifications
 
 LiteBin pushes events to an external notification router. LiteBin does not handle channel routing, provider configuration, or delivery timing — that's the router's job.

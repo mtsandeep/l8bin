@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Docs made consistent; fixed API reference templating issues.
+- Docs reorganized into folders (reference/architecture/topics/guides/dev); roadmap statuses refreshed; waker+janitor merged into one scale-to-zero doc.
 - **Undo last restore** — every restore checkpoints the live WAL and keeps the replaced database as `litebin.db.pre-restore`; "Undo last restore" (Restore section, shown only when one exists) stages it back through the same boot swap, so undoing again flips back and forth (`POST /backup/revert-restore`, `l8b backup revert`).
 - **Manual backup — snapshot the live database anytime** — a `VACUUM INTO` snapshot (consistent, lock-free in WAL mode) into `backups/points/`, so it restores even after a destination switch, with backup disabled, or with no sidecar. Dashboard: "Manual backup" button in the status header (name defaults to the current date-time, asked in a modal); backups are listed under Restore with size, restore, and delete (`POST /backup/restore-point`, `l8b backup restore --point <id>`); deleting removes the snapshot.
 - **R2/S3 is the primary backup destination; local becomes a secondary daily copy** — litestream ≥0.5 allows a single replica per database, so configuring R2/S3 points the sidecar at it (continuous, point-in-time restore) and the server keeps a dated local snapshot restored from R2/S3 daily (30 retained; a snapshot that can't be taken is the "destination may be broken" alarm, surfaced as a stale local-daily in Settings → Backup and `l8b backup status`). Without R2/S3, local continuous backup is unchanged. The normal Restore always prefers R2/S3; local snapshots restore via an explicit bypass option (dashboard "Restore locally", `l8b backup restore --from-local YYYY-MM-DD`). Destinations show primary/secondary + continuous/daily badges, provider chip (R2/S3, URL on hover), and file/size/coverage stats for both.
@@ -24,7 +25,7 @@ All notable changes to this project will be documented in this file.
 ## [0.4.6] - 2026-10-11
 
 ### Fixed
-- **Orchestrator and agent RSS no longer sits at the allocation high-water mark** — jemalloc now runs with `narenas:2` and a 1s dirty decay (`_RJEM_MALLOC_CONF` baked into both the installer-generated and source Dockerfiles, override per host); a 9-project master drops from 77MB to 34MB idle. Methodology and per-host numbers: [docs/memory-footprint.md](docs/memory-footprint.md).
+- **Orchestrator and agent RSS no longer sits at the allocation high-water mark** — jemalloc now runs with `narenas:2` and a 1s dirty decay (`_RJEM_MALLOC_CONF` baked into both the installer-generated and source Dockerfiles, override per host); a 9-project master drops from 77MB to 34MB idle. Methodology and per-host numbers: [docs/memory-footprint.md](docs/dev/memory-footprint.md).
 
 ## [0.4.5] - 2026-10-11
 
@@ -181,7 +182,7 @@ All notable changes to this project will be documented in this file.
 - **`l8b ship` asked "Direct to agent or relay via master?" when deploying to the local node** — both are the same there; the prompt is now skipped for the local node only.
 
 ### Changed
-- **Typed orchestrator ↔ agent wire contract** — internal agent endpoints now share request/response structs used by both sides; no wire-format change. See [docs/agent-api.md](docs/agent-api.md).
+- **Typed orchestrator ↔ agent wire contract** — internal agent endpoints now share request/response structs used by both sides; no wire-format change. See [docs/agent-api.md](docs/dev/development.md).
 
 ## [0.3.21] - 2026-08-08
 
@@ -552,7 +553,7 @@ All notable changes to this project will be documented in this file.
 - **Dashboard: service management** — view and manage individual services within a project. New modular ProjectCard components (service settings, sleep controls, redeploy, service selection).
 - **Dashboard: log viewer** — improved log viewer component with better streaming and display.
 - **Dashboard: volume management** — view and manage project volumes from the dashboard.
-- **New documentation** — [multi-service.md](docs/multi-service.md), [volumes.md](docs/volumes.md), [waker.md](docs/waker.md), [user-flows.md](docs/user-flows.md)
+- **New documentation** — [multi-service.md](docs/topics/multi-service.md), [volumes.md](docs/topics/volumes.md), [waker.md](docs/architecture/scale-to-zero.md), [user-flows.md](docs/architecture/user-flows.md)
 
 ### Fixed
 - Fix multi-service remote routing using node UUID as hostname instead of the actual node host address — remote multi-service and degraded projects now correctly resolve the node's `host` from the database.
@@ -569,7 +570,7 @@ All notable changes to this project will be documented in this file.
 - Fix agent Caddy self-referencing loop in cloudflare_dns mode — orchestrator pushed `{agent_ip}:443` as the upstream in the agent's Caddy config, causing it to proxy to itself instead of the app container (`litebin-{id}:{port}`). Added `container_upstream` field to `ProjectRoute` so the agent Caddy uses the correct Docker network address.
 
 ### Added
-- Troubleshooting FAQ ([docs/faq.md](docs/faq.md)) — common issues with mTLS certs, agent connectivity, Docker logs, and firewalls
+- Troubleshooting FAQ ([docs/faq.md](docs/topics/faq.md)) — common issues with mTLS certs, agent connectivity, Docker logs, and firewalls
 
 ### Changed
 - Added "Further Reading" links to architecture docs and centralized doc navigation from README

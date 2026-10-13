@@ -1,3 +1,5 @@
+> **Status: NOT STARTED** · verified 2026-10-13
+
 # CLI: exact `.env` path from the server instead of a guess
 
 **Status:** planned, not implemented. Revisit later.

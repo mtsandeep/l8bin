@@ -1,3 +1,5 @@
+> **Status: NOT STARTED — roadmap Phase 2 / item 4** · verified 2026-10-13
+
 # Project Migration & Master Migration
 
 ## Overview

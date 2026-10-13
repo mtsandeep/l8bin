@@ -3,22 +3,24 @@
 const DOC_MAP = {
   'api': null, // Scalar view
   'cli': '/docs/guides/cli-reference.md',
-  'quickstart': '/quickstart.html', // dedicated page
-  'agents': '/agents.html', // dedicated page
+  // External pages — open in a new tab (marked with an arrow in the sidebar)
+  'quickstart': '/quickstart.html',
+  'agents': '/agents.html',
   'multi-service': '/docs/guides/multi-service.md',
   'multi-server': '/docs/guides/multi-server.md',
   'volumes': '/docs/guides/volumes.md',
   'env-secrets': '/docs/guides/env-secrets.md',
   'configuration': '/docs/guides/configuration.md',
-  'local-testing': '/docs/guides/local-testing.md',
   'security': '/docs/guides/security.md',
   'faq': '/docs/guides/faq.md',
+  'backup': '/docs/guides/backup.md',
+  'github-connect': '/docs/guides/github-connect.md',
+  'ai-native': '/docs/guides/ai-native.md',
   'architecture': '/docs/guides/architecture.md',
   'decisions': '/docs/guides/decisions.md',
   'failure-model': '/docs/guides/failure-model.md',
-  'janitor': '/docs/guides/janitor.md',
+  'scale-zero': '/docs/guides/scale-zero.md',
   'user-flows': '/docs/guides/user-flows.md',
-  'waker': '/docs/guides/waker.md',
 };
 
 let currentView = 'api';
@@ -49,9 +51,9 @@ function initScalar() {
 // Switch view
 async function showView(name, anchor) {
   const url = DOC_MAP[name];
-  // External links (full page navigation)
+  // External pages (Quick Start, For Agents) open in a new tab
   if (url && !url.endsWith('.md')) {
-    window.location.href = url;
+    window.open(url, '_blank', 'noopener');
     return;
   }
 

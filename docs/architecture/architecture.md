@@ -59,7 +59,7 @@ Browser -> Cloudflare (per-project A record) -> Agent IP -> Agent Caddy -> Agent
 
 Hot-swappable from the dashboard. All agents must be reachable for Mode B.
 
-See [multi-server.md](multi-server.md) for the full multi-server guide including bandwidth comparisons and manual DNS setup.
+See [multi-server.md](../topics/multi-server.md) for the full multi-server guide including bandwidth comparisons and manual DNS setup.
 
 ## Sleep & Wake
 
@@ -86,7 +86,7 @@ Memory overhead is minimal (~10-15 KB) — it's a single async task with a strea
 
 ### Janitor (background task)
 
-Runs on a configurable interval (default: 5 min). Stops idle containers that haven't received traffic within their timeout threshold (default: 15 min). See [janitor.md](janitor.md) for the detailed flow.
+Runs on a configurable interval (default: 5 min). Stops idle containers that haven't received traffic within their timeout threshold (default: 15 min). See [scale-to-zero.md](scale-to-zero.md) for the detailed flow.
 
 ### Waker (forward-auth handler)
 
@@ -100,7 +100,7 @@ When a request hits a sleeping app:
 
 In Mode B, the agent handles this autonomously using only the Docker API — no master or database needed.
 
-See [waker.md](waker.md) for detailed wake-on-request flow diagrams.
+See [scale-to-zero.md](scale-to-zero.md) for detailed wake-on-request flow diagrams.
 
 ### Custom Domain Wake
 
@@ -196,31 +196,9 @@ Host
 
 All management services share a single Docker bridge network (`litebin-network`). Single-service app containers also join this network. Multi-service projects get their own per-project bridge network (`litebin-{project_id}`).
 
-## mTLS (Master <-> Agent)
+## mTLS & Container Hardening
 
-- Orchestrator authenticates with `server.pem` when connecting to agents
-- All agents share one `agent.pem` for the agent API on port 5083
-- Both sides verify the certificate chain; no HTTP fallback
-- Per-node `agent_secret` authenticates agent → master wake/heartbeat (HMAC), separate from TLS
-
-```
-Root CA (self-signed, ECDSA P-256)
-+-- Master identity (server.pem) — orchestrator → agent
-+-- Shared agent identity (agent.pem) — agent API (same on every agent)
-```
-
-## Container Hardening
-
-| Control | Value |
-|---|---|
-| Capabilities | `cap_drop: ALL`, `cap_add: CHOWN, DAC_OVERRIDE, FOWNER, FSETID, SETGID, SETUID, NET_BIND_SERVICE, KILL` |
-| Privilege escalation | `no-new-privileges` |
-| Process limit | 4096 (fork bomb prevention) |
-| Log rotation | 10 MB max, 3 files |
-| Memory | 256 MiB default, per-project override |
-| CPU | 0.5 cores default, per-project override |
-| Network | Isolated bridge network |
-| Restart policy | `no` by default; compose can override with `restart: unless-stopped` (recommended for multi-service) |
+Orchestrator ↔ agent traffic is mutually authenticated TLS (both sides verify the certificate chain, no HTTP fallback), and app containers run with dropped capabilities, `no-new-privileges`, resource limits, and isolated networks. The full cert tree, capability list, and hardening table live in [security.md](../topics/security.md) — the single home for that detail.
 
 ## Database Schema
 
@@ -232,7 +210,7 @@ Root CA (self-signed, ECDSA P-256)
 | name | TEXT | Human-friendly label |
 | host | TEXT | IP or hostname |
 | public_ip | TEXT | Public IP address |
-| agent_port | INTEGER | Default 8443 |
+| agent_port | INTEGER | Host port the agent API is published on (installer default 5083 → container 8443) |
 | agent_secret | TEXT | Per-node HMAC secret for agent → master wake/heartbeat |
 | region | TEXT | Optional metadata |
 | status | TEXT | `online`, `offline`, `draining`, `pending_setup` |
@@ -278,16 +256,15 @@ Root CA (self-signed, ECDSA P-256)
 
 Additional tables: `users`, `deploy_tokens`, `settings`, `project_services`, `project_volumes`, `project_routes`.
 
-See [security.md](security.md) for the full security architecture and threat model.
+See [security.md](../topics/security.md) for the full security architecture and threat model.
 
 ## Further Reading
 
-- [Multi-Service Architecture](multi-service.md) — per-project networks, dependency levels, internal routing, health checks
-- [Multi-Server Setup](multi-server.md) — adding agents, routing modes, certificate architecture, bandwidth comparison
+- [Multi-Service Architecture](../topics/multi-service.md) — per-project networks, dependency levels, internal routing, health checks
+- [Multi-Server Setup](../topics/multi-server.md) — adding agents, routing modes, certificate architecture, bandwidth comparison
 - [Design Decisions](decisions.md) — why Rust, Caddy, SQLite, Docker (not K8s), scale-to-zero, mTLS
 - [Failure Model](failure-model.md) — how every component handles failures, degradation, and recovery
-- [Troubleshooting FAQ](faq.md) — common issues with mTLS certs, agent connectivity, Docker logs, firewalls
-- [Janitor](janitor.md) — idle container auto-stop flow
-- [Waker](waker.md) — wake-on-request flow diagrams
-- [Security](security.md) — threat model and hardening details
+- [Troubleshooting FAQ](../topics/faq.md) — common issues with mTLS certs, agent connectivity, Docker logs, firewalls
+- [Scale-to-Zero](scale-to-zero.md) — wake-on-request and idle auto-stop flows
+- [Security](../topics/security.md) — threat model and hardening details
 - [User Flows](user-flows.md) — all user-triggerable scenarios and their current status

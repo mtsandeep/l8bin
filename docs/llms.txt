@@ -109,30 +109,30 @@ Already have the `l8b` binary? Register it directly:
 
 ## Architecture
 
-- [Architecture overview](architecture.md) — Orchestrator + Agent + Caddy reverse proxy
-- [Multi-server setup](multi-server.md) — Remote node configuration via mTLS
-- [Multi-service projects](multi-service.md) — Compose-based deployments
-- [Volumes](volumes.md) — Named volumes, bind mounts, and cleanup
+- [Architecture overview](architecture/architecture.md) — Orchestrator + Agent + Caddy reverse proxy
+- [Design decisions](architecture/decisions.md) — why Rust/Caddy/SQLite, two routing modes, mTLS
+- [Failure model](architecture/failure-model.md) — how LiteBin handles failures
+- [Scale-to-zero](architecture/scale-to-zero.md) — wake-on-request and idle auto-stop (waker + janitor)
+- [User flows](architecture/user-flows.md) — all user-triggerable scenarios
 
-## Configuration
+## Topics
 
-- [Environment variables](configuration.md) — All LITEBIN_* config options
-- [Env & secrets](env-secrets.md) — Per-project .env files and injection
+- [Multi-server setup](topics/multi-server.md) — Remote node configuration via mTLS
+- [Multi-service projects](topics/multi-service.md) — Compose-based deployments
+- [Volumes](topics/volumes.md) — Named volumes, bind mounts, and cleanup
+- [Configuration](topics/configuration.md) — All LITEBIN_* config options
+- [Env & secrets](topics/env-secrets.md) — Per-project .env files and injection
+- [Security internals](topics/security.md) — Auth, mTLS, deploy tokens
+- [Backup](topics/backup.md) — Litestream sidecar, S3/R2 destinations, restore
+- [GitHub connect](topics/github-connect.md) — GitHub App/PAT connect and deploy-from-repo
+- [AI-native](topics/ai-native.md) — agent operability: token scopes, JSON output, MCP, device pairing
+- [FAQ](topics/faq.md) — Troubleshooting
 
 ## Guides
 
-- [Getting started](cli.md) — First deployment walkthrough
-- [Multi-service deployment](multi-service.md) — Compose projects
-- [Local testing](local-testing.md) — Dev environment setup
-- [Agents](agents.md) — AGENTS.md template and MCP wiring for coding agents
-- [Security internals](security.md) — Auth, mTLS, deploy tokens
-
-## Optional
-
-- [Failure model](failure-model.md) — How LiteBin handles failures
-- [Janitor](janitor.md) — Auto-stop and resource cleanup
-- [Waker](waker.md) — Wake-on-traffic
-- [API reference](api-reference.md) — Full endpoint documentation
+- [Getting started](reference/cli.md) — First deployment walkthrough
+- [Agents](topics/agents.md) — AGENTS.md template and MCP wiring for coding agents
+- [API reference](reference/api-reference.md) — auth/scopes; endpoints live in /openapi.json and /docs
 
 ## Full
 

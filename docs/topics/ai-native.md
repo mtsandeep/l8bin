@@ -10,13 +10,13 @@ LiteBin is fully operable by a coding agent: deploy → verify → troubleshoot 
 | Restart/stop/start | Hold secrets (env files / sops keys) |
 | Domains (`l8b domain set`) | Custom-domain DNS (master_proxy mode — LiteBin can't touch arbitrary DNS providers) |
 
-Entry points: [agents.md](agents.md) (drop-in AGENTS.md template + MCP wiring), [cli-reference.md](cli-reference.md) (verbs + flags), [api-reference.md](api-reference.md) (HTTP surface + scopes).
+Entry points: [agents.md](../topics/agents.md) (drop-in AGENTS.md template + MCP wiring), [cli-reference.md](../reference/cli-reference.md) (verbs + flags), [api-reference.md](../reference/api-reference.md) (HTTP surface + scopes).
 
 ## Token scopes
 
-`deploy_tokens.scope` is a fixed cumulative ladder: `read ⊂ deploy ⊂ manage ⊂ admin` (ordered in [`litebin-common/src/types.rs`](../litebin-common/src/types.rs)). Tokens bind to one project (`project_id`, null = global); bound tokens only reach their project's paths. `GET /whoami` reports the active credential: token name, scope, binding (or the session user).
+`deploy_tokens.scope` is a fixed cumulative ladder: `read ⊂ deploy ⊂ manage ⊂ admin` (ordered in [`litebin-common/src/types.rs`](../../litebin-common/src/types.rs)). Tokens bind to one project (`project_id`, null = global); bound tokens only reach their project's paths. `GET /whoami` reports the active credential: token name, scope, binding (or the session user).
 
-Route groups in [`orchestrator/src/app.rs`](../orchestrator/src/app.rs) — session-or-token, 401 JSON:
+Route groups in [`orchestrator/src/app.rs`](../../orchestrator/src/app.rs) — session-or-token, 401 JSON:
 
 | Scope | Allows | Routes |
 |---|---|---|
@@ -38,7 +38,7 @@ Every CLI command takes `--json` (or `L8B_JSON=1`). Success: one `{"ok": true, .
 
 - `l8b status --wait` exits 0 only when the project reaches running; `--healthy` additionally probes the live URL (wake-tolerant) and reports `http_status` + `latency_ms`, exiting 0 only on 2xx. This is the definitive "is it up?" check.
 - Deploy timeouts exit 0 with `"status": "deploying (timed out waiting)"` — exit codes are reserved for transport/command failures; agents read the field.
-- Result structs ([`cli/src/commands/`](../cli/src/commands/)) are typed `Serialize` and are exactly what the MCP tools return — one shape, two renderings.
+- Result structs ([`cli/src/commands/`](../../cli/src/commands)) are typed `Serialize` and are exactly what the MCP tools return — one shape, two renderings.
 
 ## Runtime env: write-only
 
@@ -46,11 +46,11 @@ No plaintext read-back endpoint exists, by design — a read-back endpoint would
 
 | Rule | Where |
 |---|---|
-| GET `/projects/{id}/env` returns masked previews only (`••••••••` — no length or first-char leak) | [`orchestrator/src/routes/env.rs`](../orchestrator/src/routes/env.rs) |
+| GET `/projects/{id}/env` returns masked previews only (`••••••••` — no length or first-char leak) | [`orchestrator/src/routes/env.rs`](../../orchestrator/src/routes/env.rs) |
 | PUT (merge/replace) requires `manage`; 0600 service-owned files; 64 KB cap; audit logs keys, never values | same |
-| Single-node writes the local `litebin/projects/<id>/.env`; remote nodes go through the agent's `/internal/env` ([`agent/src/routes/env.rs`](../agent/src/routes/env.rs)) | [`AgentClient::write_env_file`](../orchestrator/src/nodes/client.rs) |
+| Single-node writes the local `litebin/projects/<id>/.env`; remote nodes go through the agent's `/internal/env` ([`agent/src/routes/env.rs`](../../agent/src/routes/env.rs)) | [`AgentClient::write_env_file`](../../orchestrator/src/nodes/client.rs) |
 | Changes apply on next container start/recreate; `pending_apply` is surfaced until then (dashboard modal, CLI output) | same |
-| CLI input is file/stdin only (`l8b env push --file \| --stdin [--replace] [--apply]`) — `KEY=VAL` args leak via shell history and transcripts | [`cli/src/commands/env.rs`](../cli/src/commands/env.rs) |
+| CLI input is file/stdin only (`l8b env push --file \| --stdin [--replace] [--apply]`) — `KEY=VAL` args leak via shell history and transcripts | [`cli/src/commands/env.rs`](../../cli/src/commands/env.rs) |
 
 Recommended agent workflow: commit encrypted env to the repo and run `sops -d env.production | l8b env push <project> --stdin` — plaintext never touches git or the agent's context.
 
@@ -58,7 +58,7 @@ Threat model: transit, read-back, scope abuse, filesystem perms, and audit are d
 
 ## Pairing (`l8b login`)
 
-GitHub-CLI-style device flow ([`orchestrator/src/routes/device_auth.rs`](../orchestrator/src/routes/device_auth.rs), [`cli/src/auth.rs`](../cli/src/auth.rs)):
+GitHub-CLI-style device flow ([`orchestrator/src/routes/device_auth.rs`](../../orchestrator/src/routes/device_auth.rs), [`cli/src/auth.rs`](../../cli/src/auth.rs)):
 
 1. CLI posts `/auth/device/start` → prints `{server}/connect?code=L8B-XXXXXX` (122-bit device code, 600 s TTL).
 2. User opens the URL in a browser that already has the dashboard session; the connect page shows scope radio + project binding and "only approve codes you initiated".
@@ -66,23 +66,23 @@ GitHub-CLI-style device flow ([`orchestrator/src/routes/device_auth.rs`](../orch
 
 Logins are stored per server and coexist — no logout dance to switch instances; `server` in `l8b.toml` binds the workspace. CI keeps `L8B_SERVER` + `L8B_TOKEN` env vars. `l8b setup --server <url>` bootstraps the first admin then pairs (refuses in CI mode — trust boundary stays human).
 
-Brute-force/spam defenses ([`orchestrator/src/rate_limit.rs`](../orchestrator/src/rate_limit.rs)): per-IP fixed-window limits — login 10/min, device/start 5/min, device/token 30/min — plus a 100-cap on pending codes; keyed on the last XFF hop (spoof-proof). Guessing is not the threat (122-bit codes, 256-bit tokens); spam is.
+Brute-force/spam defenses ([`orchestrator/src/rate_limit.rs`](../../orchestrator/src/rate_limit.rs)): per-IP fixed-window limits — login 10/min, device/start 5/min, device/token 30/min — plus a 100-cap on pending codes; keyed on the last XFF hop (spoof-proof). Guessing is not the threat (122-bit codes, 256-bit tokens); spam is.
 
 ## `l8b.toml` + `init`
 
-Three keys — `project`, `node`, `server` — nothing else. Port is sticky server-side; there is deliberately no env-file mapping (`deploy --env-file` covers it). Deploys auto-write it ([`cli/src/project_config.rs`](../cli/src/project_config.rs)); commit it, it holds no secrets. Any agent opening the repo discovers "this deploys via LiteBin" with zero arguments.
+Three keys — `project`, `node`, `server` — nothing else. Port is sticky server-side; there is deliberately no env-file mapping (`deploy --env-file` covers it). Deploys auto-write it ([`cli/src/project_config.rs`](../../cli/src/project_config.rs)); commit it, it holds no secrets. Any agent opening the repo discovers "this deploys via LiteBin" with zero arguments.
 
-`l8b init --project <id>` writes it; `--mcp` also emits the workspace `.mcp.json`; `--agents` merges a managed `## Deploying (LiteBin)` section into `AGENTS.md` (idempotent, user content untouched — [`cli/src/agents_md.rs`](../cli/src/agents_md.rs)).
+`l8b init --project <id>` writes it; `--mcp` also emits the workspace `.mcp.json`; `--agents` merges a managed `## Deploying (LiteBin)` section into `AGENTS.md` (idempotent, user content untouched — [`cli/src/agents_md.rs`](../../cli/src/agents_md.rs)).
 
 ## MCP server
 
-`l8b mcp` ([`cli/src/mcp.rs`](../cli/src/mcp.rs)): stdio JSON-RPC 2.0, spawned as a child process per agent session — no port, no daemon. It reads the same stored credential as the CLI; the agent config contains no secrets:
+`l8b mcp` ([`cli/src/mcp.rs`](../../cli/src/mcp.rs)): stdio JSON-RPC 2.0, spawned as a child process per agent session — no port, no daemon. It reads the same stored credential as the CLI; the agent config contains no secrets:
 
 ```json
 { "mcpServers": { "litebin": { "command": "npx", "args": ["-y", "l8bin-mcp"] } } }
 ```
 
-15 tools (`setup`, `deploy`, `status`, `list`, `logs`, `env_list`, `env_push`, `stop`, `start`, `restart`, `url`, `domain_set`, `domain_remove`, `delete`, `doctor`) wrap the CLI verbs and return the same JSON structs. `setup` is a state machine — call it with no arguments and follow `state` + `next`; it pairs auth and binds the workspace (backed by the hidden `l8b __setup`). The npm shim (`l8bin-mcp`) downloads the `l8b` binary on first use (`L8B_BIN` overrides). Registry listings: [mcp-registries.md](mcp-registries.md).
+15 tools (`setup`, `deploy`, `status`, `list`, `logs`, `env_list`, `env_push`, `stop`, `start`, `restart`, `url`, `domain_set`, `domain_remove`, `delete`, `doctor`) wrap the CLI verbs and return the same JSON structs. `setup` is a state machine — call it with no arguments and follow `state` + `next`; it pairs auth and binds the workspace (backed by the hidden `l8b __setup`). The npm shim (`l8bin-mcp`) downloads the `l8b` binary on first use (`L8B_BIN` overrides). Registry listings: [mcp-registries.md](../planning/mcp-registries.md).
 
 ## Env surfaces
 

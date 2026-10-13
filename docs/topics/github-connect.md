@@ -57,7 +57,7 @@ workflow_inputs JSON, auto_deploy, deploy_token_id, installation_id, connection_
 denormalized last_run_*).
 
 PEM/PAT stored plaintext — same tradeoff as `cloudflare_api_token` (at-rest encryption
-is a [security-hardening.md](planning/security-hardening.md) item).
+stays a deliberate non-goal; the DB file and its backups are the trust boundary).
 
 ## The Generated Workflow
 

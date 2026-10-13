@@ -36,7 +36,7 @@ LiteBin has two routing modes, switchable from the dashboard at any time:
 
 **Cloudflare DNS** — DNS points directly to agent nodes. Each agent handles its own traffic independently. Trade-off: requires a Cloudflare account. The key advantage: **agents continue serving traffic even if the master is down.**
 
-See [Architecture](docs/architecture.md) for the full breakdown.
+See [Architecture](docs/architecture/architecture.md) for the full breakdown.
 
 ## Quick Start
 
@@ -314,7 +314,7 @@ Caddy generates a self-signed TLS certificate for `*.localhost`. Your browser wi
 - **Caddy** — reverse proxy with automatic TLS termination, dynamic routing via admin API, and custom route proxy support (path-based and subdomain alias)
 - **Agent** — runs on remote servers, manages containers locally, handles wake requests autonomously via mTLS
 
-See [Architecture](docs/architecture.md) for detailed component breakdown, routing modes, and links to all technical docs. See [Design Decisions](docs/decisions.md) for why these technologies were chosen. See [Troubleshooting FAQ](docs/faq.md) for common issues.
+See [Architecture](docs/architecture/architecture.md) for detailed component breakdown, routing modes, and links to all technical docs. See [Design Decisions](docs/architecture/decisions.md) for why these technologies were chosen. See [Troubleshooting FAQ](docs/topics/faq.md) for common issues.
 
 ---
 
@@ -349,7 +349,7 @@ cargo check
 docker compose --profile master up -d --build
 ```
 
-See [Development Guide](docs/development.md) for build scripts, local testing, Windows development, cross-compilation, and more.
+See [Development Guide](docs/dev/development.md) for build scripts, local testing, Windows development, cross-compilation, and more.
 
 ---
 

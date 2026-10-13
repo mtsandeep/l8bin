@@ -1,3 +1,5 @@
+> **Status: NOT STARTED — roadmap Phase 3** · verified 2026-10-13
+
 # Access Control: Maintenance Mode + Password Protection
 
 Per-project access control with two modes. Both share the same password backend — the only difference is which HTML template Caddy serves.

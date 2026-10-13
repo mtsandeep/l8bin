@@ -395,9 +395,9 @@ The waker uses `try_acquire_project_lock` (non-blocking) — if the lock is held
 
 ## Further Reading
 
-- [Architecture](architecture.md) — full system overview, component responsibilities, database schema
-- [Waker](waker.md) — detailed wake-on-request flow diagrams for both single and multi-service
+- [Architecture](../architecture/architecture.md) — full system overview, component responsibilities, database schema
+- [Scale-to-Zero](../architecture/scale-to-zero.md) — wake-on-request and idle auto-stop flows, single and multi-service
 - [Multi-Server Setup](multi-server.md) — adding agents, routing modes, certificate architecture
-- [Design Decisions](decisions.md) — why Rust, Caddy, SQLite, Docker (not K8s)
-- [Failure Model](failure-model.md) — how every component handles failures and recovery
-- [User Flows](user-flows.md) — all user-triggerable scenarios and their current status
+- [Design Decisions](../architecture/decisions.md) — why Rust, Caddy, SQLite, Docker (not K8s)
+- [Failure Model](../architecture/failure-model.md) — how every component handles failures and recovery
+- [User Flows](../architecture/user-flows.md) — all user-triggerable scenarios and their current status

@@ -1,3 +1,5 @@
+> **Status: NOT STARTED — roadmap item 17** · verified 2026-10-13
+
 # Auto-Update Docker Images
 
 Periodically check for new versions of `:latest` tagged images. Pull silently for stopped projects (with warm start), flag updates for running projects.

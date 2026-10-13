@@ -1,3 +1,5 @@
+> **Status: NOT STARTED — roadmap Phase 5 / item 7** · verified 2026-10-13
+
 # Template Catalog
 
 A template system for one-click project deployment. Users pick a template (or paste any compose file), fill in env vars, and get a running multi-service or single-service project.

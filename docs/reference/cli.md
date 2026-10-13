@@ -17,13 +17,13 @@ The CLI supports two auth methods:
 | Deploy token (`L8B_TOKEN`) | CI/CD, scripts, GitHub Actions | 1st |
 | Session cookie (`l8b login`) | Local development, interactive use | 2nd |
 
-### Login (session-based)
+### Login
 
 ```bash
 l8b login --server https://l8bin.example.com
 ```
 
-Prompts for username and password. Saves the session to `~/.config/litebin/session.json`.
+Opens a login menu: **device pairing** (default — a short code you approve in the dashboard at `/connect`; the CLI's next poll receives a scoped token) or **username/password** (a session cookie). `--pair` skips the menu and runs pairing directly, so agents and scripts can use it headlessly; `--scope` requests a specific token scope. Credentials are saved under `~/.config/litebin/`.
 
 ### Logout
 
@@ -62,32 +62,9 @@ Build and deploy the current directory to a LiteBin project.
 l8b deploy --project <PROJECT_ID> [options]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--project` | *(required)* | Project ID, used as subdomain (`<id>.example.com`) |
-| `--port` | `3000` | Internal port the app listens on inside the container |
-| `--background` | *off* | Use the always-on Background lifecycle with no managed HTTP ingress or URL; disables auto-stop and request wake |
-| `--path` | `.` | Path to the project directory |
-| `--dockerfile` | auto-detect | Path to Dockerfile relative to `--path` |
-| `--node` | auto-select | Target node ID |
-| `--cmd` | image default | Custom command to run in the container |
-| `--memory` | server default | Memory limit in MB |
-| `--cpu` | server default | CPU limit (e.g. `0.5` for half a core) |
-| `--no-auto-stop` | *off* | Disable idle auto-stop |
-| `--secret` | *(none)* | Include this .env file in the build (repeatable; overrides .env auto-discovery) |
-| `--no-env` | *off* | Exclude build-time env files entirely (skip .env auto-discovery) |
-| `--compose` | auto-detect | Force compose mode (deploy as multi-service) |
-| `--service` | *(none)* | Deploy only specific services (repeatable, compose mode only) |
-| `--grant-capability` | *(none)* | Explicitly grant a requested capability; repeatable (`docker-observe`, `host-network`, `raw-ports`) |
-| `--upload` | `auto` | How to upload the image: `auto` (direct when the node supports it, else relay), `direct` (client → agent, skipping the master relay), or `relay` (client → master → agent) |
+Common flags: `--port` (internal app port), `--path`, `--dockerfile`, `--node` (target node), `--cmd`, `--memory`/`--cpu` (resource limits), `--no-auto-stop`, `--background` (no managed URL, always-on), `--compose`/`--service` (multi-service deploys), `--secret` (repeatable, include a specific .env in the build), `--env-file` (extra env file for the build), `--no-env` (exclude build-time env entirely), `--grant-capability` (repeatable: `docker-observe`, `host-network`, `raw-ports`), and `--upload auto|direct|relay`.
 
-Global flags (available on all commands):
-
-| Flag | Env | Description |
-|------|-----|-------------|
-| `--server` | `L8B_SERVER` | Orchestrator dashboard URL (e.g. `https://l8bin.example.com`) |
-| `--token` | `L8B_TOKEN` | Deploy token |
-| `--ci` | `L8B_CI` | CI mode: suppress verbose output and hide secrets |
+> **Every flag, default, and env-var equivalent** (`--server`/`L8B_SERVER`, `--token`/`L8B_TOKEN`, `--ci`/`L8B_CI`, `--json`/`L8B_JSON`, …) is listed in the [CLI Reference](../reference/cli-reference.md) — regenerated from `l8b --generate-markdown` on every release, so it is always current. This page stays narrative on purpose.
 
 ### Build strategy
 
@@ -175,12 +152,7 @@ New projects explicitly choose **Web app / HTTP API** (the default) or **Backgro
 l8b ship [options]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--path` | `.` | Path to the project directory |
-| `--port` | prompt | Skip port prompt and use this port |
-| `--secret` | *(none)* | Include this .env file in the build (repeatable; skips the confirm prompt) |
-| `--no-env` | *off* | Exclude build-time env files entirely (skip .env auto-discovery) |
+Flags (`--path`, `--port` to skip the prompt, `--secret`, `--no-env`): see the [CLI Reference](../reference/cli-reference.md).
 
 #### Flow
 
@@ -246,20 +218,33 @@ When selecting **Existing project**, a list of projects is shown with their stat
 
 For advanced options (custom Dockerfile, resource limits, node selection), use `l8b deploy` with flags. Non-interactive `l8b deploy` / CI paths do not pause for runtime configuration.
 
-### `l8b login`
-
-Log in to a LiteBin server interactively.
+## Bootstrap, health, and server admin
 
 ```bash
-l8b login --server https://l8bin.example.com
+l8b init                # write l8b.toml project defaults (project, node, server);
+                        #   --mcp also emits .mcp.json, --agents adds a managed
+                        #   "Deploying (LiteBin)" section to AGENTS.md
+l8b doctor              # environment sanity checks with recovery hints
+l8b setup --server URL  # first-run bootstrap: create the admin account on a fresh server
+l8b mcp                 # run a stdio MCP server exposing l8b as tools (coding agents)
+l8b status              # CLI status: stored logins, current server, auth identity
 ```
 
-### `l8b logout`
-
-Clear the saved session.
+Domains and server admin:
 
 ```bash
-l8b logout
+l8b domain set app.example.com      # custom domain for the project (admin)
+l8b domain remove                   # detach it again
+l8b platform domain set example.com # change the server's platform domain (admin)
+l8b platform domain show
+```
+
+Backup (see [backup.md](../topics/backup.md)):
+
+```bash
+l8b backup status | enable | disable
+l8b backup add-s3 | remove-s3
+l8b backup restore | revert
 ```
 
 ### `l8b config set`
@@ -314,6 +299,7 @@ l8b start myapp                # polls until running
 l8b restart myapp              # recreates containers (applies pending .env changes)
 l8b env list myapp             # env keys, masked previews only
 l8b env push myapp --file .env.production --apply   # push secrets + apply
+l8b domain set myapp app.example.com   # custom domain (also: domain remove)
 l8b delete myapp --yes         # removes project, containers, and volumes (admin)
 ```
 
@@ -358,7 +344,7 @@ l8b deploy --project myapp --port 3000
 
 ## GitHub Actions
 
-The dashboard can manage the whole thing — `Settings → GitHub` connects a GitHub App (or PAT), and Deploy → GitHub repo writes the workflow + secrets into your repo for you ([github-connect.md](github-connect.md)).
+The dashboard can manage the whole thing — `Settings → GitHub` connects a GitHub App (or PAT), and Deploy → GitHub repo writes the workflow + secrets into your repo for you ([github-connect.md](../topics/github-connect.md)).
 
 To wire it by hand, see [l8bin-action](https://github.com/mtsandeep/l8bin-action) for the reusable composite action:
 

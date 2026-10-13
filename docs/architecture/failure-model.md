@@ -95,19 +95,7 @@ SQLite WAL mode is resilient to crashes — uncommitted transactions are rolled 
 
 ## Wake Failure Paths
 
-### Background Wake Fails (Both Modes)
-
-```
-Background wake fails (Docker error, timeout, image gone)
-  │
-  ├─ Lock stays in project_locks (NOT removed)
-  ├─ Auto-cleanup spawned: remove after 60s
-  │
-  Next browser refresh → completed=true, success=false
-  ├─ Error page: "Failed to start {project}. Retrying in 30 seconds..."
-  │
-  After 60s → lock auto-removed → next refresh tries fresh wake
-```
+The full wake flows (single-flight locking, timelines, agent autonomy) live in [Scale-to-Zero](scale-to-zero.md); this section covers only the failure outcomes.
 
 | Failure | Recovery |
 |---|---|
@@ -115,22 +103,7 @@ Background wake fails (Docker error, timeout, image gone)
 | Container fails to start | Same — error page, retry cycle |
 | Docker daemon unresponsive | Wake times out (60s), error page, retry cycle |
 | Port conflict on restart | Orchestrator auto-assigns new port (`host_port=0`) |
-
-### Master Down During Agent Wake (Mode B)
-
-```
-Agent wakes container, rebuilds local Caddy
-  │
-  ├─ report_wake_to_master() → connection refused
-  │   └─ Logged as debug, ignored (fire-and-forget)
-  │
-  ├─ Container is running, Caddy route exists locally
-  └─ App serves traffic normally
-
-When master comes back:
-  ├─ Next heartbeat → master reconciles DB state
-  └─ Or next wake → wake-report succeeds
-```
+| Master down during agent wake (Mode B) | Agent serves traffic autonomously; wake-report is fire-and-forget, master reconciles DB from the next heartbeat/wake-report |
 
 ### Docker Daemon Restarts (Port Drift)
 
@@ -176,4 +149,4 @@ Some conditions don't cause hard failures but degrade gracefully:
 | High memory on VPS | OOM killer may stop containers or the orchestrator | Apps become unreachable, dashboard errors |
 | Container exceeds memory limit | Docker kills the container (OOM) | 502 error page, auto-wake on next request |
 
-See [Troubleshooting FAQ](faq.md) for debugging steps for specific failure symptoms.
+See [Troubleshooting FAQ](../topics/faq.md) for debugging steps for specific failure symptoms.

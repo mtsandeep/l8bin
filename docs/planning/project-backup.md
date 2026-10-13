@@ -1,10 +1,12 @@
+> **Status: NOT STARTED (rustic) — roadmap item 15; gates disaster recovery** · verified 2026-10-13
+
 # Project Backup (Rustic)
 
 Incremental backup of project data — Docker volumes, compose files, and user-uploaded images — using Rustic.
 
 ## Context
 
-LiteBin currently backs up only the SQLite database via Litestream ([backup.md](../backup.md)). Project data — Docker volumes, compose files, and user-uploaded images — has no backup story. This plan adds incremental project backups with configurable retention policies, local + external storage (S3/SFTP), and a separate image vault for user-uploaded `sha256:` images.
+LiteBin currently backs up only the SQLite database via Litestream ([backup.md](../topics/backup.md)). Project data — Docker volumes, compose files, and user-uploaded images — has no backup story. This plan adds incremental project backups with configurable retention policies, local + external storage (S3/SFTP), and a separate image vault for user-uploaded `sha256:` images.
 
 ## Tool: Rustic
 

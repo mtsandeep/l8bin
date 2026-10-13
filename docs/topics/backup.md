@@ -113,4 +113,4 @@ Zero containers and zero RAM for installs that never enable backup.
 
 ## Not Covered Here
 
-Project data (Docker volumes, uploaded images, compose files) is a separate plan: [project-backup.md](planning/project-backup.md). Disaster recovery (dead-master restore from S3) builds on this: [disaster-recovery.md](planning/disaster-recovery.md).
+Project data (Docker volumes, uploaded images, compose files) is a separate plan: [project-backup.md](../planning/project-backup.md). Disaster recovery (dead-master restore from S3) builds on this: [disaster-recovery.md](../planning/disaster-recovery.md).
