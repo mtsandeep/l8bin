@@ -30,9 +30,10 @@ pub struct RecreateRequest {
 
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/recreate",
+    path = "/projects/{id}/recreate",
+    description = "Recreate containers without pulling images, picking up updated env files; optionally select specific services or pull latest images (redeploy).",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
     ),
     request_body = Option<RecreateRequest>,
     responses(

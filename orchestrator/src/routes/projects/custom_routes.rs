@@ -32,12 +32,12 @@ pub struct ProjectRouteResponse {
     pub created_at: i64,
 }
 
-/// GET /projects/:id/routes — List custom routes for a project.
 #[utoipa::path(
     get,
-    path = "/projects/{project_id}/routes",
+    path = "/projects/{id}/routes",
+    description = "List custom routes (path-based and alias) for a project.",
     params(
-        ("project_id" = String, Path)
+        ("id" = String, Path, description = "Project ID")
     ),
     responses(
         (status = 200, body = Vec<ProjectRouteResponse>),
@@ -73,12 +73,12 @@ pub async fn list_routes(
     (StatusCode::OK, Json(routes)).into_response()
 }
 
-/// POST /projects/:id/routes — Create a custom route.
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/routes",
+    path = "/projects/{id}/routes",
+    description = "Create a custom route (path-based or subdomain alias); rejects aliases that clash with project IDs.",
     params(
-        ("project_id" = String, Path)
+        ("id" = String, Path, description = "Project ID")
     ),
     request_body = CreateRouteRequest,
     responses(
@@ -221,13 +221,13 @@ pub async fn create_route(
         .into_response()
 }
 
-/// DELETE /projects/:id/routes/:route_id — Delete a custom route.
 #[utoipa::path(
     delete,
-    path = "/projects/{project_id}/routes/{route_id}",
+    path = "/projects/{id}/routes/{route_id}",
+    description = "Delete a custom route and resync Caddy.",
     params(
-        ("project_id" = String, Path),
-        ("route_id" = String, Path)
+        ("id" = String, Path, description = "Project ID"),
+        ("route_id" = String, Path, description = "Route ID")
     ),
     responses(
         (status = 200),

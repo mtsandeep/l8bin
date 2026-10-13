@@ -1,20 +1,17 @@
 use axum::{Json, extract::Path, extract::Query, extract::State, http::StatusCode};
-use serde_json::json;
 
 use super::super::manage::get_node_from_db;
 use super::helpers::logs_use_service_selection;
-use super::types::{LogsQuery, LogsResponse};
+use super::types::{DeployLogsResponse, LogsQuery, LogsResponse};
 use crate::AppState;
 use crate::nodes;
 
-/// GET /projects/:id/logs?tail=100&service=frontend
-/// For multi-service projects, `service` selects a specific service's logs.
-/// Defaults to the public service if not specified.
 #[utoipa::path(
     get,
-    path = "/projects/{project_id}/logs",
+    path = "/projects/{id}/logs",
+    description = "Tail stored log lines for a project; for multi-service projects, `service` selects a specific service (defaults to the public service).",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
         ("tail" = Option<usize>, Query, description = "Number of log lines to return"),
         ("service" = Option<String>, Query, description = "Service name to filter logs"),
     ),
@@ -124,20 +121,20 @@ pub async fn project_logs(
     Ok(Json(LogsResponse { project_id, service_name, lines }))
 }
 
-/// GET /projects/:id/deploy-logs — Returns in-memory deploy log lines for a project.
 #[utoipa::path(
     get,
-    path = "/projects/{project_id}/deploy-logs",
+    path = "/projects/{id}/deploy-logs",
+    description = "Return the in-memory deploy log lines captured during the project's last deploy.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
     ),
     responses(
-        (status = 200, description = "Deploy log lines"),
+        (status = 200, body = DeployLogsResponse),
     ),
     tag = "stats",
     security(("session_auth" = []))
 )]
-pub async fn deploy_logs(State(state): State<AppState>, Path(project_id): Path<String>) -> Json<serde_json::Value> {
+pub async fn deploy_logs(State(state): State<AppState>, Path(project_id): Path<String>) -> Json<DeployLogsResponse> {
     let lines = state
         .deploy_logs
         .get(&project_id)
@@ -147,8 +144,5 @@ pub async fn deploy_logs(State(state): State<AppState>, Path(project_id): Path<S
         })
         .unwrap_or_default();
 
-    Json(json!({
-        "project_id": project_id,
-        "lines": lines,
-    }))
+    Json(DeployLogsResponse { project_id, lines })
 }

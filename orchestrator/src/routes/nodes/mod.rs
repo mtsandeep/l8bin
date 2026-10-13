@@ -68,6 +68,7 @@ fn recommended_node_id(nodes: &[Node]) -> Option<String> {
 #[utoipa::path(
     get,
     path = "/nodes",
+    description = "List all nodes with health/resource info; flags the recommended node for new deploys.",
     responses(
         (status = 200, description = "List of nodes", body = Vec<NodeResponse>),
         (status = 500, description = "Internal server error"),
@@ -94,6 +95,7 @@ pub async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
     post,
     path = "/nodes",
     request_body = CreateNodeRequest,
+    description = "Register an agent node; returns the agent secret once for configuring the agent.",
     responses(
         (status = 201, description = "Node created"),
         (status = 500, description = "Internal server error"),
@@ -164,6 +166,7 @@ pub async fn create_node(State(state): State<AppState>, Json(req): Json<CreateNo
 #[utoipa::path(
     delete,
     path = "/nodes/{id}",
+    description = "Decommission a node; rejected while projects still run on it.",
     params(
         ("id" = String, Path, description = "Node ID"),
     ),

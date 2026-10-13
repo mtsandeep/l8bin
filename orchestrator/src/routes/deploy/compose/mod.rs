@@ -28,6 +28,7 @@ use validate::validate_compose_request;
     post,
     path = "/deploy/compose",
     request_body(content = String, description = "Multipart form with project_id and compose file"),
+    description = "Deploy a multi-service project from a docker-compose file (multipart form: project_id, optional name/description/node_id/auto-stop/auto-start/is_background/custom_domain fields, and the compose file).",
     responses(
         (status = 200, description = "Compose deployment started"),
         (status = 400, description = "Missing project_id"),
@@ -37,19 +38,6 @@ use validate::validate_compose_request;
     tag = "deploy",
     security(("session_auth" = []), ("bearer_token" = [])),
 )]
-/// POST /deploy/compose — Deploy a multi-service project via compose file.
-///
-/// Accepts multipart form data with:
-/// - `project_id` (text field)
-/// - `name` (optional text field)
-/// - `description` (optional text field)
-/// - `node_id` (optional text field)
-/// - `auto_stop_enabled` (optional text field, "true"/"false")
-/// - `auto_stop_timeout_mins` (optional text field)
-/// - `auto_start_enabled` (optional text field, "true"/"false")
-/// - `is_background` (optional text field, "true"/"false")
-/// - `custom_domain` (optional text field)
-/// - `compose` (file field — the docker-compose.yaml content)
 pub async fn deploy_compose(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,

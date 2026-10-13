@@ -48,6 +48,7 @@ pub struct UpdateGlobalSettings {
 #[utoipa::path(
     get,
     path = "/settings",
+    description = "Read global platform settings (domain, routing mode, Cloudflare, subdomains). Admin-only — contains secrets.",
     responses(
         (status = 200, body = GlobalSettings),
         (status = 500),
@@ -63,6 +64,7 @@ pub async fn get_settings(State(state): State<AppState>) -> Result<Json<GlobalSe
 #[utoipa::path(
     patch,
     path = "/settings",
+    description = "Update global platform settings; domain changes must go through /settings/domain/apply.",
     request_body = UpdateGlobalSettings,
     responses(
         (status = 200, body = GlobalSettings),

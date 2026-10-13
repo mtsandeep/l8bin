@@ -57,6 +57,7 @@ pub struct ConnectionSummary {
 #[utoipa::path(
     get,
     path = "/github/connections",
+    description = "List all GitHub connections (PATs and Apps) with account and installation info.",
     responses(
         (status = 200, description = "All GitHub connections (apps + PATs) with their installations", body = [ConnectionSummary]),
         (status = 500, description = "Internal server error"),
@@ -111,6 +112,7 @@ pub(crate) async fn load_installations(db: &sqlx::SqlitePool) -> Vec<Installatio
 #[utoipa::path(
     get,
     path = "/github/connection",
+    description = "Summarize the active GitHub connection used for repo browsing and deploys.",
     responses(
         (status = 200, description = "Aggregate status across all connections", body = ConnectionStatus),
         (status = 500, description = "Internal server error"),
@@ -165,6 +167,7 @@ pub async fn connection_status(State(state): State<AppState>) -> impl IntoRespon
 #[utoipa::path(
     post,
     path = "/github/pat",
+    description = "Connect a GitHub account using a Personal Access Token.",
     request_body = PatRequest,
     responses(
         (status = 200, description = "Connected via PAT", body = PatConnected),
@@ -288,6 +291,7 @@ pub async fn connect_pat(
 #[utoipa::path(
     delete,
     path = "/github/connections/{id}",
+    description = "Delete a GitHub connection and the project links that used it.",
     params(("id" = i64, Path, description = "Connection ID")),
     responses(
         (status = 204, description = "Connection removed; its link tokens revoked"),
@@ -418,6 +422,7 @@ fn sanitize_app_name(raw: &str) -> Result<String, String> {
 #[utoipa::path(
     post,
     path = "/github/manifest",
+    description = "Start GitHub App creation via the manifest flow; returns the one-time URL to open on GitHub.",
     request_body = ManifestStartRequest,
     responses(
         (status = 200, description = "Pending manifest registered; POST the returned JSON to github.com/settings/apps/new as the `manifest` form field", body = ManifestStartResponse),
@@ -514,6 +519,7 @@ pub async fn start_manifest(
 #[utoipa::path(
     post,
     path = "/github/manifest/exchange",
+    description = "Exchange the manifest-flow callback code for the GitHub App credentials.",
     request_body = ManifestExchangeRequest,
     responses(
         (status = 200, description = "App credentials stored; install next", body = ManifestExchangeResponse),
@@ -657,6 +663,7 @@ pub struct InstallationSummary {
 #[utoipa::path(
     post,
     path = "/github/app",
+    description = "Register an existing GitHub App directly with its client ID and secret.",
     request_body = AppCredentialsRequest,
     responses(
         (status = 200, description = "Existing app attached (credentials validated against GitHub)", body = ManifestExchangeResponse),
@@ -752,6 +759,7 @@ pub async fn connect_app(
 #[utoipa::path(
     get,
     path = "/github/installations",
+    description = "List installations of the connected GitHub App and the accounts they can access.",
     responses(
         (status = 200, description = "Installations synced from GitHub", body = [InstallationSummary]),
         (status = 404, description = "Not in GitHub App mode"),

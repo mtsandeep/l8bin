@@ -43,12 +43,12 @@ async fn build_volume_list(db: &sqlx::SqlitePool, project: &crate::db::models::P
     }
 }
 
-/// DELETE /projects/:id
 #[utoipa::path(
     delete,
-    path = "/projects/{project_id}",
+    path = "/projects/{id}",
+    description = "Delete a project: containers and volumes on its node, project files, DB rows, and routes.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
     ),
     responses(
         (status = 200, body = MessageResponse),

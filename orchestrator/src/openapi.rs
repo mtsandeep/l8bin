@@ -179,6 +179,7 @@ use utoipa::OpenApi;
             crate::routes::stats::DiskUsageResponse,
             crate::routes::stats::LogsQuery,
             crate::routes::stats::LogsResponse,
+            crate::routes::stats::DeployLogsResponse,
             // Nodes
             crate::routes::nodes::CreateNodeRequest,
             crate::routes::nodes::NodeResponse,
@@ -238,6 +239,7 @@ use utoipa::OpenApi;
             crate::routes::env::EnvVarInfo,
             // Meta
             crate::routes::meta::MetaResponse,
+            crate::routes::meta::WhoamiResponse,
             crate::routes::health::SystemStatsResponse,
             // GitHub
             crate::routes::github::connect::ConnectionStatus,

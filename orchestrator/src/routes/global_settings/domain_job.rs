@@ -30,6 +30,7 @@ pub struct DomainPreflightResponse {
 #[utoipa::path(
     post,
     path = "/settings/domain/preflight",
+    description = "Check a candidate platform domain: DNS control, conflicts, TLS reachability; returns errors and warnings.",
     request_body = DomainPreflightRequest,
     responses(
         (status = 200, body = DomainPreflightResponse),
@@ -154,6 +155,7 @@ pub struct DomainApplyResponse {
 #[utoipa::path(
     post,
     path = "/settings/domain/apply",
+    description = "Switch the platform domain as a background job (routes, agent Caddy, DNS cutover); poll the jobs endpoint.",
     request_body = DomainApplyRequest,
     responses(
         (status = 200, body = DomainApplyResponse),
@@ -201,6 +203,7 @@ pub async fn domain_apply(
 #[utoipa::path(
     get,
     path = "/settings/domain/jobs/{id}",
+    description = "Domain-change job progress: per-step status, errors, and the resulting dashboard URL.",
     params(("id" = String, Path, description = "Job ID")),
     responses(
         (status = 200, body = DomainJob),
@@ -219,6 +222,7 @@ pub async fn domain_job_status(
 #[utoipa::path(
     post,
     path = "/settings/domain/jobs/{id}/retry",
+    description = "Retry a failed domain-change job, resuming from the failed step.",
     params(("id" = String, Path, description = "Job ID")),
     responses(
         (status = 200, body = DomainApplyResponse),

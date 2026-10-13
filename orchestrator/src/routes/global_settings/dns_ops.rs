@@ -14,6 +14,7 @@ pub struct CleanupDnsResponse {
 #[utoipa::path(
     post,
     path = "/settings/cleanup-dns",
+    description = "Delete all DNS records LiteBin created (per its ledger); user-created records are left alone.",
     responses(
         (status = 200, body = CleanupDnsResponse),
         (status = 400),
@@ -71,6 +72,7 @@ pub struct SyncDnsResponse {
 #[utoipa::path(
     post,
     path = "/settings/sync-dns",
+    description = "Reconcile Cloudflare DNS records for the platform domain and project custom domains.",
     responses(
         (status = 200, body = SyncDnsResponse),
         (status = 400),

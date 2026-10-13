@@ -30,6 +30,7 @@ pub struct CreateProjectRequest {
     post,
     path = "/projects",
     request_body = CreateProjectRequest,
+    description = "Create an empty project (staged, not yet deployed). IDs must be DNS-safe and unused.",
     responses(
         (status = 201, body = ProjectResponse),
         (status = 401),
@@ -130,8 +131,9 @@ pub async fn create_project(
 #[utoipa::path(
     get,
     path = "/projects/{id}",
+    description = "Fetch a single project with its routes, services, and settings.",
     params(
-        ("id" = String, Path)
+        ("id" = String, Path, description = "Project ID")
     ),
     responses(
         (status = 200, body = ProjectResponse),
@@ -163,6 +165,7 @@ pub async fn get_project(
 #[utoipa::path(
     get,
     path = "/projects",
+    description = "List all projects, most recently updated first.",
     responses(
         (status = 200, body = Vec<ProjectResponse>),
         (status = 500),

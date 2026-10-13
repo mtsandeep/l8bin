@@ -11,6 +11,7 @@ pub struct HealthResponse {
 #[utoipa::path(
     get,
     path = "/health",
+    description = "Liveness check; reports degraded when Docker is unreachable.",
     responses(
         (status = 200, description = "Health check response", body = HealthResponse),
     ),
@@ -64,6 +65,7 @@ async fn fetch_service_stats(
 #[utoipa::path(
     get,
     path = "/system/stats",
+    description = "Memory, CPU, and disk usage of the LiteBin stack containers (orchestrator, dashboard, caddy).",
     responses(
         (status = 200, description = "System stats response", body = SystemStatsResponse),
     ),

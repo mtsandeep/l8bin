@@ -66,6 +66,7 @@ pub struct DeviceStartResponse {
     post,
     path = "/auth/device/start",
     request_body = DeviceStartRequest,
+    description = "Start device pairing: returns a device code to poll with and a user code to approve in the dashboard.",
     responses((status = 200, description = "Pairing started", body = DeviceStartResponse)),
     tag = "auth",
 )]
@@ -148,6 +149,7 @@ pub struct DeviceRequestInfo {
 #[utoipa::path(
     get,
     path = "/auth/device",
+    description = "Show the pending pairing request for a user code (approve-page data).",
     params(("user_code" = String, Query, description = "Code being approved")),
     responses(
         (status = 200, description = "Pending pairing request", body = DeviceRequestInfo),
@@ -201,6 +203,7 @@ pub struct DeviceApproveRequest {
     post,
     path = "/auth/device/approve",
     request_body = DeviceApproveRequest,
+    description = "Approve or deny a pending pairing request, setting the token scope and optional project binding.",
     responses(
         (status = 200, description = "Approval recorded"),
         (status = 401, description = "Unauthorized"),
@@ -285,6 +288,7 @@ pub struct DeviceTokenResponse {
     post,
     path = "/auth/device/token",
     request_body = DeviceTokenRequest,
+    description = "Poll pairing status; returns the token exactly once when approved.",
     responses((status = 200, description = "Poll result; token present once when approved", body = DeviceTokenResponse)),
     tag = "auth",
 )]

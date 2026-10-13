@@ -23,6 +23,7 @@ pub use types::{DeployRequest, DeployResponse};
     post,
     path = "/deploy",
     request_body = DeployRequest,
+    description = "Deploy a new single-service project; fails with 409 if the project already exists.",
     responses(
         (status = 200, description = "Deployment started", body = DeployResponse),
         (status = 401, description = "Authentication required"),
@@ -33,7 +34,6 @@ pub use types::{DeployRequest, DeployResponse};
     tag = "deploy",
     security(("session_auth" = []), ("bearer_token" = [])),
 )]
-/// POST /deploy — Create a new project deployment (fails with 409 if project already exists).
 pub async fn deploy_create(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -73,6 +73,7 @@ pub async fn deploy_create(
     put,
     path = "/deploy",
     request_body = DeployRequest,
+    description = "Redeploy an existing single-service project (upserts, creating if missing).",
     responses(
         (status = 200, description = "Deployment started", body = DeployResponse),
         (status = 401, description = "Authentication required"),
@@ -82,7 +83,6 @@ pub async fn deploy_create(
     tag = "deploy",
     security(("session_auth" = []), ("bearer_token" = [])),
 )]
-/// PUT /deploy — Redeploy an existing project (upserts, creating if missing).
 pub async fn deploy_update(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,

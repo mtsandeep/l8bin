@@ -39,6 +39,13 @@ pub struct LogsResponse {
     pub lines: Vec<String>,
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DeployLogsResponse {
+    pub project_id: String,
+    /// In-memory deploy log lines from the project's last deploy.
+    pub lines: Vec<String>,
+}
+
 /// Per-container live stats collected from Docker.
 /// (cpu_percent, memory_usage_bytes, memory_limit_bytes, disk_gb, cpu_limit)
 pub(super) type LiveStats = (f64, u64, u64, f64, Option<f64>);

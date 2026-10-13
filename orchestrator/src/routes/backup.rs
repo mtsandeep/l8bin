@@ -241,6 +241,7 @@ async fn checkpoint_live_db(state: &AppState) -> Result<(), (StatusCode, String)
 #[utoipa::path(
     get,
     path = "/backup/status",
+    description = "Backup status: sidecar state, replica stores, snapshots, named points, and undo target.",
     responses((status = 200, body = BackupStatus)),
     tag = "backup",
     security(("session_auth" = []))
@@ -252,6 +253,7 @@ pub async fn backup_status(State(state): State<AppState>) -> Result<Json<BackupS
 #[utoipa::path(
     post,
     path = "/backup/enable",
+    description = "Turn on the Litestream backup sidecar (local replica; add an s3/r2 destination for continuous off-site).",
     responses(
         (status = 200, body = BackupActionResponse),
         (status = 409, description = "backup unavailable (not running in a container / in-memory db)"),
@@ -283,6 +285,7 @@ pub async fn backup_enable(State(state): State<AppState>) -> Result<Json<BackupA
 #[utoipa::path(
     post,
     path = "/backup/disable",
+    description = "Stop the backup sidecar and turn backup off; existing replica data is kept.",
     responses((status = 200, body = BackupActionResponse)),
     tag = "backup",
     security(("session_auth" = []))
@@ -296,6 +299,7 @@ pub async fn backup_disable(State(state): State<AppState>) -> Result<Json<Backup
 #[utoipa::path(
     post,
     path = "/backup/s3",
+    description = "Configure the s3/r2 destination (validated with a probe via the running sidecar); it becomes the primary replica.",
     request_body = BackupS3Request,
     responses(
         (status = 200, body = BackupS3Response),
@@ -374,6 +378,7 @@ pub async fn backup_add_s3(
 #[utoipa::path(
     delete,
     path = "/backup/s3",
+    description = "Remove the s3/r2 destination and fall back to the local replica.",
     responses((status = 200, body = BackupActionResponse)),
     tag = "backup",
     security(("session_auth" = []))
@@ -398,6 +403,7 @@ pub async fn backup_remove_s3(
 #[utoipa::path(
     post,
     path = "/backup/points",
+    description = "Take a named restore point (VACUUM INTO snapshot kept as a local file).",
     request_body = BackupPointRequest,
     responses(
         (status = 200, body = BackupActionResponse),
@@ -424,6 +430,7 @@ pub async fn backup_create_point(
 #[utoipa::path(
     delete,
     path = "/backup/points/{id}",
+    description = "Delete a named restore point and its snapshot file.",
     responses(
         (status = 200, body = BackupActionResponse),
         (status = 404, description = "point not found"),
@@ -452,6 +459,7 @@ pub async fn backup_delete_point(
 #[utoipa::path(
     post,
     path = "/backup/restore",
+    description = "Point-in-time restore from the replica (latest snapshot when no timestamp given); the orchestrator restarts to apply it.",
     request_body = BackupRestoreRequest,
     responses(
         (status = 200, body = BackupActionResponse, description = "restore staged; orchestrator restarting"),
@@ -508,6 +516,7 @@ pub async fn backup_restore(
 #[utoipa::path(
     post,
     path = "/backup/revert-restore",
+    description = "Undo the last applied restore by staging the kept pre-restore database back in.",
     responses(
         (status = 200, body = BackupActionResponse),
         (status = 404, description = "no restore to undo"),
@@ -515,7 +524,6 @@ pub async fn backup_restore(
     tag = "backup",
     security(("session_auth" = []))
 )]
-/// Undo the last applied restore — stage `litebin.db.pre-restore` back in.
 pub async fn backup_revert_restore(
     State(state): State<AppState>,
 ) -> Result<Json<BackupActionResponse>, (StatusCode, String)> {
@@ -551,6 +559,7 @@ fn stage_restart() {
 #[utoipa::path(
     post,
     path = "/backup/restore-local",
+    description = "Restore from a local daily snapshot, bypassing the s3/r2 replica.",
     request_body = BackupRestoreLocalRequest,
     responses(
         (status = 200, body = BackupActionResponse),
@@ -560,7 +569,6 @@ fn stage_restart() {
     tag = "backup",
     security(("session_auth" = []))
 )]
-/// Restore from a local daily snapshot (bypasses the s3/r2 replica).
 pub async fn backup_restore_local(
     State(state): State<AppState>,
     Json(payload): Json<BackupRestoreLocalRequest>,
@@ -586,6 +594,7 @@ pub async fn backup_restore_local(
 #[utoipa::path(
     post,
     path = "/backup/restore-point",
+    description = "Restore a named point from its local snapshot file.",
     request_body = BackupRestorePointRequest,
     responses(
         (status = 200, body = BackupActionResponse),
@@ -594,7 +603,6 @@ pub async fn backup_restore_local(
     tag = "backup",
     security(("session_auth" = []))
 )]
-/// Restore a named point from its local snapshot file.
 pub async fn backup_restore_point(
     State(state): State<AppState>,
     Json(payload): Json<BackupRestorePointRequest>,

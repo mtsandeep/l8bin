@@ -13,12 +13,12 @@ use crate::routes::manage::multi_service::{
 
 use super::recreate::{RecreateRequest, recreate_project};
 
-/// POST /projects/:id/services/:name/start
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/services/{name}/start",
+    path = "/projects/{id}/services/{name}/start",
+    description = "Start a single compose service (recreates just that service).",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
         ("name" = String, Path, description = "Service name"),
     ),
     responses(
@@ -71,12 +71,12 @@ pub async fn start_service(
     Ok(Json(MessageResponse { message: format!("service '{}' started", service_name), ..Default::default() }))
 }
 
-/// POST /projects/:id/services/:name/stop
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/services/{name}/stop",
+    path = "/projects/{id}/services/{name}/stop",
+    description = "Stop a single compose service; derives project status from remaining services.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
         ("name" = String, Path, description = "Service name"),
     ),
     responses(
@@ -159,12 +159,12 @@ pub async fn stop_service(
     Ok(Json(MessageResponse { message: format!("service '{}' stopped", service_name), ..Default::default() }))
 }
 
-/// POST /projects/:id/services/:name/restart
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/services/{name}/restart",
+    path = "/projects/{id}/services/{name}/restart",
+    description = "Restart a single compose service (stop then start, recreate on the agent path).",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
         ("name" = String, Path, description = "Service name"),
     ),
     responses(

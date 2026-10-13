@@ -32,6 +32,7 @@ pub struct UploadResponse {
 #[utoipa::path(
     post,
     path = "/images/upload",
+    description = "Upload a Docker image tarball for a project (loaded into the target node's Docker).",
     params(UploadQueryParams),
     responses(
         (status = 200, description = "Image uploaded", body = UploadResponse),

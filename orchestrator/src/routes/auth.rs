@@ -35,6 +35,7 @@ impl From<User> for UserResponse {
     post,
     path = "/auth/login",
     request_body = LoginRequest,
+    description = "Log in with username and password and create a session cookie.",
     responses(
         (status = 200, description = "Login successful", body = LoginResponse),
         (status = 401, description = "Invalid credentials"),
@@ -82,6 +83,7 @@ pub async fn login(
 #[utoipa::path(
     post,
     path = "/auth/logout",
+    description = "Log out and destroy the current session.",
     responses(
         (status = 200, description = "Logged out successfully"),
         (status = 500, description = "Internal server error"),
@@ -107,6 +109,7 @@ pub struct RegisterRequest {
     post,
     path = "/auth/register",
     request_body = RegisterRequest,
+    description = "Create the initial admin user. Only allowed while no users exist.",
     responses(
         (status = 200, description = "Registration successful", body = LoginResponse),
         (status = 403, description = "Registration forbidden"),
@@ -156,6 +159,7 @@ pub struct SetupResponse {
 #[utoipa::path(
     get,
     path = "/auth/setup",
+    description = "Check whether initial setup (admin user creation) is needed.",
     responses(
         (status = 200, description = "Setup check response", body = SetupResponse),
         (status = 500, description = "Internal server error"),
@@ -174,6 +178,7 @@ pub async fn setup_check(State(state): State<AppState>) -> Result<Json<SetupResp
 #[utoipa::path(
     get,
     path = "/auth/me",
+    description = "Return the currently authenticated user.",
     responses(
         (status = 200, description = "Current user info", body = UserResponse),
         (status = 401, description = "Unauthorized"),
@@ -220,6 +225,7 @@ pub struct StatusResponse {
 #[utoipa::path(
     get,
     path = "/status",
+    description = "Return system status: version, current user, nodes, and project count.",
     responses(
         (status = 200, description = "System status", body = StatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -270,6 +276,7 @@ pub async fn status(
     post,
     path = "/auth/change-password",
     request_body = ChangePasswordRequest,
+    description = "Change the current user's password after verifying the old one.",
     responses(
         (status = 200, description = "Password changed successfully", body = ChangePasswordResponse),
         (status = 401, description = "Unauthorized"),

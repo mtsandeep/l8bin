@@ -37,6 +37,7 @@ pub struct ListTokensQuery {
     post,
     path = "/deploy-tokens",
     request_body = CreateTokenRequest,
+    description = "Create a deploy token (CI/CD auth); the plaintext token is returned once.",
     responses(
         (status = 201, description = "Token created", body = CreateTokenResponse),
         (status = 401, description = "Unauthorized"),
@@ -129,6 +130,7 @@ pub async fn create_token(
 #[utoipa::path(
     get,
     path = "/deploy-tokens",
+    description = "List deploy tokens, optionally filtered by project. Token values are never returned.",
     params(
         ("project_id" = Option<String>, Query, description = "Filter by project ID"),
     ),
@@ -178,6 +180,7 @@ pub async fn list_tokens(
 #[utoipa::path(
     delete,
     path = "/deploy-tokens/{id}",
+    description = "Revoke a deploy token; clients using it stop authenticating immediately.",
     params(
         ("id" = String, Path, description = "Token ID"),
     ),

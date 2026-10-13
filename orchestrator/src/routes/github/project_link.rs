@@ -223,8 +223,9 @@ async fn gh_error_degraded(
 
 #[utoipa::path(
     get,
-    path = "/projects/{project_id}/github/config",
-    params(("project_id" = String, Path, description = "Project ID")),
+    path = "/projects/{id}/github/config",
+    description = "Read a project's GitHub link: repo, branch, path, workflow, and deploy token status.",
+    params(("id" = String, Path, description = "Project ID")),
     responses(
         (status = 200, description = "Link config", body = ProjectGithubConfigResponse),
         (status = 404, description = "No link for this project"),
@@ -241,8 +242,9 @@ pub async fn get_config(State(state): State<AppState>, Path(project_id): Path<St
 
 #[utoipa::path(
     put,
-    path = "/projects/{project_id}/github/config",
-    params(("project_id" = String, Path, description = "Project ID")),
+    path = "/projects/{id}/github/config",
+    description = "Create or replace a project's GitHub link (full config upsert).",
+    params(("id" = String, Path, description = "Project ID")),
     request_body = LinkRequest,
     responses(
         (status = 200, description = "Linked — workflow + secrets written, token minted", body = ProjectGithubConfigResponse),
@@ -444,8 +446,9 @@ pub async fn put_config(
 
 #[utoipa::path(
     patch,
-    path = "/projects/{project_id}/github/config",
-    params(("project_id" = String, Path, description = "Project ID")),
+    path = "/projects/{id}/github/config",
+    description = "Update selected fields of a project's GitHub link.",
+    params(("id" = String, Path, description = "Project ID")),
     request_body = PatchConfigRequest,
     responses(
         (status = 200, description = "Toggled — workflow rewritten", body = ProjectGithubConfigResponse),
@@ -525,9 +528,10 @@ async fn rewrite_workflow(
 
 #[utoipa::path(
     delete,
-    path = "/projects/{project_id}/github/config",
+    path = "/projects/{id}/github/config",
+    description = "Unlink a project from GitHub: revoke its deploy token and optionally clean the workflow file and secrets from the repo.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
         ("remove_files" = Option<bool>, Query, description = "Also remove the workflow file + secrets from the repo (default true)"),
     ),
     responses(
@@ -588,8 +592,9 @@ pub async fn delete_config(
 
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/github/rotate-token",
-    params(("project_id" = String, Path, description = "Project ID")),
+    path = "/projects/{id}/github/rotate-token",
+    description = "Rotate the project's GitHub deploy token; the repo secret is overwritten before the old token is revoked.",
+    params(("id" = String, Path, description = "Project ID")),
     responses(
         (status = 200, description = "Token rotated — repo secret overwritten first"),
         (status = 404, description = "No link for this project"),
@@ -658,8 +663,9 @@ pub async fn rotate_token(State(state): State<AppState>, Path(project_id): Path<
 
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/github/deploy",
-    params(("project_id" = String, Path, description = "Project ID")),
+    path = "/projects/{id}/github/deploy",
+    description = "Dispatch the linked repo's deploy workflow now (build and push image, then deploy).",
+    params(("id" = String, Path, description = "Project ID")),
     request_body = DeployRequest,
     responses(
         (status = 202, description = "Workflow dispatched — watch the runs endpoint"),

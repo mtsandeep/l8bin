@@ -50,8 +50,9 @@ async fn persist_last_run(state: &AppState, project_id: &str, latest: Option<&Wo
 
 #[utoipa::path(
     get,
-    path = "/projects/{project_id}/github/runs",
-    params(("project_id" = String, Path, description = "Project ID")),
+    path = "/projects/{id}/github/runs",
+    description = "Recent GitHub Actions workflow runs for the project's linked repo.",
+    params(("id" = String, Path, description = "Project ID")),
     responses(
         (status = 200, description = "Recent runs of the linked workflow, newest first", body = ProjectRuns),
         (status = 404, description = "No link for this project"),
@@ -122,6 +123,7 @@ const BULK_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(20);
 #[utoipa::path(
     get,
     path = "/github/status",
+    description = "Latest workflow run status for every GitHub-linked project (badge polling).",
     responses(
         (status = 200, description = "Latest run per linked project (20s server cache)", body = BulkStatus),
     ),

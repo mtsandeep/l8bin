@@ -11,12 +11,12 @@ use crate::nodes;
 use crate::status;
 use litebin_common::types::{DeployType, ProjectStatus};
 
-/// GET /projects/:id/stats
 #[utoipa::path(
     get,
-    path = "/projects/{project_id}/stats",
+    path = "/projects/{id}/stats",
+    description = "Per-service CPU, memory, and disk stats for one project (syncs status from Docker first).",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
     ),
     responses(
         (status = 200, body = StatsResponse),
@@ -119,12 +119,12 @@ pub async fn project_stats(
     Ok(Json(make_stats_response(project_id, project.status, project.last_active_at, services)))
 }
 
-/// GET /projects/:id/disk-usage
 #[utoipa::path(
     get,
-    path = "/projects/{project_id}/disk-usage",
+    path = "/projects/{id}/disk-usage",
+    description = "Total disk usage (GB) across a running project's containers.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
     ),
     responses(
         (status = 200, body = DiskUsageResponse),

@@ -200,8 +200,9 @@ async fn read_env(state: &AppState, project: &Project) -> Result<(String, bool),
 
 #[utoipa::path(
     get,
-    path = "/projects/{project_id}/env",
-    params(("project_id" = String, Path, description = "Project ID")),
+    path = "/projects/{id}/env",
+    description = "List runtime env var keys with masked previews; values are write-only and never returned.",
+    params(("id" = String, Path, description = "Project ID")),
     responses(
         (status = 200, description = "Env keys with masked previews (never plaintext values)", body = EnvResponse),
         (status = 401, description = "Unauthorized"),
@@ -226,9 +227,10 @@ pub async fn get_project_env(
 
 #[utoipa::path(
     put,
-    path = "/projects/{project_id}/env",
+    path = "/projects/{id}/env",
     request_body = UpdateEnvRequest,
-    params(("project_id" = String, Path, description = "Project ID")),
+    description = "Set, delete, or replace runtime env vars; changes apply on the next container start or recreate.",
+    params(("id" = String, Path, description = "Project ID")),
     responses(
         (status = 200, description = "Env updated; applies on next container start", body = UpdateEnvResponse),
         (status = 400, description = "Invalid keys/values"),

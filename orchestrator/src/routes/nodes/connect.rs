@@ -15,6 +15,7 @@ use super::ErrorResponse;
 #[utoipa::path(
     post,
     path = "/nodes/{id}/connect",
+    description = "Health-check an agent over mTLS, push its config, and transition it to online.",
     params(
         ("id" = String, Path, description = "Node ID"),
     ),
@@ -28,8 +29,6 @@ use super::ErrorResponse;
     tag = "nodes",
     security(("session_auth" = [])),
 )]
-/// POST /nodes/{id}/connect — health check + push config to agent via mTLS.
-/// Transitions node from pending_setup → online.
 pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     // 1. Look up node from DB
     let node = match sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ?")

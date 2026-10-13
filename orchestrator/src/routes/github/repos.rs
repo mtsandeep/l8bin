@@ -26,6 +26,7 @@ pub struct RepoListQuery {
 #[utoipa::path(
     get,
     path = "/github/repos",
+    description = "Browse repositories visible to the active GitHub connection (paginated, searchable).",
     params(
         ("page" = Option<u32>, Query, description = "1-based page (100 per page, pushed-desc)"),
     ),
@@ -68,6 +69,7 @@ pub struct RepoDetailQuery {
 #[utoipa::path(
     get,
     path = "/github/repos/{owner}/{repo}",
+    description = "Repository details: default branch, private flag, visibility, and update time.",
     params(
         ("owner" = String, Path, description = "Repo owner (user or org)"),
         ("repo" = String, Path, description = "Repo name"),
@@ -100,6 +102,7 @@ pub async fn repo_detail(
 #[utoipa::path(
     get,
     path = "/github/repos/{owner}/{repo}/branches",
+    description = "List branches for a repository.",
     params(
         ("owner" = String, Path, description = "Repo owner (user or org)"),
         ("repo" = String, Path, description = "Repo name"),

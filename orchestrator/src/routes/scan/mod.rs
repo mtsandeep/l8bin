@@ -26,13 +26,10 @@ pub struct ScanQuery {
     pub node_id: Option<String>,
 }
 
-/// GET /scan?node_id={local|all|<id>}
-///
-/// Returns foreign container groups from the requested node(s).
-/// Default (no node_id) = "all".
 #[utoipa::path(
     get,
     path = "/scan",
+    description = "Find foreign (non-LiteBin) container groups on a node: local, all, or a specific node ID.",
     params(ScanQuery),
     responses(
         (status = 200, body = litebin_common::scan::ScanResult),
@@ -149,18 +146,11 @@ pub struct ImportResponse {
     pub errors: Vec<String>,
 }
 
-/// POST /scan/import
-///
-/// For each group:
-/// 1. Write DB rows (projects, project_services, project_volumes)
-/// 2. Resolve compose.yaml (copy from working_dir or reconstruct)
-/// 3. Rewrite relative bind mounts to absolute paths
-/// 4. Execute Docker import (local or via agent)
-/// 5. Trigger route sync if setup_routing=true
 #[utoipa::path(
     post,
     path = "/scan/import",
     request_body = ImportRequest,
+    description = "Adopt scanned foreign container groups as LiteBin projects: write DB rows, resolve/rebuild compose, rewrite bind mounts, import into Docker, and optionally set up routing.",
     responses(
         (status = 200, body = ImportResponse),
         (status = 400, description = "Bad request"),

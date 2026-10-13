@@ -15,12 +15,12 @@ use crate::routes::manage::multi_service::{
 
 use super::shared::{can_attempt_full_stop, uses_compose_lifecycle};
 
-/// POST /projects/:id/stop
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/stop",
+    path = "/projects/{id}/stop",
+    description = "Stop a project asynchronously (local Docker or via the node agent); Caddy routes are removed immediately.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
     ),
     responses(
         (status = 200, body = MessageResponse),
@@ -131,14 +131,12 @@ pub async fn stop_project(
     Ok(Json(MessageResponse { message: format!("project '{}' stopping", project_id), ..Default::default() }))
 }
 
-/// POST /projects/:id/start
-/// Starts all services for a project. Uses unified start_services() which handles
-/// fast-path (docker start existing) and fallback (recreate) automatically.
 #[utoipa::path(
     post,
-    path = "/projects/{project_id}/start",
+    path = "/projects/{id}/start",
+    description = "Start all services for a project: fast-path docker start of existing containers, falling back to recreate. Handles local and remote nodes.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
     ),
     responses(
         (status = 200, body = MessageResponse),

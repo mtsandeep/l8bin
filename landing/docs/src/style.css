@@ -86,6 +86,18 @@
   margin-bottom: 0.5rem;
 }
 
+/* Small section labels — h5/h6, e.g. "Options:" / "Arguments:" in the CLI reference */
+.prose-docs h5,
+.prose-docs h6 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #a78bfa;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+
 .prose-docs p {
   margin-bottom: 1rem;
 }

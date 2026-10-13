@@ -11,10 +11,10 @@ use crate::nodes;
 use crate::status;
 use litebin_common::types::ProjectStatus;
 
-/// GET /projects/stats — returns stats + disk + services for all projects in one call
 #[utoipa::path(
     get,
     path = "/projects/stats",
+    description = "Stats, disk usage, and services for all projects in one call (dashboard polling endpoint).",
     responses(
         (status = 200, body = BatchStatsResponse),
         (status = 500, description = "Internal server error"),

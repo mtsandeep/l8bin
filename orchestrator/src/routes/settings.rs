@@ -29,8 +29,9 @@ pub struct UpdateSettingsRequest {
 #[utoipa::path(
     patch,
     path = "/projects/{id}/settings",
+    description = "Update project settings (name, custom domain, auto-stop/start, resource limits); only provided fields change.",
     params(
-        ("id" = String, Path)
+        ("id" = String, Path, description = "Project ID")
     ),
     request_body = UpdateSettingsRequest,
     responses(
@@ -290,13 +291,13 @@ pub struct UpdateServiceSettingsRequest {
     pub cpu_limit: Option<Option<f64>>,
 }
 
-/// PATCH /projects/:id/services/:name/settings
 #[utoipa::path(
     patch,
     path = "/projects/{id}/services/{name}/settings",
+    description = "Update per-service resource limits (memory, CPU) for a compose service.",
     params(
-        ("id" = String, Path),
-        ("name" = String, Path)
+        ("id" = String, Path, description = "Project ID"),
+        ("name" = String, Path, description = "Service name")
     ),
     request_body = UpdateServiceSettingsRequest,
     responses(

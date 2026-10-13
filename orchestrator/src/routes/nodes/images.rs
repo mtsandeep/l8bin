@@ -21,6 +21,7 @@ pub struct NodeImageStatsResponse {
 #[utoipa::path(
     get,
     path = "/nodes/image-stats",
+    description = "Image statistics (counts, sizes, dangling) for each node.",
     responses(
         (status = 200, description = "Image statistics per node", body = Vec<NodeImageStatsResponse>),
         (status = 500, description = "Internal server error"),
@@ -28,7 +29,6 @@ pub struct NodeImageStatsResponse {
     tag = "nodes",
     security(("session_auth" = [])),
 )]
-/// GET /nodes/image-stats — returns image statistics for each node.
 pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoResponse {
     let mut results = Vec::new();
 
@@ -88,6 +88,7 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
 #[utoipa::path(
     post,
     path = "/nodes/{id}/images/prune",
+    description = "Prune dangling images on a node and report reclaimed bytes.",
     params(
         ("id" = String, Path, description = "Node ID"),
     ),
@@ -100,7 +101,6 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
     tag = "nodes",
     security(("session_auth" = [])),
 )]
-/// POST /nodes/{id}/images/prune — prune dangling images on a specific node.
 pub async fn prune_node_images(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     if id == "local" {
         match state.docker.prune_dangling_images().await {

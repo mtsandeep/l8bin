@@ -12,9 +12,10 @@ use crate::auth::backend::PasswordBackend;
 
 #[utoipa::path(
     delete,
-    path = "/projects/{project_id}/volumes/{name}",
+    path = "/projects/{id}/volumes/{name}",
+    description = "Remove a specific named volume for a project.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
         ("name" = String, Path, description = "Volume name"),
     ),
     responses(
@@ -25,7 +26,6 @@ use crate::auth::backend::PasswordBackend;
     tag = "volumes",
     security(("session_auth" = [])),
 )]
-/// DELETE /projects/:id/volumes/:name — Remove a specific volume.
 pub async fn delete_volume(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,
@@ -48,9 +48,10 @@ pub async fn delete_volume(
 
 #[utoipa::path(
     delete,
-    path = "/projects/{project_id}/volumes",
+    path = "/projects/{id}/volumes",
+    description = "Remove all volumes for a project; returns the deleted volume names.",
     params(
-        ("project_id" = String, Path, description = "Project ID"),
+        ("id" = String, Path, description = "Project ID"),
     ),
     responses(
         (status = 200, description = "All volumes deleted"),
@@ -60,7 +61,6 @@ pub async fn delete_volume(
     tag = "volumes",
     security(("session_auth" = [])),
 )]
-/// DELETE /projects/:id/volumes — Remove all volumes for a project.
 pub async fn delete_all_volumes(
     auth_session: AuthSession<PasswordBackend>,
     State(state): State<AppState>,

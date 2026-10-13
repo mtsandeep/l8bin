@@ -140,7 +140,11 @@ function renderMarkdown(md) {
     })
     // Inline code
     .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
-    // Headers (with slug IDs for anchor navigation)
+    // Headers (with slug IDs for anchor navigation). h5/h6 are repeating
+    // section labels (e.g. clap-markdown's "Options:" / "Arguments:"), so they
+    // get a label class and no ID — slugs would collide across commands.
+    .replace(/^###### (.+)$/gm, (_, t) => `<h6 class="md-label">${t.replace(/\*\*/g, '')}</h6>`)
+    .replace(/^##### (.+)$/gm, (_, t) => `<h5 class="md-label">${t.replace(/\*\*/g, '')}</h5>`)
     .replace(/^#### (.+)$/gm, (_, t) => `<h4 id="${slugify(t)}">${t}</h4>`)
     .replace(/^### (.+)$/gm, (_, t) => `<h3 id="${slugify(t)}">${t}</h3>`)
     .replace(/^## (.+)$/gm, (_, t) => `<h2 id="${slugify(t)}">${t}</h2>`)
