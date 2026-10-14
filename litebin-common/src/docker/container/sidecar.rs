@@ -122,6 +122,9 @@ impl DockerManager {
             cmd: Some(spec.cmd.clone()),
             host_config: Some(HostConfig {
                 binds: Some(spec.binds.clone()),
+                // docs/architecture/resource-protection.md
+                memory: Some(256 * 1024 * 1024),
+                nano_cpus: Some(500_000_000),
                 restart_policy: Some(RestartPolicy {
                     name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
                     maximum_retry_count: None,

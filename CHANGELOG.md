@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Resource protection — the platform survives app overload by design** ([docs/architecture/resource-protection.md](docs/architecture/resource-protection.md)): stack containers (orchestrator, dashboard, caddy, agent, agent-caddy) get OOM kill-order priority, a guaranteed CPU share under saturation, and memory floors — apps always die first, the dashboard stays usable under load. Existing installs pick them up through the normal update flow.
+- **Backup sidecars are hard-capped** (256 MB / 0.5 CPU) so a LiteBin-owned backup job can never sink the host.
+
 ### Changed
 - Docs made consistent; fixed API reference templating issues.
 - Docs reorganized into folders (reference/architecture/topics/guides/dev); roadmap statuses refreshed; waker+janitor merged into one scale-to-zero doc.

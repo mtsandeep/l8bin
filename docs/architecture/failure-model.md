@@ -146,7 +146,7 @@ Some conditions don't cause hard failures but degrade gracefully:
 | Agent unreachable (heartbeat) | Orchestrator marks node `offline`, image stats timeout | Dashboard shows node as offline, image stats page may be slow |
 | Cloudflare API rate limit | DNS record creation delayed | App deployed but DNS may take longer to propagate |
 | Disk full | SQLite writes fail, container creation fails | Error pages, deploy failures |
-| High memory on VPS | OOM killer may stop containers or the orchestrator | Apps become unreachable, dashboard errors |
+| High memory on VPS | Apps die first (fattest first); the stack survives by design — see [Resource Protection](resource-protection.md) | Fattest app killed (502 + auto-wake), dashboard stays usable |
 | Container exceeds memory limit | Docker kills the container (OOM) | 502 error page, auto-wake on next request |
 
 See [Troubleshooting FAQ](../topics/faq.md) for debugging steps for specific failure symptoms.

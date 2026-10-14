@@ -402,6 +402,9 @@ run_agent_container() {
   docker run -d \
     --name litebin-agent \
     --restart unless-stopped \
+    --oom-score-adj -300 \
+    --cpu-shares 26214 \
+    --memory-reservation 28m \
     --log-driver json-file \
     --log-opt max-size=10m \
     --log-opt max-file=3 \
@@ -429,6 +432,9 @@ run_agent_caddy() {
   docker run -d \
     --name litebin-agent-caddy \
     --restart unless-stopped \
+    --oom-score-adj -300 \
+    --cpu-shares 26214 \
+    --memory-reservation 30m \
     --log-driver json-file \
     --log-opt max-size=25m \
     --log-opt max-file=3 \
@@ -639,6 +645,28 @@ volumes:
   caddy-config:
   caddy-root:
 COMPOSE_EOF
+}
+
+# docs/architecture/resource-protection.md
+generate_compose_override() {
+  local dest="$1"
+  cat > "$dest" <<'COMPOSE_OVERRIDE_EOF'
+services:
+  orchestrator:
+    oom_score_adj: -300
+    cpu_shares: 26214
+    mem_reservation: 28m
+
+  dashboard:
+    oom_score_adj: -300
+    cpu_shares: 26214
+    mem_reservation: 8m
+
+  caddy:
+    oom_score_adj: -300
+    cpu_shares: 26214
+    mem_reservation: 30m
+COMPOSE_OVERRIDE_EOF
 }
 
 # Install dashboard release package (dist/ + nginx.conf + Dockerfile) into install_dir/dashboard.
@@ -903,6 +931,7 @@ EOF
 
   # -- Generate docker-compose.yml --------------------------------------
   generate_compose "${install_dir}/docker-compose.yml"
+  generate_compose_override "${install_dir}/docker-compose.override.yml"
 
   # -- Configure firewall (Linux only) ----------------------------------
   if is_linux && [ "$(id -u)" -eq 0 ]; then
@@ -1534,6 +1563,23 @@ update_master() {
     fi
     cp "$tmp_compose" "${install_dir}/docker-compose.yml"
     info "docker-compose.yml updated"
+  fi
+  rm -f "$tmp_compose"
+
+  tmp_compose=$(mktemp)
+  generate_compose_override "$tmp_compose"
+  if ! diff -q "$tmp_compose" "${install_dir}/docker-compose.override.yml" >/dev/null 2>&1; then
+    echo ""
+    warn "docker-compose.override.yml needs to be updated in this version:"
+    echo ""
+    diff -u --label "installed" --label "new" "${install_dir}/docker-compose.override.yml" "$tmp_compose" || true
+    echo ""
+    if prompt_yes "Apply these changes?"; then
+      cp "$tmp_compose" "${install_dir}/docker-compose.override.yml"
+      info "docker-compose.override.yml updated"
+    else
+      info "Skipped — resource protections unchanged until this file is updated."
+    fi
   fi
   rm -f "$tmp_compose"
 

@@ -112,6 +112,7 @@ Already have the `l8b` binary? Register it directly:
 - [Architecture overview](architecture/architecture.md) — Orchestrator + Agent + Caddy reverse proxy
 - [Design decisions](architecture/decisions.md) — why Rust/Caddy/SQLite, two routing modes, mTLS
 - [Failure model](architecture/failure-model.md) — how LiteBin handles failures
+- [Resource protection](architecture/resource-protection.md) — how the stack survives CPU/RAM pressure from apps
 - [Scale-to-zero](architecture/scale-to-zero.md) — wake-on-request and idle auto-stop (waker + janitor)
 - [User flows](architecture/user-flows.md) — all user-triggerable scenarios
 
