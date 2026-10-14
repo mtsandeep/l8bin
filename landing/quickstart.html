@@ -4,19 +4,48 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Quick Start - LiteBin</title>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
     <script type="module" src="/src/quickstart.js"></script>
+    <script type="module" src="/src/nav.js"></script>
     <link rel="stylesheet" href="/src/quickstart.css" />
+    <link rel="stylesheet" href="/src/nav.css" />
   </head>
   <body class="bg-night-950 text-zinc-300 antialiased min-h-screen">
+    <!-- WIP Banner -->
+    <div class="bg-violet-500/10 border-b border-violet-500/20 px-4 py-2 text-center">
+      <p class="text-xs text-violet-300 font-mono">Early release: expect some rough edges. Feedback welcome.</p>
+    </div>
+
     <!-- Nav -->
     <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
       <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
         <a href="/" class="flex items-center gap-1"><img src="/logo.svg" alt="" class="h-[22px] mt-[3px]" style="height:22px" /><span class="font-black text-white tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
+        <div class="hidden md:flex items-center gap-8 text-sm text-zinc-400">
+          <a href="/#core" class="nav-link hover:text-white transition">Why</a>
+          <a href="/#ship" class="nav-link hover:text-white transition">Ship</a>
+          <a href="/#fleet" class="nav-link hover:text-white transition">Fleet</a>
+          <a href="/agents" class="nav-link hover:text-white transition">Agents</a>
+          <a href="/docs/" class="nav-link hover:text-white transition">Docs</a>
+        </div>
         <div class="flex items-center gap-3">
-          <a href="/docs/" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">Docs</a>
           <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
-          <a href="/" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Back to Home</a>
+          <a href="/quickstart" class="hidden sm:inline-flex text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Quick Start</a>
+          <button type="button" id="mobile-menu-btn" class="md:hidden flex flex-col justify-center items-center w-8 h-8 gap-1.5 rounded hover:bg-white/5 transition" aria-label="Toggle menu">
+            <span id="mhb-1" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
+            <span id="mhb-2" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
+            <span id="mhb-3" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
+          </button>
+        </div>
+      </div>
+      <!-- Mobile menu -->
+      <div id="mobile-menu" class="hidden md:hidden border-t border-white/5 bg-night-950/98 backdrop-blur-xl">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex flex-col">
+          <a href="/#core" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Why</a>
+          <a href="/#ship" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Ship</a>
+          <a href="/#fleet" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Fleet</a>
+          <a href="/agents" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Agents</a>
+          <a href="/docs/" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Docs</a>
+          <a href="/quickstart" class="mt-4 sm:hidden text-xs font-mono px-3 py-2.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Quick Start</a>
         </div>
       </div>
     </nav>
@@ -28,27 +57,10 @@
         <p class="text-zinc-400 max-w-2xl mb-8">
           Get your LiteBin running and deploy your first app in under 5 minutes.
         </p>
-
-        <div class="glass p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-6 glow-border">
-          <div>
-            <p class="text-xs font-mono uppercase tracking-widest text-violet-400 mb-1">Pick your platform</p>
-            <h2 class="text-lg font-bold text-white">Choose your Operating System:</h2>
-          </div>
-          <div class="flex gap-2 p-1 bg-white/5 border border-white/10 rounded-xl">
-            <button onclick="switchOS('unix')" id="os-tab-unix" class="os-tab border-none px-6 py-2.5">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 0 0-9 9 9 9 0 0 0 9 9 9 9 0 0 0 9-9 9 9 0 0 0-9-9Z"></path><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"></path></svg>
-              Linux / macOS
-            </button>
-            <button onclick="switchOS('win')" id="os-tab-win" class="os-tab border-none px-6 py-2.5">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 12h18"></path><path d="M12 3v18"></path></svg>
-              Windows
-            </button>
-          </div>
-        </div>
       </div>
 
       <!-- Main Tabs -->
-      <div class="flex flex-wrap gap-2 mb-8 sm:gap-8 sm:border-b sm:border-white/10">
+      <div class="flex flex-wrap items-end gap-2 mb-8 sm:gap-8 sm:border-b sm:border-white/10">
         <button onclick="switchMainTab('setup')" id="tab-setup" class="tab-active pb-4 text-sm font-bold uppercase tracking-wider transition">
           1. Setup Server
         </button>
@@ -61,6 +73,19 @@
         <button onclick="switchMainTab('dockerfile')" id="tab-dockerfile" class="tab-inactive pb-4 text-sm font-bold uppercase tracking-wider transition">
           Dockerfile
         </button>
+        <div class="ml-auto pb-4 flex items-center gap-1.5 max-[979px]:basis-full max-[979px]:justify-end" title="All code blocks on this page follow this choice">
+          <span class="hidden sm:block text-[10px] font-mono uppercase tracking-widest text-zinc-600">commands for</span>
+          <div class="flex gap-1 p-0.5 bg-white/5 border border-white/10 rounded-md">
+            <button onclick="switchOS('unix')" id="os-tab-unix" class="os-tab border-none">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 0 0-9 9 9 9 0 0 0 9 9 9 9 0 0 0 9-9 9 9 0 0 0-9-9Z"></path><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"></path></svg>
+              Linux / macOS
+            </button>
+            <button onclick="switchOS('win')" id="os-tab-win" class="os-tab border-none">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 12h18"></path><path d="M12 3v18"></path></svg>
+              Windows
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- TAB 1: Setup Server -->
@@ -102,7 +127,7 @@
               <h2 class="text-2xl font-bold text-white mb-4">Install Master</h2>
               
               <div data-os="unix">
-                <p class="text-zinc-400 mb-6">SSH into your Linux VPS (with Docker installed) and run:</p>
+                <p class="text-zinc-400 mb-6">SSH into your Linux VPS and run:</p>
                 <div class="code-block mb-4 relative group">
                   <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -119,6 +144,10 @@
                   </button>
                   <code class="text-sm text-zinc-300">iex (irm https://l8b.in/windows.ps1)</code>
                 </div>
+              </div>
+
+              <div data-os="unix" class="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4 mb-6">
+                <p class="text-sm text-cyan-300"><strong>Fresh VPS?</strong> Optionally harden it before installing — SSH keys, firewall, fail2ban: <a href="https://gist.github.com/mtsandeep/fbcfe30351d78b8ff9ec9d3c75354ec6" target="_blank" class="underline hover:text-cyan-200">basic security setup script →</a></p>
               </div>
 
               <div class="glass rounded-xl p-6 mb-6">
@@ -236,21 +265,21 @@
             <p class="text-xs text-zinc-500">Manage apps via web interface</p>
           </button>
 
-          <button onclick="showDeployOption('actions')" id="opt-actions" class="deploy-option p-6 rounded-xl text-left">
+          <button onclick="showDeployOption('github')" id="opt-github" class="deploy-option p-6 rounded-xl text-left">
             <div class="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-4">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-zinc-400"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
             </div>
-            <h3 class="font-bold text-white mb-1">GitHub Actions</h3>
-            <p class="text-xs text-zinc-500">CI/CD pipeline</p>
+            <h3 class="font-bold text-white mb-1">GitHub</h3>
+            <p class="text-xs text-zinc-500">Auto-deploy from your repo</p>
           </button>
 
-          <button onclick="showDeployOption('connect')" id="opt-connect" class="deploy-option p-6 rounded-xl text-left opacity-60">
+          <a href="/agents" class="deploy-option p-6 rounded-xl text-left block">
             <div class="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-4">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-zinc-400"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-zinc-400"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"></path></svg>
             </div>
-            <h3 class="font-bold text-white mb-1">Connect GitHub</h3>
-            <p class="text-xs text-zinc-500 flex items-center gap-1">Auto-deploy from repo</p>
-          </button>
+            <h3 class="font-bold text-white mb-1">AI Agent</h3>
+            <p class="text-xs text-zinc-500">Deploy from Cursor or Claude</p>
+          </a>
         </div>
 
         <!-- Deploy Option Content -->
@@ -363,7 +392,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc</code
                 </details>
               </div>
 
-              <p class="text-sm text-zinc-400 mb-3">Login to your master:</p>
+              <p class="text-sm text-zinc-400 mb-3">Login once — the session is stored:</p>
               <div class="code-block mb-4 relative group">
                 <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -373,11 +402,11 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc</code
               <p class="text-[10px] text-zinc-500 mb-6 italic" data-os="win">Note: If running LiteBin locally, use <code class="text-zinc-400">http://localhost:5080</code> as the server. Cloud-hosted instances work normally over HTTPS.</p>
 
               <p class="text-sm text-zinc-400 mb-3">Interactive deploy (auto-detects Dockerfile or uses Railpack):</p>
-              <div class="code-block mb-4 relative group">
+              <div class="code-block hl mb-4 relative group">
                 <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <code class="text-sm text-zinc-300">l8b ship</code>
+                <code class="text-sm text-white font-semibold">l8b ship</code>
               </div>
 
               <p class="text-sm text-zinc-400 mb-3">Or deploy non-interactively:</p>
@@ -442,17 +471,44 @@ ghcr.io/org/app:latest</code>
             </div>
           </div>
 
-          <!-- GitHub Actions -->
-          <div id="deploy-actions" class="deploy-detail hidden">
-            <h3 class="text-xl font-bold text-white mb-4">Deploy via GitHub Actions</h3>
-            <p class="text-zinc-400 mb-6">Auto-deploy on every push to main, or trigger a deploy manually from the GitHub Actions UI.</p>
+          <!-- GitHub: managed connect + manual workflow -->
+          <div id="deploy-github" class="deploy-detail hidden">
+            <h3 class="text-xl font-bold text-white mb-4">Deploy from GitHub</h3>
+            <p class="text-zinc-400 mb-6">Push to your repo and the site updates itself. Let LiteBin wire it up, or write the workflow yourself.</p>
 
-            <p class="text-sm text-zinc-400 mb-3">Create <code class="text-violet-400">.github/workflows/deploy.yml</code>:</p>
-            <div class="code-block mb-6 relative group">
-              <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <pre class="text-sm text-zinc-300"><code>name: Deploy
+            <p class="text-sm font-bold text-white mb-3">Recommended: Connect GitHub <span class="font-normal text-zinc-500">— zero YAML, zero secrets to paste</span></p>
+            <div class="space-y-4 mb-8">
+              <div class="flex gap-4">
+                <span class="w-8 h-8 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-sm font-bold shrink-0">1</span>
+                <div>
+                  <p class="text-white font-medium">Create your GitHub App</p>
+                  <p class="text-sm text-zinc-500">Dashboard → Settings → GitHub → Create GitHub App. It's your own private app — you own it, and you choose which repos it can see.</p>
+                </div>
+              </div>
+              <div class="flex gap-4">
+                <span class="w-8 h-8 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-sm font-bold shrink-0">2</span>
+                <div>
+                  <p class="text-white font-medium">Pick a repo and a project</p>
+                  <p class="text-sm text-zinc-500">LiteBin commits the workflow (<code class="text-violet-300 bg-white/5 px-1 rounded">.github/workflows/litebin-&lt;project&gt;-deploy.yml</code>) and sets the secrets (<code class="text-violet-300 bg-white/5 px-1 rounded">L8B_SERVER</code> + <code class="text-violet-300 bg-white/5 px-1 rounded">L8B_TOKEN_&lt;PROJECT&gt;</code>) for you.</p>
+                </div>
+              </div>
+              <div class="flex gap-4">
+                <span class="w-8 h-8 rounded-full bg-violet-500/20 text-violet-400 flex items-center justify-center text-sm font-bold shrink-0">3</span>
+                <div>
+                  <p class="text-white font-medium">Choose the trigger</p>
+                  <p class="text-sm text-zinc-500">Auto-deploy on every push to your branch (builds run on GitHub-hosted runners), or keep it manual — trigger deploys from the GitHub Actions tab or the LiteBin dashboard.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="border-t border-white/10 pt-6">
+              <p class="text-sm font-bold text-white mb-1">Manual: write the workflow yourself</p>
+              <p class="text-sm text-zinc-500 mb-4">Exactly what Connect GitHub commits for you — same workflow, same secrets, done by hand. Create <code class="text-violet-400">.github/workflows/deploy.yml</code>:</p>
+              <div class="code-block mb-6 relative group">
+                <button onclick="copyCode(this)" class="copy-btn absolute top-3 right-3 text-zinc-500 transition" title="Copy">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <pre class="text-sm text-zinc-300"><code>name: LiteBin Deploy
 on:
   push:
     branches: [main]
@@ -463,41 +519,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mtsandeep/l8bin-action@v1
+      - uses: mtsandeep/l8bin-action@v0.2.0
         with:
           server: ${{ secrets.L8B_SERVER }}
-          token: ${{ secrets.L8B_TOKEN }}
+          token: ${{ secrets.L8B_TOKEN_MYAPP }}
           project_id: myapp</code></pre>
-            </div>
-
-            <div class="glass rounded-xl p-4 mb-4">
-              <p class="text-sm text-white font-medium mb-2">Required GitHub Secrets:</p>
-              <ul class="space-y-2 text-sm text-zinc-400">
-                <li class="flex gap-3"><span class="text-violet-400">L8B_SERVER</span><span>https://l8bin.example.com (orchestrator URL)</span></li>
-                <li class="flex gap-3"><span class="text-violet-400">L8B_TOKEN</span><span>Generate from Dashboard → Settings → API Tokens</span></li>
-              </ul>
-            </div>
-
-            <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
-              <p class="text-sm text-emerald-300">Every push to main will now auto-deploy to your LiteBin cluster.</p>
-            </div>
-          </div>
-
-          <!-- Connect GitHub -->
-          <div id="deploy-connect" class="deploy-detail hidden">
-            <h3 class="text-xl font-bold text-white mb-4">Connect GitHub</h3>
-            <p class="text-zinc-400 mb-6">Connect your GitHub account, pick a repo — LiteBin writes the workflow and secrets for you.</p>
-
-            <div class="bg-zinc-800/50 border border-zinc-700 rounded-xl p-6 text-center">
-              <div class="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-zinc-500"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
               </div>
-              <p class="text-zinc-400 mb-2">Direct GitHub repository linking</p>
-              <p class="text-sm text-zinc-500 mb-4">Auto-deploy without writing workflows</p>
-              <span class="inline-flex items-center px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-full text-xs text-emerald-400">
-                <span class="w-2 h-2 bg-emerald-400 rounded-full mr-2"></span>
-                Available now
-              </span>
+
+              <div class="glass rounded-xl p-4 mb-4">
+                <p class="text-sm text-white font-medium mb-2">Required GitHub Secrets:</p>
+                <ul class="space-y-2 text-sm text-zinc-400">
+                  <li class="flex gap-3"><span class="text-violet-400">L8B_SERVER</span><span>https://l8bin.example.com (orchestrator URL)</span></li>
+                  <li class="flex gap-3"><span class="text-violet-400">L8B_TOKEN_MYAPP</span><span>One token per project (<code class="text-violet-300 bg-white/5 px-1 rounded">L8B_TOKEN_&lt;PROJECT&gt;</code>). Generate from Dashboard → Settings → API Tokens</span></li>
+                </ul>
+              </div>
+
+              <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+                <p class="text-sm text-emerald-300">Every push to main will now auto-deploy to your LiteBin cluster.</p>
+              </div>
             </div>
           </div>
         </div>

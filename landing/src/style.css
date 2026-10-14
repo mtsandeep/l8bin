@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./nav.css";
 
 @theme {
   --font-sans: "Outfit", sans-serif;
@@ -17,6 +18,11 @@
 
 .glow {
   box-shadow: 0 0 50px -12px var(--vio-g);
+}
+
+/* Deploy-method tabs — pointer in every state */
+.dtab {
+  cursor: pointer;
 }
 
 .glass {
@@ -61,23 +67,9 @@ html {
   scroll-behavior: smooth;
 }
 
-.nav-link {
-  position: relative;
-}
-
-.nav-link::after {
-  content: "";
-  position: absolute;
-  bottom: -2px;
-  left: 0;
-  width: 0;
-  height: 1px;
-  background: var(--vio-l);
-  transition: width 0.2s;
-}
-
-.nav-link:hover::after {
-  width: 100%;
+/* Anchor jumps should land below the sticky nav, not under it */
+section[id] {
+  scroll-margin-top: 4.5rem;
 }
 
 .dot-grid {
@@ -134,11 +126,15 @@ html {
   white-space: pre;
 }
 
-.tl.cmd { color: #e4e4e7; }
-.tl.ans { color: #a1a1aa; }
-.tl.ok { color: #34d399; }
-.tl.info { color: #71717a; }
-.tl.url { color: #a78bfa; font-weight: 600; }
+/* Typed console segments (see main.js runTyper) */
+.tl .cmd { color: #e4e4e7; }
+.tl .ans { color: #a1a1aa; }
+.tl .ok { color: #34d399; }
+.tl .info { color: #71717a; }
+.tl .url { color: #a78bfa; font-weight: 600; }
+.tl .you { color: #e4e4e7; font-weight: 600; }
+.tl .agent { color: #c4b5fd; font-weight: 600; }
+.tl .link { color: #67e8f9; }
 
 .ws-row {
   transition: background 0.35s, border-color 0.35s;
@@ -159,14 +155,4 @@ html {
 
 .ws-row.active .text-zinc-600 {
   color: #71717a !important;
-}
-
-@keyframes wake-fill {
-  0% { width: 5%; }
-  80% { width: 88%; }
-  100% { width: 94%; }
-}
-
-.wake-anim {
-  animation: wake-fill 2s ease-out forwards;
 }

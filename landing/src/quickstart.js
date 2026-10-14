@@ -15,14 +15,14 @@ function switchOS(os) {
 
   // Update OS toggle buttons
   document.querySelectorAll('.os-tab').forEach(el => {
-    el.classList.remove('bg-white/10', 'text-white', 'border-white/20');
-    el.classList.add('text-zinc-500', 'border-transparent');
+    el.classList.remove('bg-violet-600', 'text-white');
+    el.classList.add('text-zinc-500');
   });
-  
+
   const activeBtn = document.getElementById('os-tab-' + os);
   if (activeBtn) {
-    activeBtn.classList.remove('text-zinc-500', 'border-transparent');
-    activeBtn.classList.add('bg-white/10', 'text-white', 'border-white/20');
+    activeBtn.classList.remove('text-zinc-500');
+    activeBtn.classList.add('bg-violet-600', 'text-white');
   }
 }
 

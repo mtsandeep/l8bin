@@ -10,18 +10,47 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <script type="module" src="/src/agents.js"></script>
+  <script type="module" src="/src/nav.js"></script>
   <link rel="stylesheet" href="/src/agents.css" />
+  <link rel="stylesheet" href="/src/nav.css" />
 </head>
 <body class="bg-night-950 text-zinc-300 antialiased selection:bg-violet-500/30">
+
+  <!-- WIP Banner -->
+  <div class="bg-violet-500/10 border-b border-violet-500/20 px-4 py-2 text-center">
+    <p class="text-xs text-violet-300 font-mono">Early release: expect some rough edges. Feedback welcome.</p>
+  </div>
 
   <!-- Nav -->
   <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
     <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-1"><img src="/logo.svg" alt="" class="h-[22px] mt-[3px]" style="height:22px" /><span class="font-black text-zinc-100 tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
+      <a href="/" class="flex items-center gap-1"><img src="/logo.svg" alt="" class="h-[22px] mt-[3px]" style="height:22px" /><span class="font-black text-white tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
+      <div class="hidden md:flex items-center gap-8 text-sm text-zinc-400">
+        <a href="/#core" class="nav-link hover:text-white transition">Why</a>
+        <a href="/#ship" class="nav-link hover:text-white transition">Ship</a>
+        <a href="/#fleet" class="nav-link hover:text-white transition">Fleet</a>
+        <a href="/agents" class="nav-link hover:text-white transition">Agents</a>
+        <a href="/docs/" class="nav-link hover:text-white transition">Docs</a>
+      </div>
       <div class="flex items-center gap-3">
-        <a href="/docs/" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-zinc-100">Docs</a>
-        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-zinc-100">GitHub →</a>
-        <a href="/" class="text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Back to Home</a>
+        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
+        <a href="/quickstart" class="hidden sm:inline-flex text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Quick Start</a>
+        <button type="button" id="mobile-menu-btn" class="md:hidden flex flex-col justify-center items-center w-8 h-8 gap-1.5 rounded hover:bg-white/5 transition" aria-label="Toggle menu">
+          <span id="mhb-1" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
+          <span id="mhb-2" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
+          <span id="mhb-3" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
+        </button>
+      </div>
+    </div>
+    <!-- Mobile menu -->
+    <div id="mobile-menu" class="hidden md:hidden border-t border-white/5 bg-night-950/98 backdrop-blur-xl">
+      <div class="max-w-6xl mx-auto px-6 py-4 flex flex-col">
+        <a href="/#core" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Why</a>
+        <a href="/#ship" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Ship</a>
+        <a href="/#fleet" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Fleet</a>
+        <a href="/agents" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Agents</a>
+        <a href="/docs/" class="py-3 text-sm text-zinc-400 hover:text-white border-b border-white/5 transition">Docs</a>
+        <a href="/quickstart" class="mt-4 sm:hidden text-xs font-mono px-3 py-2.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold text-center">Quick Start</a>
       </div>
     </div>
   </nav>

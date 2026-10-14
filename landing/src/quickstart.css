@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @theme {
+  --font-sans: "Outfit", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --color-night-950: #030308;
   --color-night-900: #0a0912;
@@ -44,6 +45,12 @@
   overflow-x: auto;
 }
 
+/* Highlighted variant — the one command that matters */
+.code-block.hl {
+  border-color: rgba(139, 92, 246, 0.55);
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.3), 0 0 28px -8px rgba(139, 92, 246, 0.45);
+}
+
 .copy-btn:hover { color: #8b5cf6; }
 
 .tab-active { border-bottom: 2px solid #7c3aed; color: #7c3aed; }
@@ -69,6 +76,7 @@
 .nav-link::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 0; height: 1px; background: #8b5cf6; transition: width .2s; }
 .nav-link:hover::after { width: 100%; }
 
+/* Compact OS toggle, sits in the main tab bar */
 .os-tab {
-  @apply transition-all duration-200 border px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2;
+  @apply transition-all duration-200 border px-3 py-1 rounded text-xs font-bold flex items-center gap-1.5;
 }

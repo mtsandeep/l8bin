@@ -1,33 +1,26 @@
 import './style.css'
-
-// Tab switching
-const TAB_COLORS = { migrations:'#06b6d4', backup:'#d946ef', duplicate:'#f59e0b', handover:'#10b981' };
-
-function switchTab(name) {
-  document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-  document.querySelectorAll('.tab-btn').forEach(el => {
-    el.style.borderLeftColor = 'transparent';
-    el.classList.remove('bg-white/5');
-  });
-  document.getElementById('content-' + name).classList.remove('hidden');
-  const btn = document.getElementById('tab-' + name);
-  btn.style.borderLeftColor = TAB_COLORS[name];
-  btn.classList.add('bg-white/5');
-}
-
-window.switchTab = switchTab;
+import './nav.js'
 
 function switchDeployTab(name) {
-  ['cli', 'gh'].forEach(t => {
-    document.getElementById('dcontent-' + t).classList.add('hidden');
-    const btn = document.getElementById('dtab-' + t);
+  // Tabs are discovered from the DOM so pages can ship any number of them
+  document.querySelectorAll('[id^="dtab-"]').forEach(btn => {
+    const t = btn.id.slice('dtab-'.length);
+    const content = document.getElementById('dcontent-' + t);
+    if (content) content.classList.add('hidden');
     btn.classList.remove('bg-white/10', 'text-white', 'shadow-sm');
     btn.classList.add('text-zinc-500');
   });
-  document.getElementById('dcontent-' + name).classList.remove('hidden');
+  const content = document.getElementById('dcontent-' + name);
+  if (content) content.classList.remove('hidden');
   const active = document.getElementById('dtab-' + name);
-  active.classList.add('bg-white/10', 'text-white', 'shadow-sm');
-  active.classList.remove('text-zinc-500');
+  if (active) {
+    active.classList.add('bg-white/10', 'text-white', 'shadow-sm');
+    active.classList.remove('text-zinc-500');
+  }
+  // Optional matching visual panel per tab (v2 ship section)
+  document.querySelectorAll('[id^="shipvis-"]').forEach(el => el.classList.add('hidden'));
+  const vis = document.getElementById('shipvis-' + name);
+  if (vis) vis.classList.remove('hidden');
 }
 
 window.switchDeployTab = switchDeployTab;
@@ -75,62 +68,86 @@ const fadeObs = new IntersectionObserver(entries => {
 }, { threshold: 0.1 });
 document.querySelectorAll('.fade-in').forEach(el => fadeObs.observe(el));
 
-// Terminal animation
+// Typewriter consoles — the deploy terminal and the agent transcript share
+// one engine. Each line is a list of colored segments typed char by char;
+// s = ms per char, p = pause after the line (ms).
 const TERM_LINES = [
-  { t:'$ l8b ship',                         c:'cmd', s:55,  p:260 },
-  { t:'Deploy to: New project',              c:'ans', s:30,  p:80  },
-  { t:'Project name: myapp',                 c:'ans', s:30,  p:110 },
-  { t:'  :: Creating project myapp...',      c:'info', s:8,  p:320 },
-  { t:'  ✔ Project created',                 c:'ok',  s:8,  p:80  },
-  { t:'App port: 3000',                      c:'ans',  s:30, p:120 },
-  { t:'  🔍 Detected: Node.js 20 · Express', c:'info', s:8,  p:60  },
-  { t:'  ✔ Railpack image ready',            c:'ok',   s:8,  p:700 },
-  { t:'  📦 Image built — 129.04 MiB',       c:'info', s:8,  p:60  },
-  { t:'  🗜️  Compressed to 46.45 MiB',       c:'info', s:8,  p:180 },
-  { t:'  Uploading  ▓▓▓▓▓▓▓▓▓▓▓▓  100%',    c:'info', s:18, p:320 },
-  { t:'  ✔ Deploy successful!',              c:'ok',   s:8,  p:100 },
-  { t:'  🌐 Live at: https://myapp.l8b.in',  c:'url',  s:10, p:0   },
+  { segs: [{ t: '$ l8b ship', c: 'cmd' }],                          s: 55, p: 260 },
+  { segs: [{ t: 'Deploy to: New project', c: 'ans' }],              s: 30, p: 80  },
+  { segs: [{ t: 'Project name: myapp', c: 'ans' }],                 s: 30, p: 110 },
+  { segs: [{ t: '  :: Creating project myapp...', c: 'info' }],     s: 8,  p: 320 },
+  { segs: [{ t: '  ✔ Project created', c: 'ok' }],                  s: 8,  p: 80  },
+  { segs: [{ t: 'App port: 3000', c: 'ans' }],                      s: 30, p: 120 },
+  { segs: [{ t: '  🔍 Detected: Node.js 20 · Express', c: 'info' }], s: 8,  p: 60  },
+  { segs: [{ t: '  ✔ Railpack image ready', c: 'ok' }],             s: 8,  p: 700 },
+  { segs: [{ t: '  📦 Image built — 129.04 MiB', c: 'info' }],      s: 8,  p: 60  },
+  { segs: [{ t: '  🗜️  Compressed to 46.45 MiB', c: 'info' }],     s: 8,  p: 180 },
+  { segs: [{ t: '  Uploading  ▓▓▓▓▓▓▓▓▓▓▓▓  100%', c: 'info' }],    s: 18, p: 320 },
+  { segs: [{ t: '  ✔ Deploy successful!', c: 'ok' }],               s: 8,  p: 100 },
+  { segs: [{ t: '  🌐 Live at: https://myapp.l8b.in', c: 'url' }],  s: 10, p: 0   },
 ];
 
-function runTerminal() {
-  const container = document.getElementById('term-lines');
-  const cursor = document.getElementById('term-cursor');
-  if (!container) return;
+// The human types slower than the agent — s per line reflects that.
+const AGENT_LINES = [
+  { segs: [{ t: 'you: ', c: 'you' }, { t: 'ship this to my litebin server' }],                              s: 32, p: 300 },
+  { segs: [{ t: 'agent: ', c: 'agent' }, { t: 'pairing ok (scope: deploy)' }],                              s: 10, p: 140 },
+  { segs: [{ t: 'agent: ', c: 'agent' }, { t: 'building image… done' }],                                    s: 10, p: 240 },
+  { segs: [{ t: 'agent: ', c: 'agent' }, { t: 'uploading… done' }],                                         s: 10, p: 240 },
+  { segs: [{ t: 'agent: ', c: 'agent' }, { t: 'deployed. checking health… ' }, { t: '200 OK', c: 'ok' }],   s: 10, p: 420 },
+  { segs: [{ t: 'agent: ', c: 'agent' }, { t: 'live at ' }, { t: 'https://myapp.l8b.in', c: 'link' }],      s: 10, p: 0   },
+];
+
+function runTyper(container, lines, holdMs = 5000) {
   container.innerHTML = '';
-  let li = 0, ci = 0;
+  let li = 0, si = 0, ci = 0, lineEl = null, segEl = null;
   function next() {
-    if (li >= TERM_LINES.length) {
-      setTimeout(() => { container.style.opacity='0'; setTimeout(() => { container.style.opacity='1'; runTerminal(); }, 600); }, 5000);
+    if (li >= lines.length) {
+      setTimeout(() => {
+        container.style.opacity = '0';
+        setTimeout(() => { container.style.opacity = '1'; runTyper(container, lines, holdMs); }, 600);
+      }, holdMs);
       return;
     }
-    const line = TERM_LINES[li];
+    const line = lines[li];
+    if (si === 0 && ci === 0) {
+      lineEl = document.createElement('div');
+      lineEl.className = 'tl';
+      container.appendChild(lineEl);
+    }
+    if (si >= line.segs.length) {
+      li++; si = 0; ci = 0;
+      setTimeout(next, line.p ?? 60);
+      return;
+    }
+    const seg = line.segs[si];
     if (ci === 0) {
-      const el = document.createElement('div');
-      el.className = 'tl ' + line.c;
-      el.id = 'tl-' + li;
-      container.appendChild(el);
+      segEl = document.createElement('span');
+      if (seg.c) segEl.className = seg.c;
+      lineEl.appendChild(segEl);
     }
-    const el = document.getElementById('tl-' + li);
-    if (ci < line.t.length) {
-      el.textContent += line.t[ci];
-      ci++;
-      const spd = line.s !== undefined ? line.s : (Math.random() * 8 + 3);
-      setTimeout(next, spd);
-    } else {
-      li++; ci = 0;
-      const pause = TERM_LINES[li - 1]?.p ?? 60;
-      setTimeout(next, pause);
-    }
+    segEl.textContent += seg.t[ci];
+    ci++;
+    if (ci >= seg.t.length) { si++; ci = 0; segEl = null; }
+    const spd = line.s !== undefined ? line.s : (Math.random() * 8 + 3);
+    setTimeout(next, spd);
   }
   container.style.transition = 'opacity .5s';
   next();
 }
 
-const termObs = new IntersectionObserver(entries => {
-  if (entries[0].isIntersecting) { runTerminal(); termObs.disconnect(); }
-}, { threshold: 0.3 });
-const termEl = document.getElementById('term-lines');
-if (termEl) termObs.observe(termEl.parentElement);
+// Start a console the first time its panel is visible. A panel hidden by tab
+// switching reports not-intersecting, so hidden tabs start when opened.
+function watchConsole(id, lines) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const obs = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting) { runTyper(el, lines); obs.disconnect(); }
+  }, { threshold: 0.3 });
+  obs.observe(el.parentElement);
+}
+
+watchConsole('term-lines', TERM_LINES);
+watchConsole('agent-lines', AGENT_LINES);
 
 // Wake cycle
 const WS_MSGS = [
@@ -534,34 +551,3 @@ if (glitchEl) {
   drawSpark(); // dotted baseline until the stream arrives
 })();
 
-// Mobile menu toggle
-(function() {
-  const btn = document.getElementById('mobile-menu-btn');
-  const menu = document.getElementById('mobile-menu');
-  const b1 = document.getElementById('mhb-1');
-  const b2 = document.getElementById('mhb-2');
-  const b3 = document.getElementById('mhb-3');
-  let open = false;
-
-  if (btn && menu) {
-    btn.addEventListener('click', () => {
-      open = !open;
-      menu.classList.toggle('hidden', !open);
-      b1.style.transform = open ? 'translateY(6px) rotate(45deg)' : '';
-      b2.style.opacity   = open ? '0' : '1';
-      b3.style.transform = open ? 'translateY(-6px) rotate(-45deg)' : '';
-    });
-
-    function closeMenu() {
-      open = false;
-      menu.classList.add('hidden');
-      b1.style.transform = b3.style.transform = '';
-      b2.style.opacity = '1';
-    }
-
-    menu.querySelectorAll('a').forEach(a => a.addEventListener('click', closeMenu));
-    document.addEventListener('click', (e) => {
-      if (open && !btn.closest('nav').contains(e.target)) closeMenu();
-    });
-  }
-})();

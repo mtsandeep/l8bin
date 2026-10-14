@@ -1,0 +1,19 @@
+/* Shared site nav underline (paired with nav.js) */
+.nav-link {
+  position: relative;
+}
+
+.nav-link::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 1px;
+  background: var(--vio-l, #8b5cf6);
+  transition: width 0.2s;
+}
+
+.nav-link:hover::after {
+  width: 100%;
+}
