@@ -28,6 +28,18 @@ On the master, the installer writes a minimal `docker-compose.yml` plus a separa
 
 Backup sidecars (`sidecar.rs`) are the one LiteBin-owned exception: they get a **hard cap** of 256 MB + 0.5 CPU, so a runaway backup job dies at its own limit instead of sinking the host.
 
+### Daemon protection (docker, containerd, sshd)
+
+The panel's *actions* — deploy, stop, delete — execute in dockerd and containerd, host services no compose file can reach. The measured failure ([results](../../test-apps/resource-stress/RESULTS.md), phase H): under a memory-churn storm the daemon's own pages get swapped out, and every management operation page-faults against a saturated disk — actions hang indefinitely even while the panel itself still loads. Pure CPU famine, by contrast, is survivable unweighted (a small daemon operation needs only ~100ms of CPU). So the daemons get the same two-axis protection as the stack containers, applied at the systemd layer — the installer runs `systemctl set-property` on every install and update (live, no restarts, persistent):
+
+| Service | CPUWeight | MemoryLow |
+|---|---|---|
+| docker.service | 2000 | 150M |
+| containerd.service | 2000 | 100M |
+| ssh.service (or sshd.service) | 1000 | — |
+
+sshd's weight is the emergency hatch — a usable terminal when everything else is on fire. Validation: the original failure storm (28 memory-churn apps) recreated with full hardening — actions completed in 2–13s and all 28 apps were deleted in 34s, versus hung-indefinitely and a zero-for-28 cleanup without it. Not covered: D-state I/O waits (`ionice` would be that layer if it ever shows) and kswapd (kept quiet by the memory-side design). The boundary: LiteBin configures its own critical path at install time — stack containers, proxy, Docker daemons, SSH — and recommends, never automates, the rest (swap size, swappiness, zram, disks).
+
 ### What each knob does
 
 **`oom_score_adj: -300` — victim ordering.** The kernel's OOM killer picks victims by score ≈ RSS adjusted by this value. The host landscape is: dockerd runs at **-500**, journald at **-250**, everything else (apps, sshd, containerd-shims) at **0**. The stack at -300 nests between them:
@@ -98,6 +110,7 @@ Settings take effect at container creation. The installer's update flow regenera
 
 Tuning knobs:
 
+- **Swap ≈ 1×RAM, not more.** With wake-on-request, shedding memory early is cheaper than hoarding it: a smaller swap brings the OOM cliff sooner, resolves overcommit with a quick kill (web apps re-wake on next traffic), and keeps the box responsive instead of thrashing for minutes ([measured](../../test-apps/resource-stress/RESULTS.md): 2.4× swap → 14% degraded samples and multi-second stalls; 1× swap → 4%, zero outages). Zero swap is too twitchy — deploy bursts and backups need the grace.
 - **Caddy floor 30m → 48m (masters)** if heavy proxied traffic coinciding with host pressure shows proxy latency — Caddy's hot pages lose protection once it grows past its floor.
 
 ## Known limitations

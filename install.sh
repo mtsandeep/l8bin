@@ -143,6 +143,16 @@ ensure_docker_compose() {
   fi
 }
 
+# Daemon resource protection — docs/architecture/resource-protection.md.
+harden_daemons() {
+  if ! systemctl set-property docker.service CPUWeight=2000 MemoryLow=150M >/dev/null 2>&1; then
+    warn "could not apply docker.service resource protection"
+  fi
+  systemctl set-property containerd.service CPUWeight=2000 MemoryLow=100M >/dev/null 2>&1 || true
+  systemctl set-property ssh.service CPUWeight=1000 >/dev/null 2>&1 \
+    || systemctl set-property sshd.service CPUWeight=1000 >/dev/null 2>&1 || true
+}
+
 get_latest_release() {
   if [ -n "${L8B_RELEASE_DIR:-}" ]; then
     echo "local"
@@ -757,6 +767,7 @@ install_master() {
 
   ensure_docker
   ensure_docker_compose
+  harden_daemons
 
   # Check for existing installation → redirect to update
   if [ -f "${install_dir}/docker-compose.yml" ]; then
@@ -1296,6 +1307,7 @@ install_agent() {
   fi
 
   ensure_docker
+  harden_daemons
 
   # Check for existing agent installation → redirect to update
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^litebin-agent$"; then
@@ -1452,6 +1464,7 @@ update_master() {
 
   ensure_docker
   ensure_docker_compose
+  harden_daemons
 
   # Get current version
   local current_version="unknown"
@@ -1706,6 +1719,7 @@ update_agent() {
   [ -d "${install_dir}/agent" ] || die "Agent installation not found at ${install_dir}/agent"
 
   ensure_docker
+  harden_daemons
 
   # Get current version
   local current_version="unknown"
