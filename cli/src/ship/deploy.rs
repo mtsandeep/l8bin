@@ -105,7 +105,7 @@ pub(super) async fn build_and_deploy(
         println!("  🗜️  Compressed to {}", HumanBytes(image.compressed_size));
     }
 
-    let image_id = crate::upload::upload_image(
+    let uploaded = crate::upload::upload_image(
         client,
         server,
         project_id,
@@ -116,6 +116,9 @@ pub(super) async fn build_and_deploy(
         false,
     )
     .await?;
+    let image_id = uploaded.image_id;
+    // Echo the broker's node so the deploy lands where the image did.
+    let selected_node = uploaded.node_id.or(selected_node);
 
     let deploy_spinner = spinner("  🚢 {spinner} {msg}");
     deploy_spinner.set_message(if is_new_project { "Staging deployment..." } else { "Deploying..." });
@@ -268,7 +271,7 @@ async fn deploy_compose(
 
     let upload_mode = resolve_upload_mode(&auth::fetch_online_nodes(client, server).await, node_id, false, upload_flag);
 
-    let resolved_yaml = prepare_compose_deployment(
+    let (resolved_yaml, uploaded_node) = prepare_compose_deployment(
         client,
         server,
         project_id,
@@ -307,7 +310,8 @@ async fn deploy_compose(
         resolved_yaml,
         is_partial_build,
         &build_infos,
-        node_id,
+        // Pin to the node the images landed on — "auto" would re-roll the scheduler.
+        uploaded_node.as_deref().or(node_id),
         // Interactive deploys always stage first so the env-edit checkpoint fires
         // (user updates the node .env, then starts) — for both first deploy and redeploy.
         true,
@@ -370,7 +374,7 @@ pub async fn deploy_compose_noninteractive(
     print_compose_build_summary(&compose, &build_infos);
     print_building_services(&build_infos);
 
-    let resolved_yaml = prepare_compose_deployment(
+    let (resolved_yaml, uploaded_node) = prepare_compose_deployment(
         client,
         server,
         project_id,
@@ -406,7 +410,8 @@ pub async fn deploy_compose_noninteractive(
         resolved_yaml,
         is_partial_build,
         &build_infos,
-        opts.node_id.as_deref(),
+        // Pin to the node the images landed on — "auto" would re-roll the scheduler.
+        uploaded_node.as_deref().or(opts.node_id.as_deref()),
         false,
         opts.is_background,
         &grants,

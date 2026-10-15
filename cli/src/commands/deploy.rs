@@ -230,7 +230,7 @@ pub(crate) async fn run(
         .await?;
 
         ci_mode.println("Uploading image...");
-        let image_id = upload::upload_image(
+        let uploaded = upload::upload_image(
             &client,
             &server,
             &project,
@@ -241,6 +241,9 @@ pub(crate) async fn run(
             ci_mode.enabled,
         )
         .await?;
+        let image_id = uploaded.image_id;
+        // Echo the broker's node so the deploy lands where the image did.
+        let effective_node = uploaded.node_id.or(effective_node);
 
         ci_mode.println("Deploying...");
         let response = deploy_cmd::deploy_or_redeploy(

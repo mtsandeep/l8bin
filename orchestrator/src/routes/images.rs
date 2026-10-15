@@ -172,6 +172,8 @@ pub struct UploadTargetRequest {
 #[derive(Serialize)]
 pub struct UploadTargetResponse {
     pub mode: String,
+    /// Concrete node the image will land on — echo it in the deploy request.
+    pub node_id: String,
     pub token: String,
     pub chunk_size: u64,
     pub expires_at: i64,
@@ -201,13 +203,32 @@ pub async fn upload_target(
         },
     };
 
-    let node_id = req.node_id.clone().unwrap_or_else(|| "local".to_string());
+    // Same resolution as the deploy will use, so the image lands where the container runs.
+    let sticky_node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
+        .bind(&req.project_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let node_id = match nodes::selector::select_node_for_sticky(
+        &state.db,
+        sticky_node_id.as_deref(),
+        req.node_id.clone(),
+    )
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
 
     // Local node: stage on master, load to master Docker at commit.
-    if node_id == "local" {
+    if node_id == nodes::selector::LOCAL_NODE {
         return match state.upload_store.mint(&req.project_id, &req.image_id, "local", DEFAULT_TTL_SECS) {
             Ok(s) => Json(UploadTargetResponse {
                 mode: "local".into(),
+                node_id: nodes::selector::LOCAL_NODE.to_string(),
                 token: s.token,
                 chunk_size: state.upload_store.chunk_size(),
                 expires_at: s.expires_at,
@@ -266,6 +287,7 @@ pub async fn upload_target(
         let public_ip = node.public_ip.as_deref().unwrap_or("");
         return Json(UploadTargetResponse {
             mode: "direct".into(),
+            node_id: node_id.clone(),
             token: mint_resp.token,
             chunk_size: mint_resp.chunk_size,
             expires_at: mint_resp.expires_at,
@@ -279,6 +301,7 @@ pub async fn upload_target(
     match state.upload_store.mint(&req.project_id, &req.image_id, &node_id, DEFAULT_TTL_SECS) {
         Ok(s) => Json(UploadTargetResponse {
             mode: "relay".into(),
+            node_id: node_id.clone(),
             token: s.token,
             chunk_size: state.upload_store.chunk_size(),
             expires_at: s.expires_at,

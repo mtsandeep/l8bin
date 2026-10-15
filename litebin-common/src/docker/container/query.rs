@@ -119,9 +119,7 @@ impl DockerManager {
     }
 
     /// All `litebin-`-named containers with their labels, for the janitor's orphan reaper.
-    pub async fn list_litebin_containers(
-        &self,
-    ) -> anyhow::Result<Vec<(String, String, HashMap<String, String>)>> {
+    pub async fn list_litebin_containers(&self) -> anyhow::Result<Vec<(String, String, HashMap<String, String>)>> {
         let containers =
             self.docker.list_containers(Some(ListContainersOptions { all: true, ..Default::default() })).await?;
         Ok(containers

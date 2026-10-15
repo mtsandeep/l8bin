@@ -2,6 +2,11 @@ use anyhow::anyhow;
 use litebin_common::types::{Node, Project};
 use sqlx::SqlitePool;
 
+/// The master node itself.
+pub const LOCAL_NODE: &str = "local";
+/// Sentinel node id asking the least-loaded scheduler to place the deploy.
+pub const AUTO_NODE: &str = "auto";
+
 pub async fn select_node(
     db: &SqlitePool,
     project: &Project,
@@ -15,8 +20,12 @@ pub async fn select_node_for_sticky(
     sticky_node_id: Option<&str>,
     override_node_id: Option<String>,
 ) -> anyhow::Result<String> {
-    // 1. Override path — validate node exists and is online
+    // 1. Override path — "auto" runs the least-loaded scheduler, an id must exist and be online
     if let Some(override_id) = override_node_id {
+        if override_id == AUTO_NODE {
+            return pick_least_loaded(db).await;
+        }
+
         let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = ? AND status = 'online'")
             .bind(&override_id)
             .fetch_optional(db)
@@ -40,7 +49,12 @@ pub async fn select_node_for_sticky(
         }
     }
 
-    // 3. Least-loaded path: score nodes by memory usage + container count
+    // 3. Default: the master. Placement is deliberate — opt into the scheduler with "auto".
+    Ok(LOCAL_NODE.to_string())
+}
+
+/// Least-loaded placement: score nodes by memory usage + container count.
+async fn pick_least_loaded(db: &SqlitePool) -> anyhow::Result<String> {
     let nodes = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE status = 'online'").fetch_all(db).await?;
 
     if nodes.is_empty() {
@@ -165,7 +179,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn prop_scheduler_least_loaded(
+        fn prop_scheduler_auto_vs_default(
             total_a in 4000i64..=8000i64,
             used_pct_a in 10i64..=40i64,
             total_b in 4000i64..=8000i64,
@@ -207,11 +221,14 @@ mod tests {
                 .await
                 .unwrap();
 
-                // Should pick node-a (lower usage)
                 let project = make_project(None);
-                let result = select_node(&pool, &project, None).await.unwrap();
+                let result = select_node(&pool, &project, Some(AUTO_NODE.to_string())).await.unwrap();
 
                 prop_assert_eq!(result.as_str(), "node-a");
+
+                let result = select_node(&pool, &project, None).await.unwrap();
+
+                prop_assert_eq!(result.as_str(), LOCAL_NODE);
                 Ok(())
             }).unwrap();
         }

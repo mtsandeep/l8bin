@@ -564,6 +564,9 @@ pub async fn fetch_online_nodes(client: &reqwest::Client, server: &str) -> Vec<N
 pub struct UploadTarget {
     /// "local" | "relay" | "direct"
     pub mode: String,
+    /// Concrete node the image will land on.
+    #[serde(default)]
+    pub node_id: Option<String>,
     pub token: String,
     pub chunk_size: u64,
     #[allow(dead_code)]

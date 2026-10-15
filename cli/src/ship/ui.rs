@@ -176,15 +176,44 @@ pub fn detect_compose_file(project_dir: &Path) -> Option<&'static str> {
 pub fn resolve_platform(nodes: &[crate::auth::NodeInfo], node_id: Option<&str>) -> Option<String> {
     let arch = match node_id {
         Some(id) => nodes.iter().find(|n| n.id == id).and_then(|n| n.architecture.as_deref()),
-        None => nodes
-            .iter()
-            .find(|n| n.recommended == Some(true))
-            .or_else(|| nodes.first())
-            .and_then(|n| n.architecture.as_deref()),
+        // No node choice means the deploy lands on the master.
+        None => {
+            nodes.iter().find(|n| n.id == "local").or_else(|| nodes.first()).and_then(|n| n.architecture.as_deref())
+        }
     };
     arch.map(|a| match a {
         "aarch64" => "linux/arm64".to_string(),
         "x86_64" => "linux/amd64".to_string(),
         other => format!("linux/{}", other),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::NodeInfo;
+    use litebin_common::types::NodeStatus;
+
+    fn node(id: &str, arch: Option<&str>, recommended: bool) -> NodeInfo {
+        NodeInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            status: NodeStatus::Online,
+            architecture: arch.map(str::to_string),
+            recommended: Some(recommended),
+            public_ip: None,
+        }
+    }
+
+    #[test]
+    fn platform_follows_explicit_node() {
+        let nodes = vec![node("local", Some("x86_64"), false), node("armbox", Some("aarch64"), false)];
+        assert_eq!(resolve_platform(&nodes, Some("armbox")).as_deref(), Some("linux/arm64"));
+    }
+
+    #[test]
+    fn unspecified_node_builds_for_master_not_recommended() {
+        let nodes = vec![node("armbox", Some("aarch64"), true), node("local", Some("x86_64"), false)];
+        assert_eq!(resolve_platform(&nodes, None).as_deref(), Some("linux/amd64"));
+    }
 }

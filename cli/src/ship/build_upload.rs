@@ -77,8 +77,10 @@ pub(super) async fn build_and_upload_services(
     platform: Option<&str>,
     mode: crate::upload::UploadMode,
     ci_mode: bool,
-) -> Result<HashMap<String, String>> {
+) -> Result<(HashMap<String, String>, Option<String>)> {
     let mut resolved_images = HashMap::new();
+    // First concrete node the broker placed an image on; the compose submit pins to it.
+    let mut resolved_node: Option<String> = None;
 
     // Services sharing an identical (context, dockerfile) produce the same image;
     // build + upload once per group and share the resulting image ID.
@@ -111,7 +113,7 @@ pub(super) async fn build_and_upload_services(
         .await?;
         println!("    {} {} — {}", "  ✓".green(), names.join(", "), HumanBytes(saved_image.compressed_size));
 
-        let image_id = crate::upload::upload_image(
+        let uploaded = crate::upload::upload_image(
             client,
             server,
             project_id,
@@ -123,13 +125,14 @@ pub(super) async fn build_and_upload_services(
         )
         .await?;
         let _ = std::fs::remove_file(&saved_image.path);
+        resolved_node = resolved_node.or(uploaded.node_id);
 
         for info in &group {
-            resolved_images.insert(info.svc_name.clone(), image_id.clone());
+            resolved_images.insert(info.svc_name.clone(), uploaded.image_id.clone());
         }
     }
 
-    Ok(resolved_images)
+    Ok((resolved_images, resolved_node))
 }
 
 /// Group `BuildInfo`s whose `(build_context, dockerfile)` are identical, preserving
@@ -203,9 +206,9 @@ pub(super) async fn prepare_compose_deployment(
     platform: Option<&str>,
     mode: crate::upload::UploadMode,
     ci_mode: bool,
-) -> Result<String> {
+) -> Result<(String, Option<String>)> {
     let root_env_paths = resolve_env_files(project_dir, &env_source, !ci_mode, ci_mode)?;
-    let resolved_images = build_and_upload_services(
+    let (resolved_images, resolved_node) = build_and_upload_services(
         client,
         server,
         project_id,
@@ -223,7 +226,7 @@ pub(super) async fn prepare_compose_deployment(
     if let Some(service_name) = selected_public {
         resolved_yaml = inject_public_label(&resolved_yaml, service_name)?;
     }
-    Ok(resolved_yaml)
+    Ok((resolved_yaml, resolved_node))
 }
 
 #[cfg(test)]

@@ -39,8 +39,14 @@ impl UploadMode {
     }
 }
 
+pub struct UploadHandle {
+    pub image_id: String,
+    /// Node the broker placed the image on — echo it in the deploy request.
+    pub node_id: Option<String>,
+}
+
 /// High-level entry: ask the master where to upload, build the right client for
-/// that target, and run the chunked upload. Returns the resolved image id.
+/// that target, and run the chunked upload.
 #[allow(clippy::too_many_arguments)]
 pub async fn upload_image(
     client: &reqwest::Client,
@@ -51,7 +57,7 @@ pub async fn upload_image(
     node_id: Option<&str>,
     mode: UploadMode,
     ci_mode: bool,
-) -> Result<String> {
+) -> Result<UploadHandle> {
     let target = auth::request_upload_target(client, server, project_id, image_id, node_id, mode.hint()).await?;
 
     // For direct mode the broker returns base_url = https://<ip>/__l8b_upload.
@@ -81,7 +87,8 @@ pub async fn upload_image(
         eprintln!("  {} Uploading {} ({})", "↻".dimmed(), label, tar_path.display());
     }
 
-    chunked_upload(&upload_client, &base, &target, tar_path, ci_mode).await
+    let image_id = chunked_upload(&upload_client, &base, &target, tar_path, ci_mode).await?;
+    Ok(UploadHandle { image_id, node_id: target.node_id.clone() })
 }
 
 /// Read the bytes of chunk `index` (0-based) from the file.
