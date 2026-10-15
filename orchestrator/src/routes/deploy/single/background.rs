@@ -5,6 +5,16 @@ use litebin_common::types::{ProjectStatus, VolumeMount};
 
 use super::types::DeployRequest;
 
+/// Fails open on DB errors so a transient check can't silently cancel deploys.
+async fn project_exists(db: &sqlx::SqlitePool, project_id: &str) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
+        .bind(project_id)
+        .fetch_one(db)
+        .await
+        .map(|n| n > 0)
+        .unwrap_or(true)
+}
+
 /// The background deploy task: pull, start the container, sync routes, and
 /// clean up old images/volumes. On failure the project is transitioned to Error
 /// (handled by the caller).
@@ -47,6 +57,12 @@ pub(super) async fn run_deploy_task(
             state_clone.docker.pull_image_with_progress(&payload_clone.image, false, Some(on_progress)).await?;
         }
 
+        // A container started for a deleted project would be an invisible orphan.
+        if !project_exists(&state_clone.db, &payload_clone.project_id).await {
+            tracing::info!(project_id = %payload_clone.project_id, "deploy aborted: project deleted mid-deploy");
+            return Ok(());
+        }
+
         // Start the container
         crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Creating container...");
         crate::routes::manage::start_services(
@@ -81,6 +97,10 @@ pub(super) async fn run_deploy_task(
             &payload_clone.project_id,
             &format!("Deploying to remote node {}...", &node_id_clone),
         );
+        if !project_exists(&state_clone.db, &payload_clone.project_id).await {
+            tracing::info!(project_id = %payload_clone.project_id, "deploy aborted: project deleted mid-deploy");
+            return Ok(());
+        }
         let agent = nodes::client::AgentClient::resolve(&state_clone, &node_id_clone).await?;
 
         let run_request = litebin_common::agent_api::RunRequest {

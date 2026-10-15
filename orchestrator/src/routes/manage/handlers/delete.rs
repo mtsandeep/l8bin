@@ -78,7 +78,9 @@ pub async fn delete_project(
         } else {
             // Collect volumes for single-service local cleanup
             let volumes: Vec<String> = build_volume_list(&state.db, &project).await;
-            let _ = state.docker.cleanup_project_resources(&project_id, &volumes).await;
+            if let Err(e) = state.docker.cleanup_project_resources(&project_id, &volumes).await {
+                tracing::warn!(project = %project_id, error = %e, "delete: cleanup incomplete (janitor reaps orphans)");
+            }
         }
     } else {
         // Remote: best-effort container cleanup via the agent. When the node is

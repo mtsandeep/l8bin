@@ -118,6 +118,24 @@ impl DockerManager {
         Ok(containers.into_iter().filter_map(|c| c.id).collect())
     }
 
+    /// All `litebin-`-named containers with their labels, for the janitor's orphan reaper.
+    pub async fn list_litebin_containers(
+        &self,
+    ) -> anyhow::Result<Vec<(String, String, HashMap<String, String>)>> {
+        let containers =
+            self.docker.list_containers(Some(ListContainersOptions { all: true, ..Default::default() })).await?;
+        Ok(containers
+            .into_iter()
+            .filter_map(|c| {
+                let name = c.names.as_ref()?.first()?.trim_start_matches('/').to_string();
+                if !name.starts_with("litebin-") {
+                    return None;
+                }
+                Some((c.id?, name, c.labels.unwrap_or_default()))
+            })
+            .collect())
+    }
+
     /// List every workload container belonging to a project, including stopped
     /// containers and replacements whose IDs are not known by the orchestrator.
     pub async fn list_project_workload_containers(&self, project_id: &str) -> anyhow::Result<Vec<String>> {

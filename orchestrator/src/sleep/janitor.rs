@@ -29,6 +29,10 @@ pub async fn run_janitor(state: AppState, mut shutdown_rx: tokio::sync::watch::R
 }
 
 async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingProvider) -> anyhow::Result<()> {
+    if let Err(e) = reap_orphaned_containers(state).await {
+        tracing::warn!(error = %e, "janitor: orphan reaper failed");
+    }
+
     let now = chrono::Utc::now().timestamp();
 
     let candidates = sqlx::query_as::<_, crate::db::models::Project>(
@@ -156,6 +160,43 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
         }
     }
 
+    Ok(())
+}
+
+/// Remove `litebin-` containers whose project no longer exists in the DB.
+async fn reap_orphaned_containers(state: &AppState) -> anyhow::Result<()> {
+    const STACK_CONTAINERS: [&str; 6] = [
+        "litebin-orchestrator",
+        "litebin-dashboard",
+        "litebin-caddy",
+        "litebin-agent",
+        "litebin-agent-caddy",
+        "litebin-agent-local",
+    ];
+
+    let containers = state.docker.list_litebin_containers().await?;
+    if containers.is_empty() {
+        return Ok(());
+    }
+    let project_ids: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT id FROM projects").fetch_all(&state.db).await?.into_iter().collect();
+
+    for (container_id, name, labels) in containers {
+        if STACK_CONTAINERS.contains(&name.as_str()) || labels.contains_key("litebin.sidecar") {
+            continue;
+        }
+        let Some(suffix) = name.strip_prefix("litebin-") else { continue };
+        // Single-service: litebin-<project>; compose/proxy: litebin-<project>.<service>
+        let owned = project_ids.iter().any(|p| suffix == p.as_str() || suffix.starts_with(&format!("{p}.")));
+        if owned {
+            continue;
+        }
+        let _ = state.docker.stop_container(&container_id).await;
+        match state.docker.remove_container(&container_id).await {
+            Ok(()) => tracing::info!(container = %name, "janitor: reaped orphaned container"),
+            Err(e) => tracing::warn!(container = %name, error = %e, "janitor: failed to remove orphaned container"),
+        }
+    }
     Ok(())
 }
 

@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - `BackupPanel.tsx` (1260 lines) split into focused components under `dashboard/src/components/settings/backup/` — no behavior change.
 
 ### Fixed
+- **Containers orphaned when a delete races an in-flight deploy** — deploys now abort if the project was deleted mid-flight, and the janitor reaps `litebin-` containers with no project left.
 - **Configuring an S3/R2 destination crash-looped the sidecar** — litestream 0.5 rejects multiple replicas per database ("multiple replicas on a single database are no longer supported"); the sidecar now runs the single-replica config above and the stale local LTX store is cleared on switch.
 - The Litestream backup sidecar now carries the platform's compose labels, so Docker Desktop groups it with the other litebin containers instead of listing it loose.
 - **Restores self-heal after the swap** — the orchestrator REINDEXes and quick-checks the database at boot after applying a restore; litestream 0.5.17 point-in-time restores can carry stale PK index pages (upstream #1164, repro'd on 0.5.17; REINDEX fully repairs).
