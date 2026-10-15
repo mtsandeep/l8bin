@@ -561,7 +561,24 @@ The platform (orchestrator + dashboard + Caddy proxy) idles at ~45MB on a small 
 
 ### Why does my server show more than 58MB?
 
-Most likely you're on a host with 2GB+ RAM. There, the proxy (Caddy) runs with Go's default heap policy and floats to ~60MB — it uses spare memory as headroom to do less GC work. That's by design, not a leak; on hosts under 2GB RAM LiteBin caps the proxy heap automatically (`GOMEMLIMIT=35MiB`). The orchestrator itself idles around 34MB even on a 9-project master.
+Usually one of two reasons — both by design, not leaks:
+
+**Caddy floats to ~60MB, more under heavy traffic.** On hosts with 2GB+ RAM the proxy runs with Go's default heap policy: it sizes its heap to roughly twice the live data — usage tracks traffic, plateaus when traffic does, and settles back slowly after a burst. On hosts under 2GB RAM LiteBin caps it automatically (`GOMEMLIMIT=35MiB`).
+
+**The orchestrator reads 50–75MB and stays there — THP.** Check your host's Transparent Huge Pages policy (Debian and Ubuntu default to `always`):
+
+```bash
+cat /sys/kernel/mm/transparent_hugepage/enabled    # [always] madvise never
+grep AnonHugePages /proc/$(pgrep -x litebin-orchest)/smaps_rollup   # nonzero = THP-backed heap
+```
+
+With THP on `always`, the kernel hands out memory in big 2MB chunks instead of small pages, and a partially-used chunk counts as fully used. Deploy spikes leave the orchestrator holding rounded-up chunks it can't hand back, so on such hosts it reads ~50–75MB even though only ~20MB is live data. With `madvise` or `never`, the same binary sits at ~20MB. A restart resets it.
+
+Nothing is leaking and nothing is lost: under real memory pressure the kernel reclaims those pages, so the orchestrator yields RAM to your apps. On a roomy box, leave THP as the distro ships it — big-heap Node and Python apps (think Ghost, Uptime Kuma) and in-memory caches actually run faster with it: bigger pages mean the CPU's small address-translation cache (the TLB) covers far more memory per entry, a real speedup for memory-churning workloads. On a host where every 30MB matters, you can opt out until the next reboot:
+
+```bash
+echo madvise > /sys/kernel/mm/transparent_hugepage/enabled
+```
 
 On very small boxes also note: if the host has swap, the kernel parks cold pages in swap opportunistically, so per-process RSS understates real usage — check RSS+swap together, or just `docker stats`.
 
@@ -569,6 +586,10 @@ Measured numbers per host size, plus how to reproduce them: [memory-footprint.md
 
 ### Can I tune it?
 
-- Orchestrator and agent images ship allocator tuning (`_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2`) so freed memory returns to the OS promptly. Override per host by setting that variable in the `.env` your compose loads.
-- Deploys briefly spike ~20MB and settle back within seconds; a platform restart always returns the stack to its idle footprint.
+Yes — both knobs are environment variables in the `.env` your compose loads (`docker compose up -d` to apply):
+
+- **Caddy: `GOMEMLIMIT`** — a soft heap cap for the Go runtime, e.g. `GOMEMLIMIT=48MiB`. LiteBin already sets `35MiB` on hosts under 2GB RAM; on bigger hosts, setting it yourself trades a little CPU for bounded RAM.
+- **Orchestrator and agent: `_RJEM_MALLOC_CONF`** — ships as `dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2` so freed memory returns to the OS promptly. The underscore prefix is required — the bundled jemalloc ignores plain `MALLOC_CONF`.
+
+Deploys briefly spike ~20MB and settle back within seconds; a platform restart always returns the stack to its idle footprint.
 
