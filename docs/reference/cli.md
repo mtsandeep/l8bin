@@ -349,10 +349,10 @@ The dashboard can manage the whole thing — `Settings → GitHub` connects a Gi
 To wire it by hand, see [l8bin-action](https://github.com/mtsandeep/l8bin-action) for the reusable composite action:
 
 ```yaml
-- uses: mtsandeep/l8bin-action@v1
+- uses: mtsandeep/l8bin-action@v0.2.0
   with:
     server: ${{ secrets.L8B_SERVER }}
-    token: ${{ secrets.L8B_TOKEN }}
+    token: ${{ secrets.L8B_TOKEN_MYAPP }}
     project_id: myapp
     port: 3000
     # compose: true            # multi-service repos

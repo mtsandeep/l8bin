@@ -9,6 +9,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
   <script type="module" src="/src/main.js"></script>
 </head>
 <body id="top" class="bg-night-950 text-zinc-300 antialiased selection:bg-violet-500/30">
@@ -21,7 +22,7 @@
   <!-- Nav -->
   <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
     <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-1"><img src="/logo.svg" alt="" class="h-[22px] mt-[3px]" style="height:22px" /><span class="font-black text-white tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
+      <a href="/" class="flex items-center gap-1"><img src="/logo.svg" alt="" class="h-[22px] mt-[3px]" style="height:22px" /><span class="font-black text-zinc-100 tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
       <div class="hidden md:flex items-center gap-8 text-sm text-zinc-400">
         <a href="/#core" class="nav-link hover:text-white transition">Why</a>
         <a href="/#ship" class="nav-link hover:text-white transition">Ship</a>
@@ -30,7 +31,7 @@
         <a href="/docs/" class="nav-link hover:text-white transition">Docs</a>
       </div>
       <div class="flex items-center gap-3">
-        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
+        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white inline-flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
         <a href="/quickstart" class="hidden sm:inline-flex text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Quick Start</a>
         <button type="button" id="mobile-menu-btn" class="md:hidden flex flex-col justify-center items-center w-8 h-8 gap-1.5 rounded hover:bg-white/5 transition" aria-label="Toggle menu">
           <span id="mhb-1" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
@@ -64,12 +65,12 @@
             <span class="text-emerald-400">#selfHosted</span><span class="text-zinc-700">/</span><span class="text-cyan-400">Open Source</span><span class="text-zinc-700">/</span><span class="text-amber-400">Lightweight</span>
           </p>
           <h1 id="glitch-title" data-variants="LITEBIN|L8BIN|L8B.IN|L8=50+8|L8BIN"
-            class="text-6xl lg:text-8xl font-black text-white tracking-tighter leading-none mb-5"></h1>
+            class="text-6xl lg:text-8xl font-black text-zinc-100 tracking-tighter leading-none mb-5"></h1>
           <p class="text-lg text-zinc-400 leading-relaxed mb-4">
             Every time I wanted to show someone a demo, it was already gone — killed to free up RAM for the next one. One cheap VPS meant one app. Cloud free tiers work until you hit their framework limits or your app gets purged for inactivity. Existing self-hosted platforms are built for always-on production workloads. Nothing fit what I needed.
           </p>
           <p class="text-lg text-zinc-400 leading-relaxed mb-8">
-            <span class="text-white font-semibold">So I built LiteBin</span> — entire stack under 58MB. Push from your laptop, no building on the VPS. Apps sleep to zero when idle, wake on the first request. Deploy as many as your disk holds.
+            <span class="text-zinc-200 font-semibold">So I built LiteBin</span> — entire stack under 58MB. Push from your laptop, no building on the VPS. Apps sleep to zero when idle, wake on the first request. Deploy as many as your disk holds.
           </p>
           <div class="flex flex-col sm:flex-row gap-3 justify-center">
             <a href="#start" class="px-6 py-3 bg-white text-night-950 font-bold rounded-xl hover:bg-violet-200 transition text-base flex items-center justify-center gap-2">
@@ -102,15 +103,15 @@
           </div>
           <div class="space-y-4">
             <div>
-              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">L8Bin Manager (Rust)</span><span class="font-bold text-white"><span id="mv-0" class="tabular-nums">16</span> MB</span></div>
+              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">L8Bin Manager (Rust)</span><span class="font-bold text-zinc-200"><span id="mv-0" class="tabular-nums">16</span> MB</span></div>
               <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-cyan-500 rounded-full bar-fill" style="width:0%" data-w="28%" data-count-id="mv-0" data-count-val="16"></div></div>
             </div>
             <div>
-              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Dashboard (React)</span><span class="font-bold text-white"><span id="mv-1" class="tabular-nums">2</span> MB</span></div>
+              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Dashboard (React)</span><span class="font-bold text-zinc-200"><span id="mv-1" class="tabular-nums">2</span> MB</span></div>
               <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-fuchsia-500 rounded-full bar-fill" style="width:0%" data-w="3%" data-count-id="mv-1" data-count-val="2"></div></div>
             </div>
             <div>
-              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Caddy Proxy</span><span class="font-bold text-white"><span id="mv-2" class="tabular-nums">29</span> MB</span></div>
+              <div class="flex justify-between text-sm mb-1.5"><span class="font-mono text-zinc-400">Caddy Proxy</span><span class="font-bold text-zinc-200"><span id="mv-2" class="tabular-nums">29</span> MB</span></div>
               <div class="h-1.5 bg-white/5 rounded-full"><div class="h-full bg-amber-500 rounded-full bar-fill" style="width:0%" data-w="50%" data-count-id="mv-2" data-count-val="29"></div></div>
             </div>
             <div class="pt-4 border-t border-white/10 flex justify-between items-center">
@@ -124,14 +125,15 @@
             <p id="under-load-note" class="absolute left-0 top-0 text-[10px] text-amber-500/90 uppercase font-mono whitespace-nowrap" style="visibility: hidden;">vps under load</p>
             <p id="updated-ago" class="absolute right-0 top-0 text-[10px] text-zinc-600 font-mono whitespace-nowrap" style="visibility: hidden;"></p>
           </div>
+          <a href="/live/" class="-mx-7 -mb-7 mt-6 flex items-center justify-center gap-2 border-t border-white/5 bg-black/40 py-3 rounded-b-2xl text-xs font-mono text-zinc-300 hover:text-white hover:bg-violet-500/10 transition">
+            <span class="flex items-end gap-[3px] h-3" aria-hidden="true"><span class="w-[3px] h-1 bg-emerald-400 rounded-sm"></span><span class="w-[3px] h-2.5 bg-emerald-400 rounded-sm"></span><span class="w-[3px] h-1.5 bg-emerald-400 rounded-sm"></span></span>
+            see detailed live stats <span class="text-violet-400">→</span>
+          </a>
         </div>
-        <a href="/live/" class="mt-4 self-center text-xs font-mono text-zinc-300 hover:text-violet-300 transition">
-          see detailed live stats <span class="text-violet-400">→</span>
-        </a>
         </div>
       </div>
       <p class="mt-16 text-center text-lg text-zinc-400">
-        Set it up once. <span class="text-zinc-100 font-semibold">Forget about it.</span>
+        Think about infra once, so you can <span class="text-zinc-100 font-semibold">build what matters.</span>
       </p>
     </div>
   </header>
@@ -141,24 +143,23 @@
   <section id="core" class="py-24 border-t border-white/5">
     <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="text-center mb-14">
-        <h2 class="text-4xl font-black text-white tracking-tighter mb-3">One tiny VPS. <span class="grad-text">All your apps.</span></h2>
+        <h2 class="text-4xl font-black text-zinc-100 tracking-tighter mb-3">One tiny VPS. <span class="grad-text">All your apps.</span></h2>
         <p class="text-zinc-500 font-mono text-sm max-w-2xl mx-auto">LiteBin itself sips memory and idle apps sleep to zero, so the deploy threshold drops to nothing. Spin up the fifteenth experiment; it costs the same as the first.</p>
       </div>
-      <div class="grid md:grid-cols-3 gap-5 mb-4">
+      <div class="grid md:grid-cols-3 gap-5">
         <div class="p-6 glass rounded-2xl">
-          <div class="text-violet-400 font-bold mb-2 text-sm uppercase tracking-tight">Sleep to zero</div>
-          <p class="text-sm text-zinc-500 leading-relaxed">No traffic? The app's RAM goes back to your VPS. Every idle project costs exactly nothing. No meters, no purge policies, no "inactive app deleted".</p>
+          <div class="text-lg font-bold text-zinc-200 mb-2">Sleep to zero</div>
+          <p class="text-sm text-zinc-400 leading-relaxed">No traffic? The app's RAM goes back to your VPS. Every idle project costs exactly nothing. No meters, no purge policies, no "inactive app deleted".</p>
         </div>
         <div class="p-6 glass rounded-2xl">
-          <div class="text-fuchsia-400 font-bold mb-2 text-sm uppercase tracking-tight">Wake in seconds</div>
-          <p class="text-sm text-zinc-500 leading-relaxed">A visitor hits the URL, the container starts in the background, the page refreshes into your app. Links you share never die of old age.</p>
+          <div class="text-lg font-bold text-zinc-200 mb-2">Wake in seconds</div>
+          <p class="text-sm text-zinc-400 leading-relaxed">A visitor hits the URL, the container starts in the background, the page refreshes into your app. Links you share never die of old age.</p>
         </div>
         <div class="p-6 glass rounded-2xl">
-          <div class="text-cyan-400 font-bold mb-2 text-sm uppercase tracking-tight">Always-on when it matters</div>
-          <p class="text-sm text-zinc-500 leading-relaxed">Paying users, a live demo, anything where the first second matters: flip that project to always-on. It's a per-project choice you can make anytime.</p>
+          <div class="text-lg font-bold text-zinc-200 mb-2">Always-on when it matters</div>
+          <p class="text-sm text-zinc-400 leading-relaxed">Paying users, a live demo, anything where the first second matters: flip that project to always-on. It's a per-project choice you can make anytime.</p>
         </div>
       </div>
-      <p class="text-center text-xs text-zinc-600 font-mono">Multi-service too: drop a docker-compose.yml and LiteBin runs the whole stack on its own network.</p>
     </div>
   </section>
 
@@ -168,7 +169,7 @@
     <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(124,58,237,0.09),transparent_70%)]"></div>
     <div class="max-w-6xl mx-auto px-6 relative z-10">
       <div class="text-center mb-12 fade-in">
-        <h2 class="text-3xl font-black text-white mb-2 uppercase tracking-tight">See it <span class="text-fuchsia-400">Sleep</span> & <span class="text-violet-400">Wake</span>.</h2>
+        <h2 class="text-3xl font-black text-zinc-100 mb-2 uppercase tracking-tight">See it <span class="text-fuchsia-400">Sleep</span> & <span class="text-violet-400">Wake</span>.</h2>
         <p class="text-zinc-500 text-sm">The core feature, live on real LiteBin instances.</p>
       </div>
       <!-- Wake cycle widget -->
@@ -254,20 +255,34 @@
       </div>
       <!-- Demo links -->
       <div class="grid md:grid-cols-2 gap-5 fade-in">
-        <a href="https://react-demo.l8b.in" target="_blank" class="p-6 glass rounded-2xl hover:border-fuchsia-500/40 transition group flex items-start gap-4">
-          <div class="w-10 h-10 bg-fuchsia-500/10 rounded-xl flex items-center justify-center shrink-0"><span class="text-fuchsia-400">⚡</span></div>
-          <div>
-            <div class="flex items-center gap-2 mb-1"><h4 class="font-bold text-white">Aggressive Demo</h4><span class="text-xs font-mono text-fuchsia-400 bg-fuchsia-500/10 px-1.5 py-0.5 rounded">60s sleep</span></div>
-            <p class="text-xs text-zinc-500 mb-2">Sleeps after 60 seconds. Come back after a minute and see the wake animation live.</p>
-            <span class="text-fuchsia-400 font-mono text-xs group-hover:underline">react-demo.l8b.in →</span>
+        <a href="https://react-demo.l8b.in" target="_blank" class="p-4 glass rounded-xl hover:border-fuchsia-500/50 hover:bg-fuchsia-500/5 transition-all duration-300 group flex items-center gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 mb-0.5">
+              <h4 class="font-bold text-zinc-200 text-sm">Aggressive Demo</h4>
+              <span class="text-[10px] font-mono text-fuchsia-400 bg-fuchsia-500/10 px-1.5 py-0.5 rounded">60s sleep</span>
+            </div>
+            <p class="text-xs text-zinc-400">Sleeps after 60 seconds — come back in a minute and watch it wake.</p>
+          </div>
+          <div class="ml-auto flex items-center gap-2.5 shrink-0">
+            <span class="text-fuchsia-400 font-mono text-xs hidden sm:inline">react-demo.l8b.in</span>
+            <div class="w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center text-zinc-500 transition-all duration-300 group-hover:border-fuchsia-500/50 group-hover:text-fuchsia-400 group-hover:translate-x-0.5" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+            </div>
           </div>
         </a>
-        <a href="https://portfolio.l8b.in" target="_blank" class="p-6 glass rounded-2xl hover:border-violet-500/40 transition group flex items-start gap-4">
-          <div class="w-10 h-10 bg-violet-500/10 rounded-xl flex items-center justify-center shrink-0"><span class="text-violet-400">📁</span></div>
-          <div>
-            <div class="flex items-center gap-2 mb-1"><h4 class="font-bold text-white">Portfolio Demo</h4><span class="text-xs font-mono text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded">15m sleep</span></div>
-            <p class="text-xs text-zinc-500 mb-2">Real-world sleep timer. Stays warm longer, still fully scales to zero when idle.</p>
-            <span class="text-violet-400 font-mono text-xs group-hover:underline">portfolio.l8b.in →</span>
+        <a href="https://portfolio.l8b.in" target="_blank" class="p-4 glass rounded-xl hover:border-violet-500/50 hover:bg-violet-500/5 transition-all duration-300 group flex items-center gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 mb-0.5">
+              <h4 class="font-bold text-zinc-200 text-sm">Portfolio Demo</h4>
+              <span class="text-[10px] font-mono text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded">15m sleep</span>
+            </div>
+            <p class="text-xs text-zinc-400">Real-world timer — stays warm longer, still scales to zero when idle.</p>
+          </div>
+          <div class="ml-auto flex items-center gap-2.5 shrink-0">
+            <span class="text-violet-400 font-mono text-xs hidden sm:inline">portfolio.l8b.in</span>
+            <div class="w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center text-zinc-500 transition-all duration-300 group-hover:border-violet-500/50 group-hover:text-violet-400 group-hover:translate-x-0.5" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+            </div>
           </div>
         </a>
       </div>
@@ -280,31 +295,31 @@
     <div class="max-w-6xl mx-auto px-6">
       <div class="grid lg:grid-cols-2 gap-12 items-start">
         <div class="fade-in">
-          <h2 class="text-3xl font-black text-white uppercase tracking-tight mb-3">Ship it <span class="text-violet-400">your way.</span></h2>
+          <h2 class="text-3xl font-black text-zinc-100 uppercase tracking-tight mb-3">Ship it <span class="text-violet-400">your way.</span></h2>
           <div class="flex gap-1 mb-6 bg-night-800 rounded-lg p-1 inline-flex flex-wrap">
             <button type="button" onclick="switchDeployTab('cli')" id="dtab-cli" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition bg-white/10 text-white shadow-sm">Terminal</button>
             <button type="button" onclick="switchDeployTab('gh')" id="dtab-gh" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition text-zinc-500 hover:text-zinc-300 cursor-pointer">GitHub</button>
             <button type="button" onclick="switchDeployTab('agent')" id="dtab-agent" class="dtab px-4 py-1.5 rounded-md text-xs font-mono font-semibold transition text-zinc-500 hover:text-zinc-300 cursor-pointer">AI Agent</button>
           </div>
           <div id="dcontent-cli">
-            <p class="text-zinc-500 text-sm leading-relaxed mb-6">One command from any directory. No YAML, no CI config, no Dockerfile needed. Builds happen on your machine. The VPS just runs the result.</p>
-            <ul class="space-y-3 text-sm text-zinc-500">
+            <p class="text-zinc-400 text-sm leading-relaxed mb-6">One command from any directory. No YAML, no CI config, no Dockerfile needed. Builds happen on your machine. The VPS just runs the result.</p>
+            <ul class="space-y-3 text-sm text-zinc-400">
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Builds on your laptop, zero CPU pressure on the VPS</span></li>
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Streams the image directly: no registry, no Docker Hub</span></li>
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Auto-detects Node, Python, Go, PHP and more via Railpack</span></li>
             </ul>
           </div>
           <div id="dcontent-gh" class="hidden">
-            <p class="text-zinc-500 text-sm leading-relaxed mb-6">Connect your GitHub account once. LiteBin creates the App, writes the deploy workflow into your repo, and sets the secrets itself. Push to deploy.</p>
-            <ul class="space-y-3 text-sm text-zinc-500">
+            <p class="text-zinc-400 text-sm leading-relaxed mb-6">Connect your GitHub account once. LiteBin creates the App, writes the deploy workflow into your repo, and sets the secrets itself. Push to deploy.</p>
+            <ul class="space-y-3 text-sm text-zinc-400">
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>One-click GitHub App setup, no review process, you own it</span></li>
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Workflow + secrets written for you, nothing to wire by hand</span></li>
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Builds run on GitHub-hosted runners; deploy on push or on demand</span></li>
             </ul>
           </div>
           <div id="dcontent-agent" class="hidden">
-            <p class="text-zinc-500 text-sm leading-relaxed mb-6">Add the LiteBin MCP server to Cursor, Claude Code, or any MCP-capable editor. Your agent pairs once, then deploys, verifies, sets env and restarts, end to end. No dashboard visits, no SSH.</p>
-            <ul class="space-y-3 text-sm text-zinc-500">
+            <p class="text-zinc-400 text-sm leading-relaxed mb-6">Add the LiteBin MCP server to Cursor, Claude Code, or any MCP-capable editor. Your agent pairs once, then deploys, verifies, sets env and restarts, end to end. No dashboard visits, no SSH.</p>
+            <ul class="space-y-3 text-sm text-zinc-400">
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>One entry in your editor's MCP settings; <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">l8b init --mcp</code> writes it for you</span></li>
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Scoped tokens: the agent gets exactly the access you approve</span></li>
               <li class="flex gap-3"><span class="text-violet-400">✔</span><span>Machine-readable everything: deploy → health-check → logs → fix → redeploy</span></li>
@@ -374,29 +389,33 @@
   <section id="who" class="py-24 border-t border-white/5">
     <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="text-center mb-14">
-        <h2 class="text-4xl font-black text-white tracking-tighter mb-3">Sound <span class="grad-text">familiar?</span></h2>
+        <h2 class="text-4xl font-black text-zinc-100 tracking-tighter mb-3">Sound <span class="grad-text">familiar?</span></h2>
         <p class="text-zinc-500 font-mono text-sm">The situations that led to LiteBin.</p>
       </div>
       <div class="grid md:grid-cols-2 gap-5 mb-8">
         <div class="p-7 glass rounded-2xl">
-          <h3 class="text-lg font-bold text-white mb-3">The link you shared is already dead</h3>
-          <p class="text-sm text-zinc-500 leading-relaxed">You demoed something on a free tier and moved on. Weeks later, someone actually clicks the link — purged for inactivity. Apps here <span class="text-zinc-300">sleep, they don't disappear</span>. The URL keeps working; it just wakes on the first hit.</p>
+          <h3 class="text-lg font-bold text-zinc-200 mb-3">The link you shared is already dead</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">You demoed something on a free tier and moved on. Weeks later, someone actually clicks the link — purged for inactivity. Apps here <span class="text-zinc-300">sleep, they don't disappear</span>. The URL keeps working; it just wakes on the first hit.</p>
         </div>
         <div class="p-7 glass rounded-2xl">
-          <h3 class="text-lg font-bold text-white mb-3">Too many ideas, one small VPS</h3>
-          <p class="text-sm text-zinc-500 leading-relaxed">Every experiment deserves a URL, but RAM says otherwise — so you keep deleting the old to make room for the new. <span class="text-zinc-300">Idle apps cost nothing here.</span> Stop choosing which project gets to exist.</p>
+          <h3 class="text-lg font-bold text-zinc-200 mb-3">Too many ideas, one small VPS</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">Every experiment deserves a URL, but RAM says otherwise — so you keep deleting the old to make room for the new. <span class="text-zinc-300">Idle apps cost nothing here.</span> Stop choosing which project gets to exist.</p>
         </div>
         <div class="p-7 glass rounded-2xl">
-          <h3 class="text-lg font-bold text-white mb-3">Your agent built it. Where does it live?</h3>
-          <p class="text-sm text-zinc-500 leading-relaxed">You build in Cursor or Claude, but shipping still means a dashboard, a card on file, a per-app plan. <span class="text-zinc-300">Give the agent a scoped token instead</span>: it deploys, health-checks, reads logs and redeploys while you stay in the editor.</p>
+          <h3 class="text-lg font-bold text-zinc-200 mb-3">Your agent built it. Where does it live?</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">You build in Cursor or Claude, but shipping still means a dashboard, a card on file, a per-app plan. <span class="text-zinc-300">Give the agent a scoped token instead</span>: it deploys, health-checks, reads logs and redeploys while you stay in the editor.</p>
         </div>
         <div class="p-7 glass rounded-2xl">
-          <h3 class="text-lg font-bold text-white mb-3">The box already has a job</h3>
-          <p class="text-sm text-zinc-500 leading-relaxed">The VPS runs your stuff; it doesn't need a 500MB+ tenant moving in. LiteBin's whole stack rests <span class="text-zinc-300">under 58MB</span>, manages what's already there, and when one box isn't enough you connect more from the same dashboard.</p>
+          <h3 class="text-lg font-bold text-zinc-200 mb-3">The box already has a job</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">The VPS runs your stuff; it doesn't need a 500MB+ tenant moving in. LiteBin's whole stack rests <span class="text-zinc-300">under 58MB</span>, manages what's already there, and when one box isn't enough you connect more from the same dashboard.</p>
+        </div>
+        <div class="p-7 glass rounded-2xl md:col-span-2">
+          <h3 class="text-lg font-bold text-zinc-200 mb-3">You like building, not maintaining</h3>
+          <p class="text-sm text-zinc-400 leading-relaxed">The client site you shipped last year? The URL is theirs now — redesigned, redirected, or gone one day. Keep your own copies on your VPS instead: a living archive of your freelance work, where <span class="text-zinc-300">idle copies cost nothing and wake the moment someone clicks.</span></p>
         </div>
       </div>
       <div class="p-6 glass rounded-2xl text-center">
-        <p class="text-sm text-zinc-400">Anything you want live without a per-app bill — a demo, a portfolio, a side project, an internal tool, a small SaaS. <span class="text-white font-semibold">Custom domains and TLS included.</span></p>
+        <p class="text-sm text-zinc-400">Anything you want live without a per-app bill — a demo, a portfolio, a side project, an internal tool, a small SaaS. <span class="text-zinc-200 font-semibold">Custom domains and TLS included.</span></p>
       </div>
     </div>
   </section>
@@ -405,7 +424,7 @@
   <section class="py-20 border-t border-white/5 bg-night-900/40">
     <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="text-center mb-10">
-        <h2 class="text-3xl font-black text-white uppercase tracking-tight mb-2">Every app, <span class="text-fuchsia-400">one dashboard.</span></h2>
+        <h2 class="text-3xl font-black text-zinc-100 uppercase tracking-tight mb-2">Every app, <span class="text-fuchsia-400">one dashboard.</span></h2>
         <p class="text-zinc-500 text-sm">Deploy, stop, wake, and manage everything from a clean web UI, or skip it entirely and use the CLI.</p>
       </div>
       <img src="dashboard.png" alt="L8BIN Dashboard" class="rounded-2xl border-2 border-white/10 shadow-2xl shadow-violet-900/20 glow w-full">
@@ -417,9 +436,9 @@
     <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="grid lg:grid-cols-2 gap-16 items-center">
         <div>
-          <h2 class="text-3xl font-black text-white mb-5 uppercase tracking-tight">One Manager.<br/><span class="text-violet-400">Unlimited Bins.</span></h2>
+          <h2 class="text-3xl font-black text-zinc-100 mb-5 uppercase tracking-tight">One Manager.<br/><span class="text-violet-400">Unlimited Bins.</span></h2>
           <p class="text-zinc-400 leading-relaxed mb-6 text-sm">Manage a fleet of tiny droplets from a single command center. LiteBin uses <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">mTLS</code> to secure communication between your Manager and Agents.</p>
-          <ul class="space-y-3 text-sm text-zinc-500">
+          <ul class="space-y-3 text-sm text-zinc-400">
             <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Mix any VPS, any provider: a 512MB box from Hetzner, a spare DigitalOcean droplet, an old home server. Each server hosts its own set of apps; more servers means room for more projects.</span></li>
             <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Remote control: restart, reload, and update any app from a single dashboard.</span></li>
             <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Auto-placement: new apps are dropped onto the server with the most free capacity at deploy time.</span></li>
@@ -430,17 +449,29 @@
         <div class="glass rounded-2xl p-8 glow relative overflow-hidden">
           <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(139,92,246,0.08),transparent)]"></div>
           <div class="relative z-10 flex flex-col items-center gap-4">
-            <p class="text-lg font-black text-white font-mono tracking-tight">Your <span class="text-violet-400">FrankenVPS</span></p>
+            <p class="text-lg font-black text-zinc-100 font-mono tracking-tight">Your <span class="text-violet-400">FrankenVPS</span></p>
             <div class="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs font-mono">L8BIN</div>
-            <div class="flex items-center gap-1">
-              <div class="w-px h-6 bg-violet-500/40 mx-auto"></div>
+            <svg class="w-full max-w-md -my-4" viewBox="0 0 300 56" fill="none" aria-hidden="true">
+              <g stroke="rgba(139,92,246,0.35)" stroke-width="1">
+                <path id="fl-eu" d="M150 1 C 150 24, 50 32, 50 55" />
+                <path id="fl-us" d="M150 1 L 150 55" />
+                <path id="fl-in" d="M150 1 C 150 24, 250 32, 250 55" />
+              </g>
+              <g fill="#a78bfa">
+                <circle class="fleet-packet" r="2.5"><animateMotion dur="2.4s" begin="0s" repeatCount="indefinite"><mpath href="#fl-eu"/></animateMotion></circle>
+                <circle class="fleet-packet" r="2.5"><animateMotion dur="2.4s" begin="1.2s" repeatCount="indefinite"><mpath href="#fl-eu"/></animateMotion></circle>
+                <circle class="fleet-packet" r="2.5"><animateMotion dur="2s" begin="0.5s" repeatCount="indefinite"><mpath href="#fl-us"/></animateMotion></circle>
+                <circle class="fleet-packet" r="2.5"><animateMotion dur="2s" begin="1.5s" repeatCount="indefinite"><mpath href="#fl-us"/></animateMotion></circle>
+                <circle class="fleet-packet" r="2.5"><animateMotion dur="2.7s" begin="0.2s" repeatCount="indefinite"><mpath href="#fl-in"/></animateMotion></circle>
+                <circle class="fleet-packet" r="2.5"><animateMotion dur="2.7s" begin="1.7s" repeatCount="indefinite"><mpath href="#fl-in"/></animateMotion></circle>
+              </g>
+            </svg>
+            <div class="grid grid-cols-3 gap-3 w-full max-w-md">
+              <div class="px-2 py-2 glass rounded-lg text-xs font-mono text-zinc-400 text-center"><div class="text-zinc-200">AGENT-EU-1</div><div class="text-[10px] text-zinc-400 mt-0.5">1GB · Hetzner</div></div>
+              <div class="px-2 py-2 glass rounded-lg text-xs font-mono text-zinc-400 text-center"><div class="text-zinc-200">AGENT-US-W</div><div class="text-[10px] text-zinc-400 mt-0.5">512MB · Vultr</div></div>
+              <div class="px-2 py-2 glass rounded-lg text-xs font-mono text-zinc-400 text-center"><div class="text-zinc-200">AGENT-IN-1</div><div class="text-[10px] text-zinc-400 mt-0.5">2GB · DigitalOcean</div></div>
             </div>
-            <div class="flex gap-3 flex-wrap justify-center">
-              <div class="px-3 py-2 glass rounded-lg text-xs font-mono text-zinc-400 text-center"><div>AGENT-EU-1</div><div class="text-[10px] text-zinc-600 mt-0.5">1GB · Hetzner</div></div>
-              <div class="px-3 py-2 glass rounded-lg text-xs font-mono text-zinc-400 text-center"><div>AGENT-US-W</div><div class="text-[10px] text-zinc-600 mt-0.5">512MB · Vultr</div></div>
-              <div class="px-3 py-2 glass rounded-lg text-xs font-mono text-zinc-400 text-center"><div>AGENT-IN-1</div><div class="text-[10px] text-zinc-600 mt-0.5">2GB · DigitalOcean</div></div>
-            </div>
-            <p class="text-xs text-zinc-600 mt-2 font-mono">All connected via mTLS</p>
+            <p class="text-xs text-zinc-600 mt-2 font-mono">All connections secured with mTLS</p>
           </div>
         </div>
       </div>
@@ -452,7 +483,7 @@
   <section id="compare" class="py-24 border-t border-white/5 bg-night-900/40">
     <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="mb-10">
-        <h2 class="text-2xl font-black text-white uppercase tracking-tight mb-1">How It Stacks Up.</h2>
+        <h2 class="text-2xl font-black text-zinc-100 uppercase tracking-tight mb-1">How It Stacks Up.</h2>
         <p class="text-zinc-500 text-sm font-mono">An honest look. We know our lane.</p>
       </div>
       <div class="overflow-x-auto rounded-2xl border border-white/8 bg-night-950">
@@ -507,7 +538,7 @@
   <!-- VPS Providers + Not For Production -->
   <section class="py-16 border-t border-white/5">
     <div class="max-w-4xl mx-auto px-6 fade-in">
-      <h3 class="text-lg font-bold text-white mb-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>Need a VPS?</h3>
+      <h3 class="text-lg font-bold text-zinc-200 mb-2 flex items-center gap-2"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-400 shrink-0" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>Need a VPS?</h3>
       <p class="text-sm text-zinc-500 mb-6">LiteBin thrives on tiny, high-value boxes.</p>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <a href="https://www.hetzner.com/cloud" class="inline-flex flex-col px-4 py-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition font-mono text-sm text-emerald-300 font-semibold"><div>Hetzner Cloud</div><div class="text-xs text-emerald-500/60 font-normal mt-0.5">from ~$4/mo</div></a>
@@ -515,7 +546,7 @@
         <a href="https://www.vultr.com/?ref=6803388" class="inline-flex flex-col px-4 py-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition font-mono text-sm text-emerald-300 font-semibold"><div>Vultr VPS</div><div class="text-xs text-emerald-500/60 font-normal mt-0.5">from $2.50/mo</div></a>
         <a href="https://www.lowendbox.com/" class="inline-flex flex-col px-4 py-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition font-mono text-sm text-emerald-300 font-semibold"><div>LowEndBox</div><div class="text-xs text-emerald-500/60 font-normal mt-0.5">from $1/mo</div></a>
       </div>
-      <p class="text-xs text-zinc-600 mt-3 italic">These links earn a small commission at no extra cost to you.</p>
+      <p class="text-xs text-zinc-600 mt-3 italic">These links may earn a small commission at no extra cost to you.</p>
       <p class="text-xs text-zinc-500 mt-4 border-t border-white/5 pt-4 text-center">Already have a spare box? Connect it. LiteBin doesn't care where your servers come from. Mix providers freely; each one gives you room for more apps.</p>
     </div>
   </section>
@@ -524,7 +555,7 @@
   <!-- CTA -->
   <section id="start" class="py-24 border-t border-white/5">
     <div class="max-w-2xl mx-auto px-6 text-center fade-in">
-      <h2 class="text-4xl font-black text-white tracking-tighter mb-3">Deploy your <span class="text-violet-500">first app.</span></h2>
+      <h2 class="text-4xl font-black text-zinc-100 tracking-tighter mb-3">Deploy your <span class="text-violet-500">first app.</span></h2>
       <p class="text-zinc-500 mb-8">Free and open source. Your first app is minutes away.</p>
       <div class="flex flex-wrap justify-center gap-3 mb-10">
         <a href="https://github.com/mtsandeep/l8bin" target="_blank" class="inline-flex items-center gap-2 px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm font-semibold text-white hover:bg-white/10 transition">
@@ -538,7 +569,7 @@
       <p class="text-sm text-zinc-400 mb-3">One command over SSH installs LiteBin on your VPS:</p>
       <div class="inline-block p-px bg-gradient-to-r from-violet-500 to-fuchsia-600 rounded-xl mb-4">
         <div class="bg-night-900 px-6 py-4 rounded-[11px] flex items-center gap-4">
-          <code class="text-white font-mono text-sm">curl -fsSL l8b.in | bash</code>
+          <code class="text-zinc-100 font-mono text-sm">curl -fsSL l8b.in | bash</code>
           <button type="button" onclick="copyInstall()" id="copy-btn" class="text-zinc-500 hover:text-violet-400 transition" title="Copy">
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Copy"><title>Copy</title><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>
@@ -554,20 +585,20 @@
     <p class="text-xs font-mono text-zinc-400 mb-1">This page woke up on a 512MB VPS. LiteBin is currently managing 5 apps on this server.</p>
     <p class="text-xs text-zinc-500 mb-4">1 vCPU · 512 MB · 512 MB swap · 10 GB · <a href="/live/" class="text-violet-400 hover:underline">View Live Stats →</a></p>
     <div class="flex flex-wrap justify-center gap-2 mb-6">
-      <a href="/" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-violet-500/40 hover:text-white hover:bg-violet-500/5 hover:scale-105 transition">
-        <span class="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 text-[10px]">Static</span>This page
+      <a href="/" class="inline-flex items-stretch overflow-hidden rounded-md text-xs font-mono text-zinc-400 border border-white/10 hover:border-violet-500/40 hover:text-white hover:bg-violet-500/5 hover:scale-105 transition">
+        <span class="px-2.5 flex items-center bg-violet-500/15 text-violet-400 text-[10px]">Static</span><span class="px-2.5 py-1.5 flex items-center">This page</span>
       </a>
-      <a href="https://portfolio.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-blue-500/40 hover:text-white hover:bg-blue-500/5 hover:scale-105 transition">
-        <span class="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 text-[10px]">React SPA</span>Portfolio
+      <a href="https://portfolio.l8b.in" target="_blank" class="inline-flex items-stretch overflow-hidden rounded-md text-xs font-mono text-zinc-400 border border-white/10 hover:border-blue-500/40 hover:text-white hover:bg-blue-500/5 hover:scale-105 transition">
+        <span class="px-2.5 flex items-center bg-blue-500/15 text-blue-600 text-[10px]">React SPA</span><span class="px-2.5 py-1.5 flex items-center">Portfolio</span>
       </a>
-      <a href="https://react-demo.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-amber-500/40 hover:text-white hover:bg-amber-500/5 hover:scale-105 transition">
-        <span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 text-[10px]">Express + React</span>Aggressive Sleep
+      <a href="https://react-demo.l8b.in" target="_blank" class="inline-flex items-stretch overflow-hidden rounded-md text-xs font-mono text-zinc-400 border border-white/10 hover:border-amber-500/40 hover:text-white hover:bg-amber-500/5 hover:scale-105 transition">
+        <span class="px-2.5 flex items-center bg-amber-500/15 text-amber-600 text-[10px]">Express + React</span><span class="px-2.5 py-1.5 flex items-center">Aggressive Sleep</span>
       </a>
-      <a href="https://nextjs-ssr-demo.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-cyan-500/40 hover:text-white hover:bg-cyan-500/5 hover:scale-105 transition">
-        <span class="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-600 text-[10px]">Next.js SSR</span>Ecom Demo
+      <a href="https://nextjs-ssr-demo.l8b.in" target="_blank" class="inline-flex items-stretch overflow-hidden rounded-md text-xs font-mono text-zinc-400 border border-white/10 hover:border-cyan-500/40 hover:text-white hover:bg-cyan-500/5 hover:scale-105 transition">
+        <span class="px-2.5 flex items-center bg-cyan-500/15 text-cyan-600 text-[10px]">Next.js SSR</span><span class="px-2.5 py-1.5 flex items-center">Ecom Demo</span>
       </a>
-      <a href="https://quiz.l8b.in" target="_blank" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 border border-white/10 hover:border-emerald-500/40 hover:text-white hover:bg-emerald-500/5 hover:scale-105 transition">
-        <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 text-[10px]">NodeJS + PG + OpenAI + React</span>Calorie Quiz
+      <a href="https://quiz.l8b.in" target="_blank" class="inline-flex items-stretch overflow-hidden rounded-md text-xs font-mono text-zinc-400 border border-white/10 hover:border-emerald-500/40 hover:text-white hover:bg-emerald-500/5 hover:scale-105 transition">
+        <span class="px-2.5 flex items-center bg-emerald-500/15 text-emerald-600 text-[10px]">NodeJS + PG + OpenAI + React</span><span class="px-2.5 py-1.5 flex items-center">Calorie Quiz</span>
       </a>
     </div>
     <p class="text-xs text-zinc-500 mb-2">Engineers, not salesmen. LiteBin is for everything you want live without per-app bills.</p>

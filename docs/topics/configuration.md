@@ -40,6 +40,22 @@ Only needed when `ROUTING_MODE=cloudflare_dns`. Also configurable via Dashboard 
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API token with DNS edit permissions |
 | `CLOUDFLARE_ZONE_ID` | Cloudflare zone ID for your domain |
 
+## DNS Records
+
+Create **DNS-only** (grey cloud, not proxied) A records in your DNS provider. The records depend on your routing mode:
+
+| Routing Mode | Records to Create | Managed By |
+|---|---|---|
+| `master_proxy` (default) | `*.{domain}` → master IP | Manual (one wildcard) |
+| `cloudflare_dns` | `{DASHBOARD_SUBDOMAIN}.{domain}` → master IP<br>`{POKE_SUBDOMAIN}.{domain}` → master IP | Manual (2 records) |
+| | All app subdomains (e.g. `{project}.{domain}`) | **Automatic** via Cloudflare API |
+
+Specific DNS records always override wildcards — you can keep `mail.` / other hosts on the same zone pointing elsewhere. Apex (`domain.com`) is not covered by `*.domain.com`; use a subdomain as `DOMAIN` (e.g. `apps.example.com`) if you need the apex for something else.
+
+> **cloudflare_dns mode:** Do NOT create a wildcard (`*`) record. It is not needed and will conflict with the per-project records created automatically.
+
+> **Tryout (sslip.io):** No DNS setup. Full features work; Let's Encrypt may fail. Change to a real domain later in **Dashboard → Settings**.
+
 ## Agent (Worker node)
 
 All agent variables use the `AGENT_` prefix. Not needed on the master.

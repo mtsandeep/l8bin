@@ -138,7 +138,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t ghcr.io/me/myapp:pr-${{ github.event.number }} .
       - run: docker push ghcr.io/me/myapp:pr-${{ github.event.number }}
-      - uses: mtsandeep/l8bin-action@v1
+      - uses: mtsandeep/l8bin-action@v0.2.0
         with:
           server: ${{ secrets.L8B_SERVER }}
           token: ${{ secrets.L8B_TOKEN }}

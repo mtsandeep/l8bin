@@ -77,6 +77,13 @@ section[id] {
   background-size: 28px 28px;
 }
 
+/* Fleet diagram packets — SMIL animation ignores prefers-reduced-motion, so gate it here */
+@media (prefers-reduced-motion: reduce) {
+  .fleet-packet {
+    display: none;
+  }
+}
+
 .fade-in {
   opacity: 0;
   transform: translateY(16px);

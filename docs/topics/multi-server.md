@@ -5,7 +5,7 @@ LiteBin supports running across multiple servers (nodes). One server acts as the
 ## Prerequisites
 
 - A master server set up via `curl -fsSL https://l8b.in | bash`
-- One or more agent servers with Docker installed
+- One or more agent servers (any Linux box — the installer sets up Docker if it's missing)
 - Root CA certificates generated during master setup (used for mTLS between master and agents)
 
 ## Adding an Agent
@@ -15,9 +15,32 @@ LiteBin supports running across multiple servers (nodes). One server acts as the
 curl -fsSL https://l8b.in | bash -s agent
 ```
 
+The installer will prompt for:
+
+| Prompt | Description | Default |
+|--------|-------------|---------|
+| Master dashboard URL | Your master's dashboard URL (e.g. `https://l8bin.example.com`) | — |
+| Node name | A name for this worker (e.g. `worker-1`) | — |
+| Agent port | Host port for the agent | `5083` |
+| Cert bundle | Paste the cert bundle from the master's multi-node setup | — |
+
 This installs the agent binary, generates mTLS certs (signed by the master's Root CA), and starts:
 - **Agent app** — API server on container port 8443 (mTLS, orchestrator-only); the installer publishes it on host port **5083**
 - **Agent Caddy sidecar** — Reverse proxy on ports 80/443 (handles app traffic)
+
+After setup, register the node on the master: **Dashboard → Nodes → Add Node**, enter the node name and the worker's public IP, then click **Connect**. You can also start here — **Add Node** shows the install command to copy.
+
+### Regenerating certificates
+
+Re-run the certs command on the master. This invalidates all existing agent connections — update each agent afterward:
+
+```bash
+# On the master
+curl -fsSL https://l8b.in | bash -s certs
+
+# On each agent — prompts for the new cert bundle
+curl -fsSL https://l8b.in | bash -s agent --update-certs
+```
 
 ## Routing Modes
 

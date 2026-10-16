@@ -12,8 +12,6 @@ Cloud hosting platforms are great until you check the bill for side projects you
 
 LiteBin runs on **one cheap VPS** ($5-10/mo) and sleeps apps when nobody's looking. No per-app fees, no credit card on file, no vendor lock-in. Deploy from your laptop or GitHub Actions — your Docker image runs as-is, behind your own domain, with automatic HTTPS.
 
-v0.2 adds **multi-service deploy** (bring your own `docker-compose.yml`), **volume persistence** (named volumes and bind mounts), **custom route proxy** (path-based and subdomain alias routing), and **compose variable interpolation** (`${VAR}`, `${VAR:-default}`).
-
 It's built for engineers who want their side projects, demos, and portfolio apps **actually running** — not just committed to a repo or sitting in a local Docker container.
 
 ## Design Decisions
@@ -28,6 +26,8 @@ It's built for engineers who want their side projects, demos, and portfolio apps
 | **No Kubernetes** | LiteBin manages 1-50 apps on 1-5 servers. K8s adds complexity with no benefit at this scale |
 | **Scale-to-zero for web apps** | Idle web projects can sleep and wake on HTTP requests, saving resources without losing on-demand availability |
 
+More rationale in [Design Decisions](docs/architecture/decisions.md).
+
 ## Routing Modes
 
 LiteBin has two routing modes, switchable from the dashboard at any time:
@@ -36,7 +36,7 @@ LiteBin has two routing modes, switchable from the dashboard at any time:
 
 **Cloudflare DNS** — DNS points directly to agent nodes. Each agent handles its own traffic independently. Trade-off: requires a Cloudflare account. The key advantage: **agents continue serving traffic even if the master is down.**
 
-See [Architecture](docs/architecture/architecture.md) for the full breakdown.
+See [Architecture](docs/architecture/architecture.md) for the full breakdown, and [Configuration → DNS Records](docs/topics/configuration.md) for the records each mode needs.
 
 ## Quick Start
 
@@ -54,242 +54,16 @@ curl -fsSL https://l8b.in | bash -s agent
 curl -fsSL https://l8b.in | bash -s cli
 ```
 
----
-
-## Master Server Setup
-
-Run on a Linux VPS with Docker installed. A domain is recommended for production; you can also try LiteBin without one (sslip.io).
-
-```bash
-curl -fsSL https://l8b.in | bash -s master
-```
-
-The installer will prompt for:
-
-| Prompt | Description | Default |
-|--------|-------------|---------|
-| Domain ready? | Yes = your domain/subdomain; No = tryout via `{ip}.sslip.io` | No |
-| Domain | Your server's domain (e.g. `example.com` or `apps.example.com`) | *(if Yes)* |
-| Dashboard subdomain | Subdomain for the dashboard | `l8bin` |
-| Poke subdomain | Subdomain for agent wake endpoint | `poke` |
-| Routing mode | `master_proxy` or `cloudflare_dns` (skipped on tryout) | `master_proxy` |
-
-After setup:
-
-1. Open `https://l8bin.example.com` (or your tryout URL) and create an admin account
-2. Configure DNS for your domain if not using tryout (see below)
-3. Deploy apps using any method below
-
-### DNS Setup
-
-Create **DNS-only** (grey cloud, not proxied) A records in your DNS provider. The records depend on your routing mode:
-
-| Routing Mode | Records to Create | Managed By |
-|---|---|---|
-| `master_proxy` (default) | `*.{domain}` → master IP | Manual (one wildcard) |
-| `cloudflare_dns` | `{DASHBOARD_SUBDOMAIN}.{domain}` → master IP<br>`{POKE_SUBDOMAIN}.{domain}` → master IP | Manual (2 records) |
-| | All app subdomains (e.g. `{project}.{domain}`) | **Automatic** via Cloudflare API |
-
-Specific DNS records always override wildcards — you can keep `mail.` / other hosts on the same zone pointing elsewhere. Apex (`domain.com`) is not covered by `*.domain.com`; use a subdomain as `DOMAIN` (e.g. `apps.example.com`) if you need the apex for something else.
-
-> **cloudflare_dns mode:** Do NOT create a wildcard (`*`) record. It is not needed and will conflict with the per-project records created automatically. Also requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` in your `.env` or Dashboard Settings. `DOMAIN` may be a subdomain of your Cloudflare zone.
-
-> **Tryout (sslip.io):** No DNS setup. Full features work; Let's Encrypt may fail. Change to a real domain later in **Dashboard → Settings**.
-
-### Multi-node (optional)
-
-To add agents, run the multi-node setup on the master server:
-
-```bash
-# On the master — generates mTLS certs, prints a cert bundle
-curl -fsSL https://l8b.in | bash -s certs
-```
-
-This generates ECDSA P-256 mTLS certificates, configures the master, and prints a compact cert bundle.
-
-#### To regenerate certificates
-
-Re-run the same command. This **invalidates all existing agent connections** — update each agent afterward:
-
-```bash
-# On each agent — prompts for new cert bundle
-curl -fsSL https://l8b.in | bash -s agent --update-certs
-```
-
----
-
-## Agent Setup
-
-Run on a separate Linux server. Requires Docker.
-
-You can also start this from the **dashboard** -> **Nodes** -> **Add Node**, which shows the install command to copy.
-
-```bash
-curl -fsSL https://l8b.in | bash -s agent
-```
-
-The installer will prompt for:
-
-| Prompt | Description |
-|--------|-------------|
-| Master dashboard URL | Your master's dashboard URL (e.g. `https://l8bin.example.com`) |
-| Node name | A name for this worker (e.g. `worker-1`) |
-| Agent port | Host port for the agent (default: `5083`) |
-| Cert bundle | Paste the cert bundle from the multi-node setup |
-
-After setup, go to the master dashboard -> **Nodes** -> **Add Node**, enter the node name and the worker's public IP, then click **Connect**.
-
----
+Run the master on a Linux VPS as root — the installer sets up Docker if it's missing. The guided walkthrough (prompts, DNS, admin account, first deploy) lives at **[l8bin.com/quickstart](https://l8bin.com/quickstart)**.
 
 ## Deploying Apps
 
-### Option 1: Dashboard
+- **CLI** — `l8b ship` builds on your machine and streams the image to the server. No registry needed; Dockerfile optional (Railpack auto-detects). ([CLI reference](docs/reference/cli.md))
+- **Dashboard** — click Deploy and enter any public-registry image, or upload a `docker-compose.yml` for multi-service apps.
+- **GitHub** — the dashboard's GitHub App writes the workflow + secrets into your repo ([github-connect](docs/topics/github-connect.md)), or wire [l8bin-action](https://github.com/mtsandeep/l8bin-action) by hand.
+- **AI agents** — give Cursor or Claude the LiteBin MCP server and let them deploy, verify, and fix end-to-end: [l8bin.com/agents](https://l8bin.com/agents).
 
-Open the dashboard and click **Deploy**. Enter an image from any public registry:
-
-```
-nginx:alpine
-node:20
-ghcr.io/org/app:latest
-```
-
-Or upload a `docker-compose.yml` for multi-service apps (e.g. frontend + API + database). The dashboard will parse the compose file, detect the public service, and start all containers on a per-project Docker network with dependency-ordered startup.
-
-Dashboard deploys only support pre-built images from public registries. Private registry support is coming soon.
-
-### Option 2: CLI
-
-Install the CLI:
-
-```bash
-curl -fsSL https://l8b.in | bash -s cli
-```
-
-Log in to your server:
-
-```bash
-l8b login --server https://l8bin.example.com
-```
-
-Deploy from a local project (auto-detects Dockerfile or uses Railpack):
-
-```bash
-l8b ship
-```
-
-Or deploy non-interactively (port auto-detected from `EXPOSE`):
-
-```bash
-l8b deploy --project myapp
-```
-
-For multi-service (compose) projects:
-
-```bash
-# Auto-detected when docker-compose.yml exists
-l8b deploy --project myapp
-
-# Selective service rebuild (CI-friendly)
-l8b deploy --project myapp --service api --service worker
-
-# Force compose mode explicitly
-l8b deploy --project myapp --compose
-```
-
-For CI/CD, use a deploy token (created from the dashboard):
-
-```bash
-export L8B_TOKEN=your-token-here
-l8b deploy --project myapp --port 3000
-```
-
-### Option 3: GitHub
-
-The dashboard can set all of this up for you: **Settings → GitHub → Connect with GitHub App** (one prefilled click on GitHub, no approval needed — or paste a PAT on LAN boxes), then **Deploy → GitHub repo**, pick a repo and branch. LiteBin writes the workflow and secrets into the repo itself and shows deploy status on the project card, with optional auto-deploy on push.
-
-Prefer wiring it yourself? Add a workflow to your repo:
-
-```yaml
-name: Deploy
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: mtsandeep/l8bin-action@v1
-        with:
-          server: ${{ secrets.L8B_SERVER }}
-          token: ${{ secrets.L8B_TOKEN }}
-          project_id: myapp
-```
-
-For multi-service (compose) projects:
-
-```yaml
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: mtsandeep/l8bin-action@v1
-        with:
-          server: ${{ secrets.L8B_SERVER }}
-          token: ${{ secrets.L8B_TOKEN }}
-          project_id: myapp
-          compose: true
-          services: api,worker    # optional: rebuild only specific services
-```
-
----
-
-## Running Locally on Windows
-
-For development and testing on Windows with Docker Desktop.
-
-### Prerequisites
-
-- Windows with Docker Desktop
-
-### Quick start
-
-```powershell
-iex (irm https://l8b.in/windows.ps1)
-```
-
-Downloads release binaries from GitHub, generates Dockerfiles + docker-compose, and starts everything. Defaults to `localhost` (domain) and `l8bin.localhost` (dashboard).
-
-Optional flags:
-
-```powershell
-iex "& { $(irm https://l8b.in/windows.ps1) } -Domain example.com -DashboardSub l8bin"
-```
-
-Install CLI only:
-
-```powershell
-iex "& { $(irm https://l8b.in/windows.ps1) } -Cli"
-```
-
-To clean up:
-
-```powershell
-iex "& { $(irm https://l8b.in/windows.ps1) } -Clean"
-```
-
-### What you get
-
-| Component | URL |
-|-----------|-----|
-| Dashboard & API | `https://l8bin.localhost` |
-
-Caddy generates a self-signed TLS certificate for `*.localhost`. Your browser will show a certificate warning — trust it or import the root cert from Docker.
-
----
+Idle apps sleep to zero and wake on the first request; any project can be pinned always-on.
 
 ## Architecture
 
@@ -314,25 +88,36 @@ Caddy generates a self-signed TLS certificate for `*.localhost`. Your browser wi
 - **Caddy** — reverse proxy with automatic TLS termination, dynamic routing via admin API, and custom route proxy support (path-based and subdomain alias)
 - **Agent** — runs on remote servers, manages containers locally, handles wake requests autonomously via mTLS
 
-See [Architecture](docs/architecture/architecture.md) for detailed component breakdown, routing modes, and links to all technical docs. See [Design Decisions](docs/architecture/decisions.md) for why these technologies were chosen. See [Troubleshooting FAQ](docs/topics/faq.md) for common issues.
+See [Architecture](docs/architecture/architecture.md) for the detailed component breakdown, routing modes, and links to all technical docs.
 
----
+## Multi-Node (Optional)
 
-## Configuration
+Mix any servers, any providers — each agent hosts its own set of apps:
 
-All config is in `.env` after install. Key variables:
+```bash
+# On the master — generates mTLS certs, prints a cert bundle
+curl -fsSL https://l8b.in | bash -s certs
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DOMAIN` | Your server domain | *(required on Linux)* |
-| `DASHBOARD_SUBDOMAIN` | Dashboard subdomain | `l8bin` |
-| `ROUTING_MODE` | `master_proxy` or `cloudflare_dns` | `master_proxy` |
-| `DEFAULT_AUTO_STOP_MINS` | Mins before idle apps sleep | `15` |
-| `JANITOR_INTERVAL_SECS` | Janitor check interval | `300` (5 min) |
+# On each agent — prompts for the cert bundle
+curl -fsSL https://l8b.in | bash -s agent
+```
 
-See [`.env.example`](.env.example) for the full list.
+Or start from the dashboard — **Nodes → Add Node** — which walks you through it. Details in [Multi-Server Setup](docs/topics/multi-server.md).
 
----
+## Documentation
+
+| Topic | Link |
+|---|---|
+| Architecture | [docs/architecture/architecture.md](docs/architecture/architecture.md) |
+| Design decisions | [docs/architecture/decisions.md](docs/architecture/decisions.md) |
+| Multi-server (agents, mTLS) | [docs/topics/multi-server.md](docs/topics/multi-server.md) |
+| Volumes & persistence | [docs/topics/volumes.md](docs/topics/volumes.md) |
+| Configuration & DNS records | [docs/topics/configuration.md](docs/topics/configuration.md) · [`.env.example`](.env.example) |
+| GitHub connect | [docs/topics/github-connect.md](docs/topics/github-connect.md) |
+| Security · Backup | [docs/topics/security.md](docs/topics/security.md) · [docs/topics/backup.md](docs/topics/backup.md) |
+| FAQ / troubleshooting | [docs/topics/faq.md](docs/topics/faq.md) |
+| CLI reference · REST API | [docs/reference/cli.md](docs/reference/cli.md) · [API docs](https://l8bin.com/docs) · [openapi.json](https://l8bin.com/docs/openapi.json) |
+| llms.txt (for agents) | [l8bin.com/llms.txt](https://l8bin.com/llms.txt) · [l8bin.com/llms-full.txt](https://l8bin.com/llms-full.txt) (with API spec) |
 
 ## Development
 
@@ -349,16 +134,12 @@ cargo check
 docker compose --profile master up -d --build
 ```
 
-See [Development Guide](docs/dev/development.md) for build scripts, local testing, Windows development, cross-compilation, and more.
+On Windows with Docker Desktop, the installer script runs the full stack locally:
 
----
+```powershell
+iex (irm https://l8b.in/windows.ps1)   # add -Clean to tear it down
+```
 
-## Resources
+Caddy generates a self-signed cert for `*.localhost` — expect a browser warning.
 
-| Resource | Link |
-|----------|------|
-| Website | [l8bin.com](https://l8bin.com) |
-| API Docs (Scalar) | [l8bin.com/docs](https://l8bin.com/docs) |
-| OpenAPI Spec | [l8bin.com/docs/openapi.json](https://l8bin.com/docs/openapi.json) |
-| llms.txt | [l8bin.com/llms.txt](https://l8bin.com/llms.txt) |
-| Full llms.txt (with API spec) | [l8bin.com/llms-full.txt](https://l8bin.com/llms-full.txt) |
+See the [Development Guide](docs/dev/development.md) for build scripts, local testing, Windows development, and cross-compilation.

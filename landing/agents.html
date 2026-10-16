@@ -24,7 +24,7 @@
   <!-- Nav -->
   <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
     <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-1"><img src="/logo.svg" alt="" class="h-[22px] mt-[3px]" style="height:22px" /><span class="font-black text-white tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
+      <a href="/" class="flex items-center gap-1"><img src="/logo.svg" alt="" class="h-[22px] mt-[3px]" style="height:22px" /><span class="font-black text-zinc-100 tracking-tighter font-mono text-3xl pt-[4px]">L8BIN<span class="text-violet-500">.</span></span></a>
       <div class="hidden md:flex items-center gap-8 text-sm text-zinc-400">
         <a href="/#core" class="nav-link hover:text-white transition">Why</a>
         <a href="/#ship" class="nav-link hover:text-white transition">Ship</a>
@@ -33,7 +33,7 @@
         <a href="/docs/" class="nav-link hover:text-white transition">Docs</a>
       </div>
       <div class="flex items-center gap-3">
-        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white">GitHub →</a>
+        <a href="https://github.com/mtsandeep/l8bin" class="text-xs font-mono px-3 py-1.5 border border-white/10 rounded-lg hover:bg-white/5 transition text-zinc-400 hover:text-white inline-flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
         <a href="/quickstart" class="hidden sm:inline-flex text-xs font-mono px-3 py-1.5 bg-violet-600 hover:bg-violet-500 transition rounded-lg text-white font-bold">Quick Start</a>
         <button type="button" id="mobile-menu-btn" class="md:hidden flex flex-col justify-center items-center w-8 h-8 gap-1.5 rounded hover:bg-white/5 transition" aria-label="Toggle menu">
           <span id="mhb-1" class="block w-5 h-px bg-zinc-400 transition-all origin-center"></span>
@@ -107,7 +107,7 @@
                 </button>
                 <code class="text-xs text-zinc-300">curl -fsSL https://l8b.in | bash</code>
               </div>
-              <p class="text-sm text-zinc-500 mt-4">Fresh install? Create the first admin account when the installer finishes (the <a href="/quickstart" class="text-violet-400 hover:underline">quickstart</a> walks the prompts).</p>
+              <p class="text-sm text-zinc-400 mt-4">Fresh install? Create the first admin account when the installer finishes (the <a href="/quickstart" class="text-violet-400 hover:underline">quickstart</a> walks the prompts).</p>
             </div>
           </div>
 
@@ -131,7 +131,7 @@
                   </button>
                 </div>
               </div>
-              <p class="text-sm text-zinc-500 mt-4">The agent takes it from here. It writes <code class="bg-white/5 px-1 rounded font-mono">.mcp.json</code> with the npx shim (no CLI install, the binary downloads on first use), then has you reload the client so it can call the <code class="bg-white/5 px-1 rounded font-mono">setup</code> tool: it asks for your server URL, runs the pairing, and hands you an approval link. Open it, pick the scope, approve.</p>
+              <p class="text-sm text-zinc-400 mt-4">The agent takes it from here. It writes <code class="bg-white/5 px-1 rounded font-mono">.mcp.json</code> with the npx shim (no CLI install, the binary downloads on first use), then has you reload the client so it can call the <code class="bg-white/5 px-1 rounded font-mono">setup</code> tool: it asks for your server URL, runs the pairing, and hands you an approval link. Open it, pick the scope, approve.</p>
               <div class="mt-5" data-tabs>
                 <p class="text-[11px] font-mono uppercase tracking-widest text-zinc-600 mb-2">rather register it yourself?</p>
                 <div class="rounded-xl overflow-hidden border border-white/10">
@@ -160,7 +160,7 @@
                     <p class="text-[11px] text-zinc-600 mt-3">Paste into the workspace <code>.mcp.json</code> or your client's MCP config. Windows clients that don't resolve <code>.cmd</code> shims: command <span class="text-zinc-400">cmd</span>, args <span class="text-zinc-400">["/c", "npx", "-y", "l8bin-mcp"]</span>.</p>
                   </div>
                 </div>
-                <p class="text-sm text-zinc-500 mt-4">After the reload, ask your agent to run the <code class="bg-white/5 px-1 rounded font-mono">setup</code> tool; it pairs auth from there.</p>
+                <p class="text-sm text-zinc-400 mt-4">After the reload, ask your agent to run the <code class="bg-white/5 px-1 rounded font-mono">setup</code> tool; it pairs auth from there.</p>
               </div>
             </div>
           </div>
