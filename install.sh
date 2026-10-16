@@ -176,6 +176,22 @@ get_latest_release() {
   echo "$tag"
 }
 
+normalize_release_tag() {
+  local tag="${1//[[:space:]]/}"
+  [ -z "$tag" ] && return 0
+  echo "v${tag#[vV]}"
+}
+
+verify_release_exists() {
+  local tag="$1"
+  [ -n "${L8B_RELEASE_DIR:-}" ] && return 0
+  local response
+  if ! response=$(curl -sf "https://api.github.com/repos/${REPO}/releases/tags/${tag}" 2>/dev/null) \
+    || ! grep -q '"tag_name"' <<<"$response"; then
+    die "Release ${tag} not found. Check available releases at ${CHANGELOG_URL}"
+  fi
+}
+
 download_and_verify() {
   local url="$1" dest="$2" name="$3"
 
@@ -1518,13 +1534,10 @@ update_master() {
     case "${choice:-1}" in
       2)
         prompt "Enter version (e.g. v0.1.2)" target_release ""
+        target_release=$(normalize_release_tag "$target_release")
         [ -z "$target_release" ] && die "Version is required"
         # Verify release exists on GitHub
-        if [ -z "${L8B_RELEASE_DIR:-}" ]; then
-          if ! curl -sf "https://api.github.com/repos/${REPO}/releases/tags/${target_release}" 2>/dev/null | grep -q '"tag_name"'; then
-            die "Release ${target_release} not found. Check available releases at ${CHANGELOG_URL}"
-          fi
-        fi
+        verify_release_exists "$target_release"
         ;;
       *)
         target_release="$latest_release"
@@ -1762,13 +1775,10 @@ update_agent() {
     case "${choice:-1}" in
       2)
         prompt "Enter version (e.g. v0.1.2)" target_release ""
+        target_release=$(normalize_release_tag "$target_release")
         [ -z "$target_release" ] && die "Version is required"
         # Verify release exists on GitHub
-        if [ -z "${L8B_RELEASE_DIR:-}" ]; then
-          if ! curl -sf "https://api.github.com/repos/${REPO}/releases/tags/${target_release}" 2>/dev/null | grep -q '"tag_name"'; then
-            die "Release ${target_release} not found. Check available releases at ${CHANGELOG_URL}"
-          fi
-        fi
+        verify_release_exists "$target_release"
         ;;
       *)
         target_release="$latest_release"

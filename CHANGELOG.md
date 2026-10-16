@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Updating to a specific version failed with "Release not found" — fixed; the version prompt now accepts both `0.4.7` and `v0.4.7`.
+
 ## [0.4.7] - 2026-10-16
 
 ### Added
