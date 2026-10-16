@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-10-16
+
 ### Added
 - **Docker daemon + sshd protection** — the installer now applies CPU/memory protection to docker.service, containerd.service, and sshd on install and update (live, no restarts). Fixes the measured failure where a memory-churn app fleet starves the daemon and every dashboard action (deploy/stop/delete) hangs indefinitely: with it, the same storm leaves actions at 2–13s and cleanup of 28 apps completes in 34s.
 - **Stress-test suite** ([test-apps/resource-stress/](test-apps/resource-stress/README.md)) — the resource-protection results are now replicable: memory/CPU fleet ramps, timed management-action trials, k6 percentile measurement, an external observer, and a report generator. [RESULTS.md](test-apps/resource-stress/RESULTS.md) holds the full campaign findings, including the ~1×RAM swap recommendation.
