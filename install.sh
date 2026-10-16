@@ -145,6 +145,7 @@ ensure_docker_compose() {
 
 # Daemon resource protection — docs/architecture/resource-protection.md.
 harden_daemons() {
+  is_linux || return 0
   if ! systemctl set-property docker.service CPUWeight=2000 MemoryLow=150M >/dev/null 2>&1; then
     warn "could not apply docker.service resource protection"
   fi

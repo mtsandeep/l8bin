@@ -4,8 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Windows installer: `update` mode — update to latest or a specific version, with database backup and staged restart.
+- Windows installer: interactive menu on a bare run (master / CLI / update) like install.sh.
+
+### Changed
+- Windows installer: single domain prompt like install.sh (Enter = localhost). Local installs keep plain-HTTP access — `http://<sub>.localhost` via Caddy plus the direct `http://localhost:5080` fallback; real domains auto-TLS.
+
 ### Fixed
 - Updating to a specific version failed with "Release not found" — fixed; the version prompt now accepts both `0.4.7` and `v0.4.7`.
+- Windows installer brought to parity with install.sh: jemalloc memory env, resource protections, log rotation caps, checksum-verified downloads, `.env` preserved on re-run.
+- Windows installer generated Caddyfiles with empty site addresses (`{}.{} ` instead of `{$DASHBOARD_SUBDOMAIN}.{$DOMAIN}`) — subdomain routing never worked from a Windows install.
+- Spurious docker resource-protection warning when running install.sh in Git Bash on Windows.
 
 ## [0.4.7] - 2026-10-16
 
