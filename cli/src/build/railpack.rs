@@ -181,13 +181,7 @@ pub(super) async fn build_with_railpack_docker(
     if let Some(s) = &spinner {
         s.finish_and_clear();
     }
-    if let Some((stderr, stdout)) = last_output
-        && !ci_mode
-    {
-        eprintln!("{}", stdout);
-        eprintln!("{}", stderr);
-    }
-    anyhow::bail!("railpack build failed after {} attempts", max_retries);
+    Err(railpack_failure(&last_output, ci_mode, max_retries))
 }
 
 // Railpack native (Linux / macOS)
@@ -270,13 +264,7 @@ pub(super) async fn build_with_railpack_native(
     if let Some(s) = &spinner {
         s.finish_and_clear();
     }
-    if let Some((stderr, stdout)) = last_output
-        && !ci_mode
-    {
-        eprintln!("{}", stdout);
-        eprintln!("{}", stderr);
-    }
-    anyhow::bail!("railpack build failed after {} attempts", max_retries)
+    Err(railpack_failure(&last_output, ci_mode, max_retries))
 }
 
 fn parse_railpack_summary(output: &str) -> Option<String> {
@@ -287,6 +275,68 @@ fn parse_railpack_summary(output: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Bounded per-stream tail of captured output, keeping JSON error payloads readable.
+fn output_tail(stdout: &str, stderr: &str, max_lines: usize) -> String {
+    let tail = |text: &str| {
+        let lines: Vec<&str> = text.lines().collect();
+        let start = lines.len().saturating_sub(max_lines);
+        lines[start..].join("\n")
+    };
+    let mut parts = Vec::new();
+    if !stdout.trim().is_empty() {
+        parts.push(format!("stdout:\n{}", tail(stdout)));
+    }
+    if !stderr.trim().is_empty() {
+        parts.push(format!("stderr:\n{}", tail(stderr)));
+    }
+    parts.join("\n")
+}
+
+/// Diagnosis for failures railpack surfaces only as an exit code.
+fn railpack_hint(stdout: &str, stderr: &str) -> Option<String> {
+    let hay = format!("{stdout}\n{stderr}");
+    // pnpm <10 requires `packages:` in pnpm-workspace.yaml; settings-only files are 10+.
+    if hay.contains("packages field missing or empty") {
+        return Some(
+            "pnpm-workspace.yaml without a `packages:` field is invalid for pnpm <10, and \
+             the build resolved pnpm 9 from the lockfile (lockfileVersion 9.0 is written by \
+             both). Move settings to `pnpm.onlyBuiltDependencies` in package.json (honored \
+             by pnpm 9 and 10), or pin `\"packageManager\": \"pnpm@10.x\"` in package.json"
+                .to_string(),
+        );
+    }
+    if hay.contains("Ignored build scripts") || hay.contains("ERR_PNPM_IGNORED_BUILDS") || hay.contains("approve-builds") {
+        return Some(
+            "pnpm 10+ blocks dependency install scripts: add the affected packages to \
+             `pnpm.onlyBuiltDependencies` in package.json (or `onlyBuiltDependencies` in \
+             pnpm-workspace.yaml) and redeploy — or run `pnpm approve-builds` locally and \
+             commit the change"
+                .to_string(),
+        );
+    }
+    None
+}
+
+/// Final failure for both railpack paths: humans get the full output on stderr,
+/// JSON/MCP a bounded tail inside the error.
+fn railpack_failure(last_output: &Option<(String, String)>, ci_mode: bool, attempts: u32) -> anyhow::Error {
+    let msg = format!("railpack build failed after {attempts} attempts");
+    let Some((stderr, stdout)) = last_output else {
+        return anyhow::anyhow!(msg);
+    };
+    if !ci_mode {
+        eprintln!("{stdout}");
+        eprintln!("{stderr}");
+    }
+    let detail = output_tail(stdout, stderr, 40);
+    match railpack_hint(stdout, stderr) {
+        Some(hint) if ci_mode => crate::out::fail(format!("{msg}\n\n{detail}"), hint),
+        Some(hint) => crate::out::fail(msg, hint),
+        None if ci_mode && !detail.is_empty() => anyhow::anyhow!(format!("{msg}\n\n{detail}")),
+        None => anyhow::anyhow!(msg),
+    }
 }
 
 /// `railpack build` inside the Railpack container. Env vars ride along as bare
@@ -412,6 +462,42 @@ mod tests {
         assert!(envs.contains(&("ALPHA".to_string(), "1".to_string())));
         assert!(envs.contains(&("BETA".to_string(), "hush".to_string())));
         assert!(envs.contains(&("BUILDKIT_HOST".to_string(), "docker-container://buildkit".to_string())));
+    }
+
+    #[test]
+    fn railpack_hint_detects_pnpm_blocked_builds() {
+        assert!(railpack_hint("", "ERR_PNPM_IGNORED_BUILDS: esbuild").is_some());
+        assert!(railpack_hint("Ignored build scripts: esbuild", "").is_some());
+        assert!(railpack_hint("", "some other build error").is_none());
+    }
+
+    #[test]
+    fn railpack_hint_detects_settings_only_workspace_yaml() {
+        let (message, hint) = crate::out::split_hint(&railpack_failure(
+            &Some(("ERROR packages field missing or empty".to_string(), String::new())),
+            true,
+            3u32,
+        ));
+        assert!(message.contains("packages field missing"));
+        assert!(hint.unwrap().contains("packageManager"));
+    }
+
+    #[test]
+    fn ci_failure_embeds_output_tail() {
+        let stdout: String = "filler\n".repeat(60) + "last stdout line\n";
+        let err = railpack_failure(&Some(("err line".to_string(), stdout)), true, 3u32);
+        let (message, hint) = crate::out::split_hint(&err);
+        assert!(message.contains("after 3 attempts"));
+        assert!(message.contains("last stdout line"));
+        assert!(message.contains("err line"));
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn ci_failure_pnpm_hint_carries_diagnosis() {
+        let err = railpack_failure(&Some(("Ignored build scripts: esbuild".to_string(), String::new())), true, 3u32);
+        let (_, hint) = crate::out::split_hint(&err);
+        assert!(hint.unwrap().contains("onlyBuiltDependencies"));
     }
 
     #[test]

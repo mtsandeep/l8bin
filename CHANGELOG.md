@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Windows installer: single domain prompt like install.sh (Enter = localhost). Local installs keep plain-HTTP access — `http://<sub>.localhost` via Caddy plus the direct `http://localhost:5080` fallback; real domains auto-TLS.
 
 ### Fixed
+- Railpack build failures under `--json`/MCP now include the build log tail and diagnosed hints for common pnpm failures (blocked build scripts, settings-only `pnpm-workspace.yaml`).
 - Updating to a specific version failed with "Release not found" — fixed; the version prompt now accepts both `0.4.7` and `v0.4.7`.
 - Windows installer brought to parity with install.sh: jemalloc memory env, resource protections, log rotation caps, checksum-verified downloads, `.env` preserved on re-run.
 - Windows installer generated Caddyfiles with empty site addresses (`{}.{} ` instead of `{$DASHBOARD_SUBDOMAIN}.{$DOMAIN}`) — subdomain routing never worked from a Windows install.
