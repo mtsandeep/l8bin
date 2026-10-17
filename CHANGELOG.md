@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Windows installer: single domain prompt like install.sh (Enter = localhost). Local installs keep plain-HTTP access — `http://<sub>.localhost` via Caddy plus the direct `http://localhost:5080` fallback; real domains auto-TLS.
 
 ### Fixed
+- API endpoints now also answer under a stripped `/api/` prefix (`/api/auth/login` ≡ `/auth/login`); unknown `/api/*` paths and non-GET dashboard-host misses return JSON 404s instead of the SPA (`200 index.html`) or nginx's raw 405, and the dashboard nginx no longer advertises its version.
 - Railpack build failures under `--json`/MCP now include the build log tail and diagnosed hints for common pnpm failures (blocked build scripts, settings-only `pnpm-workspace.yaml`).
 - Updating to a specific version failed with "Release not found" — fixed; the version prompt now accepts both `0.4.7` and `v0.4.7`.
 - Windows installer brought to parity with install.sh: jemalloc memory env, resource protections, log rotation caps, checksum-verified downloads, `.env` preserved on re-run.

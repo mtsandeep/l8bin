@@ -90,6 +90,57 @@ async fn api_paths_still_hit_orchestrator_routes() {
     assert!(!resp.headers().contains_key("x-stub"), "API routes must not be swallowed by the proxy");
 }
 
+/// /api/* is a stripped alias — the near-universal client guess must work.
+#[tokio::test]
+async fn api_prefix_aliases_real_routes() {
+    let stub = spawn_stub_dashboard().await;
+    let (server, _db) = test_server_with_db_config(config_with_upstream(&stub.addr)).await;
+
+    let resp = server.get("/api/health").add_header(HOST, "l8bin.localhost").await;
+
+    resp.assert_status(StatusCode::OK);
+    assert!(!resp.headers().contains_key("x-stub"), "/api/* must hit the orchestrator, not the SPA");
+}
+
+/// POST /api/auth/login was nginx's raw 405 HTML; it must reach the real handler.
+#[tokio::test]
+async fn api_prefix_post_hits_handler_not_405_html() {
+    let stub = spawn_stub_dashboard().await;
+    let (server, _db) = test_server_with_db_config(config_with_upstream(&stub.addr)).await;
+
+    let resp = server.post("/api/auth/login").json(&serde_json::json!({})).add_header(HOST, "l8bin.localhost").await;
+
+    assert_ne!(resp.status_code(), StatusCode::METHOD_NOT_ALLOWED, "must not be the static server's 405");
+    assert!(!resp.headers().contains_key("x-stub"));
+    assert!(!resp.text().contains("nginx"), "must not be an nginx error page");
+}
+
+/// Unknown /api/* paths answer in the JSON error shape, never the SPA's index.html.
+#[tokio::test]
+async fn unknown_api_route_returns_json_not_spa() {
+    let stub = spawn_stub_dashboard().await;
+    let (server, _db) = test_server_with_db_config(config_with_upstream(&stub.addr)).await;
+
+    let resp = server.get("/api/nonexistent").add_header(HOST, "l8bin.localhost").await;
+
+    resp.assert_status(StatusCode::NOT_FOUND);
+    assert!(!resp.headers().contains_key("x-stub"), "must not fall through to the SPA");
+    assert!(resp.text().contains("unknown API route"));
+}
+
+/// Non-GET misses on the dashboard host are failed API calls — JSON 404, not nginx 405.
+#[tokio::test]
+async fn dashboard_host_non_get_fallback_is_json() {
+    let stub = spawn_stub_dashboard().await;
+    let (server, _db) = test_server_with_db_config(config_with_upstream(&stub.addr)).await;
+
+    let resp = server.post("/some-page").add_header(HOST, "l8bin.localhost").await;
+
+    resp.assert_status(StatusCode::NOT_FOUND);
+    assert!(!resp.headers().contains_key("x-stub"));
+    assert!(resp.text().contains("unknown API route"));
+}
+
 #[tokio::test]
 async fn bare_and_loopback_hosts_proxy_to_dashboard() {
     let stub = spawn_stub_dashboard().await;

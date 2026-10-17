@@ -184,7 +184,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/deploy-tokens/{id}", delete(routes::deploy_tokens::revoke_token))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), require_auth_or_401));
 
-    Router::new()
+    let api = Router::new()
         .merge(auth_public)
         .merge(auth_protected)
         .merge(read_routes)
@@ -193,7 +193,12 @@ pub fn build_router(state: AppState) -> Router {
         .merge(deploy_routes)
         .merge(token_routes)
         .route("/health", get(routes::health::health_check))
-        .route("/internal/wake-report", post(routes::wake_report::wake_report))
+        .route("/internal/wake-report", post(routes::wake_report::wake_report));
+
+    // Mirrors app.rs: /api/* is a stripped alias of the API surface.
+    Router::new()
+        .merge(api.clone())
+        .nest("/api", api)
         .fallback(routes::waker::wake)
         .layer(auth_layer)
         .layer(CorsLayer::permissive())

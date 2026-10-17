@@ -307,7 +307,10 @@ fn railpack_hint(stdout: &str, stderr: &str) -> Option<String> {
                 .to_string(),
         );
     }
-    if hay.contains("Ignored build scripts") || hay.contains("ERR_PNPM_IGNORED_BUILDS") || hay.contains("approve-builds") {
+    if hay.contains("Ignored build scripts")
+        || hay.contains("ERR_PNPM_IGNORED_BUILDS")
+        || hay.contains("approve-builds")
+    {
         return Some(
             "pnpm 10+ blocks dependency install scripts: add the affected packages to \
              `pnpm.onlyBuiltDependencies` in package.json (or `onlyBuiltDependencies` in \

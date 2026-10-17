@@ -151,7 +151,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/github/manifest/exchange", post(crate::routes::github::connect::exchange_manifest))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard::require_admin));
 
-    Router::new()
+    let api = Router::new()
         .merge(auth_public)
         .merge(auth_protected)
         .merge(read_routes)
@@ -167,7 +167,12 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/llms.txt", get(crate::routes::openapi::llms_txt))
         .route("/caddy/ask", get(crate::routes::caddy::ask))
         .route("/internal/wake-report", post(crate::routes::wake_report::wake_report))
-        .route("/internal/heartbeat", post(crate::routes::heartbeat::heartbeat))
+        .route("/internal/heartbeat", post(crate::routes::heartbeat::heartbeat));
+
+    // /api/* is a stripped alias (/api/auth/login ≡ /auth/login) — clients guess the prefix.
+    Router::new()
+        .merge(api.clone())
+        .nest("/api", api)
         .fallback(crate::routes::waker::wake)
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::routes::waker::waker_intercept))
         .layer(auth::auth_layer(state.clone()))

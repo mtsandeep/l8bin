@@ -467,6 +467,11 @@ pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::
     let headers = parts.headers.clone();
     let body = axum::body::to_bytes(body, 10 * 1024 * 1024).await.unwrap_or_default();
 
+    // Machine-shaped misses answer in JSON, never the SPA.
+    if uri.path() == "/api" || uri.path().starts_with("/api/") {
+        return unknown_api_route(&method, uri.path());
+    }
+
     let snap = state.platform.snapshot();
     let host_without_port = host.split(':').next().unwrap_or("");
     let dashboard_host = format!("{}.{}", snap.dashboard_subdomain, snap.domain);
@@ -474,6 +479,10 @@ pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::
         || host_without_port == snap.domain
         || (snap.domain == "localhost" && host_without_port == "127.0.0.1")
     {
+        // The SPA serves GET/HEAD only — anything else here is a missed API call.
+        if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
+            return unknown_api_route(&method, uri.path());
+        }
         return proxy_request(
             &state.proxy_client,
             method,
@@ -486,6 +495,21 @@ pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::
     }
 
     wake_for_host(state, host, json, method, &uri, &headers, body).await
+}
+
+/// JSON 404 for requests that look like API traffic but matched no route.
+fn unknown_api_route(method: &axum::http::Method, path: &str) -> Response {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        axum::Json(serde_json::json!({
+            "ok": false,
+            "error": {
+                "message": format!("unknown API route: {method} {path}"),
+                "hint": "endpoints are root-relative (a /api/ prefix is stripped) — see /openapi.json and /llms.txt"
+            }
+        })),
+    )
+        .into_response()
 }
 
 /// Middleware that intercepts requests for app subdomains BEFORE axum's route matcher.
