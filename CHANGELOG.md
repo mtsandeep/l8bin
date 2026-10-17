@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-10-17
+
 ### Added
 - Windows installer: `update` mode — update to latest or a specific version, with database backup and staged restart.
 - Windows installer: interactive menu on a bare run (master / CLI / update) like install.sh.
