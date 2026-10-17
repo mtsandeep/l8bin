@@ -33,12 +33,15 @@ tool do the rest:
 
    Claude Code: `claude mcp add litebin -- npx -y l8bin-mcp`. Needs Node 18+; on Windows clients that don't resolve `.cmd` shims use `"command": "cmd"`, `"args": ["/c", "npx", "-y", "l8bin-mcp"]`. The shim downloads the `l8b` binary from GitHub releases on first use (`L8B_BIN` overrides).
 2. Restart/reload the MCP client and approve the new server when prompted.
+   Fresh session after the reload? Re-follow this recipe — registration is
+   idempotent; skip to step 3 when `.mcp.json` is already in place.
 3. Call the `setup` tool with no arguments and follow its `state` + `next`:
-   - ask the user for their LiteBin server URL, then call `setup` with `{"server": url}`
+   - ask the user for their LiteBin server URL — the dashboard address, e.g. https://l8bin.com or their self-hosted orchestrator — then call `setup` with `{"server": url}`
    - relay the returned `approval_url` — the user opens it in a browser where they are logged into the dashboard and picks the token scope
    - once approved: `setup` with `{"server": url, "complete": true}` (returns `pairing_pending` until then — re-call). On success auth is stored and `server` is written into the workspace `l8b.toml`
    - already logged in (e.g. several logins stored)? `setup` with `{"server": url, "action": "bind"}` binds without pairing
-4. Verify with the `doctor` tool (`healthy: true`), then `deploy`.
+4. Verify with the `doctor` tool (`healthy: true`), then deploy — first deploy
+   needs a project name: see "Deploying a repo" below.
 
 `setup` is idempotent — calling it with no arguments at any point reports the state and the exact next call. Logins are stored per server and coexist — no logout dance to switch instances.
 
@@ -49,15 +52,17 @@ tool do the rest:
 ## Deploying a repo (new vs existing)
 
 If the repo has no `l8b.toml`, this is its first deploy: ask the user what to
-name the project (lowercase letters, numbers, hyphens), or run `l8b list` and
-let them pick an existing project if this repo replaces one. After a
-successful deploy the CLI writes `l8b.toml` (project, node, server)
-into the directory — commit it, it holds no secrets — every later session then
-deploys, checks status, and
-reads logs with no arguments at all. Custom domains surface in `l8b
-status` / `l8b url` / `l8b list` output (preferred over the managed
-subdomain). To teach later sessions the workflow, run `l8b init --agents`
-(managed `AGENTS.md` section, merges without touching user content).
+name the project (lowercase letters, numbers, hyphens) — or call the `list`
+tool (CLI: `l8b list`) and let them pick an existing project if this repo
+replaces one — then pass the name as `project` to `deploy`. Never invent a
+project name; deploy refuses with "no project specified" until the user
+chooses one. After a successful deploy (tool or CLI alike) `l8b.toml`
+(project, node, server) is written into the directory — commit it, it holds
+no secrets — every later session then deploys, checks status, and reads logs
+with no arguments at all. Custom domains surface in `status` / `url` / `list`
+output (preferred over the managed subdomain). To teach later sessions the
+workflow, run `l8b init --agents` (managed `AGENTS.md` section, merges
+without touching user content).
 
 ## API
 

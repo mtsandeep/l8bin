@@ -68,7 +68,7 @@ fn tools() -> Vec<Tool> {
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "project": {"type": "string", "description": "Project ID (default: l8b.toml)"},
+                    "project": {"type": "string", "description": "Project ID (default: l8b.toml). First deploy with no l8b.toml? Ask the user for a name (lowercase letters, numbers, hyphens) — never invent one"},
                     "server": {"type": "string", "description": "LiteBin server URL (default: l8b.toml server, else your only login; refused with the choices if ambiguous)"},
                     "path": {"type": "string", "description": "Project directory (default: cwd)"},
                     "port": {"type": "integer", "description": "Internal app port"},

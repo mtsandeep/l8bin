@@ -127,7 +127,7 @@ fn next_instruction(state: &SetupState) -> String {
         SetupState::Ambiguous { choices } =>
             format!("Multiple stored logins and this workspace is not bound to one. Ask the user which server this project deploys to, then call setup with {{\"server\": \"<url>\", \"action\": \"bind\"}}. Choices: {}", choices.join(", ")),
         SetupState::Unconfigured =>
-            "No LiteBin auth on this machine. Ask the user for their LiteBin server URL (or self-host: https://l8bin.com), then call setup with {\"server\": \"<url>\"}.".into(),
+            "No LiteBin auth on this machine. Ask the user for their LiteBin server URL — the dashboard address (or self-host one: https://l8bin.com) — then call setup with {\"server\": \"<url>\"}.".into(),
     }
 }
 

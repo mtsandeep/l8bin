@@ -14,7 +14,7 @@ wired in `.mcp.json`; prefer the LiteBin MCP tools, or fall back to the CLI.
   successful deploy, `l8b.toml` records the project so future sessions need
   no arguments.
 - Check if it's up: tool `status` with `wait: true, healthy: true` (or
-  `l8b status --wait --healthy`); succeeds only when serving HTTP 200. The
+  `l8b status --wait --healthy`); succeeds only when the URL serves a 2xx. The
   reported URL is the custom domain when one is set.
 - Read logs on failure: tool `logs` (or `l8b logs`).
 - Runtime secrets (DATABASE_URL etc.): tool `env_push`, then `restart`.
@@ -36,9 +36,11 @@ first use):
 { "mcpServers": { "litebin": { "command": "npx", "args": ["-y", "l8bin-mcp"] } } }
 ```
 
-Then call the `setup` tool once — it pairs auth and writes `l8b.toml` /
-`.mcp.json` as needed. To record the workflow in the repo itself, `l8b init
---agents` merges a managed `## Deploying (LiteBin)` section into `AGENTS.md`
+Reload the client so the new server goes live, then call the `setup` tool
+with no arguments and follow its `state` + `next` — it asks for the server
+(dashboard) URL, pairs auth via an approval link, and writes `server` into
+`l8b.toml`. To record the workflow in the repo itself, `l8b init --agents`
+merges a managed `## Deploying (LiteBin)` section into `AGENTS.md`
 (created when absent, refreshed in place, user content never removed). The
 template below shows what it writes. CLI-first instead:
 

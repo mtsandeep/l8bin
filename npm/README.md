@@ -41,9 +41,9 @@ to point at a specific binary.
    client. Don't have a LiteBin server yet? One command on any VPS with Docker:
    `curl -fsSL https://l8b.in | bash` ([quickstart](https://l8bin.com/quickstart))
 2. **Call the `setup` tool** with no arguments and follow its `state` + `next`:
-   give it your server URL, open the `approval_url` it returns, approve in the
-   dashboard (you pick the token scope), then call it again with
-   `complete: true`. Auth is stored and the workspace `l8b.toml` is bound —
+   give it your server URL (the dashboard address), open the `approval_url` it
+   returns, approve in the dashboard (you pick the token scope), then call it
+   again with `complete: true`. Auth is stored and the workspace `l8b.toml` is bound —
    no CLI install, no terminal login. Manual alternative:
    `l8b login --server https://your-l8bin.example.com --pair`.
 
