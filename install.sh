@@ -1033,7 +1033,7 @@ EOF
   echo "       c) Dashboard:  add from the web UI(only prebuilt images)"
   echo ""
 
-  echo -e "  Manage LiteBin:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
+  echo -e "  Manage LiteBin:  ${DIM}cd ${install_dir} && docker compose logs -f --tail 100 orchestrator${NC}"
 
   # Save installed version
   echo "$release_url" > "${install_dir}/.version"
@@ -1252,7 +1252,7 @@ EOF
   fi
   echo ""
   echo -e "  Visit Dashboard to add/connect agent: Dashboard -> Agents -> Add Agent to connect."
-  echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
+  echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f --tail 100 orchestrator${NC}"
 }
 
 # -- Agent Install -----------------------------------------------------------
@@ -1666,7 +1666,7 @@ update_master() {
     echo ""
     echo -e "${GREEN}${BOLD}  LiteBin ${target_release} is running!${NC}"
     echo ""
-    echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f${NC}"
+    echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f --tail 100 orchestrator${NC}"
   elif [ "$is_reinstall" = true ] \
     && [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" = "true" ]; then
     # Reinstall with unchanged bits — nothing to recreate is fine.
@@ -1868,7 +1868,8 @@ show_menu() {
   if ! [ -t 0 ] && ! [ -t 1 ]; then
     local latest
     latest=$(get_latest_release 2>/dev/null) || true
-    echo -e "${BOLD}LiteBin Installer${NC}  ${latest:-}"
+    echo -e "${BOLD}LiteBin Installer${NC}"
+    [ -n "$latest" ] && echo -e "Latest LiteBin Version: ${latest}" || true
     echo ""
     echo "Usage:  curl -fsSL ${L8B_IN} | bash -s <mode>"
     echo ""
@@ -1902,7 +1903,8 @@ show_menu() {
   echo ""
   local latest
   latest=$(get_latest_release 2>/dev/null) || true
-  echo -e "  ${BOLD}LiteBin Installer${NC}  ${DIM}${latest:-}${NC}"
+  echo -e "  ${BOLD}LiteBin Installer${NC}"
+  [ -n "$latest" ] && echo -e "  ${DIM}Latest LiteBin Version: ${latest}${NC}" || true
   echo ""
   echo "  This host:"
   if [ -n "$master_dir" ]; then
@@ -1993,9 +1995,9 @@ case "${1:-}" in
   update)  update_litebin ;;
   set-domain) set_domain_cmd "${2:-}" ;;
   -h|--help|"help")
-    local latest
     latest=$(get_latest_release 2>/dev/null) || true
-    echo -e "${BOLD}LiteBin Installer${NC}  ${latest:-}"
+    echo -e "${BOLD}LiteBin Installer${NC}"
+    [ -n "$latest" ] && echo -e "Latest LiteBin Version: ${latest}" || true
     echo ""
     echo "Usage:  curl -fsSL ${L8B_IN} | bash -s <mode>"
     echo ""

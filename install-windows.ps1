@@ -516,7 +516,7 @@ ROUTING_MODE=master_proxy
     Write-Host "    2. Login via CLI:"
     Write-Host "       l8b login --server $LoginUrl" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Manage: cd $TargetDir && docker compose logs -f" -ForegroundColor DarkGray
+    Write-Host "  Manage: cd $TargetDir && docker compose logs -f --tail 100 orchestrator" -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -686,7 +686,7 @@ function Update-Master {
         Write-Host ""
         Write-Host "  LiteBin $TargetTag is running!" -ForegroundColor Green
         Write-Host ""
-        Write-Host "  Manage: cd $TargetDir && docker compose logs -f" -ForegroundColor DarkGray
+        Write-Host "  Manage: cd $TargetDir && docker compose logs -f --tail 100 orchestrator" -ForegroundColor DarkGray
     } elseif ($running -eq "true" -and $CurrentVersion -eq $TargetTag) {
         Set-Content -Path $VersionFile -Value $TargetTag
         Write-Info "No changes to apply - orchestrator already running $TargetTag."

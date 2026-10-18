@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Post-install/update "Manage" hint now follows only the orchestrator with a bounded backlog (`docker compose logs -f --tail 100 orchestrator`) instead of all services, so caddy access logs don't flood the terminal.
+- Installer banner now shows the version on its own line: `LiteBin Installer` / `Latest LiteBin Version: v0.4.8`.
+
+### Fixed
+- `install.sh --help` crashed with "local: can only be used in a function" before printing usage.
+
 ## [0.4.8] - 2026-10-17
 
 ### Added
