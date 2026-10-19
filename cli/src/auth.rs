@@ -500,7 +500,7 @@ pub async fn fetch_platform_domain(client: &reqwest::Client, server: &str) -> St
 }
 
 /// Last-resort domain derivation when /settings is unavailable.
-/// `https://dash.11b.in` → `11b.in`
+/// `https://dash.example.com` → `example.com`
 fn derive_domain_from_server(server: &str) -> String {
     let host = server.trim().trim_end_matches('/').trim_start_matches("https://").trim_start_matches("http://");
     let host = host.split('/').next().unwrap_or(host);
@@ -520,8 +520,8 @@ mod tests {
 
     #[test]
     fn strips_dashboard_subdomain() {
-        assert_eq!(derive_domain_from_server("https://dash.11b.in"), "11b.in");
-        assert_eq!(derive_domain_from_server("https://dash.11b.in/"), "11b.in");
+        assert_eq!(derive_domain_from_server("https://dash.example.com"), "example.com");
+        assert_eq!(derive_domain_from_server("https://dash.example.com/"), "example.com");
     }
 
     #[test]
@@ -531,8 +531,8 @@ mod tests {
 
     #[test]
     fn project_url_uses_platform_domain() {
-        assert_eq!(project_live_url("board", "11b.in"), "https://board.11b.in");
-        assert_ne!(project_live_url("board", "11b.in"), "board.https://dash.11b.in");
+        assert_eq!(project_live_url("board", "example.com"), "https://board.example.com");
+        assert_ne!(project_live_url("board", "example.com"), "board.https://dash.example.com");
     }
 }
 

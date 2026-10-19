@@ -183,9 +183,13 @@ pub fn agent_base_url(config: &Config, node: &Node) -> String {
 /// Error from an agent HTTP call. Encodes the handler convention used across
 /// the orchestrator: transport failure → 503, non-success agent response → 502
 /// with the agent's error body, response parse failure → 500.
+/// Cap for control-plane pushes — must fail fast so a dead node can't stall sync.
+const CONTROL_PLANE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[derive(Debug)]
 pub enum AgentClientError {
     Transport(reqwest::Error),
+    Timeout,
     Status { code: StatusCode, body: String },
     Parse(String),
 }
@@ -194,6 +198,7 @@ impl std::fmt::Display for AgentClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AgentClientError::Transport(e) => write!(f, "agent unreachable: {e}"),
+            AgentClientError::Timeout => write!(f, "agent timed out"),
             AgentClientError::Status { code, body } => write!(f, "agent error ({code}): {body}"),
             AgentClientError::Parse(e) => write!(f, "failed to parse agent response: {e}"),
         }
@@ -207,6 +212,7 @@ impl AgentClientError {
     pub fn into_response_parts(self) -> (StatusCode, String) {
         match self {
             AgentClientError::Transport(e) => (StatusCode::SERVICE_UNAVAILABLE, format!("agent unreachable: {e}")),
+            AgentClientError::Timeout => (StatusCode::SERVICE_UNAVAILABLE, "agent timed out".to_string()),
             AgentClientError::Status { code, body } => {
                 (StatusCode::BAD_GATEWAY, format!("agent error ({code}): {body}"))
             }
@@ -370,18 +376,22 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::ProjectMetaRequest,
     ) -> Result<(), AgentClientError> {
-        self.post_status(litebin_common::agent_api::PROJECT_META_PATH, req).await
+        let call = self.post_status(litebin_common::agent_api::PROJECT_META_PATH, req);
+        tokio::time::timeout(CONTROL_PLANE_TIMEOUT, call).await.map_err(|_| AgentClientError::Timeout)?
     }
 
     /// POST /caddy/sync — push a Caddy JSON config to the agent (raw by design).
+    /// Bounded: control-plane pushes must never stall route sync on a dead node.
     pub async fn caddy_sync(&self, config: &serde_json::Value) -> Result<(), AgentClientError> {
-        let resp = self
+        let send = self
             .client
             .post(self.url(litebin_common::agent_api::CADDY_SYNC_PATH))
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(config)
-            .send()
+            .send();
+        let resp = tokio::time::timeout(CONTROL_PLANE_TIMEOUT, send)
             .await
+            .map_err(|_| AgentClientError::Timeout)?
             .map_err(AgentClientError::Transport)?;
         let status = resp.status();
         if !status.is_success() {

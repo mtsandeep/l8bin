@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **An unreachable node no longer wedges the master at startup** — the initial route sync ran inline before the HTTP server bound, and its agent pushes inherited the node client's 30-minute timeout, so one dead node could hold the dashboard hostage. The sync now runs in the background (Caddy keeps its last config meanwhile), agent caddy/meta pushes carry a 10s timeout, and each push is logged so wedge points are visible.
+
 ## [0.4.9] - 2026-10-19
 
 ### Added

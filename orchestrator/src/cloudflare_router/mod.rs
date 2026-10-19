@@ -104,6 +104,7 @@ impl RoutingProvider for CloudflareDnsRouter {
                 &self.config.public_ip, // orchestrator reachable for /caddy/ask
             );
 
+            tracing::info!(node_id, routes = agent_projects.len(), "pushing caddy config to node");
             if let Err(e) = self.push_agent_caddy(&node_id, &agent_config).await {
                 tracing::warn!(node_id, error = %e, "failed to push caddy config to agent");
             }

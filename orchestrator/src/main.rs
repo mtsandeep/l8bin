@@ -376,40 +376,53 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Sync routes for any previously running projects (retry up to 5 times)
-    let platform_snap = platform.snapshot();
-    let orchestrator_upstream = format!("litebin-orchestrator:{}", config.port);
-    for attempt in 1..=5 {
-        let routes = match routing_helpers::resolve_all_routes(&db, &platform_snap.domain, &orchestrator_upstream).await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(error = %e, "startup: failed to resolve routes (attempt {})", attempt);
-                Vec::new()
-            }
-        };
-        let r = router.read().await.clone();
-        match r
-            .sync_routes(
-                &routes,
-                &platform_snap.domain,
-                &orchestrator_upstream,
-                &platform_snap.dashboard_subdomain,
-                &platform_snap.poke_subdomain,
-                true,
-            )
-            .await
-        {
-            Ok(_) => break,
-            Err(e) => {
-                if attempt == 5 {
-                    tracing::warn!(error = %e, "failed to sync routes after 5 attempts");
-                } else {
-                    tracing::info!(attempt, "caddy not ready, retrying in 2s...");
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    // Route sync runs in the background — a dead node must never block the bind;
+    // Caddy keeps its last config until the push lands.
+    {
+        let db = db.clone();
+        let router = router.clone();
+        let config = config.clone();
+        let platform = platform.clone();
+        tokio::spawn(async move {
+            let platform_snap = platform.snapshot();
+            let orchestrator_upstream = format!("litebin-orchestrator:{}", config.port);
+            for attempt in 1..=5 {
+                let routes =
+                    match routing_helpers::resolve_all_routes(&db, &platform_snap.domain, &orchestrator_upstream).await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "startup: failed to resolve routes (attempt {})", attempt);
+                            Vec::new()
+                        }
+                    };
+                let r = router.read().await.clone();
+                match r
+                    .sync_routes(
+                        &routes,
+                        &platform_snap.domain,
+                        &orchestrator_upstream,
+                        &platform_snap.dashboard_subdomain,
+                        &platform_snap.poke_subdomain,
+                        true,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        tracing::info!("startup route sync complete");
+                        break;
+                    }
+                    Err(e) => {
+                        if attempt == 5 {
+                            tracing::warn!(error = %e, "failed to sync routes after 5 attempts");
+                        } else {
+                            tracing::info!(attempt, "caddy not ready, retrying in 2s...");
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                    }
                 }
             }
-        }
+        });
     }
 
     // Stack updates recreate caddy without its project-network memberships;
