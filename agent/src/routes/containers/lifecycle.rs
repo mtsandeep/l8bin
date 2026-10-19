@@ -49,7 +49,8 @@ fn update_project_meta(state: &AgentState, project_id: &str, is_background: bool
             entry.auto_start_enabled = false;
         }
     }
-    crate::save_project_meta_to_file(&state.project_meta.read().unwrap());
+    let snapshot = state.project_meta.read().unwrap().clone();
+    crate::save_project_meta_to_file(&snapshot);
 }
 
 pub(crate) async fn run_single_plan(

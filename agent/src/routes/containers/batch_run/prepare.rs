@@ -97,7 +97,8 @@ pub(super) async fn persist_project_files(
             entry.auto_start_enabled = false;
         }
     }
-    crate::save_project_meta_to_file(&state.project_meta.read().unwrap());
+    let snapshot = state.project_meta.read().unwrap().clone();
+    crate::save_project_meta_to_file(&snapshot);
 
     // Store compose.yaml
     let compose_path = super::super::env::projects_dir().join(&req.project_id).join("compose.yaml");

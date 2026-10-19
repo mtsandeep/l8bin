@@ -60,8 +60,10 @@ pub async fn update_project_meta(State(state): State<AgentState>, Json(req): Jso
         *guard = meta;
     }
 
-    // Persist to disk
-    crate::save_project_meta_to_file(&state.project_meta.read().unwrap());
+    // Persist to disk — never hold the lock across the write: a stalled fs
+    // write would starve every reader (write-preferring RwLock) and wedge the agent.
+    let snapshot = state.project_meta.read().unwrap().clone();
+    let _ = tokio::task::spawn_blocking(move || crate::save_project_meta_to_file(&snapshot)).await;
 
     StatusCode::OK
 }
