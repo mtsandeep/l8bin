@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-10-19
+
 ### Added
 - **Held wake requests** — visits to sleeping apps hold the request (`WAKE_HOLD_SECS`, default 2s) instead of a 1s refresh loop: fast wakes serve the real response in one request (documents and assets alike), slower ones get a no-refresh waiting page that long-polls and reloads once, subresources hold up to 30s so cached-HTML revisits render styled, API clients get `503 + Retry-After` after the hold. Local and remote projects alike.
 - **Redesigned waker pages** — all six visitor states rebuilt around the litebin mark (animated bars, perceived progress, state storytelling), platform- and id-free copy with the real state in `console.info('[l8bin] …')`; each page is a ~6KB self-contained document, and every transient page answers `503 + Retry-After` (not-found `404`) so fetchers never cache it as content.
