@@ -31,8 +31,18 @@ pub(super) async fn proxy_request(
     body: axum::body::Bytes,
 ) -> Response {
     let url = format!("http://{}{}", upstream, path_and_query.unwrap_or("/"));
+    proxy_request_url(client, method, &url, headers, body).await
+}
 
-    let mut req = client.request(method, &url);
+/// Reverse-proxy to a full URL (remote agent Caddy): the client pins the connection, the Host header routes.
+pub(super) async fn proxy_request_url(
+    client: &reqwest::Client,
+    method: Method,
+    url: &str,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let mut req = client.request(method, url);
     for (name, value) in headers.iter() {
         if is_hop_by_hop(name.as_str()) {
             continue;
@@ -57,10 +67,89 @@ pub(super) async fn proxy_request(
             })
         }
         Err(e) => {
-            tracing::error!(error = %e, upstream = %upstream, "proxy error");
+            tracing::error!(error = %e, url = %url, "proxy error");
             Response::builder().status(StatusCode::BAD_GATEWAY).body(axum::body::Body::from("Bad gateway")).unwrap()
         }
     }
+}
+
+/// Proxy with bounded retries on 502/hung attempts; returns the last 502 once the budget elapses.
+pub(super) async fn proxy_with_retry(
+    client: &reqwest::Client,
+    method: Method,
+    uri: &axum::http::Uri,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+    upstream: &str,
+    budget: std::time::Duration,
+) -> Response {
+    let url = format!("http://{}{}", upstream, uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/"));
+    proxy_url_with_retry(client, method, &url, headers, body, budget).await
+}
+
+/// URL-based variant for non-container upstreams (remote agent Caddy).
+pub(super) async fn proxy_url_with_retry(
+    client: &reqwest::Client,
+    method: Method,
+    url: &str,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+    budget: std::time::Duration,
+) -> Response {
+    let deadline = tokio::time::Instant::now() + budget;
+    let mut last = proxy_url_attempt(client, method.clone(), url, headers, &body).await;
+    while last.status() == StatusCode::BAD_GATEWAY && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        last = proxy_url_attempt(client, method.clone(), url, headers, &body).await;
+    }
+    last
+}
+
+/// One proxy attempt, capped at 3s so an unresponsive upstream can't pin the handler.
+async fn proxy_url_attempt(
+    client: &reqwest::Client,
+    method: Method,
+    url: &str,
+    headers: &HeaderMap,
+    body: &axum::body::Bytes,
+) -> Response {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        proxy_request_url(client, method, url, headers, body.clone()),
+    )
+    .await
+    {
+        Ok(resp) => resp,
+        Err(_) => {
+            Response::builder().status(StatusCode::BAD_GATEWAY).body(axum::body::Body::from("Bad gateway")).unwrap()
+        }
+    }
+}
+
+/// Proxy through the agent's Caddy (master Caddy's app-traffic transport). None when unreachable — callers
+/// fall back to the waiting page.
+pub(super) async fn remote_proxy_response(
+    state: &AppState,
+    project: &crate::db::models::Project,
+    method: Method,
+    uri: &axum::http::Uri,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+    budget: std::time::Duration,
+) -> Option<Response> {
+    let node_id = project.node_id.as_deref()?;
+    let (host, _) = crate::routing_helpers::lookup_node_host(&state.db, node_id).await.ok()??;
+    let client = nodes::client::build_remote_proxy_client(
+        &state.config.ca_cert_path,
+        &state.config.client_cert_path,
+        &state.config.client_key_path,
+        &host,
+    )
+    .await
+    .ok()?;
+    let url = format!("https://agent{}", uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/"));
+    let resp = proxy_url_with_retry(&client, method, &url, headers, body, budget).await;
+    (resp.status() != StatusCode::BAD_GATEWAY).then_some(resp)
 }
 
 /// Recreate a container on a remote agent (no image pull).
@@ -115,6 +204,11 @@ pub(super) async fn remote_recreate(
     };
     let new_container_id = result.container_id;
     let mapped_port = result.mapped_port;
+    if result.ready == Some(false) {
+        // Agent probed: started but not listening — fail the wake; the container stays up.
+        tracing::warn!(project = %project.id, "waker: agent recreated container but app is not ready");
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "app did not become ready").into_response());
+    }
 
     let now = chrono::Utc::now().timestamp();
     if let Err(e) = status::transition(
@@ -169,6 +263,7 @@ pub(super) async fn start_stopped_services(state: &AppState, project: &crate::db
             services: Some(filter),
             connect_orchestrator: true,
             rollback_on_failure: false,
+            skip_dns_wait: true,
         },
     )
     .await
@@ -282,6 +377,14 @@ pub(super) async fn start_stopped_container(
         };
         match agent.start(&start_request).await {
             Ok(started) => {
+                if started.ready == Some(false) {
+                    // The agent probed: container up but the app never accepted
+                    // connections. Fail the wake — the container stays running
+                    // and serves once it finishes booting.
+                    tracing::warn!(project = %subdomain, "waker: agent started container but app is not ready");
+                    return Err((StatusCode::SERVICE_UNAVAILABLE, "app did not become ready").into_response());
+                }
+
                 let mapped_port = started.mapped_port;
 
                 let now = chrono::Utc::now().timestamp();
@@ -326,6 +429,7 @@ pub(super) async fn start_stopped_container(
             services: None,
             connect_orchestrator: true,
             rollback_on_failure: false,
+            skip_dns_wait: true,
         },
     )
     .await
@@ -364,6 +468,7 @@ pub(super) async fn restart_crashed_container(
             services: None,
             connect_orchestrator: true,
             rollback_on_failure: false,
+            skip_dns_wait: true,
         },
     )
     .await

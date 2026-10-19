@@ -59,6 +59,7 @@ pub(super) async fn run_local_compose_deploy(
                 services: Some(target_set),
                 connect_orchestrator: true,
                 rollback_on_failure: true,
+                skip_dns_wait: false,
             },
         )
         .await
@@ -119,6 +120,7 @@ pub(super) async fn run_local_compose_deploy(
                 services: None,
                 connect_orchestrator: true,
                 rollback_on_failure: true,
+                skip_dns_wait: false,
             },
         )
         .await

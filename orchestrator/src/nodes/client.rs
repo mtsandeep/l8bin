@@ -7,6 +7,34 @@ use litebin_common::types::Node;
 
 use crate::config::Config;
 
+/// Load the platform mTLS identity (CA root store + client cert) shared by the
+/// agent API client and the remote app-traffic proxy client.
+fn load_node_tls_config(
+    ca_cert_path: &str,
+    client_cert_path: &str,
+    client_key_path: &str,
+) -> anyhow::Result<rustls::ClientConfig> {
+    let ca_cert_pem = std::fs::read(ca_cert_path)?;
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in rustls_pemfile::certs(&mut &ca_cert_pem[..]) {
+        root_store.add(cert?)?;
+    }
+
+    // Load client identity (cert + key)
+    let cert_pem = std::fs::read(client_cert_path)?;
+    let key_pem = std::fs::read(client_key_path)?;
+    let client_certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..]).collect::<Result<Vec<_>, _>>()?;
+    let client_key = rustls_pemfile::ec_private_keys(&mut &key_pem[..])
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no EC private key found"))??;
+
+    // Build rustls ClientConfig with hostname verification disabled
+    Ok(rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoHostnameVerifier::new(root_store)))
+        .with_client_auth_cert(client_certs, client_key.into())?)
+}
+
 /// Build a reqwest client configured for mTLS communication with a Worker Agent.
 ///
 /// If cert paths are empty or the CA cert file does not exist, returns a plain
@@ -24,26 +52,7 @@ pub fn build_node_client(
         return Ok(reqwest::Client::new());
     }
 
-    // Load CA cert into rustls root store
-    let ca_cert_pem = std::fs::read(ca_cert_path)?;
-    let mut root_store = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut &ca_cert_pem[..]) {
-        root_store.add(cert?)?;
-    }
-
-    // Load client identity (cert + key)
-    let cert_pem = std::fs::read(client_cert_path)?;
-    let key_pem = std::fs::read(client_key_path)?;
-    let client_certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..]).collect::<Result<Vec<_>, _>>()?;
-    let client_key = rustls_pemfile::ec_private_keys(&mut &key_pem[..])
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("no EC private key found"))??;
-
-    // Build rustls ClientConfig with hostname verification disabled
-    let config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoHostnameVerifier::new(root_store)))
-        .with_client_auth_cert(client_certs, client_key.into())?;
+    let config = load_node_tls_config(ca_cert_path, client_cert_path, client_key_path)?;
 
     let client = reqwest::Client::builder()
         .use_preconfigured_tls(config)
@@ -51,6 +60,35 @@ pub fn build_node_client(
         .build()?;
 
     Ok(client)
+}
+
+/// Client for proxying visitor traffic through a remote agent's Caddy — the same transport master Caddy uses
+/// (CA TLS, SNI `agent`, node pinned via `resolve`). Errors when certs are missing or the node doesn't resolve.
+pub async fn build_remote_proxy_client(
+    ca_cert_path: &str,
+    client_cert_path: &str,
+    client_key_path: &str,
+    node_host: &str,
+) -> anyhow::Result<reqwest::Client> {
+    if ca_cert_path.is_empty() || !std::path::Path::new(ca_cert_path).exists() {
+        anyhow::bail!("no CA cert configured — remote app proxying unavailable");
+    }
+
+    let addr = resolve_node_addr(node_host).await?;
+    let config = load_node_tls_config(ca_cert_path, client_cert_path, client_key_path)?;
+
+    let client = reqwest::Client::builder().use_preconfigured_tls(config).resolve("agent", addr).build()?;
+
+    Ok(client)
+}
+
+/// Resolve a node host (IP or hostname) to its app-traffic address (:443).
+async fn resolve_node_addr(node_host: &str) -> anyhow::Result<std::net::SocketAddr> {
+    if let Ok(ip) = node_host.parse::<std::net::IpAddr>() {
+        return Ok(std::net::SocketAddr::new(ip, 443));
+    }
+    let mut addrs = tokio::net::lookup_host(format!("{node_host}:443")).await?;
+    addrs.next().ok_or_else(|| anyhow::anyhow!("node host did not resolve: {node_host}"))
 }
 
 /// Custom certificate verifier that verifies the cert chain against the trusted CA

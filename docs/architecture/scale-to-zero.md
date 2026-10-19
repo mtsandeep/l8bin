@@ -7,7 +7,9 @@ visitor leaves → janitor stops the container after the idle timeout (minutes)
                      │
                      │  container kept on disk — fast `docker start` wake
                      ▼
-visitor returns → Caddy catch-all → waker → container starts → loading page → app
+visitor returns → Caddy catch-all → waker holds the request
+                     → container starts → request answered with the app
+                     (waiting page + single reload only when the wake is slow)
 ```
 
 ---
@@ -77,18 +79,30 @@ wake() receives request with Host: myapp.l8b.in
   │
   ├─ status="running" + mapped_port=Some?
   │   ├─ YES → is container actually alive?
-  │   │   ├─ YES → verify port hasn't drifted, sync Caddy, return loading page
+  │   │   ├─ YES → verify port hasn't drifted, sync Caddy, proxy straight to the container
   │   │   └─ NO  → fall through to single-flight restart
   │   └─ NO → fall through
   │
-  ├─ auto_start_enabled? NO → return 503
+  ├─ auto_start_enabled? NO → return 503 (no Retry-After — down until re-enabled)
   │
   └─ Single-flight dedup (project_locks)
-      ├─ Vacant (first request) → spawn background wake, return loading page immediately
-      └─ Occupied (concurrent request) → completed+failed? return error page : return loading page
+      ├─ Vacant (first request) → spawn background wake + publish WakeGuard, hold the request
+      └─ Occupied (concurrent request) → await the same WakeGuard
 ```
 
-The first request returns the loading page **instantly** (503 with `Retry-After` header for API clients; HTML loading page for browsers). The Docker wake happens in a background task. The loading page has `<meta http-equiv="refresh" content="1">` so the browser re-requests every second.
+**Held requests — every client class** — the request is held, not answered with a poll loop. The silent-hold budget (`WAKE_HOLD_SECS`, default 2s) applies to everyone; what differs is the fallback past it, by client class ([`classify_wake_client`](../../litebin-common/src/proxy.rs) — based on `Sec-Fetch-Dest` and `Accept`):
+
+- **Document** (browser navigation): silent hold → if ready, the real app response proxied in that one request. Past the budget: the **waiting page**, rendered once, no meta-refresh loop (the old 1s re-render restarted the spinner every second). Its JS long-polls `GET /__l8b_wake_wait` (10s abort timeout, noscript fallback refreshes 1s); the waker holds that fetch until the wake finishes, then the page performs a single `location.reload()`. If the app itself answers the poll (route already synced), the missing `X-L8b-Wake` marker header tells the JS to reload too.
+- **Asset** (browser subresource, `Sec-Fetch-Dest: style/script/image/...`): held up to **30s** past the silent budget — a cached-HTML revisit must not render unstyled while the app wakes; the asset is proxied once the app is ready. 503 on failure/timeout.
+- **Api** (curl, SDKs, `fetch()`/EventSource, bots): held for the silent budget (a fast wake serves the real response — also eliminating 503→retry double-POSTs), then the standard `503 + Retry-After: 5`.
+
+Wake failure (including the readiness probe failing) → error page immediately for Documents, 503 for the rest. Offline projects (auto-start disabled) return 503 **without** `Retry-After` — the app is down until a human re-enables it. All waker pages carry `X-Robots-Tag: noindex` so fetchers never cache "Starting…" as content.
+
+Local projects are proxied by the waker directly (it shares the project's Docker network). **Remote projects** (master proxy mode) are proxied through the agent's Caddy — the same transport master Caddy uses for app traffic (CA-verified TLS, SNI `agent`, original Host header) — so they get the same one-request experience. The waiting page appears only when the node/certs/agent are unreachable, and its reload goes through the synced route.
+
+A completed wake guard survives for 60s so late waiters still see the outcome instead of re-triggering a wake.
+
+**Guard success means "app accepting connections", not just "container started".** After the start succeeds, the wake task probes the upstream (`http://{container}:{port}/` — any HTTP response counts as ready) at ~250ms intervals for up to 60s, checking container liveness every ~2s so a crash fails fast. A not-ready probe **fails the wake** (error page once) but never stops the container — status stays running and a later request is served once the app finishes booting.
 
 ### Background Wake — Local Project
 
@@ -137,21 +151,34 @@ start_stopped_container(state, project)
 
 ### Mode A Timeline
 
+Fast wake (ready inside the 2s silent hold — no page shown, no reload):
+
 ```
 T+0s    Browser → Master Caddy → orchestrator wake()
-        → Vacant entry → spawn background task
-        → return loading page (instant)
+        → Vacant entry → spawn background task → request held
 
-T+0.5s  Background: docker rm old container
-T+1s    Browser refresh → Occupied entry → loading page
-T+2s    Background: docker create + start
-T+3s    Browser refresh → Occupied entry → loading page
-T+4s    Background: inspect port → UPDATE DB → route_sync_tx.send(())
-        → debounced route sync task: Caddy now has: myapp.l8b.in → host.docker.internal:32771
-        → lock removed
+T+0.5s  Background: docker start → readiness probe passes
+        → guard signals success → route_sync_tx.send(())
 
-T+5s    Browser refresh → Caddy matches myapp.l8b.in
-        → proxies directly to container → user sees app
+T+1s    Held request resumes → waker proxies to litebin-myapp:3000
+        → user sees the app in ONE request
+```
+
+Slow wake (still starting at 2s):
+
+```
+T+0s    Browser → Master Caddy → orchestrator wake()
+        → Vacant entry → spawn background task → request held
+
+T+2s    Not ready → waiting page returned (spinner, no refresh loop)
+        Page JS: fetch /__l8b_wake_wait → waker holds the poll
+
+T+4s    Background: docker create + start → inspect port → UPDATE DB
+        → readiness probe passes → guard signals success
+        → route_sync_tx.send(()) → debounced sync: Caddy has myapp.l8b.in → container
+
+T+4.1s  Wait poll answers {"status":"ready"} → JS: location.reload()
+T+4.2s  Browser reload → Caddy matches myapp.l8b.in → user sees the app
 ```
 
 ---
@@ -185,20 +212,24 @@ Browser → https://app.example.com → Cloudflare DNS → Agent IP → Agent Ca
 ```
 wake() receives request with Host: myapp.l8b.in
   │
+  ├─ Path == /__l8b_wake_wait? → hold until the wake guard finishes → {"status": ready|failed}
+  │
   ├─ Extract subdomain = "myapp" (strips .{domain} suffix)
   ├─ Look up container by name: "litebin-myapp" (via Docker API, no DB)
   │   ├─ Not found → 404
   │   └─ Found → container_id
   │
   ├─ Container is running?
-  │   └─ YES → rebuild local Caddy, return loading page
+  │   └─ YES → rebuild local Caddy, proxy straight to the container
   │
-  └─ Single-flight dedup (project_locks)
-      ├─ Vacant (first request) → spawn background wake, return loading page
-      └─ Occupied → completed+failed? error page : loading page
+  ├─ project-meta auto_start_enabled? NO → 503 (no Retry-After)
+  │
+  └─ Single-flight dedup (wake_locks)
+      ├─ Vacant (first request) → spawn background wake, hold the request (2s silent → waiting page)
+      └─ Occupied → await the same guard: proxy / waiting page / error page
 ```
 
-The agent waker does **not** check `auto_start_enabled` — it always tries to wake. The `auto_start_enabled` check is a master-side concern (DB field). If the container exists on the agent, it starts it.
+Browser requests are held exactly like the orchestrator waker (2s silent hold → proxy on success, waiting page + long-poll otherwise). API clients get the instant 503 + `Retry-After`.
 
 ### Background Wake — Agent (Autonomous)
 
@@ -262,21 +293,21 @@ The agent can wake and recreate containers fully autonomously using only these l
 ```
 T+0s    Browser → Cloudflare DNS → Agent IP → Agent Caddy
         → Catch-all → agent wake()
-        → Vacant entry → spawn background task
-        → return loading page (instant)
+        → Vacant entry → spawn background task → request held
 
 T+0.5s  Background: docker start {container_id}
-T+1s    Browser refresh → Occupied entry → loading page
-T+1.5s  Background: inspect port → 32771
+T+1s    Background: inspect port → readiness probe passes
+T+1.2s  Held request resumes → waker proxies to litebin-myapp:3000
+        → user sees the app in ONE request
+
+        (still starting at T+2s → waiting page; its /__l8b_wake_wait poll is
+        held until the readiness probe passes, then a single reload)
+
 T+2s    Background: list all running containers, rebuild Caddy config
         → POST /load to local Caddy
-        → Caddy now has: myapp.l8b.in → localhost:32771
-        → lock removed
+        → Caddy now has: myapp.l8b.in → container
 T+2.5s  Background: POST /internal/wake-report to orchestrator (fire-and-forget)
         → Master: UPDATE DB, send debounced route sync signal
-
-T+3s    Browser refresh → Agent Caddy matches myapp.l8b.in
-        → proxies directly to container → user sees app
 ```
 
 ---
@@ -333,8 +364,8 @@ The switch from sleeping → running route happens automatically when `sync_rout
 
 | Endpoint | What it does |
 |---|---|
-| `POST /containers/start` | Smart start: compares `.env` vs `.env.l8bin` hash. Same → `docker start` (fast). Different → recreate with new env (reads `metadata.json`). Returns `{mapped_port}`. |
-| `POST /containers/recreate` | Remove old, create fresh (no pull), reads `.env`, writes `.env.l8bin` snapshot + `metadata.json`, auto-assign port, return `{container_id, mapped_port}` |
+| `POST /containers/start` | Smart start: compares `.env` vs `.env.l8bin` hash. Same → `docker start` (fast). Different → recreate with new env (reads `metadata.json`). Waits for the app to accept connections (readiness probe) before responding. Returns `{mapped_port}`. |
+| `POST /containers/recreate` | Remove old, create fresh (no pull), reads `.env`, writes `.env.l8bin` snapshot + `metadata.json`, auto-assign port, waits for readiness, return `{container_id, mapped_port}` |
 | `POST /containers/run` | Pull image + create + start, auto-assign port, return `{container_id, mapped_port}` |
 | `POST /caddy/sync` | Accept Caddy JSON config, persist to `data/caddy-config.json`, push to local Caddy Admin API |
 | `POST /internal/register` | Receive config from orchestrator (mTLS auth): `{node_id, secret, domain, wake_report_url}`. Persists to `data/agent-state.json`. |
@@ -358,15 +389,13 @@ The switch from sleeping → running route happens automatically when `sync_rout
 ```
 Background wake fails (Docker error, timeout, image gone)
   │
-  ├─ guard.completed = true, guard.success = false
-  ├─ Lock stays in project_locks (NOT removed)
-  ├─ Auto-cleanup spawned: remove after 60s
+  ├─ guard.finish(false) — held requests and wait-endpoint polls
+  │   get the error page immediately ("Failed to start the website.
+  │   Retrying in 30 seconds..." — the waiting page swaps it in place)
+  ├─ Lock stays held (NOT removed)
+  ├─ Auto-cleanup spawned: remove guard + lock after 60s
   │
-  Next browser refresh → Occupied entry
-  ├─ completed=true, success=false → return error page
-  │   "Failed to start myapp. Retrying in 30 seconds..."
-  │
-  After 60s → lock auto-removed → next refresh tries fresh wake
+  After 60s → guard auto-removed → next request tries fresh wake
 ```
 
 ### Master is down during agent wake (Mode B)
@@ -394,8 +423,8 @@ When master comes back up:
 |---|---|---|
 | Docker daemon restarts, port drifts | Waker inspects actual port, updates DB, resyncs Caddy | Container uses `docker start` (preserves port); if stale, rebuild catches it |
 | Container pruned on agent | Remote start fails → falls back to recreate with stored image | Recreate from `metadata.json` + `.env` (no master needed) |
-| Wake fails entirely | Error page with 30s retry; lock auto-clears after 60s | Same |
-| Concurrent requests during wake | Single-flight dedup — all get instant loading page | Same |
+| Wake fails entirely | Error page (held requests get it immediately; guard auto-clears after 60s) | Same |
+| Concurrent requests during wake | Single-flight dedup — all hold on the same WakeGuard, all served when the app is ready | Same |
 | Background wake hangs | 60s timeout, then treated as failure | Same |
 | Master is down | N/A (master IS the waker) | Agent handles locally, reports to master on recovery |
 | Sleeping custom domain wake | Caddy Host rewrite → waker extracts subdomain → wakes | Same — Caddy Host rewrite → agent waker extracts subdomain |
@@ -451,7 +480,8 @@ if container is down → 502 → fallback to orchestrator waker
 if auto_start disabled → offline page
 wake lock + start_services(force_recreate=false)
     ↓
-loading page → next poll serves the site
+request held (2s silent) → app response proxied directly
+    or waiting page → single reload serves the site
 ```
 
 ### Why not proxy through the orchestrator?
@@ -667,7 +697,7 @@ T+17min  Janitor runs
          → Caddy route removed
 
 T+18min  New visitor hits myapp.l8b.in
-         → Caddy catch-all → waker → container starts → loading page → auto-refresh → app served
+         → Caddy catch-all → waker → container starts → request answered with the app
 ```
 
 ### What Triggers last_active_at Updates

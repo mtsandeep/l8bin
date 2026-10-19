@@ -202,6 +202,7 @@ pub async fn start_project(
                 services: None,
                 connect_orchestrator: true,
                 rollback_on_failure: false,
+                skip_dns_wait: false,
             },
         )
         .await?;

@@ -21,4 +21,7 @@ pub struct StartServicesOpts {
 
     /// On failure, stop and remove all containers started in this call.
     pub rollback_on_failure: bool,
+
+    /// Skip the trailing 2s DNS wait (waker only): the readiness probe is the precise version of that wait.
+    pub skip_dns_wait: bool,
 }

@@ -12,19 +12,13 @@ use dashmap::DashMap;
 use litebin_common::caddy::CaddyClient;
 use litebin_common::docker::DockerManager;
 use litebin_common::upload::UploadStore;
-use tokio::sync::Notify;
 
 pub use config::{AgentRegistration, Config};
+pub use litebin_common::wake_wait::WakeGuard;
 
 const REGISTRATION_FILE: &str = "data/agent-state.json";
 const CADDY_CONFIG_FILE: &str = "data/caddy-config.json";
 const PROJECT_META_FILE: &str = "data/project-meta.json";
-
-pub struct WakeGuard {
-    pub notify: Notify,
-    pub success: std::sync::atomic::AtomicBool,
-    pub completed: std::sync::atomic::AtomicBool,
-}
 
 #[derive(Clone)]
 pub struct AgentState {

@@ -314,6 +314,7 @@ pub async fn recreate_project(
                 services: None,
                 connect_orchestrator: true,
                 rollback_on_failure: true,
+                skip_dns_wait: false,
             },
         )
         .await?;

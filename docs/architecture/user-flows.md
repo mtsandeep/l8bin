@@ -155,10 +155,10 @@ Import writes DB rows, resolves or reconstructs compose.yaml, rewrites relative 
 ## Wake / Auto-Start Flows
 
 ### W1. Visit URL of a stopped project (auto-start enabled)
-Loading page shown. Container started in background. Next poll serves the site. Works for both single and multi-service (local + remote).
+Request held while the container starts — every client class, the same `WAKE_HOLD_SECS` (default 2s) budget. Ready in time → the app's response is proxied in that one request (no page shown in between). Slower → Documents get the waiting page (renders once, JS long-polls, single reload), subresources keep holding up to 30s, API clients get `503 + Retry-After`. Works for both single and multi-service, local and remote (remote projects proxy through the agent's Caddy).
 
 ### W2. Visit URL of a stopped project (auto-start disabled)
-Offline page shown. No auto-start.
+Offline page shown (503, no Retry-After). No auto-start.
 
 ### W3. Visit URL of a running single-service project
 Direct proxy to container. No loading page.
@@ -167,16 +167,16 @@ Direct proxy to container. No loading page.
 Direct proxy to public service container (same as single-service). No loading page. All protocols (HTTP, WebSocket, etc.) work natively.
 
 ### W5. Visit URL when public service crashed (multi-service)
-502 → Caddy falls back to orchestrator. Loading page shown. All containers restarted in background. Next poll serves the site.
+502 → Caddy falls back to orchestrator. Same held-wake flow as W1. All containers restarted in background.
 
 ### W6. Visit URL when non-public service crashed (multi-service)
 No impact on routing. Public service still proxied directly. Crashed service recovers via Docker's `restart: unless-stopped` policy (if set).
 
 ### W7. Visit URL during an ongoing wake (concurrent requests)
-All concurrent requests get the loading page. Only one background wake runs (single-flight lock).
+All concurrent requests hold on the same wake guard and are all served when the app is ready. Only one background wake runs (single-flight lock).
 
-### W8. Visit URL after wake completes but DNS not ready
-Still shows loading page (wake lock check), not 502.
+### W8. Visit URL after wake completes but route not yet synced
+The waker proxies straight to the container — locally over the shared project network, remotely through the agent's Caddy — no 502, no waiting page.
 
 ---
 
@@ -278,10 +278,10 @@ Heartbeat from agent resumes. Wake reports update DB. Reconciliation corrects st
 ## Static Assets / Sub-resources
 
 ### F1. CSS/JS/image requests while project is starting
-Non-HTML requests get a JSON 502 response (not the HTML loading page), so the browser doesn't replace the loading spinner with an error page.
+Browser subresources (`Sec-Fetch-Dest: style/script/image/...`) are held like everything else and keep waiting up to 30s past the silent hold — so a cached-HTML revisit renders styled once the app is up instead of getting stuck on 503s. API-shaped requests (no `Sec-Fetch-Dest`, no `Accept: text/html`) get the 503 JSON after the silent hold.
 
 ### F2. CSS/JS/image requests while project is running
-Proxied normally, no loading page.
+Proxied normally (or directly by the waker if the Caddy route is momentarily stale), no loading page.
 
 ### F3. Favicon/browser extension requests (non-project paths)
 Should not trigger a wake. Returns 404.

@@ -52,6 +52,9 @@ pub struct AppState {
     pub disk_cache: Arc<DashMap<String, i64>>,
     pub project_locks: Arc<DashMap<String, Arc<Semaphore>>>,
     pub wake_failures: Arc<DashMap<String, std::time::Instant>>,
+    /// Single-flight wake completion guards — concurrent requests await these
+    /// instead of polling the waker.
+    pub wake_guards: Arc<DashMap<String, Arc<litebin_common::wake_wait::WakeGuard>>>,
     // Debounced route sync channel — send a signal to trigger a batched route sync
     pub route_sync_tx: tokio::sync::mpsc::UnboundedSender<()>,
     // Reverse proxy client for multi-service projects (always routed through orchestrator)
@@ -339,6 +342,7 @@ async fn main() -> anyhow::Result<()> {
         disk_cache: Arc::new(DashMap::new()),
         project_locks,
         wake_failures,
+        wake_guards: Arc::new(DashMap::new()),
         route_sync_tx,
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),

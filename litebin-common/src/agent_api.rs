@@ -81,6 +81,10 @@ pub struct RunRequest {
 pub struct RunResponse {
     pub container_id: String,
     pub mapped_port: Option<u16>,
+    /// Whether the app accepted connections after start (readiness probe).
+    /// Absent from older agents — treat as unknown/true.
+    #[serde(default)]
+    pub ready: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -101,6 +105,10 @@ pub struct StartRequest {
 #[derive(Serialize, Deserialize)]
 pub struct StartResponse {
     pub mapped_port: u16,
+    /// Whether the app accepted connections after start (readiness probe).
+    /// Absent from older agents — treat as unknown/true.
+    #[serde(default)]
+    pub ready: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]

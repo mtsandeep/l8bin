@@ -12,6 +12,33 @@ use super::types::{
 
 // ── Single-Container Lifecycle Handlers ──────────────────────────────────────
 
+/// Poll until the app accepts connections; returned in the response so master-initiated wakes report real
+/// readiness. Never stops the container.
+async fn probe_readiness(state: &AgentState, project_id: &str) -> Option<bool> {
+    // Background projects have no listener — skip.
+    if state.project_meta.read().unwrap().get(project_id).is_some_and(|e| e.is_background) {
+        return None;
+    }
+    let containers = state.docker.list_running_litebin_containers().await.ok()?;
+    let c = containers.iter().find(|c| c.project_id == project_id && c.service_name == "web")?;
+    let upstream = format!("{}:{}", c.container_name, c.internal_port);
+    let docker = state.docker.clone();
+    let alive_upstream = upstream.clone();
+    let ready = litebin_common::wake_wait::readiness_probe(
+        &state.proxy_client,
+        &upstream,
+        litebin_common::wake_wait::WAKE_READINESS_MAX,
+        || {
+            let docker = docker.clone();
+            let alive_upstream = alive_upstream.clone();
+            async move { litebin_common::wake_wait::upstream_container_alive(&docker, &alive_upstream).await }
+        },
+    )
+    .await;
+    tracing::info!(project = %project_id, upstream = %upstream, ready = ready, "start: readiness probe done");
+    Some(ready)
+}
+
 fn update_project_meta(state: &AgentState, project_id: &str, is_background: bool, docker_observe: bool) {
     {
         let mut meta = state.project_meta.write().unwrap();
@@ -101,7 +128,8 @@ pub async fn run_container(State(state): State<AgentState>, Json(req): Json<RunR
             req.volumes.clone(),
         );
         tracing::info!(project = %req.project_id, "container run staged (no containers started)");
-        return (StatusCode::OK, Json(RunResponse { container_id: String::new(), mapped_port: None })).into_response();
+        return (StatusCode::OK, Json(RunResponse { container_id: String::new(), mapped_port: None, ready: None }))
+            .into_response();
     }
 
     // Remove existing container for this project if present (handles redeploy)
@@ -168,7 +196,10 @@ pub async fn run_container(State(state): State<AgentState>, Json(req): Json<RunR
                 req.cpu_limit,
                 req.volumes.clone(),
             );
-            (StatusCode::OK, Json(RunResponse { container_id, mapped_port: req.internal_port.map(|_| mapped_port) }))
+            (
+                StatusCode::OK,
+                Json(RunResponse { container_id, mapped_port: req.internal_port.map(|_| mapped_port), ready: None }),
+            )
                 .into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response(),
@@ -235,7 +266,11 @@ pub async fn recreate_container(State(state): State<AgentState>, Json(req): Json
                 req.cpu_limit,
                 req.volumes.clone(),
             );
-            (StatusCode::OK, Json(RunResponse { container_id, mapped_port: req.internal_port.map(|_| mapped_port) }))
+            let ready = if project.is_background { None } else { probe_readiness(&state, &req.project_id).await };
+            (
+                StatusCode::OK,
+                Json(RunResponse { container_id, mapped_port: req.internal_port.map(|_| mapped_port), ready }),
+            )
                 .into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response(),
@@ -358,7 +393,8 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
                     req.cpu_limit,
                     None,
                 );
-                (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
+                let ready = probe_readiness(&state, project_id).await;
+                (StatusCode::OK, Json(StartResponse { mapped_port, ready })).into_response()
             }
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response(),
         };
@@ -383,7 +419,11 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
             0
         }
     };
-    (StatusCode::OK, Json(StartResponse { mapped_port })).into_response()
+    let ready = match req.project_id.as_deref() {
+        Some(pid) => probe_readiness(&state, pid).await,
+        None => None,
+    };
+    (StatusCode::OK, Json(StartResponse { mapped_port, ready })).into_response()
 }
 
 /// POST /containers/stop

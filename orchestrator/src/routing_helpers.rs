@@ -36,7 +36,10 @@ pub(crate) fn build_routing_provider(
 
 /// Look up a node's host address and public_ip by node_id.
 /// Returns None if the node doesn't exist in the database.
-async fn lookup_node_host(db: &SqlitePool, node_id: &str) -> anyhow::Result<Option<(String, Option<String>)>> {
+pub(crate) async fn lookup_node_host(
+    db: &SqlitePool,
+    node_id: &str,
+) -> anyhow::Result<Option<(String, Option<String>)>> {
     let row: Option<(String, Option<String>)> =
         sqlx::query_as("SELECT host, public_ip FROM nodes WHERE id = ?").bind(node_id).fetch_optional(db).await?;
     Ok(row)

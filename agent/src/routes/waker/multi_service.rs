@@ -317,10 +317,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 
     tracing::info!(project_id = %project_id, "wake_multi_service: all services started");
 
-    // Wait for Docker DNS to propagate only if we created new containers.
-    if any_created.load(std::sync::atomic::Ordering::Relaxed) {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    }
+    // No DNS wait — the readiness probe polls by container name (DNS + accept); a blind sleep would blow the 2s silent hold.
 
     Ok(())
 }

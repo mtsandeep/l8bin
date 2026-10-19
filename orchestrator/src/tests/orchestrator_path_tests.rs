@@ -82,6 +82,7 @@ async fn live_orchestrator_state() -> anyhow::Result<AppState> {
         disk_cache: Arc::new(DashMap::new()),
         project_locks: Arc::new(DashMap::new()),
         wake_failures: Arc::new(DashMap::new()),
+        wake_guards: Arc::new(DashMap::new()),
         route_sync_tx,
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
@@ -214,6 +215,7 @@ async fn live_local_compose_background_uses_orchestrator_lifecycle() {
                 pull_images: false,
                 connect_orchestrator: false,
                 rollback_on_failure: true,
+                skip_dns_wait: false,
                 ..Default::default()
             },
         )

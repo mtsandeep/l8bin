@@ -62,6 +62,7 @@ pub async fn start_service(
             services: Some(services),
             connect_orchestrator: true,
             rollback_on_failure: false,
+            skip_dns_wait: false,
         },
     )
     .await?;
@@ -209,6 +210,7 @@ pub async fn restart_service(
             services: Some(services),
             connect_orchestrator: true,
             rollback_on_failure: false,
+            skip_dns_wait: false,
         },
     )
     .await?;

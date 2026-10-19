@@ -42,7 +42,7 @@ Largest idle footprint per expected re-wake cost — an app that wakes hourly sh
 **Wake path (hybrid admission)** — the 20% headroom between water marks is the admission budget:
 
 - **Fast path (common):** app's expected footprint (historical RSS from stats) fits the reserve → wake immediately without waiting; swap absorbs startup transients. After start, if pressure persists past the settle window, evict from the ranked list as normal.
-- **Slow path (rare, big apps):** expected footprint exceeds the reserve → evict from the ranked list first, then wake. The waker already holds the request during wake; slightly longer hold is acceptable here.
+- **Slow path (rare, big apps):** expected footprint exceeds the reserve → evict from the ranked list first, then wake. The waker already holds the request during wake (2s silent hold, then the waiting page's long-poll — see [scale-to-zero.md](../architecture/scale-to-zero.md)); a slightly longer hold is acceptable here.
 
 **Placement** — pressure decisions are node-local truth, so they belong on the agent (which already owns the waker and activity tracking). The orchestrator/janitor keeps computing idle eligibility; this preserves the agents-survive-master-down property.
 

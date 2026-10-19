@@ -75,6 +75,7 @@ pub(super) async fn run_deploy_task(
                 services: None,
                 connect_orchestrator: true,
                 rollback_on_failure: true,
+                skip_dns_wait: false,
             },
         )
         .await

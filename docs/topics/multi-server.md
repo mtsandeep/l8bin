@@ -177,17 +177,18 @@ User → Master Caddy → agent_ip:443 → Agent Caddy (no matching route)
                                         → returns 502
      ← Master Caddy catches 502 via handle_response
      → falls back to orchestrator waker
-     → Orchestrator sends mTLS request to agent (start container)
-     → Agent starts container, rebuilds local Caddy
-     → Agent reports wake to orchestrator
+     → Orchestrator holds the request, sends mTLS request to agent (start container)
+     → Agent starts container, waits for the app to accept connections,
+       rebuilds local Caddy, reports wake to orchestrator
      → Orchestrator syncs master Caddy routes
-     → User refreshes → normal request flow
+     → Held request: the app's response, proxied through the agent's Caddy
 ```
 
 Key details:
 - Agent Caddy's catch-all route returns a **static 502** (not a proxy) — this triggers master Caddy's `handle_response` for 502/503/504 status codes, which falls back to the orchestrator waker
-- The waker shows a "Starting {project}..." page with a 1-second auto-refresh
-- Once the container is running and routes are rebuilt, the next refresh reaches the app
+- The orchestrator proxies remote held requests through the agent's Caddy itself (`build_remote_proxy_client`: CA-verified TLS, SNI `agent`, connection pinned to the node, original Host header preserved) — the same transport master Caddy uses for app traffic
+- The agent's `/containers/start` and `/containers/recreate` don't respond until the app accepts connections (readiness probe), so "wake succeeded" means "ready to serve"
+- Only when the node, certs, or agent are unreachable does the visitor get the waiting page; its long-poll triggers one reload through the synced master Caddy → agent Caddy route
 
 ## Certificate Architecture
 

@@ -742,8 +742,9 @@ pub async fn start_services(
 
     sync_caddy(state).await;
 
-    // DNS wait if any container was created or re-started (Docker DNS needs time either way)
-    if any_started.load(std::sync::atomic::Ordering::Relaxed) {
+    // DNS wait if any container was created or re-started (Docker DNS needs time either way).
+    // Skipped by the waker: its readiness probe polls by name (DNS + accept).
+    if any_started.load(std::sync::atomic::Ordering::Relaxed) && !opts.skip_dns_wait {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 

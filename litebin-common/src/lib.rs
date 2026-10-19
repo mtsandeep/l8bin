@@ -13,4 +13,5 @@ pub mod scan;
 pub mod sys;
 pub mod types;
 pub mod upload;
+pub mod wake_wait;
 pub mod waker_pages;

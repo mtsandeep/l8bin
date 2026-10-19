@@ -83,10 +83,7 @@ async fn waker_returns_503_when_auto_start_disabled_and_stopped() {
     assert_eq!(row.0, "stopped");
 }
 
-/// Requirement 5.2 — stopped project with auto_start_enabled=true does NOT return 503.
-///
-/// The waker passes the auto_start check and spawns a background wake.
-/// It returns the loading page (200) immediately, proving the 503 auto-start gate was passed.
+/// Stopped + auto-start enabled: passes the gate, spawns a wake (no offline 503).
 #[tokio::test]
 async fn waker_does_not_return_503_when_auto_start_enabled_and_stopped() {
     let (server, db) = test_server_with_db().await;
@@ -99,19 +96,15 @@ async fn waker_does_not_return_503_when_auto_start_enabled_and_stopped() {
         .add_header(axum::http::header::ACCEPT, "text/html")
         .await;
 
-    // Must NOT be 503 (auto-start disabled). Returns 200 loading page (background wake).
-    assert_ne!(
-        resp.status_code(),
-        StatusCode::SERVICE_UNAVAILABLE,
-        "waker should not return 503 when auto_start_enabled=true"
+    // Auto-start gate passed: NOT the offline 503 (its body is the offline page).
+    let body = resp.text();
+    assert!(
+        !body.contains("currently offline"),
+        "waker should not return the offline page when auto_start_enabled=true"
     );
-    resp.assert_status(StatusCode::OK);
 }
 
-/// Requirement 5.3 — running project with auto_start_enabled=false returns 200.
-///
-/// A running project with mapped_port is recognized as running, skips the auto_start
-/// check entirely, syncs Caddy routes, and returns the 200 loading page.
+/// Running project skips the offline gate.
 #[tokio::test]
 async fn waker_returns_200_for_running_project_with_auto_start_disabled() {
     let (server, db) = test_server_with_db().await;
@@ -125,7 +118,65 @@ async fn waker_returns_200_for_running_project_with_auto_start_disabled() {
         .add_header(axum::http::header::ACCEPT, "text/html")
         .await;
 
+    let body = resp.text();
+    assert!(!body.contains("currently offline"), "running project must skip the auto-start/offline gate");
+}
+
+/// No guard → immediate "ready" + marker header.
+#[tokio::test]
+async fn wake_wait_endpoint_answers_ready_without_guard() {
+    let (server, db) = test_server_with_db().await;
+    seed_user(&db).await;
+    insert_project_with_status(&db, "wait-proj", "stopped", true, None).await;
+
+    let resp = server
+        .get("/__l8b_wake_wait")
+        .add_header(axum::http::header::HOST, "wait-proj.localhost")
+        .add_header(axum::http::header::ACCEPT, "application/json")
+        .await;
+
     resp.assert_status(StatusCode::OK);
+    assert_eq!(resp.headers().get("x-l8b-wake").and_then(|v| v.to_str().ok()), Some("1"));
+    assert!(resp.text().contains("\"status\":\"ready\""));
+}
+
+/// Completed guard → its outcome.
+#[tokio::test]
+async fn wake_wait_endpoint_reports_guard_outcome() {
+    use axum_test::TestServer;
+    use std::sync::Arc;
+
+    let (state, db) = super::helpers::build_test_state(super::helpers::test_config()).await;
+    seed_user(&db).await;
+    insert_project_with_status(&db, "guarded-proj", "stopped", true, None).await;
+
+    let guard = Arc::new(litebin_common::wake_wait::WakeGuard::new());
+    guard.finish(true);
+    state.wake_guards.insert("guarded-proj".to_string(), guard);
+
+    let server = TestServer::new(super::helpers::build_router(state)).unwrap();
+    let resp = server
+        .get("/__l8b_wake_wait")
+        .add_header(axum::http::header::HOST, "guarded-proj.localhost")
+        .add_header(axum::http::header::ACCEPT, "application/json")
+        .await;
+
+    resp.assert_status(StatusCode::OK);
+    assert_eq!(resp.headers().get("x-l8b-wake").and_then(|v| v.to_str().ok()), Some("1"));
+    assert!(resp.text().contains("\"status\":\"ready\""));
+}
+
+/// Offline: 503 without Retry-After (down until a human acts).
+#[tokio::test]
+async fn offline_json_has_no_retry_after() {
+    let (server, db) = test_server_with_db().await;
+    seed_user(&db).await;
+    insert_project_with_status(&db, "off-proj", "stopped", false, None).await;
+
+    let resp = server.get("/").add_header(axum::http::header::HOST, "off-proj.localhost").await;
+
+    resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    assert!(resp.headers().get("retry-after").is_none(), "offline must not promise a retry window");
 }
 
 /// Unconfigured (staged) projects must not auto-start when the public URL is opened.

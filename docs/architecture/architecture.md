@@ -92,11 +92,10 @@ Runs on a configurable interval (default: 5 min). Stops idle containers that hav
 
 When a request hits a sleeping app:
 
-1. Return a loading page immediately
-2. Check `auto_start_enabled` — if disabled, show "currently offline" page
-3. Start the container in the background (single-flight dedup)
-4. Rebuild Caddy routes
-5. Browser auto-refreshes and hits the running container
+1. Check `auto_start_enabled` — if disabled, show "currently offline" page (503, no Retry-After)
+2. Start the container in the background (single-flight dedup) and hold the request
+3. Wait for the app to accept connections (readiness probe, up to 60s)
+4. Serve the app's own response in that one request — or, past the hold budget, a waiting page whose JS long-polls and performs a single reload; API clients get `503 + Retry-After`
 
 In Mode B, the agent handles this autonomously using only the Docker API — no master or database needed.
 

@@ -1,12 +1,14 @@
 use axum::{
     body::Body,
     extract::State,
-    http::{HeaderMap, Method, Request, Response, StatusCode},
+    http::{HeaderMap, Method, Request, Response, StatusCode, Uri},
 };
 use serde_json::json;
+use std::sync::Arc;
 
 use crate::{AgentState, WakeGuard};
-use litebin_common::proxy::{is_hop_by_hop, wants_json};
+use litebin_common::proxy::{WakeClient, classify_wake_client, is_hop_by_hop};
+use litebin_common::wake_wait::{WAKE_WAIT_HEADER, WAKE_WAIT_PATH};
 
 use super::caddy::{find_public_service_upstream, rebuild_local_caddy};
 use super::multi_service::{report_wake_to_master, wake_multi_service};
@@ -66,14 +68,139 @@ fn starting_json_response() -> Response<Body> {
 }
 
 /// 503 JSON response for offline/auto-start-disabled projects.
+/// Deliberately no Retry-After: the app is down until a human re-enables it.
 fn offline_json_response() -> Response<Body> {
-    let body = json!({"error": "offline", "retry_after": 5}).to_string();
+    let body = json!({"error": "offline"}).to_string();
     Response::builder()
         .status(StatusCode::SERVICE_UNAVAILABLE)
         .header("Content-Type", "application/json")
-        .header("Retry-After", "5")
         .body(Body::from(body))
         .unwrap()
+}
+
+/// Proxy with bounded retries on 502/hung attempts; returns the last 502 once the budget elapses.
+async fn proxy_with_retry(
+    client: &reqwest::Client,
+    method: Method,
+    upstream: &str,
+    uri: &Uri,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+    budget: std::time::Duration,
+) -> Response<Body> {
+    let pq = uri.path_and_query().map(|pq| pq.as_str());
+    let deadline = tokio::time::Instant::now() + budget;
+    let mut last = proxy_attempt(client, method.clone(), upstream, pq, headers, &body).await;
+    while last.status() == StatusCode::BAD_GATEWAY && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        last = proxy_attempt(client, method.clone(), upstream, pq, headers, &body).await;
+    }
+    last
+}
+
+/// One proxy attempt, capped at 3s so an unresponsive upstream can't pin the handler.
+async fn proxy_attempt(
+    client: &reqwest::Client,
+    method: Method,
+    upstream: &str,
+    path_and_query: Option<&str>,
+    headers: &HeaderMap,
+    body: &axum::body::Bytes,
+) -> Response<Body> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        proxy_request(client, method, upstream, path_and_query, headers, body.clone()),
+    )
+    .await
+    {
+        Ok(resp) => resp,
+        Err(_) => Response::builder().status(StatusCode::BAD_GATEWAY).body(Body::from("Bad gateway")).unwrap(),
+    }
+}
+
+/// Long-poll for the waiting page JS; no guard answers "ready" — the reload re-enters the waker flow.
+async fn wake_wait_response(state: &AgentState, subdomain: &str) -> Response<Body> {
+    let status = match state.wake_locks.get(subdomain).map(|g| g.clone()) {
+        Some(guard) => match guard.wait_for(litebin_common::wake_wait::WAKE_WAIT_POLL_CAP).await {
+            Some(true) => "ready",
+            Some(false) => "failed",
+            None => "timeout",
+        },
+        None => "ready",
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .header(WAKE_WAIT_HEADER, "1")
+        .body(Body::from(json!({"status": status}).to_string()))
+        .unwrap()
+}
+
+/// Upstream for a just-woken single-service project, from Docker discovery.
+async fn single_service_upstream(state: &AgentState, project_id: &str) -> Option<String> {
+    let containers = state.docker.list_running_litebin_containers().await.ok()?;
+    let c = containers.into_iter().find(|c| c.project_id == project_id && c.service_name == "web")?;
+    Some(format!("{}:{}", c.container_name, c.internal_port))
+}
+
+/// The buffered original request a held browser request proxies once its wake
+/// finishes.
+struct HeldRequest<'a> {
+    method: Method,
+    uri: &'a Uri,
+    headers: &'a HeaderMap,
+    body: axum::body::Bytes,
+}
+
+/// Held-request outcome by client class — Document gets the waiting page, Asset holds to its cap, Api gets 503;
+/// success proxies the original request (local: container network, remote: agent Caddy).
+async fn held_wake_response(
+    state: &AgentState,
+    subdomain: &str,
+    is_multi_service: bool,
+    client: WakeClient,
+    guard: Arc<WakeGuard>,
+    req: HeldRequest<'_>,
+) -> Response<Body> {
+    let budget = match client {
+        WakeClient::Asset => litebin_common::wake_wait::WAKE_ASSET_HOLD_CAP,
+        _ => litebin_common::wake_wait::wake_silent_hold(),
+    };
+    match guard.wait_for(budget).await {
+        Some(false) => match client {
+            WakeClient::Document => error_page(subdomain),
+            _ => starting_json_response(),
+        },
+        None => match client {
+            WakeClient::Document => waiting_page(subdomain),
+            _ => starting_json_response(),
+        },
+        Some(true) => {
+            let upstream = if is_multi_service {
+                find_public_service_upstream(subdomain)
+            } else {
+                single_service_upstream(state, subdomain).await
+            };
+            match upstream {
+                Some(upstream) => {
+                    proxy_with_retry(
+                        &state.proxy_client,
+                        req.method,
+                        &upstream,
+                        req.uri,
+                        req.headers,
+                        req.body,
+                        std::time::Duration::from_secs(3),
+                    )
+                    .await
+                }
+                None => match client {
+                    WakeClient::Document => waiting_page(subdomain),
+                    _ => starting_json_response(),
+                },
+            }
+        }
+    }
 }
 
 /// Get the domain from registration state. Returns None if not registered.
@@ -90,7 +217,7 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
     let headers = parts.headers.clone();
     let method = parts.method.clone();
     let uri = parts.uri.clone();
-    let json = wants_json(&headers);
+    let client = classify_wake_client(&headers);
     let body = axum::body::to_bytes(body, 10 * 1024 * 1024).await.unwrap_or_default();
 
     let domain = match get_domain(&state) {
@@ -116,6 +243,11 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
         return not_found_page();
     }
 
+    // Waiting-page long-poll: answer with the wake outcome (or "ready" with no guard).
+    if uri.path() == WAKE_WAIT_PATH {
+        return wake_wait_response(&state, &subdomain).await;
+    }
+
     // Try to find the container — single-service name first, then multi-service prefix
     let container_id =
         if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}", subdomain)).await {
@@ -134,9 +266,17 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
     let is_running = state.docker.is_container_running(&container_id).await.unwrap_or(false);
 
     if is_running && is_multi_service {
-        // If a wake is still in progress (e.g. DNS wait after container start), show loading page
-        if state.wake_locks.contains_key(&subdomain) {
-            return if json { starting_json_response() } else { loading_page(&subdomain) };
+        // Wake still in progress: wait on its guard.
+        if let Some(guard) = state.wake_locks.get(&subdomain).map(|g| g.clone()) {
+            return held_wake_response(
+                &state,
+                &subdomain,
+                true,
+                client,
+                guard,
+                HeldRequest { method, uri: &uri, headers: &headers, body },
+            )
+            .await;
         }
 
         // Multi-service running: health-check all services (throttled) and proxy to container.
@@ -226,7 +366,10 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
                 )
                 .await;
                 if resp.status() == StatusCode::BAD_GATEWAY {
-                    return if json { starting_json_response() } else { loading_page(&subdomain) };
+                    return match client {
+                        WakeClient::Document => waiting_page(&subdomain),
+                        _ => starting_json_response(),
+                    };
                 }
                 return resp;
             }
@@ -234,26 +377,43 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
         }
         // Public service is down — fall through to wake lock below
     } else if is_running {
-        // Single-service running — rebuild local Caddy and return loading page
+        // Running but unrouted: rebuild local Caddy, then proxy straight to the container for every client class.
         if let Err(e) = rebuild_local_caddy(&state).await {
             tracing::error!(project = %subdomain, error = %e, "agent waker: failed to rebuild Caddy");
         }
-        return if json { starting_json_response() } else { loading_page(&subdomain) };
+        if let Some(upstream) = single_service_upstream(&state, &subdomain).await {
+            let resp = proxy_with_retry(
+                &state.proxy_client,
+                method,
+                &upstream,
+                &uri,
+                &headers,
+                body,
+                std::time::Duration::from_secs(2),
+            )
+            .await;
+            if resp.status() != StatusCode::BAD_GATEWAY {
+                return resp;
+            }
+        }
+        return match client {
+            WakeClient::Document => waiting_page(&subdomain),
+            _ => starting_json_response(),
+        };
     }
 
     // Check auto_start_enabled before waking
     let auto_start = state.project_meta.read().unwrap().get(&subdomain).map(|e| e.auto_start_enabled).unwrap_or(true); // default true if not pushed yet
 
     if !auto_start {
-        return if json { offline_json_response() } else { offline_page() };
+        return match client {
+            WakeClient::Document => offline_page(),
+            _ => offline_json_response(),
+        };
     }
 
     // Container is stopped — single-flight wake via Entry API
-    let guard = std::sync::Arc::new(WakeGuard {
-        notify: tokio::sync::Notify::new(),
-        success: std::sync::atomic::AtomicBool::new(false),
-        completed: std::sync::atomic::AtomicBool::new(false),
-    });
+    let guard = std::sync::Arc::new(WakeGuard::new());
 
     match state.wake_locks.entry(subdomain.clone()) {
         dashmap::mapref::entry::Entry::Vacant(entry) => {
@@ -263,24 +423,52 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
             let subdomain_clone = subdomain.clone();
             let container_id_clone = container_id.clone();
             let is_multi_clone = is_multi_service;
+            let guard_task = guard.clone();
 
             tokio::spawn(async move {
                 if is_multi_clone {
                     tracing::info!(project_id = %subdomain_clone, "agent wake: multi-service wake");
                     let result = wake_multi_service(&state_clone, &subdomain_clone).await;
-                    match result {
-                        Ok(_) => guard.success.store(true, std::sync::atomic::Ordering::Relaxed),
+                    let success = match result {
+                        Ok(()) => {
+                            // Not-ready fails the wake; the container stays up and serves once it boots.
+                            match find_public_service_upstream(&subdomain_clone) {
+                                Some(upstream) => {
+                                    let docker = state_clone.docker.clone();
+                                    let alive_upstream = upstream.clone();
+                                    let ready = litebin_common::wake_wait::readiness_probe(
+                                        &state_clone.proxy_client,
+                                        &upstream,
+                                        litebin_common::wake_wait::WAKE_READINESS_MAX,
+                                        || {
+                                            let docker = docker.clone();
+                                            let alive_upstream = alive_upstream.clone();
+                                            async move {
+                                                litebin_common::wake_wait::upstream_container_alive(
+                                                    &docker,
+                                                    &alive_upstream,
+                                                )
+                                                .await
+                                            }
+                                        },
+                                    )
+                                    .await;
+                                    tracing::info!(project = %subdomain_clone, upstream = %upstream, ready = ready, "agent wake: readiness probe done");
+                                    ready
+                                }
+                                None => true,
+                            }
+                        }
                         Err(e) => {
                             tracing::warn!(project_id = %subdomain_clone, error = %e, "agent wake: multi-service failed");
-                            guard.success.store(false, std::sync::atomic::Ordering::Relaxed);
+                            false
                         }
-                    }
-                    guard.completed.store(true, std::sync::atomic::Ordering::Relaxed);
-                    guard.notify.notify_waiters();
+                    };
+                    guard_task.finish(success);
                     let key = subdomain_clone.clone();
                     let locks = state_clone.wake_locks.clone();
                     tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        tokio::time::sleep(litebin_common::wake_wait::WAKE_GUARD_RETENTION).await;
                         locks.remove(&key);
                     });
                 } else {
@@ -388,47 +576,88 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
                     }
                     .await;
 
-                    match result {
-                        Ok(_) => {
+                    let success = match result {
+                        Ok(()) => {
                             tracing::info!(project_id = %subdomain_clone, "agent wake: success");
-                            guard.success.store(true, std::sync::atomic::Ordering::Relaxed);
+                            // Readiness: guard success means "app accepting
+                            // connections". A not-ready result fails the wake — the
+                            // container stays up and serves once it finishes booting.
+                            match single_service_upstream(&state_clone, &subdomain_clone).await {
+                                Some(upstream) => {
+                                    let docker = state_clone.docker.clone();
+                                    let alive_upstream = upstream.clone();
+                                    let ready = litebin_common::wake_wait::readiness_probe(
+                                        &state_clone.proxy_client,
+                                        &upstream,
+                                        litebin_common::wake_wait::WAKE_READINESS_MAX,
+                                        || {
+                                            let docker = docker.clone();
+                                            let alive_upstream = alive_upstream.clone();
+                                            async move {
+                                                litebin_common::wake_wait::upstream_container_alive(
+                                                    &docker,
+                                                    &alive_upstream,
+                                                )
+                                                .await
+                                            }
+                                        },
+                                    )
+                                    .await;
+                                    tracing::info!(project = %subdomain_clone, upstream = %upstream, ready = ready, "agent wake: readiness probe done");
+                                    ready
+                                }
+                                None => true,
+                            }
                         }
                         Err(e) => {
                             tracing::warn!(project_id = %subdomain_clone, error = %e, "agent wake: failed");
-                            guard.success.store(false, std::sync::atomic::Ordering::Relaxed);
+                            false
                         }
-                    }
+                    };
+                    guard_task.finish(success);
                 }
 
-                guard.completed.store(true, std::sync::atomic::Ordering::Relaxed);
-                guard.notify.notify_waiters();
-
-                // Auto-cleanup after 60s
+                // Auto-cleanup after the retention window
                 let key = subdomain_clone.clone();
                 tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    tokio::time::sleep(litebin_common::wake_wait::WAKE_GUARD_RETENTION).await;
                     state_clone.wake_locks.remove(&key);
                 });
             });
 
-            if json { starting_json_response() } else { loading_page(&subdomain) }
+            held_wake_response(
+                &state,
+                &subdomain,
+                is_multi_service,
+                client,
+                guard,
+                HeldRequest { method, uri: &uri, headers: &headers, body },
+            )
+            .await
         }
         dashmap::mapref::entry::Entry::Occupied(entry) => {
-            // Someone else is already waking (or has completed)
+            // Another wake in progress (or completed) — wait on the same guard.
             let existing = entry.get().clone();
-            if existing.completed.load(std::sync::atomic::Ordering::Relaxed) {
-                let success = existing.success.load(std::sync::atomic::Ordering::Relaxed);
+            if existing.is_completed() && !existing.is_success() {
                 // Remove old lock so the next request can start a fresh wake
                 state.wake_locks.remove(&subdomain);
-                if success {
-                    if json { starting_json_response() } else { loading_page(&subdomain) }
-                } else {
-                    error_page(&subdomain)
-                }
-            } else {
-                // Wake still in progress — show loading page
-                if json { starting_json_response() } else { loading_page(&subdomain) }
+                return match client {
+                    WakeClient::Document => error_page(&subdomain),
+                    _ => starting_json_response(),
+                };
             }
+            if existing.is_completed() {
+                state.wake_locks.remove(&subdomain);
+            }
+            held_wake_response(
+                &state,
+                &subdomain,
+                is_multi_service,
+                client,
+                existing,
+                HeldRequest { method, uri: &uri, headers: &headers, body },
+            )
+            .await
         }
     }
 }
@@ -463,10 +692,16 @@ fn extract_subdomain<'a>(host: &'a str, domain: &str) -> Option<&'a str> {
     None
 }
 
-fn loading_page(project_id: &str) -> Response<Body> {
-    let html = litebin_common::waker_pages::loading_page_html(project_id);
+fn waiting_page(project_id: &str) -> Response<Body> {
+    let html = litebin_common::waker_pages::waiting_page_html(project_id);
 
-    Response::builder().status(StatusCode::OK).header("Content-Type", "text/html").body(Body::from(html)).unwrap()
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header("Content-Type", "text/html")
+        .header("Retry-After", "5")
+        .header("X-Robots-Tag", "noindex")
+        .body(Body::from(html))
+        .unwrap()
 }
 
 fn error_page(_project_id: &str) -> Response<Body> {
@@ -475,6 +710,7 @@ fn error_page(_project_id: &str) -> Response<Body> {
     Response::builder()
         .status(StatusCode::SERVICE_UNAVAILABLE)
         .header("Content-Type", "text/html")
+        .header("X-Robots-Tag", "noindex")
         .body(Body::from(html))
         .unwrap()
 }
@@ -485,6 +721,7 @@ fn offline_page() -> Response<Body> {
     Response::builder()
         .status(StatusCode::SERVICE_UNAVAILABLE)
         .header("Content-Type", "text/html")
+        .header("X-Robots-Tag", "noindex")
         .body(Body::from(html))
         .unwrap()
 }
@@ -495,6 +732,7 @@ fn not_found_page() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header("Content-Type", "text/html")
+        .header("X-Robots-Tag", "noindex")
         .body(Body::from(html))
         .unwrap()
 }

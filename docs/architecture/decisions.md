@@ -58,7 +58,7 @@ Apps are stopped after 15 minutes of inactivity (configurable) and woken on the 
 
 - **Side projects are idle 99% of the time** — A portfolio site, a demo app, a weekend hackathon project. They get traffic when you share the link, then nothing for days or weeks.
 - **Resource efficiency** — A sleeping container uses 0 CPU and 0 memory (it's stopped, not paused). On a $5 VPS with 1 GB RAM, this means you can register 20 projects but only pay for the 2-3 that are actively serving traffic.
-- **Fast wake** — Starting a stopped container takes 1-3 seconds. The user sees a loading page with auto-refresh. By the time they notice, the app is running.
+- **Fast wake** — Starting a stopped container takes 1-3 seconds. The visitor's request is held while it happens: ready within ~2s and the app's response is served in that one request; slower and a waiting page (no refresh loop) does a single reload when the app is up.
 - **No user action needed** — The janitor handles stopping. The waker handles starting. The user just visits the URL.
 
 Scale-to-zero is the core feature that makes running many apps on a small VPS practical. Without it, you'd need to manually stop idle apps or pay for a larger server.

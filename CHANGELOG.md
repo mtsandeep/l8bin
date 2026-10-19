@@ -4,7 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Held wake requests** — visits to sleeping apps hold the request (`WAKE_HOLD_SECS`, default 2s) instead of a 1s refresh loop: fast wakes serve the real response in one request (documents and assets alike), slower ones get a no-refresh waiting page that long-polls and reloads once, subresources hold up to 30s so cached-HTML revisits render styled, API clients get `503 + Retry-After` after the hold. Local and remote projects alike.
+- **Redesigned waker pages** — all six visitor states rebuilt around the litebin mark (animated bars, perceived progress, state storytelling), platform- and id-free copy with the real state in `console.info('[l8bin] …')`; each page is a ~6KB self-contained document, and every transient page answers `503 + Retry-After` (not-found `404`) so fetchers never cache it as content.
+- Wake fast path no longer pays `start_services`' trailing 2s Docker-DNS sleep — the readiness probe is the precise version of that wait; fast wakes serve in ~0.6s.
+- **Remote-agent one-request wakes** — held requests proxy through the agent's Caddy (master Caddy's transport: CA TLS, SNI `agent`, original Host header); running-but-unrouted remotes are served directly for every client class.
+- **Readiness probe semantics** — probes up to 60s after start, crashing containers fail fast (~2s liveness checks); not-ready fails the wake but never stops the container, so later requests serve once the app boots. Remote wakes inherit this via a `ready` flag in agent start/recreate responses (absent on older agents = ready).
+
 ### Changed
+- Offline projects (auto-start disabled) no longer send `Retry-After: 5` with their 503 — the app is down until re-enabled, and a 5s retry promise was false.
 - Post-install/update "Manage" hint now follows only the orchestrator with a bounded backlog (`docker compose logs -f --tail 100 orchestrator`) instead of all services, so caddy access logs don't flood the terminal.
 - Installer banner now shows the version on its own line: `LiteBin Installer` / `Latest LiteBin Version: v0.4.8`.
 

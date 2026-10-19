@@ -351,6 +351,7 @@ mod tests {
             disk_cache: Arc::new(DashMap::new()),
             project_locks: Arc::new(DashMap::new()),
             wake_failures: Arc::new(DashMap::new()),
+            wake_guards: Arc::new(DashMap::new()),
             route_sync_tx,
             proxy_client: reqwest::Client::new(),
             multi_svc_health_check: Arc::new(DashMap::new()),

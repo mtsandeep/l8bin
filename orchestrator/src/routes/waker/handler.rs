@@ -2,13 +2,17 @@ use axum::extract::State;
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
 use serde_json::json;
+use std::sync::Arc;
 
-use litebin_common::proxy::wants_json;
+use litebin_common::proxy::{WakeClient, classify_wake_client};
 use litebin_common::types::ProjectStatus;
+use litebin_common::wake_wait::{WAKE_WAIT_HEADER, WAKE_WAIT_PATH, WakeGuard};
 
 use crate::AppState;
 
-use super::helpers::{handle_down_services, proxy_request, resolve_alias_project, try_acquire_project_lock};
+use super::helpers::{
+    handle_down_services, proxy_request, proxy_with_retry, resolve_alias_project, try_acquire_project_lock,
+};
 
 fn starting_json_response() -> Response {
     (
@@ -19,31 +23,172 @@ fn starting_json_response() -> Response {
         .into_response()
 }
 
-fn loading_page_html(subdomain: &str) -> Html<String> {
-    Html(litebin_common::waker_pages::loading_page_html(subdomain))
+// Transient pages answer 503 (+Retry-After) so fetchers never treat them as content; browsers render the body identically. Not-found: 404.
+fn loading_page_html(subdomain: &str, action: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [("retry-after", "5"), ("x-robots-tag", "noindex")],
+        Html(litebin_common::waker_pages::loading_page_html(subdomain, action)),
+    )
+        .into_response()
 }
 
-fn error_page_html() -> Html<String> {
-    Html(litebin_common::waker_pages::error_page_html())
+fn waiting_page_html(subdomain: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [("retry-after", "5"), ("x-robots-tag", "noindex")],
+        Html(litebin_common::waker_pages::waiting_page_html(subdomain)),
+    )
+        .into_response()
 }
 
-fn not_found_page_html() -> Html<String> {
-    Html(litebin_common::waker_pages::not_found_page_html())
+fn error_page_html() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [("retry-after", "30"), ("x-robots-tag", "noindex")],
+        Html(litebin_common::waker_pages::error_page_html()),
+    )
+        .into_response()
 }
 
-fn offline_page_html() -> Html<String> {
-    Html(litebin_common::waker_pages::offline_page_html())
+fn not_found_page_html() -> Response {
+    (StatusCode::NOT_FOUND, [("x-robots-tag", "noindex")], Html(litebin_common::waker_pages::not_found_page_html()))
+        .into_response()
 }
 
-fn not_ready_page_html() -> Html<String> {
-    Html(litebin_common::waker_pages::not_ready_page_html())
+fn offline_page_html() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [("x-robots-tag", "noindex")],
+        Html(litebin_common::waker_pages::offline_page_html()),
+    )
+        .into_response()
+}
+
+fn not_ready_page_html() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [("retry-after", "5"), ("x-robots-tag", "noindex")],
+        Html(litebin_common::waker_pages::not_ready_page_html()),
+    )
+        .into_response()
+}
+
+/// Long-poll for the waiting page JS; no guard answers "ready" — the reload re-enters the waker flow.
+async fn wake_wait_response(state: &AppState, project_id: &str) -> Response {
+    let status = match state.wake_guards.get(project_id).map(|g| g.clone()) {
+        Some(guard) => match guard.wait_for(litebin_common::wake_wait::WAKE_WAIT_POLL_CAP).await {
+            Some(true) => "ready",
+            Some(false) => "failed",
+            None => "timeout",
+        },
+        None => "ready",
+    };
+    ([(WAKE_WAIT_HEADER.to_string(), "1".to_string())], axum::Json(json!({"status": status}))).into_response()
+}
+
+/// Docker-network upstream: `litebin-{id}:{internal_port}` for single-service, the running public service for multi.
+async fn resolve_local_upstream(state: &AppState, project: &crate::db::models::Project) -> Option<String> {
+    if project.deploy_type != Some(litebin_common::types::DeployType::Compose) {
+        let port = project.internal_port?;
+        return Some(format!("{}:{}", litebin_common::types::container_name(&project.id, "web", None), port as u16));
+    }
+    let svc = sqlx::query_as::<_, (String, Option<i64>)>(
+        "SELECT service_name, port FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'running' LIMIT 1",
+    )
+    .bind(&project.id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+    let (svc_name, port) = svc;
+    Some(format!(
+        "{}:{}",
+        litebin_common::types::container_name(&project.id, &svc_name, None),
+        port.unwrap_or(80) as u16
+    ))
+}
+
+/// Held-request outcome by client class — Document gets the waiting page, Asset holds to its cap, Api gets 503;
+/// success proxies the original request (local: container network, remote: agent Caddy).
+async fn held_wake_response(
+    state: &AppState,
+    project: &crate::db::models::Project,
+    client: WakeClient,
+    guard: Arc<WakeGuard>,
+    req: HeldRequest<'_>,
+) -> Response {
+    let (method, uri, headers, body) = (req.method, req.uri, req.headers, req.body);
+    let budget = match client {
+        WakeClient::Asset => litebin_common::wake_wait::WAKE_ASSET_HOLD_CAP,
+        _ => litebin_common::wake_wait::wake_silent_hold(),
+    };
+    match guard.wait_for(budget).await {
+        Some(false) => match client {
+            WakeClient::Document => error_page_html(),
+            _ => starting_json_response(),
+        },
+        None => match client {
+            WakeClient::Document => waiting_page_html(&project.id),
+            _ => starting_json_response(),
+        },
+        Some(true) => {
+            let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
+            if is_remote {
+                // Master can't reach agent Docker networks — proxy through the agent's Caddy; unreachable → waiting page.
+                return match super::helpers::remote_proxy_response(
+                    state,
+                    project,
+                    method,
+                    uri,
+                    headers,
+                    body,
+                    std::time::Duration::from_secs(3),
+                )
+                .await
+                {
+                    Some(resp) => resp,
+                    None => match client {
+                        WakeClient::Document => waiting_page_html(&project.id),
+                        _ => starting_json_response(),
+                    },
+                };
+            }
+            match resolve_local_upstream(state, project).await {
+                Some(upstream) => {
+                    proxy_with_retry(
+                        &state.proxy_client,
+                        method,
+                        uri,
+                        headers,
+                        body,
+                        &upstream,
+                        std::time::Duration::from_secs(3),
+                    )
+                    .await
+                }
+                None => match client {
+                    WakeClient::Document => waiting_page_html(&project.id),
+                    _ => starting_json_response(),
+                },
+            }
+        }
+    }
+}
+
+/// The buffered original request a held request proxies once its wake finishes.
+struct HeldRequest<'a> {
+    method: Method,
+    uri: &'a Uri,
+    headers: &'a HeaderMap,
+    body: axum::body::Bytes,
 }
 
 /// Core waker logic — shared by the fallback handler and the subdomain intercept middleware.
 pub async fn wake_for_host(
     state: AppState,
     host: &str,
-    wants_json: bool,
+    client: WakeClient,
     method: Method,
     uri: &Uri,
     headers: &HeaderMap,
@@ -113,10 +258,15 @@ pub async fn wake_for_host(
     let project_id = project.id.clone();
     let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
 
+    // Waiting-page long-poll: answer with the wake outcome (or "ready" with no guard).
+    if uri.path() == WAKE_WAIT_PATH {
+        return wake_wait_response(&state, &project_id).await;
+    }
+
     // A project record exists, but no deploy artifacts have been staged yet.
     if project.status == ProjectStatus::Pending {
         tracing::info!(project = %project_id, "waker: project pending, refusing auto-start");
-        if wants_json {
+        if client != WakeClient::Document {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 [(header::RETRY_AFTER, "5")],
@@ -131,7 +281,7 @@ pub async fn wake_for_host(
     // Opening the URL must not bypass that gate.
     if project.status == ProjectStatus::Unconfigured {
         tracing::info!(project = %project_id, "waker: project unconfigured, refusing auto-start");
-        if wants_json {
+        if client != WakeClient::Document {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 [(header::RETRY_AFTER, "5")],
@@ -144,21 +294,49 @@ pub async fn wake_for_host(
 
     // Deploy/stop in progress — show loading, do not spawn another wake.
     if matches!(project.status, ProjectStatus::Deploying | ProjectStatus::Stopping) {
-        return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+        let action = if project.status == ProjectStatus::Stopping { "Stopping" } else { "Deploying" };
+        return match client {
+            WakeClient::Document => loading_page_html(&project_id, action),
+            _ => starting_json_response(),
+        };
     }
 
     // Unified running/degraded path for ALL projects
     let is_multi = project.deploy_type == Some(litebin_common::types::DeployType::Compose);
     if project.status == ProjectStatus::Running || project.status == ProjectStatus::Degraded {
-        // Remote: no Docker checks possible, return loading page
+        // Running but unrouted on master Caddy — proxy straight through the agent, no waiting-page bounce.
         if is_remote {
-            return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+            if let Some(resp) = super::helpers::remote_proxy_response(
+                &state,
+                &project,
+                method,
+                uri,
+                headers,
+                body,
+                std::time::Duration::from_secs(2),
+            )
+            .await
+            {
+                return resp;
+            }
+            return match client {
+                WakeClient::Document => waiting_page_html(&project_id),
+                _ => starting_json_response(),
+            };
         }
 
-        // If an operation (deploy, recreate, wake) is in progress, show loading page
+        // If a wake is in progress, wait on its guard; any other operation
+        // (deploy, recreate) holding the lock keeps the loading page.
         let lock_held = state.project_locks.get(&project_id).map(|s| s.available_permits() == 0).unwrap_or(false);
         if lock_held {
-            return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+            if let Some(guard) = state.wake_guards.get(&project_id).map(|g| g.clone()) {
+                return held_wake_response(&state, &project, client, guard, HeldRequest { method, uri, headers, body })
+                    .await;
+            }
+            return match client {
+                WakeClient::Document => loading_page_html(&project_id, "Updating"),
+                _ => starting_json_response(),
+            };
         }
 
         let mut public_service_up = true;
@@ -232,7 +410,7 @@ pub async fn wake_for_host(
         }
 
         if public_service_up {
-            // Single-service: fix port drift on projects table, return loading page
+            // Single-service: fix port drift, then proxy straight to the container (waker reached = stale Caddy route).
             if !is_multi
                 && let Some(ref container_id) = project.container_id
                 && state.docker.is_container_running(container_id).await.unwrap_or(true)
@@ -261,10 +439,26 @@ pub async fn wake_for_host(
                     }
                 }
                 let _ = state.route_sync_tx.send(());
-                return if wants_json {
-                    starting_json_response()
-                } else {
-                    loading_page_html(&project_id).into_response()
+                if let Some(port) = project.internal_port.map(|p| p as u16) {
+                    let upstream =
+                        format!("{}:{}", litebin_common::types::container_name(&project_id, "web", None), port);
+                    let resp = proxy_with_retry(
+                        &state.proxy_client,
+                        method,
+                        uri,
+                        headers,
+                        body,
+                        &upstream,
+                        std::time::Duration::from_secs(2),
+                    )
+                    .await;
+                    if resp.status() != StatusCode::BAD_GATEWAY {
+                        return resp;
+                    }
+                }
+                return match client {
+                    WakeClient::Document => waiting_page_html(&project_id),
+                    _ => starting_json_response(),
                 };
             }
 
@@ -305,10 +499,9 @@ pub async fn wake_for_host(
                     .await;
                 }
                 if last_resp.status() == StatusCode::BAD_GATEWAY {
-                    return if wants_json {
-                        starting_json_response()
-                    } else {
-                        loading_page_html(&project_id).into_response()
+                    return match client {
+                        WakeClient::Document => waiting_page_html(&project_id),
+                        _ => starting_json_response(),
                     };
                 }
                 return last_resp;
@@ -360,13 +553,9 @@ pub async fn wake_for_host(
     }
 
     if !project.auto_start_enabled {
-        if wants_json {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [(header::RETRY_AFTER, "5")],
-                json!({"error": "offline", "retry_after": 5}).to_string(),
-            )
-                .into_response();
+        if client != WakeClient::Document {
+            // No Retry-After: down until a human re-enables it.
+            return (StatusCode::SERVICE_UNAVAILABLE, json!({"error": "offline"}).to_string()).into_response();
         }
         return (StatusCode::SERVICE_UNAVAILABLE, offline_page_html()).into_response();
     }
@@ -379,20 +568,38 @@ pub async fn wake_for_host(
         state.wake_failures.remove(&project_id);
     }
 
-    // Single-flight dedup: first caller spawns background wake, all get loading page.
-    // Uses the unified project_locks semaphore — try_acquire is atomic.
+    // Single-flight: first caller spawns the wake + guard; others hold on the guard.
+    let guard = Arc::new(WakeGuard::new());
     let permit = match try_acquire_project_lock(&state, &project_id) {
         Some(p) => p,
         None => {
             tracing::info!(project = %project_id, "waker: another operation in progress");
-            return if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() };
+            if let Some(existing) = state.wake_guards.get(&project_id).map(|g| g.clone()) {
+                return held_wake_response(
+                    &state,
+                    &project,
+                    client,
+                    existing,
+                    HeldRequest { method, uri, headers, body },
+                )
+                .await;
+            }
+            return match client {
+                WakeClient::Document => loading_page_html(&project_id, "Updating"),
+                _ => starting_json_response(),
+            };
         }
     };
+
+    // Publish the guard before yielding so concurrent requests find it.
+    state.wake_guards.insert(project_id.clone(), guard.clone());
 
     let is_stopped = project.status == ProjectStatus::Stopped || project.status == ProjectStatus::Degraded;
     let state_clone = state.clone();
     let project_clone = project.clone();
+    let project_probe = project.clone(); // wake_fut's local branch moves project_clone
     let project_id_bg = project_id.clone();
+    let guard_task = guard.clone();
 
     tracing::info!(project = %project_id, host = %host, "waker: spawning background wake");
 
@@ -418,6 +625,7 @@ pub async fn wake_for_host(
                         services: None,
                         connect_orchestrator: true,
                         rollback_on_failure: false,
+                        skip_dns_wait: true,
                     },
                 )
                 .await
@@ -428,7 +636,31 @@ pub async fn wake_for_host(
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(60), wake_fut).await;
 
-        let success = matches!(result, Ok(Ok(())));
+        let mut success = matches!(result, Ok(Ok(())));
+
+        // Readiness: not-ready fails the wake; the container stays up and serves later. Remote gets this via the agent ready flag.
+        if success
+            && !is_remote
+            && let Some(upstream) = resolve_local_upstream(&state_clone, &project_probe).await
+        {
+            let docker = state_clone.docker.clone();
+            let alive_upstream = upstream.clone();
+            let ready = litebin_common::wake_wait::readiness_probe(
+                &state_clone.proxy_client,
+                &upstream,
+                litebin_common::wake_wait::WAKE_READINESS_MAX,
+                || {
+                    let docker = docker.clone();
+                    let alive_upstream = alive_upstream.clone();
+                    async move { litebin_common::wake_wait::upstream_container_alive(&docker, &alive_upstream).await }
+                },
+            )
+            .await;
+            tracing::info!(project = %project_id_bg, upstream = %upstream, ready = ready, "waker: wake readiness probe done");
+            if !ready {
+                success = false;
+            }
+        }
 
         if success {
             let _ = state_clone.route_sync_tx.send(());
@@ -448,11 +680,22 @@ pub async fn wake_for_host(
             });
         }
 
+        guard_task.finish(success);
+
+        // Retire the guard after the retention window; identity-checked so a newer guard survives.
+        let guards = state_clone.wake_guards.clone();
+        let g = guard_task.clone();
+        let pid = project_id_bg.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(litebin_common::wake_wait::WAKE_GUARD_RETENTION).await;
+            guards.remove_if(&pid, |_, v| Arc::ptr_eq(v, &g));
+        });
+
         // permit dropped here, releasing the project lock
         drop(permit);
     });
 
-    if wants_json { starting_json_response() } else { loading_page_html(&project_id).into_response() }
+    held_wake_response(&state, &project, client, guard, HeldRequest { method, uri, headers, body }).await
 }
 
 /// Catch-all for requests that match no API route. Dashboard-host and bare-domain
@@ -461,7 +704,7 @@ pub async fn wake_for_host(
 pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::body::Body>) -> Response {
     let (parts, body) = req.into_parts();
     let host = parts.headers.get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let json = wants_json(&parts.headers);
+    let client = classify_wake_client(&parts.headers);
     let method = parts.method.clone();
     let uri = parts.uri.clone();
     let headers = parts.headers.clone();
@@ -494,7 +737,7 @@ pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::
         .await;
     }
 
-    wake_for_host(state, host, json, method, &uri, &headers, body).await
+    wake_for_host(state, host, client, method, &uri, &headers, body).await
 }
 
 /// JSON 404 for requests that look like API traffic but matched no route.
@@ -540,11 +783,11 @@ pub async fn waker_intercept(
     }
 
     // Everything else is an app request (subdomain or custom domain) — handle via waker
-    let json = wants_json(req.headers());
+    let client = classify_wake_client(req.headers());
     let (parts, body) = req.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri.clone();
     let headers = parts.headers.clone();
     let body = axum::body::to_bytes(body, 10 * 1024 * 1024).await.unwrap_or_default();
-    wake_for_host(state, &host, json, method, &uri, &headers, body).await
+    wake_for_host(state, &host, client, method, &uri, &headers, body).await
 }

@@ -17,6 +17,7 @@ All configuration is done via environment variables in `.env` after install.
 | `PORT` | `5080` | Orchestrator API port |
 | `DEFAULT_AUTO_STOP_MINS` | `15` | Minutes before idle apps are stopped |
 | `JANITOR_INTERVAL_SECS` | `300` | Janitor check interval |
+| `WAKE_HOLD_SECS` | `2` | How long a request to a sleeping app is silently held (any client) before the class-specific fallback (waiting page / 503). `0` disables holding. Read by both the orchestrator and agents. |
 | `HEARTBEAT_INTERVAL_SECS` | `30` | Node health check interval |
 | `PUBLIC_IP` | *(auto-detected)* | Override if auto-detection fails (e.g. behind NAT) |
 | `ROUTING_MODE` | `master_proxy` | `master_proxy` or `cloudflare_dns` |

@@ -83,6 +83,7 @@ pub async fn recreate_services(
             services: target_set,
             connect_orchestrator: true,
             rollback_on_failure: false,
+            skip_dns_wait: false,
         },
     )
     .await?;
