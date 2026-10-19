@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-10-19
+
 ### Fixed
 - **Visiting an app during a stop no longer shows a raw 502** — agent running routes now fall back to the wake handler on 502/503/504 (like master routes always did), and the wakers convert post-wake proxy failures to the waiting page instead of a bare error.
 - **Agent can no longer wedge on a stalled state-file write** — project-meta saves held a read lock across the disk write; one stalled write starved every reader and left the agent unresponsive (seen twice after the 0.4.9 update). Locks are now released before writes.
