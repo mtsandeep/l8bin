@@ -248,7 +248,8 @@ fn merge_routes_with_persisted(
                 }),
             );
         } else {
-            // Single-service: direct to container
+            // Single-service: direct to container, falling back to the wake
+            // handler on 502/503/504 so a dying container shows the waker page
             let c = &svc_containers[0];
             let upstream = format!("{}:{}", c.container_name, c.internal_port);
             route_map.insert(
@@ -257,7 +258,8 @@ fn merge_routes_with_persisted(
                     "match": [{ "host": [subdomain_host] }],
                     "handle": [{
                         "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": upstream }]
+                        "upstreams": [{ "dial": upstream }],
+                        "handle_response": litebin_common::routing::wake_fallback_handle("litebin-agent:8444")
                     }]
                 }),
             );
@@ -289,7 +291,8 @@ fn merge_routes_with_persisted(
                     "match": [{ "host": [host] }],
                     "handle": [{
                         "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": upstream_for_cd }]
+                        "upstreams": [{ "dial": upstream_for_cd }],
+                        "handle_response": litebin_common::routing::wake_fallback_handle("litebin-agent:8444")
                     }]
                 }),
             );
@@ -361,14 +364,16 @@ fn build_config_from_scratch(
                 }]
             }));
         } else {
-            // Single-service: direct to container
+            // Single-service: direct to container, falling back to the wake
+            // handler on 502/503/504 so a dying container shows the waker page
             let c = &svc_containers[0];
             let upstream = format!("{}:{}", c.container_name, c.internal_port);
             routes.push(json!({
                 "match": [{ "host": [host] }],
                 "handle": [{
                     "handler": "reverse_proxy",
-                    "upstreams": [{ "dial": upstream }]
+                    "upstreams": [{ "dial": upstream }],
+                    "handle_response": litebin_common::routing::wake_fallback_handle("litebin-agent:8444")
                 }]
             }));
         }

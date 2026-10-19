@@ -183,7 +183,7 @@ async fn held_wake_response(
             };
             match upstream {
                 Some(upstream) => {
-                    proxy_with_retry(
+                    let resp = proxy_with_retry(
                         &state.proxy_client,
                         req.method,
                         &upstream,
@@ -192,7 +192,11 @@ async fn held_wake_response(
                         req.body,
                         std::time::Duration::from_secs(3),
                     )
-                    .await
+                    .await;
+                    if resp.status() == StatusCode::BAD_GATEWAY && client == WakeClient::Document {
+                        return waiting_page(subdomain);
+                    }
+                    resp
                 }
                 None => match client {
                     WakeClient::Document => waiting_page(subdomain),

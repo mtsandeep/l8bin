@@ -244,7 +244,8 @@ impl CloudflareDnsRouter {
                     "match": [{ "host": [p.subdomain_host] }],
                     "handle": [{
                         "handler": "reverse_proxy",
-                        "upstreams": [{ "dial": dial }]
+                        "upstreams": [{ "dial": dial }],
+                        "handle_response": wake_fallback_handle("litebin-agent:8444")
                     }]
                 }));
             }
@@ -291,7 +292,8 @@ impl CloudflareDnsRouter {
                         "match": [{ "host": [cd] }],
                         "handle": [{
                             "handler": "reverse_proxy",
-                            "upstreams": [{ "dial": dial }]
+                            "upstreams": [{ "dial": dial }],
+                            "handle_response": wake_fallback_handle("litebin-agent:8444")
                         }]
                     }));
 

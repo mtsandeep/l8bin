@@ -156,7 +156,7 @@ async fn held_wake_response(
             }
             match resolve_local_upstream(state, project).await {
                 Some(upstream) => {
-                    proxy_with_retry(
+                    let resp = proxy_with_retry(
                         &state.proxy_client,
                         method,
                         uri,
@@ -165,7 +165,11 @@ async fn held_wake_response(
                         &upstream,
                         std::time::Duration::from_secs(3),
                     )
-                    .await
+                    .await;
+                    if resp.status() == StatusCode::BAD_GATEWAY && client == WakeClient::Document {
+                        return waiting_page_html(&project.id);
+                    }
+                    resp
                 }
                 None => match client {
                     WakeClient::Document => waiting_page_html(&project.id),
