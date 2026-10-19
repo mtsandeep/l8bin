@@ -13,7 +13,7 @@ const FALLBACK_MISE_VERSION: &str = "2026.3.17";
 /// Railpack source at the given release tag.
 /// Falls back to FALLBACK_MISE_VERSION on any failure.
 pub async fn fetch_mise_version(railpack_tag: &str) -> String {
-    let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() else {
+    let Ok(client) = crate::http::builder().timeout(std::time::Duration::from_secs(10)).build() else {
         return FALLBACK_MISE_VERSION.to_string();
     };
 
@@ -86,7 +86,7 @@ fn asset_name(version: &str) -> String {
 }
 
 async fn download_and_install(version: &str, binary_name: &str, ci_mode: bool) -> Result<()> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build()?;
+    let client = crate::http::builder().timeout(std::time::Duration::from_secs(120)).build()?;
 
     let name = asset_name(version);
     let download_url = format!("{}/v{version}/{name}", crate::config::MISE_RELEASE_BASE,);

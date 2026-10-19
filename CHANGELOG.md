@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - `install.sh --help` crashed with "local: can only be used in a function" before printing usage.
+- The CLI now resolves `.localhost` hostnames to loopback itself (RFC 6761), so `l8b login --server http://l8bin.localhost` works against a local stack on every OS (Windows and plain-glibc Linux resolvers ignore the rule; macOS/systemd-resolved and browsers honor it).
 
 ## [0.4.8] - 2026-10-17
 

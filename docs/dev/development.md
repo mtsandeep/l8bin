@@ -195,7 +195,7 @@ cp .env.example .env
 
 ### Local Dev Compose (Windows / any platform)
 
-The `litebin/docker-compose.yml` is a simplified setup for local development. It exposes the orchestrator port directly (no Caddy proxy needed).
+The `litebin/docker-compose.yml` fronts everything with Caddy; the orchestrator port is not published to the host.
 
 ```bash
 cd litebin
@@ -203,8 +203,10 @@ docker compose up -d --build
 ```
 
 This gives you:
-- Orchestrator on `http://localhost:5080`
-- Dashboard via Caddy on `http://l8bin.localhost`
+- Dashboard & API via Caddy on `http://l8bin.localhost` — browsers, curl, and the `l8b` CLI all resolve `*.localhost` to loopback themselves (RFC 6761; OS resolvers vary — Windows' doesn't — so other tools may need a `127.0.0.1 l8bin.localhost` hosts entry, which the Windows installer adds)
+- `l8b login --server http://l8bin.localhost`
+
+`http://localhost:5080` only works when the orchestrator is directly reachable: the Windows installer's local-mode compose publishes it, and the native `cargo run` flow below listens on it.
 
 ---
 
@@ -248,6 +250,7 @@ cargo build -p l8b
 # Run
 ./target/debug/l8b --help
 ./target/debug/l8b ship
+# Against the native orchestrator (above); with the compose stack instead: http://l8bin.localhost
 ./target/debug/l8b login --server http://localhost:5080
 ```
 

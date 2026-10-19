@@ -44,7 +44,7 @@ pub async fn ensure_railpack(ci_mode: bool) -> Result<(PathBuf, String)> {
 }
 
 async fn fetch_latest_tag() -> Result<String> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()?;
+    let client = crate::http::builder().timeout(std::time::Duration::from_secs(10)).build()?;
     let resp: serde_json::Value =
         client.get(crate::config::RAILPACK_RELEASE_URL).header("User-Agent", "l8b-cli").send().await?.json().await?;
     Ok(resp["tag_name"].as_str().unwrap_or("v0.23.0").to_string())
@@ -62,7 +62,7 @@ fn asset_name(version: &str) -> String {
 }
 
 async fn download_railpack(bin_path: &Path, ci_mode: bool) -> Result<String> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build()?;
+    let client = crate::http::builder().timeout(std::time::Duration::from_secs(60)).build()?;
 
     let resp: serde_json::Value = client
         .get(crate::config::RAILPACK_RELEASE_URL)

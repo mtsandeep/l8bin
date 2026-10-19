@@ -189,7 +189,7 @@ pub async fn build_status_result(client: &reqwest::Client, server: &str, project
 /// Probe the public URL. Accepts self-signed certs: this checks reachability,
 /// not certificate validity. A sleeping project is woken by the request.
 pub async fn probe_url(url: &str) -> HealthResult {
-    let client = match reqwest::Client::builder()
+    let client = match crate::http::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(30))
         .build()

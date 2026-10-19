@@ -104,7 +104,7 @@ pub(super) async fn build_with_railpack_docker(
     ci_mode: bool,
     platform: Option<&str>,
 ) -> Result<SavedImage> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()?;
+    let client = crate::http::builder().timeout(std::time::Duration::from_secs(10)).build()?;
 
     let railpack_spinner = if !ci_mode {
         let s = indicatif::ProgressBar::new_spinner();

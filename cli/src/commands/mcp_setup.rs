@@ -165,7 +165,7 @@ fn status(out: &Out) -> Result<()> {
 /// Start device pairing for `server` and persist the session.
 async fn start(server: &str, scope: Option<&str>, out: &Out) -> Result<()> {
     // Fail fast on an unreachable URL instead of a pairing that can never be approved.
-    let probe = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()?;
+    let probe = crate::http::builder().timeout(std::time::Duration::from_secs(10)).build()?;
     match probe.get(format!("{}/health", server.trim_end_matches('/'))).send().await {
         Ok(r) if r.status().is_success() => {}
         Ok(r) => bail!(crate::out::fail(
@@ -231,7 +231,7 @@ async fn complete(server: &str, out: &Out) -> Result<()> {
         ));
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let deadline = session.expires_at.min(unix_now() + COMPLETE_POLL_SECS);
     loop {
         match auth::poll_pairing(&client, server, &session.device_code).await {

@@ -37,7 +37,7 @@ pub(crate) async fn run(server_flag: Option<&str>, token_flag: Option<&str>, out
     };
     let server = target.server;
 
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()?;
+    let client = crate::http::builder().timeout(std::time::Duration::from_secs(10)).build()?;
     let health = client.get(format!("{server}/health")).send().await;
     match health {
         Ok(r) if r.status().is_success() => {

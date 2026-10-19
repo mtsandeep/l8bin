@@ -16,7 +16,7 @@ pub(crate) async fn run(server: &str, ci_mode: &CiMode, out: &Out) -> Result<()>
     };
     let server = server.trim_end_matches('/').to_string();
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .get(format!("{server}/auth/setup"))
         .send()

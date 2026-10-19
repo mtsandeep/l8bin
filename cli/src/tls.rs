@@ -33,7 +33,7 @@ pub fn direct_upload_client(ca_pem: &str, agent_ip: IpAddr) -> Result<reqwest::C
         .with_custom_certificate_verifier(Arc::new(NoHostnameVerifier::new(root_store)))
         .with_no_client_auth();
 
-    let client = reqwest::Client::builder()
+    let client = crate::http::builder()
         .use_preconfigured_tls(config)
         // Pin the `agent` hostname to the node's public IP so reqwest sends
         // SNI=`agent` (Caddy serves the matching cert) without real DNS.

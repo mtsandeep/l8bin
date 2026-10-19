@@ -5,6 +5,7 @@ mod ci;
 mod commands;
 mod config;
 mod deploy;
+mod http;
 mod mcp;
 mod mise;
 mod out;

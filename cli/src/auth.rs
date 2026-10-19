@@ -43,7 +43,7 @@ pub fn client_for(auth: String) -> Result<reqwest::Client> {
             HeaderValue::from_str(&value).map_err(|e| anyhow::anyhow!("invalid stored credential: {}", e))?,
         );
     }
-    Ok(reqwest::Client::builder().default_headers(headers).timeout(std::time::Duration::from_secs(300)).build()?)
+    Ok(crate::http::builder().default_headers(headers).timeout(std::time::Duration::from_secs(300)).build()?)
 }
 
 /// Resolve which server this command targets and build a client with that
@@ -129,7 +129,7 @@ pub async fn login_password(server: &str) -> Result<()> {
     let username: String = dialoguer::Input::new().with_prompt("Username").interact_text()?;
     let password = dialoguer::Password::new().with_prompt("Password").interact()?;
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post(format!("{}/auth/login", server.trim_end_matches('/')))
         .json(&serde_json::json!({
@@ -175,7 +175,7 @@ pub struct PairingStart {
 /// the approver decides the final scope on the dashboard.
 pub async fn start_pairing(server: &str, scope: &str, client_name: &str) -> Result<PairingStart> {
     let server = normalize_server(server);
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .post(format!("{server}/auth/device/start"))
         .json(&serde_json::json!({ "client_name": client_name, "scope": scope }))
         .send()
@@ -261,7 +261,7 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
     let expires_in = (start.expires_at - crate::config::unix_now()).max(0) as u64;
     println!("  {} Expires in {} minutes. Waiting for approval…", "⏳".yellow(), expires_in / 60);
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(start.interval)).await;
         if crate::config::unix_now() >= start.expires_at {

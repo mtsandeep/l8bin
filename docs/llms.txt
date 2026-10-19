@@ -67,7 +67,7 @@ without touching user content).
 ## API
 
 - OpenAPI 3.1 spec: /openapi.json (version-matched to this instance)
-- All endpoints are relative to the orchestrator base URL (default: port 5080); a `/api/` prefix is also accepted and stripped (`/api/auth/login` ≡ `/auth/login`)
+- All endpoints are relative to the server's base URL — the dashboard origin (e.g. `https://l8bin.example.com`; local installs: `http://l8bin.localhost`, or `http://localhost:5080` where the orchestrator port is exposed); a `/api/` prefix is also accepted and stripped (`/api/auth/login` ≡ `/auth/login`)
 
 ## CLI (manual / advanced)
 

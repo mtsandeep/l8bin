@@ -2,7 +2,7 @@
 
 ## Orchestrator API
 
-Base URL: `https://l8bin.example.com` (or `https://l8bin.localhost` locally)
+Base URL: `https://l8bin.example.com` (or `http://l8bin.localhost` locally — plain HTTP; the local HTTPS cert is Caddy's self-signed one)
 
 **The endpoint-by-endpoint reference lives in the generated OpenAPI spec** — every operation with its parameters, auth, and response schemas:
 
