@@ -30,7 +30,8 @@ impl Resolve for LocalhostAware {
         if is_localhost_domain(&host) {
             // Port 0: reqwest substitutes the URL's port.
             let addrs: Addrs = Box::new(
-                vec![SocketAddr::from(([127, 0, 0, 1], 0)), SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0))].into_iter(),
+                vec![SocketAddr::from(([127, 0, 0, 1], 0)), SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0))]
+                    .into_iter(),
             );
             return Box::pin(async move { Ok(addrs) });
         }
