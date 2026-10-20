@@ -104,6 +104,55 @@ pub async fn upstream_container_alive(docker: &crate::docker::DockerManager, ups
     }
 }
 
+/// True while every upstream's container still exists (any gone = dead).
+pub async fn all_upstreams_alive(docker: &crate::docker::DockerManager, upstreams: &[String]) -> bool {
+    for u in upstreams {
+        if !upstream_container_alive(docker, u).await {
+            return false;
+        }
+    }
+    true
+}
+
+/// Probe all upstreams each round — ready only when every one answers.
+pub async fn readiness_probe_all<F, Fut>(
+    client: &reqwest::Client,
+    upstreams: &[String],
+    max: Duration,
+    mut alive: F,
+) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + max;
+    let mut next_alive_check = tokio::time::Instant::now();
+    loop {
+        let mut all = true;
+        for u in upstreams {
+            let attempt = client.get(format!("http://{}/", u)).timeout(Duration::from_secs(1)).send().await;
+            if attempt.is_err() {
+                all = false;
+                break;
+            }
+        }
+        if all {
+            return true;
+        }
+        if tokio::time::Instant::now() >= next_alive_check {
+            next_alive_check = tokio::time::Instant::now() + Duration::from_secs(2);
+            if !alive().await {
+                tracing::warn!(count = upstreams.len(), "readiness probe: a container is gone");
+                return false;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
 /// Probe until any HTTP response arrives (any status = listening), the window closes, or `alive` reports the
 /// container gone (~2s checks, so a crash fails fast).
 pub async fn readiness_probe<F, Fut>(client: &reqwest::Client, upstream: &str, max: Duration, mut alive: F) -> bool

@@ -152,6 +152,31 @@ struct HeldRequest<'a> {
     body: axum::body::Bytes,
 }
 
+/// Path-aware proxy upstream: custom path routes (from project meta) win by
+/// longest match, else the public/single-service upstream.
+async fn resolve_proxy_upstream(
+    state: &AgentState,
+    subdomain: &str,
+    is_multi_service: bool,
+    path: &str,
+) -> Option<String> {
+    let routes = state
+        .project_meta
+        .read()
+        .unwrap()
+        .get(subdomain)
+        .and_then(|e| e.path_routes.clone())
+        .map(|m| m.into_iter().collect::<Vec<(String, String)>>());
+    if let Some(upstream) = routes.as_deref().and_then(|r| litebin_common::routing::match_path_route(r, path)) {
+        return Some(upstream);
+    }
+    if is_multi_service {
+        find_public_service_upstream(subdomain)
+    } else {
+        single_service_upstream(state, subdomain).await
+    }
+}
+
 /// Held-request outcome by client class — Document gets the waiting page, Asset holds to its cap, Api gets 503;
 /// success proxies the original request (local: container network, remote: agent Caddy).
 async fn held_wake_response(
@@ -176,11 +201,7 @@ async fn held_wake_response(
             _ => starting_json_response(),
         },
         Some(true) => {
-            let upstream = if is_multi_service {
-                find_public_service_upstream(subdomain)
-            } else {
-                single_service_upstream(state, subdomain).await
-            };
+            let upstream = resolve_proxy_upstream(state, subdomain, is_multi_service, req.uri.path()).await;
             match upstream {
                 Some(upstream) => {
                     let resp = proxy_with_retry(
@@ -358,8 +379,8 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
         }
 
         if public_service_up {
-            // Public service is healthy — proxy the request to the container
-            if let Some(upstream) = find_public_service_upstream(&subdomain) {
+            // Public service is healthy — proxy to the request's upstream (path routes win)
+            if let Some(upstream) = resolve_proxy_upstream(&state, &subdomain, true, uri.path()).await {
                 let resp = proxy_request(
                     &state.proxy_client,
                     method,

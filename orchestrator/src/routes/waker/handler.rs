@@ -88,6 +88,69 @@ async fn wake_wait_response(state: &AppState, project_id: &str) -> Response {
 }
 
 /// Docker-network upstream: `litebin-{id}:{internal_port}` for single-service, the running public service for multi.
+async fn resolve_request_upstream(
+    state: &AppState,
+    project: &crate::db::models::Project,
+    path: &str,
+) -> Option<String> {
+    let routes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT path, upstream FROM project_routes WHERE project_id = ? AND route_type = 'path' AND path IS NOT NULL",
+    )
+    .bind(&project.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    // Route paths may be exact ("/api") or glob ("/api/*") — Caddy matcher
+    // syntax. Both match the path itself and everything under it.
+    let base = |rp: &str| -> String {
+        let trimmed = rp.trim_matches('/');
+        let no_glob = trimmed.strip_suffix('*').unwrap_or(trimmed).trim_matches('/');
+        format!("/{}", no_glob)
+    };
+    let req = format!("/{}", path.trim_matches('/'));
+    if let Some((_, upstream)) = routes
+        .iter()
+        .filter(|(rp, _)| {
+            let b = base(rp);
+            req == b || req.starts_with(&format!("{b}/"))
+        })
+        .max_by_key(|(rp, _)| base(rp).len())
+    {
+        return Some(upstream.clone());
+    }
+    resolve_local_upstream(state, project).await
+}
+
+async fn all_service_upstreams(state: &AppState, project: &crate::db::models::Project) -> Vec<String> {
+    if project.deploy_type != Some(litebin_common::types::DeployType::Compose) {
+        if let Some(port) = project.internal_port {
+            return vec![format!(
+                "{}:{}",
+                litebin_common::types::container_name(&project.id, "web", None),
+                port as u16
+            )];
+        }
+        return Vec::new();
+    }
+    let rows: Vec<(String, Option<i64>)> = sqlx::query_as(
+        "SELECT service_name, port FROM project_services WHERE project_id = ? AND status = 'running' AND is_oneshot = 0 AND service_name != ? AND port IS NOT NULL",
+    )
+    .bind(&project.id)
+    .bind(litebin_common::types::DOCKER_PROXY_SERVICE)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    rows.iter()
+        .map(|(svc_name, port)| {
+            format!(
+                "{}:{}",
+                litebin_common::types::container_name(&project.id, svc_name, None),
+                port.unwrap_or(80) as u16
+            )
+        })
+        .collect()
+}
+
 async fn resolve_local_upstream(state: &AppState, project: &crate::db::models::Project) -> Option<String> {
     if project.deploy_type != Some(litebin_common::types::DeployType::Compose) {
         let port = project.internal_port?;
@@ -154,7 +217,7 @@ async fn held_wake_response(
                     },
                 };
             }
-            match resolve_local_upstream(state, project).await {
+            match resolve_request_upstream(state, project, uri.path()).await {
                 Some(upstream) => {
                     let resp = proxy_with_retry(
                         &state.proxy_client,
@@ -466,18 +529,11 @@ pub async fn wake_for_host(
                 };
             }
 
-            // Multi-service: proxy to public service container
-            let public_svc: Option<(String, Option<i64>)> = sqlx::query_as::<_, (String, Option<i64>)>(
-                "SELECT service_name, port FROM project_services WHERE project_id = ? AND is_public = 1 AND status = 'running' LIMIT 1",
-            )
-            .bind(&project_id)
-            .fetch_optional(&state.db)
-            .await
-            .unwrap_or(None);
+            // Multi-service: proxy to the request's upstream (custom path routes win, else public)
+            let public_svc = resolve_request_upstream(&state, &project, uri.path()).await;
 
-            if let Some((svc_name, port)) = public_svc {
-                let container_name = litebin_common::types::container_name(&project_id, &svc_name, None);
-                let upstream = format!("{}:{}", container_name, port.unwrap_or(80) as u16);
+            if let Some(upstream) = public_svc {
+                let upstream = upstream.clone();
                 let mut last_resp = proxy_request(
                     &state.proxy_client,
                     method.clone(),
@@ -643,26 +699,26 @@ pub async fn wake_for_host(
         let mut success = matches!(result, Ok(Ok(())));
 
         // Readiness: not-ready fails the wake; the container stays up and serves later. Remote gets this via the agent ready flag.
-        if success
-            && !is_remote
-            && let Some(upstream) = resolve_local_upstream(&state_clone, &project_probe).await
-        {
-            let docker = state_clone.docker.clone();
-            let alive_upstream = upstream.clone();
-            let ready = litebin_common::wake_wait::readiness_probe(
-                &state_clone.proxy_client,
-                &upstream,
-                litebin_common::wake_wait::WAKE_READINESS_MAX,
-                || {
-                    let docker = docker.clone();
-                    let alive_upstream = alive_upstream.clone();
-                    async move { litebin_common::wake_wait::upstream_container_alive(&docker, &alive_upstream).await }
-                },
-            )
-            .await;
-            tracing::info!(project = %project_id_bg, upstream = %upstream, ready = ready, "waker: wake readiness probe done");
-            if !ready {
-                success = false;
+        if success && !is_remote {
+            let upstreams = all_service_upstreams(&state_clone, &project_probe).await;
+            if !upstreams.is_empty() {
+                let docker = state_clone.docker.clone();
+                let probe_set = upstreams.clone();
+                let ready = litebin_common::wake_wait::readiness_probe_all(
+                    &state_clone.proxy_client,
+                    &probe_set,
+                    litebin_common::wake_wait::WAKE_READINESS_MAX,
+                    || {
+                        let docker = docker.clone();
+                        let probe_set = probe_set.clone();
+                        async move { litebin_common::wake_wait::all_upstreams_alive(&docker, &probe_set).await }
+                    },
+                )
+                .await;
+                tracing::info!(project = %project_id_bg, count = upstreams.len(), ready = ready, "waker: wake readiness probe done");
+                if !ready {
+                    success = false;
+                }
             }
         }
 

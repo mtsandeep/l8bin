@@ -7,7 +7,10 @@ use crate::{AgentState, ProjectMetaEntry};
 
 /// POST /internal/project-meta — called by orchestrator to push lifecycle and capability flags.
 /// Replaces the full project meta map, persists to disk + memory.
-pub async fn update_project_meta(State(state): State<AgentState>, Json(req): Json<ProjectMetaRequest>) -> StatusCode {
+pub async fn update_project_meta(
+    State(state): State<AgentState>,
+    Json(mut req): Json<ProjectMetaRequest>,
+) -> StatusCode {
     tracing::info!(count = req.projects.len(), "received project meta from orchestrator");
 
     // Start from auto_start_enabled, then overlay workload and capability flags.
@@ -18,6 +21,7 @@ pub async fn update_project_meta(State(state): State<AgentState>, Json(req): Jso
             (
                 id,
                 ProjectMetaEntry {
+                    path_routes: None,
                     auto_start_enabled: auto,
                     is_background: false,
                     allow_raw_ports: false,
@@ -51,6 +55,17 @@ pub async fn update_project_meta(State(state): State<AgentState>, Json(req): Jso
     if let Some(host_network) = req.host_network {
         for (id, val) in host_network {
             meta.entry(id).or_default().host_network = val;
+        }
+    }
+
+    let req_path_routes = req.path_routes.take();
+
+    // Overlay custom path routes (project_id -> {path -> upstream})
+    if let Some(pr) = req_path_routes {
+        for (pid, routes) in pr {
+            if let Some(entry) = meta.get_mut(&pid) {
+                entry.path_routes = Some(routes);
+            }
         }
     }
 

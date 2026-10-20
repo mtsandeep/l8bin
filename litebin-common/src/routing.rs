@@ -3,6 +3,25 @@ use serde_json::{Value, json};
 
 use crate::caddy::CaddyClient;
 
+/// Longest-match path-route resolver: route paths may be exact ("/api") or
+/// glob ("/api/*"); both match the path itself and everything under it.
+pub fn match_path_route(routes: &[(String, String)], path: &str) -> Option<String> {
+    let base = |rp: &str| -> String {
+        let trimmed = rp.trim_matches('/');
+        let no_glob = trimmed.strip_suffix('*').unwrap_or(trimmed).trim_matches('/');
+        format!("/{}", no_glob)
+    };
+    let req = format!("/{}", path.trim_matches('/'));
+    routes
+        .iter()
+        .filter(|(rp, _)| {
+            let b = base(rp);
+            req == b || req.starts_with(&format!("{b}/"))
+        })
+        .max_by_key(|(rp, _)| base(rp).len())
+        .map(|(_, up)| up.clone())
+}
+
 /// Global route answering the waiting page's poll path on ANY host — kept
 /// ahead of host routes so the app never sees this traffic and manual visits
 /// get the waker's JSON instead of the app's 404.

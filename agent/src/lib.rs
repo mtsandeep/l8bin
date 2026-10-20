@@ -51,6 +51,9 @@ pub struct ProjectMetaEntry {
     pub default_memory_limit_mb: Option<i64>,
     #[serde(default)]
     pub default_cpu_limit: Option<f64>,
+    /// Custom path routes ({path -> upstream}) pushed by the orchestrator.
+    #[serde(default)]
+    pub path_routes: Option<std::collections::HashMap<String, String>>,
 }
 
 pub fn load_registration_from_file() -> anyhow::Result<Option<AgentRegistration>> {

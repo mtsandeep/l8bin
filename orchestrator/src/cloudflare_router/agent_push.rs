@@ -116,6 +116,19 @@ pub async fn push_project_meta_to_agent(
         .and_then(|v: String| v.parse().ok())
         .unwrap_or(0.5);
 
+    // Custom path routes for these projects (path -> upstream), so the agent
+    // waker proxies by path exactly like Caddy does.
+    let path_rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT project_id, path, upstream FROM project_routes WHERE route_type = 'path' AND path IS NOT NULL",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+    let mut path_routes: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for (pid, path, upstream) in path_rows {
+        path_routes.entry(pid).or_default().insert(path, upstream);
+    }
+
     let body = litebin_common::agent_api::ProjectMetaRequest {
         projects,
         background_projects: Some(background_projects),
@@ -124,6 +137,7 @@ pub async fn push_project_meta_to_agent(
         host_network: Some(host_network),
         default_memory_limit_mb: Some(default_mem),
         default_cpu_limit: Some(default_cpu),
+        path_routes: Some(path_routes),
     };
 
     match agent.push_project_meta(&body).await {

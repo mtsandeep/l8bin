@@ -353,6 +353,9 @@ pub struct ProjectMetaRequest {
     pub default_memory_limit_mb: Option<i64>,
     /// Global default CPU limit from orchestrator settings.
     pub default_cpu_limit: Option<f64>,
+    /// Custom path routes per project (project_id -> {path -> upstream}).
+    #[serde(default)]
+    pub path_routes: Option<HashMap<String, HashMap<String, String>>>,
 }
 
 // ── Wire-format tests ─────────────────────────────────────────────────────────
