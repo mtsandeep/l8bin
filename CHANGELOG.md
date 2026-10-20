@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-10-20
+
 ### Fixed
 - **`/__l8b_wake_wait` is now always answered by the waker** — a global path route in every Caddy config (master + agent, all modes) sits ahead of app routes, so the poll endpoint returns `200 {"status":"ready"}` instead of falling through to the running app's 404. Apps no longer see poll traffic, and manual visits get a meaningful response.
 - **Multi-service wakes wait for every service, and waker proxies honor path routes** — the readiness probe only checked the public service, so a fast-starting front container declared the app ready while its API service was still booting, and `/api/*` requests got the front container's 404 instead of the 503 starting response. The probe now waits for all port-bearing services, and waker-side proxying on both master and agent routes by custom path routes (exact and `/*` glob, longest match — Caddy semantics) before falling back to the public service; agents receive the routes via the project-meta push.
