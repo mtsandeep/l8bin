@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **A node offline at master boot no longer stays offline forever** — the node client pool was built once at startup from online nodes, so a node that was offline at boot failed every heartbeat without ever dialing. The heartbeat now rebuilds pool entries lazily.
+
 ## [0.4.10] - 2026-10-19
 
 ### Fixed

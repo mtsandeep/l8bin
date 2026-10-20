@@ -97,9 +97,24 @@ async fn poll_node(state: &AppState, node: &litebin_common::types::Node) {
     let client = match get_node_client(&state.node_clients, &node.id) {
         Ok(c) => c,
         Err(_) => {
-            // Node not in pool — treat as failure
-            handle_failure(state, node).await;
-            return;
+            // Pool misses are stale, not fatal: it's built once at boot from
+            // online nodes, so a node that was offline at boot (or flapped)
+            // would otherwise fail every poll forever without ever dialing.
+            match crate::nodes::client::build_node_client(
+                &state.config.ca_cert_path,
+                &state.config.client_cert_path,
+                &state.config.client_key_path,
+            ) {
+                Ok(c) => {
+                    let c = Arc::new(c);
+                    state.node_clients.insert(node.id.clone(), c.clone());
+                    c
+                }
+                Err(_) => {
+                    handle_failure(state, node).await;
+                    return;
+                }
+            }
         }
     };
 
