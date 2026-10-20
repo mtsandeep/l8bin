@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-10-20
+
 ### Fixed
 - **A node offline at master boot no longer stays offline forever** — the node client pool was built once at startup from online nodes, so a node that was offline at boot failed every heartbeat without ever dialing. The heartbeat now rebuilds pool entries lazily.
 - **Node health checks fail fast and failing nodes back off** — heartbeat health/register calls now carry the same 10s timeout as the other agent pushes, and a failing node is probed at exponentially increasing intervals (30s → 15m cap) instead of every interval forever. Offline nodes get a **Recheck** button in the dashboard (same flow as Connect) that probes immediately — no loops.
