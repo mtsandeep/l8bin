@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **`/__l8b_wake_wait` is now always answered by the waker** — a global path route in every Caddy config (master + agent, all modes) sits ahead of app routes, so the poll endpoint returns `200 {"status":"ready"}` instead of falling through to the running app's 404. Apps no longer see poll traffic, and manual visits get a meaningful response.
+
 ## [0.4.11] - 2026-10-20
 
 ### Fixed

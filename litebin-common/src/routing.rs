@@ -3,6 +3,19 @@ use serde_json::{Value, json};
 
 use crate::caddy::CaddyClient;
 
+/// Global route answering the waiting page's poll path on ANY host — kept
+/// ahead of host routes so the app never sees this traffic and manual visits
+/// get the waker's JSON instead of the app's 404.
+pub fn wake_wait_route(upstream: &str) -> Value {
+    json!({
+        "match": [{ "path": [crate::wake_wait::WAKE_WAIT_PATH] }],
+        "handle": [{
+            "handler": "reverse_proxy",
+            "upstreams": [{ "dial": upstream }]
+        }]
+    })
+}
+
 /// Build the `handle_response` block that catches 502/503/504 from upstream
 /// and proxies the request to the orchestrator for auto-wake.
 pub fn wake_fallback_handle(upstream: &str) -> Value {
@@ -115,6 +128,8 @@ impl MasterProxyRouter {
     ) -> Value {
         let logging = crate::heartbeat::caddy_logging_config();
         let mut routes: Vec<Value> = Vec::new();
+
+        routes.push(wake_wait_route(orchestrator_upstream));
 
         if let Some(redirect) = crate::caddy::http_to_https_redirect(domain) {
             routes.push(redirect);

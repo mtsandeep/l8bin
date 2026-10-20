@@ -1,5 +1,5 @@
 use litebin_common::caddy::http_to_https_redirect;
-use litebin_common::routing::{ProjectRoute, wake_fallback_handle};
+use litebin_common::routing::{ProjectRoute, wake_fallback_handle, wake_wait_route};
 use serde_json::{Value, json};
 
 use super::CloudflareDnsRouter;
@@ -15,6 +15,7 @@ impl CloudflareDnsRouter {
     ) -> Value {
         let logging = litebin_common::heartbeat::caddy_logging_config();
         let mut routes: Vec<Value> = Vec::new();
+        routes.push(wake_wait_route(orchestrator_upstream));
 
         if let Some(redirect) = http_to_https_redirect(domain) {
             routes.push(redirect);
@@ -230,6 +231,7 @@ impl CloudflareDnsRouter {
         orchestrator_url: &str,
     ) -> Value {
         let mut routes: Vec<Value> = Vec::new();
+        routes.push(wake_wait_route("litebin-agent:8444"));
 
         if let Some(redirect) = http_to_https_redirect(domain) {
             routes.push(redirect);

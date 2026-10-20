@@ -299,8 +299,10 @@ fn merge_routes_with_persisted(
         }
     }
 
-    // Build routes array: upload route first (path match, any host), then specific routes + catch-all 502
-    let mut routes: Vec<serde_json::Value> = vec![upload_route(upload_upstream)];
+    // Build routes array: upload + wait-poll routes first (path match, any host),
+    // then specific host routes + catch-all 502
+    let mut routes: Vec<serde_json::Value> =
+        vec![upload_route(upload_upstream), litebin_common::routing::wake_wait_route(wake_server_upstream)];
     routes.extend(route_map.into_values());
 
     // Catch-all returns 502 so master Caddy's handle_response triggers the waker
@@ -341,8 +343,10 @@ fn build_config_from_scratch(
     key_pem: &str,
     upload_upstream: &str,
 ) -> serde_json::Value {
-    // Upload route first (path match, any host — works for raw-IP direct uploads).
-    let mut routes: Vec<serde_json::Value> = vec![upload_route(upload_upstream)];
+    let wake_server_upstream = "litebin-agent:8444";
+    // Upload + wait-poll routes first (path match, any host).
+    let mut routes: Vec<serde_json::Value> =
+        vec![upload_route(upload_upstream), litebin_common::routing::wake_wait_route(wake_server_upstream)];
 
     // Group containers by project_id to detect multi-service projects
     let mut by_project: std::collections::HashMap<String, Vec<&litebin_common::docker::RunningContainer>> =
@@ -351,7 +355,6 @@ fn build_config_from_scratch(
         by_project.entry(c.project_id.clone()).or_default().push(c);
     }
 
-    let wake_server_upstream = "litebin-agent:8444";
     for (project_id, svc_containers) in &by_project {
         let host = format!("{}.{}", project_id, domain);
         if DockerManager::read_compose(project_id).is_some() {
