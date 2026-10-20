@@ -353,7 +353,8 @@ impl AgentClient {
 
     /// GET /health — agent liveness + host capability report.
     pub async fn health(&self) -> Result<litebin_common::types::HealthReport, AgentClientError> {
-        self.get_json(self.url("/health")).await
+        let call = self.get_json(self.url("/health"));
+        tokio::time::timeout(CONTROL_PLANE_TIMEOUT, call).await.map_err(|_| AgentClientError::Timeout)?
     }
 
     /// GET /health with a per-request timeout (used by fan-out calls that must not hang).
@@ -368,7 +369,8 @@ impl AgentClient {
 
     /// POST /internal/register — push master config (domain, report URLs) to the agent.
     pub async fn register(&self, req: &litebin_common::agent_api::RegisterRequest) -> Result<(), AgentClientError> {
-        self.post_status(litebin_common::types::AGENT_REGISTER_PATH, req).await
+        let call = self.post_status(litebin_common::types::AGENT_REGISTER_PATH, req);
+        tokio::time::timeout(CONTROL_PLANE_TIMEOUT, call).await.map_err(|_| AgentClientError::Timeout)?
     }
 
     /// POST /internal/project-meta — replace the agent's project lifecycle/capability map.

@@ -3,12 +3,18 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
+use dashmap::DashMap;
+use std::time::Instant;
+
 use crate::AppState;
 use crate::nodes::client::get_node_client;
 use litebin_common::types::{HealthReport, NodeStatus};
 
 pub async fn run_heartbeat(state: AppState, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
     let interval = Duration::from_secs(state.config.heartbeat_interval_secs);
+    // Backoff schedule per failing node — probing a dead node every interval
+    // forever is pointless; the dashboard Connect button always bypasses it.
+    let next_check: Arc<DashMap<String, Instant>> = Arc::new(DashMap::new());
 
     loop {
         tokio::select! {
@@ -17,13 +23,13 @@ pub async fn run_heartbeat(state: AppState, mut shutdown_rx: tokio::sync::watch:
                 break;
             }
             _ = sleep(interval) => {
-                run_heartbeat_pass(&state).await;
+                run_heartbeat_pass(&state, &next_check).await;
             }
         }
     }
 }
 
-async fn run_heartbeat_pass(state: &AppState) {
+async fn run_heartbeat_pass(state: &AppState, next_check: &Arc<DashMap<String, Instant>>) {
     // Refresh local node stats via sysinfo (no agent needed)
     refresh_local_node(state).await;
 
@@ -42,11 +48,14 @@ async fn run_heartbeat_pass(state: &AppState) {
         }
     };
 
+    let now = Instant::now();
     let handles: Vec<_> = nodes
         .into_iter()
+        .filter(|node| next_check.get(&node.id).map(|t| now >= *t).unwrap_or(true))
         .map(|node| {
             let state = state.clone();
-            tokio::spawn(async move { poll_node(&state, &node).await })
+            let next_check = next_check.clone();
+            tokio::spawn(async move { poll_node(&state, &node, &next_check).await })
         })
         .collect();
 
@@ -87,7 +96,7 @@ async fn refresh_local_node(state: &AppState) {
     }
 }
 
-async fn poll_node(state: &AppState, node: &litebin_common::types::Node) {
+async fn poll_node(state: &AppState, node: &litebin_common::types::Node, next_check: &Arc<DashMap<String, Instant>>) {
     // For pending_setup nodes, attempt to connect (push config)
     if node.status == NodeStatus::PendingSetup {
         attempt_connect(state, node).await;
@@ -121,9 +130,27 @@ async fn poll_node(state: &AppState, node: &litebin_common::types::Node) {
     let agent = crate::nodes::client::AgentClient::new(client, node, &state.config);
 
     match agent.health().await {
-        Ok(health) => handle_success(state, node, &health).await,
-        Err(_) => handle_failure(state, node).await,
+        Ok(health) => {
+            next_check.remove(&node.id);
+            handle_success(state, node, &health).await;
+        }
+        Err(_) => {
+            schedule_backoff(state, node, next_check);
+            handle_failure(state, node).await;
+        }
     }
+}
+
+// Failing nodes back off exponentially: the first 5 fails poll every
+// interval, then interval x 2^n capped at 15 minutes.
+fn schedule_backoff(state: &AppState, node: &litebin_common::types::Node, next_check: &Arc<DashMap<String, Instant>>) {
+    if node.fail_count < 5 {
+        return;
+    }
+    let base = state.config.heartbeat_interval_secs;
+    let shift = (node.fail_count - 5).min(5) as u32;
+    let secs = (base << shift).min(900);
+    next_check.insert(node.id.clone(), Instant::now() + Duration::from_secs(secs));
 }
 
 async fn handle_success(state: &AppState, node: &litebin_common::types::Node, health: &HealthReport) {

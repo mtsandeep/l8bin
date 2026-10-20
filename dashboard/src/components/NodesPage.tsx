@@ -701,7 +701,7 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                           {node.fail_count} fail{node.fail_count > 1 ? 's' : ''}
                         </span>
                       )}
-                      {node.status === NodeStatus.PendingSetup && (
+                      {(node.status === NodeStatus.PendingSetup || node.status === NodeStatus.Offline) && (
                         <button
                           type="button"
                           onClick={() => handleConnect(node.id)}
@@ -713,7 +713,11 @@ export default function NodesPage({ onBack }: NodesPageProps) {
                           ) : (
                             <RefreshCw size={11} />
                           )}
-                          {connecting === node.id ? 'Connecting…' : 'Connect'}
+                          {connecting === node.id
+                            ? 'Connecting…'
+                            : node.status === NodeStatus.Offline
+                              ? 'Recheck'
+                              : 'Connect'}
                         </button>
                       )}
                       {node.id !== 'local' && (
