@@ -233,9 +233,8 @@ pub async fn poll_pairing(client: &reqwest::Client, server: &str, device_code: &
     }
 }
 
-/// Device-pairing login: prints a short-lived code, waits for the user to
-/// approve it at `{server}/connect` from an authenticated browser, then stores
-/// the issued scoped token. No passwords pass through the terminal.
+/// Device-pairing login: print the approval URL, offer to open it (browser
+/// default) or copy it, poll until approved, store the scoped token.
 pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
     let client_name = std::env::var("L8B_CLIENT_NAME").unwrap_or_else(|_| "l8b CLI".to_string());
     let start = start_pairing(server, suggested_scope, &client_name).await?;
@@ -249,14 +248,17 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
     println!();
     println!("    {}", connect_url.cyan().bold());
     println!();
+    // Up front so polling starts immediately after the choice.
     if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        use std::io::Write;
-        print!("  Press ENTER to open the browser… ");
-        std::io::stdout().flush().ok();
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).ok();
-        let _ = webbrowser::open(&connect_url);
-        println!();
+        let open_browser = dialoguer::Select::new()
+            .with_prompt("How do you want to open it?")
+            .items(&["Open in my browser", "I'll copy the link myself"])
+            .default(0)
+            .interact()?
+            == 0;
+        if open_browser && webbrowser::open(&connect_url).is_err() {
+            println!("  {} Couldn't open a browser — copy the link above instead.", "!".yellow());
+        }
     }
     let expires_in = (start.expires_at - crate::config::unix_now()).max(0) as u64;
     println!("  {} Expires in {} minutes. Waiting for approval…", "⏳".yellow(), expires_in / 60);
@@ -290,6 +292,21 @@ pub async fn login(server: &str, suggested_scope: &str) -> Result<()> {
             }
         }
     }
+}
+
+/// Ask how to authenticate (pairing default) and run that flow; non-terminals pair directly.
+pub async fn login_interactive(server: &str, suggested_scope: &str) -> Result<()> {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return login(server, suggested_scope).await;
+    }
+    let methods = ["Approve from the dashboard (recommended)", "Username and password"];
+    let use_password = dialoguer::Select::new()
+        .with_prompt("How do you want to authenticate?")
+        .items(&methods)
+        .default(0)
+        .interact()?
+        == 1;
+    if use_password { login_password(server).await } else { login(server, suggested_scope).await }
 }
 
 /// POST to the API using session (cookie) auth.
@@ -330,26 +347,6 @@ pub async fn session_get(client: &reqwest::Client, server: &str, path: &str) -> 
     let url = format!("{}{}", server.trim_end_matches('/'), path);
     let resp =
         client.get(&url).header("Cookie", &cookie).send().await.with_context(|| format!("GET {} failed", url))?;
-
-    let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_str(&body_text).unwrap_or(serde_json::json!({"raw": body_text}));
-
-    if !status.is_success() {
-        let error = json["error"].as_str().unwrap_or(&body_text);
-        anyhow::bail!("{} ({}): {}", url, status, error);
-    }
-
-    Ok(json)
-}
-
-/// DELETE from the API using session (cookie) auth.
-pub async fn session_delete(client: &reqwest::Client, server: &str, path: &str) -> Result<serde_json::Value> {
-    let cookie = cookie_for(server)?;
-
-    let url = format!("{}{}", server.trim_end_matches('/'), path);
-    let resp =
-        client.delete(&url).header("Cookie", &cookie).send().await.with_context(|| format!("DELETE {} failed", url))?;
 
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();

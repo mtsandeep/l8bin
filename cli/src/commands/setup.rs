@@ -57,5 +57,5 @@ pub(crate) async fn run(server: &str, ci_mode: &CiMode, out: &Out) -> Result<()>
 
     println!();
     out.note("Pairing this machine (approve from the dashboard):");
-    auth::login(&server, "manage").await
+    auth::login_interactive(&server, "manage").await
 }

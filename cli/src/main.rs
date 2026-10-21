@@ -545,22 +545,25 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 ));
             }
             let cfg = config::CliConfig::load(cli.server.as_deref(), None);
-            let target = match auth::resolve_target(&cfg, std::path::Path::new(&path)) {
+            let dir = std::path::Path::new(&path);
+            let toml_server = project_config::load(dir).and_then(|c| c.server);
+            let target = match auth::resolve_target(&cfg, dir) {
                 Ok(t) => t,
                 Err(e) => {
-                    // Not-logged-in is interactive ship's cue to pair first.
+                    // Not-logged-in/ambiguous is interactive ship's cue to pair;
+                    // a repo-bound server skips the URL question.
                     let (message, _) = crate::out::split_hint(&e);
-                    if message.contains("not logged in") || message.contains("ambiguous") {
-                        let server = dialoguer::Input::<String>::new()
+                    let server = match (message.contains("not logged in"), message.contains("ambiguous")) {
+                        (true, _) if toml_server.is_some() => toml_server.clone().unwrap(),
+                        (true, _) | (_, true) => dialoguer::Input::<String>::new()
                             .with_prompt("Server URL")
                             .default(cfg.server.clone().unwrap_or_default())
-                            .interact_text()?;
-                        auth::login(&server, "manage").await?;
-                        let cfg = config::CliConfig::load(Some(&server), None);
-                        auth::resolve_target(&cfg, std::path::Path::new(&path))?
-                    } else {
-                        return Err(e);
-                    }
+                            .interact_text()?,
+                        _ => return Err(e),
+                    };
+                    auth::login_interactive(&server, "manage").await?;
+                    let cfg = config::CliConfig::load(Some(&server), None);
+                    auth::resolve_target(&cfg, dir)?
                 }
             };
             let has_session =
@@ -704,28 +707,17 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             commands::projects::delete(project, yes, cli.server.as_deref(), cli.token.as_deref(), out, ci_mode).await?;
         }
         Commands::Login { server, scope, pair, password } => {
-            let use_password = if password {
-                true
+            if password {
+                auth::login_password(&server).await?;
             } else if pair {
-                false
+                auth::login(&server, scope.as_deref().unwrap_or("manage")).await?;
             } else if ci_mode.enabled || out.json {
                 bail!(out::fail(
                     "login needs an auth method in CI/JSON mode",
                     "use `l8b login --pair` (approve from the dashboard) or set L8B_TOKEN"
                 ));
             } else {
-                let methods = vec!["Approve from the dashboard (recommended)", "Username and password"];
-                let choice = dialoguer::Select::new()
-                    .with_prompt("How do you want to authenticate?")
-                    .items(&methods)
-                    .default(0)
-                    .interact()?;
-                choice == 1
-            };
-            if use_password {
-                auth::login_password(&server).await?;
-            } else {
-                auth::login(&server, scope.as_deref().unwrap_or("manage")).await?;
+                auth::login_interactive(&server, scope.as_deref().unwrap_or("manage")).await?;
             }
         }
         Commands::Logout { server: logout_target } => {

@@ -81,10 +81,8 @@ impl DockerManager {
     pub async fn exposed_container_ports(&self, container_id: &str) -> Option<Vec<u16>> {
         let info = self.inspect_container(container_id).await.ok()?;
         let ports = info.config?.exposed_ports?;
-        let mut list: Vec<u16> = ports
-            .iter()
-            .filter_map(|key| key.split('/').next().and_then(|p| p.parse::<u16>().ok()))
-            .collect();
+        let mut list: Vec<u16> =
+            ports.iter().filter_map(|key| key.split('/').next().and_then(|p| p.parse::<u16>().ok())).collect();
         list.sort_unstable();
         list.dedup();
         Some(list)

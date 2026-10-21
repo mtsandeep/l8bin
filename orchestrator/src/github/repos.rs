@@ -81,11 +81,7 @@ struct GhContentEntry {
 
 /// `folder/file`, or bare `file` at the repo root.
 fn join_path(folder: &str, file: &str) -> String {
-    if folder.is_empty() {
-        file.to_string()
-    } else {
-        format!("{folder}/{file}")
-    }
+    if folder.is_empty() { file.to_string() } else { format!("{folder}/{file}") }
 }
 
 impl GitHubClient {

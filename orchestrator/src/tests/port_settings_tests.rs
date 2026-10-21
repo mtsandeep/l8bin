@@ -54,13 +54,11 @@ async fn port_patch_updates_project_and_public_service_row() {
         .fetch_one(&db)
         .await
         .unwrap();
-    let svc_port: i64 = sqlx::query_scalar(
-        "SELECT port FROM project_services WHERE project_id = ? AND is_public = 1",
-    )
-    .bind(project_id)
-    .fetch_one(&db)
-    .await
-    .unwrap();
+    let svc_port: i64 = sqlx::query_scalar("SELECT port FROM project_services WHERE project_id = ? AND is_public = 1")
+        .bind(project_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!((project_port, svc_port), (80, 80));
 }
 

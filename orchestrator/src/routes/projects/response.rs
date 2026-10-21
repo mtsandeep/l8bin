@@ -194,9 +194,9 @@ pub(super) async fn to_project_response(project: &Project, state: &crate::AppSta
         created_at: project.created_at,
         updated_at: project.updated_at,
         public_stats,
-        port_mismatch: state.port_mismatches.get(&project.id).map(|entry| PortMismatch {
-            routed_port: entry.0,
-            container_ports: entry.1.clone(),
-        }),
+        port_mismatch: state
+            .port_mismatches
+            .get(&project.id)
+            .map(|entry| PortMismatch { routed_port: entry.0, container_ports: entry.1.clone() }),
     }
 }

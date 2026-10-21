@@ -45,10 +45,7 @@ pub(crate) async fn run(args: InitArgs, ci_mode: &CiMode, out: &Out) -> Result<(
         }
     };
 
-    // Server binding: explicit flag, else the unambiguous stored login, else
-    // an interactive pick (existing logins or connect a new one). CI/JSON
-    // falls back to the last-used default; the first deploy records it.
-    let server = pick_init_server(args.server.as_deref(), ci_mode).await?;
+    let server = pick_init_server(args.server.as_deref(), ci_mode)?;
 
     let toml = crate::project_config::render(Some(&project), args.node.as_deref(), server.as_deref());
     std::fs::write(&toml_path, toml)?;
@@ -81,7 +78,7 @@ pub(crate) async fn run(args: InitArgs, ci_mode: &CiMode, out: &Out) -> Result<(
 
     if !out.json {
         println!();
-        println!("  {} Deploy with: {}", "→".cyan(), "l8b deploy".cyan());
+        println!("  {} Deploy with: {}", "→".cyan(), "l8b ship".cyan());
         println!("  {} Status with: {}", "→".cyan(), "l8b status --wait".cyan());
     }
     Ok(())
@@ -94,9 +91,9 @@ fn default_from_dir(dir: &Path) -> String {
         .unwrap_or_else(|| "my-app".to_string())
 }
 
-/// Resolve the server to bind: flag > the only login > interactive pick over
-/// existing logins or a new pairing. CI/JSON keeps the last-used default.
-async fn pick_init_server(flag: Option<&str>, ci_mode: &CiMode) -> Result<Option<String>> {
+/// Resolve the server to bind: flag > the only login > interactive pick.
+/// CI/JSON keeps the last-used default.
+fn pick_init_server(flag: Option<&str>, ci_mode: &CiMode) -> Result<Option<String>> {
     if let Some(s) = flag {
         return Ok(Some(crate::config::normalize_server(s)));
     }
@@ -113,7 +110,7 @@ async fn pick_init_server(flag: Option<&str>, ci_mode: &CiMode) -> Result<Option
         dialoguer::Input::<String>::new().with_prompt("Server URL").interact_text()?
     } else {
         let mut items: Vec<String> = logged_in.iter().map(|s| s.to_string()).collect();
-        items.push("Connect a new server…".into());
+        items.push("Other server (enter URL)…".into());
         let choice = dialoguer::Select::new()
             .with_prompt("Deploy this project to which server?")
             .items(&items)
@@ -125,6 +122,5 @@ async fn pick_init_server(flag: Option<&str>, ci_mode: &CiMode) -> Result<Option
             dialoguer::Input::<String>::new().with_prompt("Server URL").interact_text()?
         }
     };
-    crate::auth::login(&server, "manage").await?;
     Ok(Some(crate::config::normalize_server(&server)))
 }

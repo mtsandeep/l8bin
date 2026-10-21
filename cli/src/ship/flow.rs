@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::{Confirm, Input, Select};
-use litebin_common::types::ProjectStatus;
+use litebin_common::types::{ProjectStatus, TokenScope};
 use serde_json::json;
 
 use crate::auth;
@@ -22,6 +22,7 @@ pub(super) struct ProjectInfo {
     pub is_background: bool,
     #[serde(default)]
     pub is_staged: bool,
+    #[serde(default)]
     pub public_stats: Option<litebin_common::types::ServiceInfo>,
 }
 
@@ -36,6 +37,11 @@ pub async fn run(
 ) -> Result<()> {
     let project_dir = Path::new(path_override.unwrap_or("."));
     let env_source = super::env::EnvSource::from_flags(secret_override, no_env);
+
+    // Project-bound token: one destination, no New/Existing menu.
+    if let Some((project_id, scope)) = bound_token(client, server).await {
+        return scoped_flow(client, server, project_dir, port_override, &env_source, scope, &project_id).await;
+    }
 
     let projects_json = auth::api_get(client, server, "/projects").await.unwrap_or_else(|e| {
         println!("  {} Could not list projects: {}", "!".yellow(), e);
@@ -54,6 +60,89 @@ pub async fn run(
 }
 
 // ── New / existing project flows ─────────────────────────────────────────────
+
+/// Some((id, scope)) when the credential is a deploy token bound to one project.
+async fn bound_token(client: &reqwest::Client, server: &str) -> Option<(String, TokenScope)> {
+    let who = auth::api_get(client, server, "/whoami").await.ok()?;
+    if who["kind"].as_str() != Some("token") {
+        return None;
+    }
+    let project_id = who["project_id"].as_str()?.to_string();
+    let scope = serde_json::from_value(who["scope"].clone()).unwrap_or(TokenScope::Deploy);
+    Some((project_id, scope))
+}
+
+/// Project-bound token: show the project, then the actions its scope allows.
+async fn scoped_flow(
+    client: &reqwest::Client,
+    server: &str,
+    project_dir: &Path,
+    port_override: Option<u16>,
+    env_source: &super::env::EnvSource,
+    scope: TokenScope,
+    project_id: &str,
+) -> Result<()> {
+    let json = auth::api_get(client, server, &format!("/projects/{project_id}"))
+        .await
+        .with_context(|| format!("could not load bound project '{project_id}'"))?;
+    let project: ProjectInfo =
+        serde_json::from_value(json).with_context(|| format!("unexpected response for project '{project_id}'"))?;
+
+    println!("  {} Token is scoped to project {}:", "::".dimmed(), project_id.cyan());
+    println!("{}", project_row(&project));
+    choose_action(client, server, project_dir, port_override, env_source, &project, Access::Token { scope }).await
+}
+
+/// The Deploy/Redeploy action: build and deploy the project's image.
+async fn deploy_existing(
+    client: &reqwest::Client,
+    server: &str,
+    project_dir: &Path,
+    port_override: Option<u16>,
+    env_source: &super::env::EnvSource,
+    project: &ProjectInfo,
+) -> Result<()> {
+    let existing_node = project.node_id.as_deref();
+    let is_first = matches!(project.status, ProjectStatus::Pending | ProjectStatus::Unconfigured);
+    let port = if project.is_background || detect_compose_file(project_dir).is_some() {
+        None
+    } else {
+        Some(resolve_app_port(project_dir, port_override)?)
+    };
+    let url = super::deploy::build_and_deploy(
+        client,
+        server,
+        &project.id,
+        project_dir,
+        port,
+        project.is_background,
+        env_source.clone(),
+        is_first,
+        existing_node,
+    )
+    .await?;
+    if let Some(url) = url {
+        print_live_url(&url);
+    } else if project.is_background {
+        print_no_managed_url();
+    }
+    Ok(())
+}
+
+/// The Resume-deployment action: env setup, then start containers.
+async fn resume_existing(client: &reqwest::Client, server: &str, project: &ProjectInfo) -> Result<()> {
+    let started = await_runtime_config_and_start(client, server, &project.id, project.node_id.as_deref()).await?;
+    if started {
+        if project.is_background {
+            print_no_managed_url();
+        } else {
+            let domain = auth::fetch_platform_domain(client, server).await;
+            let live_url = auth::project_live_url(&project.id, &domain);
+            print_live_url(&live_url);
+        }
+    }
+    Ok(())
+}
 
 async fn new_project_flow(
     client: &reqwest::Client,
@@ -156,87 +245,78 @@ async fn existing_project_flow(
     let mut projects: Vec<&ProjectInfo> = projects.iter().collect();
     projects.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let items: Vec<String> = projects
-        .iter()
-        .map(|p| {
-            let status = match &p.status {
-                ProjectStatus::Running => p.status.to_string().green().to_string(),
-                ProjectStatus::Pending | ProjectStatus::Stopped | ProjectStatus::Unconfigured => {
-                    p.status.to_string().yellow().to_string()
-                }
-                ProjectStatus::Error | ProjectStatus::Degraded => p.status.to_string().red().to_string(),
-                _ => p.status.to_string(),
-            };
-            let image = p.public_stats.as_ref().map(|ps| short_image(&ps.image)).unwrap_or_else(|| "—".to_string());
-            let port = if p.is_background {
-                "background".to_string()
-            } else {
-                p.public_stats
-                    .as_ref()
-                    .and_then(|ps| ps.mapped_port)
-                    .map(|p| format!("port {}", p))
-                    .unwrap_or("—".to_string())
-            };
-            format!("  {:<20} {:<12} {:<25} {}", p.id, status, image, port)
-        })
-        .collect();
+    let items: Vec<String> = projects.iter().map(|p| project_row(p)).collect();
 
     let idx = Select::new().with_prompt("Select project").items(&items).interact()?;
 
-    let project = &projects[idx];
+    choose_action(client, server, project_dir, port_override, env_source, projects[idx], Access::Full).await
+}
+
+/// One project row as shown in the select list.
+fn project_row(p: &ProjectInfo) -> String {
+    let status = match &p.status {
+        ProjectStatus::Running => p.status.to_string().green().to_string(),
+        ProjectStatus::Pending | ProjectStatus::Stopped | ProjectStatus::Unconfigured => {
+            p.status.to_string().yellow().to_string()
+        }
+        ProjectStatus::Error | ProjectStatus::Degraded => p.status.to_string().red().to_string(),
+        _ => p.status.to_string(),
+    };
+    let image = p.public_stats.as_ref().map(|ps| short_image(&ps.image)).unwrap_or_else(|| "—".to_string());
+    let port = if p.is_background {
+        "background".to_string()
+    } else {
+        p.public_stats.as_ref().and_then(|ps| ps.mapped_port).map(|p| format!("port {}", p)).unwrap_or("—".to_string())
+    };
+    format!("  {:<20} {:<12} {:<25} {}", p.id, status, image, port)
+}
+
+/// Which actions a credential may take on a project.
+enum Access {
+    /// Session/global: every action.
+    Full,
+    /// Token: lifecycle actions at manage scope, Delete at admin scope.
+    Token { scope: TokenScope },
+}
+
+/// Action menu for a chosen project; `access` decides which actions are offered.
+async fn choose_action(
+    client: &reqwest::Client,
+    server: &str,
+    project_dir: &Path,
+    port_override: Option<u16>,
+    env_source: &super::env::EnvSource,
+    project: &ProjectInfo,
+    access: Access,
+) -> Result<()> {
+    let (manage, admin) = match access {
+        Access::Full => (true, true),
+        Access::Token { scope } => (scope >= TokenScope::Manage, scope >= TokenScope::Admin),
+    };
     let project_id = &project.id;
 
     let staged = project.status == ProjectStatus::Unconfigured && project_is_staged(project);
     let awaiting_first_deploy =
         project.status == ProjectStatus::Pending || (project.status == ProjectStatus::Unconfigured && !staged);
-    let actions: Vec<&str> = if staged {
-        vec!["Resume deployment", "Redeploy", "Delete"]
+    let mut actions: Vec<&str> = if staged {
+        vec!["Resume deployment", "Redeploy"]
     } else if awaiting_first_deploy {
-        vec!["Deploy", "Delete"]
+        vec!["Deploy"]
     } else {
-        vec!["Redeploy", "Recreate", "Start", "Stop", "Delete"]
+        vec!["Redeploy"]
     };
+    if !staged && !awaiting_first_deploy && manage {
+        actions.extend(["Recreate", "Start", "Stop"]);
+    }
+    if admin {
+        actions.push("Delete");
+    }
     let action_idx = Select::new().with_prompt("Action").items(&actions).default(0).interact()?;
 
     match actions[action_idx] {
-        "Resume deployment" => {
-            let started =
-                await_runtime_config_and_start(client, server, project_id, project.node_id.as_deref()).await?;
-            if started {
-                if project.is_background {
-                    print_no_managed_url();
-                } else {
-                    let domain = auth::fetch_platform_domain(client, server).await;
-                    let live_url = auth::project_live_url(project_id, &domain);
-                    print_live_url(&live_url);
-                }
-            }
-        }
+        "Resume deployment" => resume_existing(client, server, project).await?,
         "Deploy" | "Redeploy" => {
-            let existing_node = project.node_id.as_deref();
-            let is_first = matches!(project.status, ProjectStatus::Pending | ProjectStatus::Unconfigured);
-            let port = if project.is_background || detect_compose_file(project_dir).is_some() {
-                None
-            } else {
-                Some(resolve_app_port(project_dir, port_override)?)
-            };
-            let url = super::deploy::build_and_deploy(
-                client,
-                server,
-                project_id,
-                project_dir,
-                port,
-                project.is_background,
-                env_source.clone(),
-                is_first,
-                existing_node,
-            )
-            .await?;
-            if let Some(url) = url {
-                print_live_url(&url);
-            } else if project.is_background {
-                print_no_managed_url();
-            }
+            deploy_existing(client, server, project_dir, port_override, env_source, project).await?
         }
         "Recreate" => {
             println!("  :: Recreating {}...", project_id.cyan());
@@ -266,7 +346,7 @@ async fn existing_project_flow(
                 return Ok(());
             }
             println!("  :: Deleting {}...", project_id.cyan());
-            auth::session_delete(client, server, &format!("/projects/{}", project_id)).await?;
+            auth::api_delete(client, server, &format!("/projects/{}", project_id)).await?;
             println!("  {} Deleted", "✔".green());
             println!();
         }
