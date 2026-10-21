@@ -56,7 +56,7 @@ pub async fn installation_token(app: &AppCredentials, installation_id: i64) -> R
     }
 
     let jwt = app_jwt(app)?;
-    let resp = reqwest::Client::new()
+    let resp = super::http()
         .post(format!("{API_BASE}/app/installations/{installation_id}/access_tokens"))
         .bearer_auth(jwt)
         .header("Accept", "application/vnd.github+json")
@@ -101,7 +101,7 @@ pub struct GhAppInfo {
 /// credentials before storing them.
 pub async fn get_app(app: &AppCredentials) -> Result<GhAppInfo, GitHubApiError> {
     let jwt = app_jwt(app)?;
-    let resp = reqwest::Client::new()
+    let resp = super::http()
         .get(format!("{API_BASE}/app"))
         .bearer_auth(jwt)
         .header("Accept", "application/vnd.github+json")
@@ -120,7 +120,7 @@ pub async fn get_app(app: &AppCredentials) -> Result<GhAppInfo, GitHubApiError> 
 /// List installations of the app (App-JWT auth).
 pub async fn list_installations(app: &AppCredentials) -> Result<Vec<GhInstallation>, GitHubApiError> {
     let jwt = app_jwt(app)?;
-    let resp = reqwest::Client::new()
+    let resp = super::http()
         .get(format!("{API_BASE}/app/installations?per_page=100"))
         .bearer_auth(jwt)
         .header("Accept", "application/vnd.github+json")

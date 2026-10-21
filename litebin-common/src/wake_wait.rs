@@ -29,6 +29,18 @@ pub const DEPLOY_READINESS_MAX: Duration = Duration::from_secs(30);
 /// How long a completed guard stays in the map so late waiters see the outcome.
 pub const WAKE_GUARD_RETENTION: Duration = Duration::from_secs(60);
 
+/// Delay between proxy retry attempts (both wakers).
+pub const PROXY_RETRY_TICK: Duration = Duration::from_millis(250);
+
+/// Cap for a single proxy attempt so an unresponsive upstream can't pin a handler.
+pub const PROXY_ATTEMPT_CAP: Duration = Duration::from_secs(3);
+
+/// Multi-service health-check cooldown — don't re-check a waking project more often.
+pub const MULTI_SVC_HEALTH_COOLDOWN: Duration = Duration::from_secs(5);
+
+/// How long a failed wake suppresses retries (error page instead).
+pub const WAKE_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+
 /// Silent-hold budget from `WAKE_HOLD_SECS` (seconds, fractional, 0 disables). Read once per process.
 pub fn wake_silent_hold() -> Duration {
     static HOLD: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();

@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use crate::{AgentState, WakeGuard};
 use litebin_common::proxy::{WakeClient, classify_wake_client, is_hop_by_hop};
-use litebin_common::wake_wait::{WAKE_WAIT_HEADER, WAKE_WAIT_PATH};
+use litebin_common::wake_wait::{
+    MULTI_SVC_HEALTH_COOLDOWN, PROXY_ATTEMPT_CAP, PROXY_RETRY_TICK, WAKE_WAIT_HEADER, WAKE_WAIT_PATH,
+};
 
 use super::caddy::{find_public_service_upstream, rebuild_local_caddy};
 use super::multi_service::{report_wake_to_master, wake_multi_service};
@@ -92,7 +94,7 @@ async fn proxy_with_retry(
     let deadline = tokio::time::Instant::now() + budget;
     let mut last = proxy_attempt(client, method.clone(), upstream, pq, headers, &body).await;
     while last.status() == StatusCode::BAD_GATEWAY && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        tokio::time::sleep(PROXY_RETRY_TICK).await;
         last = proxy_attempt(client, method.clone(), upstream, pq, headers, &body).await;
     }
     last
@@ -108,7 +110,7 @@ async fn proxy_attempt(
     body: &axum::body::Bytes,
 ) -> Response<Body> {
     match tokio::time::timeout(
-        std::time::Duration::from_secs(3),
+        PROXY_ATTEMPT_CAP,
         proxy_request(client, method, upstream, path_and_query, headers, body.clone()),
     )
     .await
@@ -308,7 +310,7 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
         let should_check = state
             .multi_svc_health_check
             .get(&subdomain)
-            .map(|t| t.elapsed() >= std::time::Duration::from_secs(5))
+            .map(|t| t.elapsed() >= MULTI_SVC_HEALTH_COOLDOWN)
             .unwrap_or(true);
 
         let mut public_service_up = true;

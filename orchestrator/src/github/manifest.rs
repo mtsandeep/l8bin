@@ -78,7 +78,7 @@ pub struct ConvertedApp {
 
 /// Exchange the single-use manifest code. Plural path — the singular form 404s.
 pub async fn exchange_code(code: &str) -> Result<ConvertedApp, GitHubApiError> {
-    let resp = reqwest::Client::new()
+    let resp = super::http()
         .post(format!("{API_BASE}/app-manifests/{code}/conversions"))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", USER_AGENT)

@@ -1,13 +1,27 @@
 use axum::{
     Router,
+    response::{IntoResponse, Response},
     routing::{delete, get, patch, post, put},
 };
 use axum_login::login_required;
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::AppState;
 use crate::auth;
+
+/// Panic responder: log the cause, return a generic 500 (never leak internals).
+fn panic_response(err: Box<dyn std::any::Any + Send + 'static>) -> Response {
+    let detail = err
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| err.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload");
+    tracing::error!(panic = %detail, "handler panicked");
+    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "internal server error" })))
+        .into_response()
+}
 
 /// Assemble the full orchestrator application router (all route groups + middleware).
 pub(crate) fn build_app(state: AppState) -> Router {
@@ -175,6 +189,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .nest("/api", api)
         .fallback(crate::routes::waker::wake)
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::routes::waker::waker_intercept))
+        .layer(CatchPanicLayer::custom(panic_response))
         .layer(auth::auth_layer(state.clone()))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

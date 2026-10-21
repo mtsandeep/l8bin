@@ -65,11 +65,8 @@ pub async fn update_project_settings(
             // Empty string means "clear the domain"
             Some(None)
         } else {
-            // Strip www. prefix — canonical form stored without www
-            let trimmed = trimmed.strip_prefix("www.").unwrap_or(&trimmed).to_string();
-            if !trimmed.contains('.') || trimmed.starts_with('.') || trimmed.ends_with('.') {
-                return Err((StatusCode::BAD_REQUEST, "invalid domain format".to_string()));
-            }
+            let trimmed =
+                crate::validation::validate_custom_domain(&trimmed).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
             // Uniqueness check
             let conflict: Option<String> =
                 sqlx::query_scalar("SELECT id FROM projects WHERE custom_domain = ? AND id != ?")
@@ -359,12 +356,17 @@ pub async fn update_service_settings(
     }
 
     // Verify project exists
-    let project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+    let project = match sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
         .bind(&project_id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": format!("{e}")})))
-        .unwrap_or(None);
+    {
+        Ok(p) => p,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("db error: {e}")})))
+                .into_response();
+        }
+    };
 
     if project.is_none() {
         return (
@@ -376,13 +378,21 @@ pub async fn update_service_settings(
 
     // Verify service exists in project_services
     let existing: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM project_services WHERE project_id = ? AND service_name = ? LIMIT 1")
+        match sqlx::query_as("SELECT 1 FROM project_services WHERE project_id = ? AND service_name = ? LIMIT 1")
             .bind(&project_id)
             .bind(&service_name)
             .fetch_optional(&state.db)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": format!("{e}")})))
-            .unwrap_or(None);
+        {
+            Ok(x) => x,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("db error: {e}")})),
+                )
+                    .into_response();
+            }
+        };
 
     if existing.is_none() {
         return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("service '{}' not found in project '{}'", service_name, project_id)}))).into_response();

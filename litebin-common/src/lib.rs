@@ -11,6 +11,7 @@ pub mod proxy;
 pub mod routing;
 pub mod scan;
 pub mod sys;
+pub mod timeouts;
 pub mod types;
 pub mod upload;
 pub mod wake_wait;

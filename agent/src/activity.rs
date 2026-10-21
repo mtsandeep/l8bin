@@ -52,7 +52,7 @@ async fn report_hosts_to_master(state: &AgentState, hosts: HashSet<String>) {
         "hosts": hosts.into_iter().collect::<Vec<_>>()
     });
 
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build() {
+    let client = match reqwest::Client::builder().timeout(litebin_common::timeouts::AGENT_REPORT).build() {
         Ok(c) => c,
         Err(e) => {
             warn!(error = %e, "activity reporter: failed to build HTTP client");

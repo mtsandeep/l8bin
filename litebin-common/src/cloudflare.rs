@@ -42,7 +42,13 @@ struct CfError {
 
 impl CloudflareClient {
     pub fn new(api_token: &str, zone_id: &str) -> Self {
-        Self { api_token: api_token.to_string(), zone_id: zone_id.to_string(), client: reqwest::Client::new() }
+        // Bounded so a hung Cloudflare API can't stall route sync or domain jobs.
+        let client = reqwest::Client::builder()
+            .connect_timeout(crate::timeouts::CONNECT_REMOTE)
+            .timeout(crate::timeouts::API_THIRD_PARTY_TOTAL)
+            .build()
+            .unwrap_or_default();
+        Self { api_token: api_token.to_string(), zone_id: zone_id.to_string(), client }
     }
 
     fn base_url(&self) -> String {

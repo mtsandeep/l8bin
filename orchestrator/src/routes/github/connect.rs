@@ -189,7 +189,7 @@ pub async fn connect_pat(
     }
 
     // Validate against GitHub before storing anything.
-    let client = reqwest::Client::new();
+    let client = github::http();
     let resp = match client
         .get(format!("{}/user", github::API_BASE))
         .bearer_auth(&token)

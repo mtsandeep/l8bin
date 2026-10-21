@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::Path, extract::State, http::StatusCode};
+use futures_util::FutureExt;
 use tokio::sync::Semaphore;
 
 use crate::AppState;
@@ -69,10 +70,18 @@ pub async fn stop_project(
     let project_id_bg = project_id.clone();
     let node_id_bg = project.node_id.clone();
     tokio::spawn(async move {
-        let _permit = semaphore.acquire().await.unwrap();
         let project_id = project_id_bg;
+        // Only this task clears the 'stopping' status — never strand it on panic or lock close.
+        let _permit = match semaphore.acquire().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::error!(project = %project_id, "stop task: project lock closed");
+                let _ = status::set_project_error_only(&state.db, &project_id).await;
+                return;
+            }
+        };
 
-        let stop_result: Result<(), String> = async {
+        let stop_result: Result<(), String> = std::panic::AssertUnwindSafe(async {
             if is_remote {
                 // Remote: let the agent select workloads by project identity so a
                 // replacement with an unpersisted container ID is still stopped.
@@ -103,8 +112,17 @@ pub async fn stop_project(
                 stop_services(&state, &project_id, None).await.map_err(|(_, error)| error)?;
             }
             Ok(())
-        }
-        .await;
+        })
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|panic| {
+            let detail = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("non-string panic payload");
+            Err(format!("stop task panicked: {detail}"))
+        });
 
         let status_result = if stop_result.is_ok() {
             let derived = status::derive_and_set_project_status(&state.db, &project_id).await;

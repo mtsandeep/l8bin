@@ -12,6 +12,18 @@ use sqlx::SqlitePool;
 pub const API_BASE: &str = "https://api.github.com";
 pub const USER_AGENT: &str = "litebin-orchestrator";
 
+/// Shared bounded HTTP client — a hung GitHub API must not stall handlers.
+pub(crate) fn http() -> &'static reqwest::Client {
+    static HTTP: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+        reqwest::Client::builder()
+            .connect_timeout(litebin_common::timeouts::CONNECT_REMOTE)
+            .timeout(litebin_common::timeouts::API_THIRD_PARTY_TOTAL)
+            .build()
+            .unwrap_or_default()
+    });
+    &HTTP
+}
+
 /// Typed errors so routes can surface actionable guidance instead of raw status codes.
 #[derive(Debug)]
 pub enum GitHubApiError {
@@ -101,12 +113,12 @@ pub struct GitHubClient {
 
 impl GitHubClient {
     fn pat(token: String) -> Self {
-        Self { http: reqwest::Client::new(), token }
+        Self { http: http().clone(), token }
     }
 
     async fn installation(app: &auth::AppCredentials, installation_id: i64) -> Result<Self, GitHubApiError> {
         let token = auth::installation_token(app, installation_id).await?;
-        Ok(Self { http: reqwest::Client::new(), token })
+        Ok(Self { http: http().clone(), token })
     }
 
     fn get(&self, path: &str) -> reqwest::RequestBuilder {

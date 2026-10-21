@@ -10,7 +10,7 @@ compose-bollard = { path = "../compose-bollard" }
 
 # Web framework
 axum = { version = "0.8", features = ["macros", "multipart"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["catch-panic", "cors", "trace"] }
 http-body-util = "0.1"
 tokio = { version = "1.51", features = ["full"] }
 

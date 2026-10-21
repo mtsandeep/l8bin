@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use litebin_common::proxy::{WakeClient, classify_wake_client};
 use litebin_common::types::ProjectStatus;
-use litebin_common::wake_wait::{WAKE_WAIT_HEADER, WAKE_WAIT_PATH, WakeGuard};
+use litebin_common::wake_wait::{
+    MULTI_SVC_HEALTH_COOLDOWN, WAKE_FAILURE_WINDOW, WAKE_WAIT_HEADER, WAKE_WAIT_PATH, WakeGuard,
+};
 
 use crate::AppState;
 
@@ -279,11 +281,13 @@ pub async fn wake_for_host(
                 // No project with that ID — check if it's an alias route
                 // e.g., "api2.localhost" or "api2.test.localhost"
                 let rest = host.strip_suffix(&domain_suffix).unwrap_or("");
-                let alias_pid = resolve_alias_project(&state.db, rest).await;
-                match alias_pid {
+                match resolve_alias_project(&state.db, rest).await {
                     Ok(Some(p)) => Some(p),
                     Ok(None) => None,
-                    Err(_) => None,
+                    Err(e) => {
+                        tracing::error!(error = %e, "waker: db error (alias lookup)");
+                        return (StatusCode::INTERNAL_SERVER_ERROR, not_found_page_html()).into_response();
+                    }
                 }
             }
             Err(e) => {
@@ -433,7 +437,7 @@ pub async fn wake_for_host(
             let should_check = state
                 .multi_svc_health_check
                 .get(&project_id)
-                .map(|t| t.elapsed() >= std::time::Duration::from_secs(5))
+                .map(|t| t.elapsed() >= MULTI_SVC_HEALTH_COOLDOWN)
                 .unwrap_or(true);
 
             if should_check {
@@ -638,7 +642,7 @@ pub async fn wake_for_host(
 
     // Check for recent wake failure — show error page instead of retrying
     if let Some(failed_at) = state.wake_failures.get(&project_id) {
-        if failed_at.elapsed() < std::time::Duration::from_secs(60) {
+        if failed_at.elapsed() < WAKE_FAILURE_WINDOW {
             return error_page_html().into_response();
         }
         state.wake_failures.remove(&project_id);
@@ -751,7 +755,7 @@ pub async fn wake_for_host(
             let failures = state_clone.wake_failures.clone();
             let pid = project_id_bg.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                tokio::time::sleep(WAKE_FAILURE_WINDOW).await;
                 failures.remove(&pid);
             });
         }

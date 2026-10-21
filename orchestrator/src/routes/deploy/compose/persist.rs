@@ -35,6 +35,16 @@ pub(super) async fn persist_compose_deploy(
     let project_id = &form.project_id;
     let compose = &v.compose;
 
+    // Validate + canonicalize custom_domain before it reaches the DB or Caddy host matchers.
+    let custom_domain = match form.custom_domain.as_deref() {
+        None => None,
+        Some(d) if d.trim().is_empty() => None,
+        Some(d) => match crate::validation::validate_custom_domain(d) {
+            Ok(canonical) => Some(canonical),
+            Err(e) => return Err((StatusCode::BAD_REQUEST, Json(json!({"error": e}))).into_response()),
+        },
+    };
+
     // Acquire deploy lock
     let semaphore =
         state.project_locks.entry(project_id.clone()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
@@ -167,7 +177,7 @@ pub(super) async fn persist_compose_deploy(
     .bind(v.auto_stop)
     .bind(v.auto_stop_mins)
     .bind(v.auto_start)
-    .bind(&form.custom_domain)
+    .bind(&custom_domain)
     .bind(allow_raw_ports)
     .bind(false)
     .bind(service_count)

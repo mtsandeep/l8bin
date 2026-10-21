@@ -12,8 +12,8 @@ pub async fn detect_public_ip() -> Option<String> {
 
     for url in providers {
         let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(2))
-            .timeout(std::time::Duration::from_secs(3))
+            .connect_timeout(crate::timeouts::CONNECT_LOCAL)
+            .timeout(crate::timeouts::PUBLIC_IP_PROBE_TOTAL)
             .build()
             .ok()?;
 

@@ -3,6 +3,10 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 
+use litebin_common::timeouts::{
+    AGENT_CONTROL_PLANE as CONTROL_PLANE_TIMEOUT, AGENT_IMAGE_WORK as IMAGE_STREAM_TIMEOUT,
+    AGENT_LIFECYCLE as LIFECYCLE_TIMEOUT, AGENT_READ as DEFAULT_AGENT_TIMEOUT, CONNECT_NODE,
+};
 use litebin_common::types::Node;
 
 use crate::config::Config;
@@ -49,14 +53,15 @@ pub fn build_node_client(
 ) -> anyhow::Result<reqwest::Client> {
     // Dev mode: no certs configured
     if ca_cert_path.is_empty() || !std::path::Path::new(ca_cert_path).exists() {
-        return Ok(reqwest::Client::new());
+        return Ok(reqwest::Client::builder().connect_timeout(CONNECT_NODE).timeout(DEFAULT_AGENT_TIMEOUT).build()?);
     }
 
     let config = load_node_tls_config(ca_cert_path, client_cert_path, client_key_path)?;
 
     let client = reqwest::Client::builder()
         .use_preconfigured_tls(config)
-        .timeout(std::time::Duration::from_secs(1800)) // 30 min for large image proxying
+        .connect_timeout(CONNECT_NODE)
+        .timeout(DEFAULT_AGENT_TIMEOUT)
         .build()?;
 
     Ok(client)
@@ -77,7 +82,12 @@ pub async fn build_remote_proxy_client(
     let addr = resolve_node_addr(node_host).await?;
     let config = load_node_tls_config(ca_cert_path, client_cert_path, client_key_path)?;
 
-    let client = reqwest::Client::builder().use_preconfigured_tls(config).resolve("agent", addr).build()?;
+    // No total timeout: streams visitor response bodies. Attempts are capped at call sites.
+    let client = reqwest::Client::builder()
+        .use_preconfigured_tls(config)
+        .connect_timeout(CONNECT_NODE)
+        .resolve("agent", addr)
+        .build()?;
 
     Ok(client)
 }
@@ -183,9 +193,6 @@ pub fn agent_base_url(config: &Config, node: &Node) -> String {
 /// Error from an agent HTTP call. Encodes the handler convention used across
 /// the orchestrator: transport failure → 503, non-success agent response → 502
 /// with the agent's error body, response parse failure → 500.
-/// Cap for control-plane pushes — must fail fast so a dead node can't stall sync.
-const CONTROL_PLANE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
 #[derive(Debug)]
 pub enum AgentClientError {
     Transport(reqwest::Error),
@@ -255,6 +262,11 @@ impl AgentClient {
         format!("{}{}", self.base_url, path)
     }
 
+    /// Per-request timeouts surface as `Timeout`; everything else as `Transport`.
+    fn map_transport(e: reqwest::Error) -> AgentClientError {
+        if e.is_timeout() { AgentClientError::Timeout } else { AgentClientError::Transport(e) }
+    }
+
     async fn decode<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T, AgentClientError> {
         let status = resp.status();
         if !status.is_success() {
@@ -268,13 +280,21 @@ impl AgentClient {
         &self,
         path: &str,
         body: &impl serde::Serialize,
+        timeout: std::time::Duration,
     ) -> Result<T, AgentClientError> {
-        let resp = self.client.post(self.url(path)).json(body).send().await.map_err(AgentClientError::Transport)?;
+        let resp =
+            self.client.post(self.url(path)).timeout(timeout).json(body).send().await.map_err(Self::map_transport)?;
         Self::decode(resp).await
     }
 
-    async fn post_status(&self, path: &str, body: &impl serde::Serialize) -> Result<(), AgentClientError> {
-        let resp = self.client.post(self.url(path)).json(body).send().await.map_err(AgentClientError::Transport)?;
+    async fn post_status(
+        &self,
+        path: &str,
+        body: &impl serde::Serialize,
+        timeout: std::time::Duration,
+    ) -> Result<(), AgentClientError> {
+        let resp =
+            self.client.post(self.url(path)).timeout(timeout).json(body).send().await.map_err(Self::map_transport)?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -283,17 +303,22 @@ impl AgentClient {
         Ok(())
     }
 
-    async fn get_json<T: serde::de::DeserializeOwned>(&self, url: String) -> Result<T, AgentClientError> {
-        let resp = self.client.get(url).send().await.map_err(AgentClientError::Transport)?;
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        url: String,
+        timeout: std::time::Duration,
+    ) -> Result<T, AgentClientError> {
+        let resp = self.client.get(url).timeout(timeout).send().await.map_err(Self::map_transport)?;
         Self::decode(resp).await
     }
 
     /// POST /containers/batch-run — deploy/start/recreate a compose project's services.
+    /// Long: the agent pulls images synchronously before starting.
     pub async fn batch_run(
         &self,
         req: &litebin_common::agent_api::BatchRunRequest,
     ) -> Result<litebin_common::agent_api::BatchRunResponse, AgentClientError> {
-        self.post_json(litebin_common::agent_api::BATCH_RUN_PATH, req).await
+        self.post_json(litebin_common::agent_api::BATCH_RUN_PATH, req, IMAGE_STREAM_TIMEOUT).await
     }
 
     /// POST /containers/run — create + start a single-service container.
@@ -301,7 +326,7 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::RunRequest,
     ) -> Result<litebin_common::agent_api::RunResponse, AgentClientError> {
-        self.post_json(litebin_common::agent_api::RUN_PATH, req).await
+        self.post_json(litebin_common::agent_api::RUN_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// POST /containers/recreate — remove + re-create a single-service container.
@@ -309,7 +334,7 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::RunRequest,
     ) -> Result<litebin_common::agent_api::RunResponse, AgentClientError> {
-        self.post_json(litebin_common::agent_api::RECREATE_PATH, req).await
+        self.post_json(litebin_common::agent_api::RECREATE_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// POST /containers/start — start an existing container (with env-change recreate inputs).
@@ -317,12 +342,12 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::StartRequest,
     ) -> Result<litebin_common::agent_api::StartResponse, AgentClientError> {
-        self.post_json(litebin_common::agent_api::START_PATH, req).await
+        self.post_json(litebin_common::agent_api::START_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// POST /containers/stop — stop a container (agent answers 200 with empty body).
     pub async fn stop(&self, req: &litebin_common::agent_api::StopRequest) -> Result<(), AgentClientError> {
-        self.post_status(litebin_common::agent_api::STOP_PATH, req).await
+        self.post_status(litebin_common::agent_api::STOP_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// POST /containers/stop-project — stop every container of a project.
@@ -330,7 +355,7 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::StopProjectRequest,
     ) -> Result<litebin_common::agent_api::StopProjectResponse, AgentClientError> {
-        self.post_json(litebin_common::agent_api::STOP_PROJECT_PATH, req).await
+        self.post_json(litebin_common::agent_api::STOP_PROJECT_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// POST /containers/stop-service — stop one service of a multi-service project.
@@ -338,23 +363,22 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::StopServiceRequest,
     ) -> Result<litebin_common::agent_api::StopServiceResponse, AgentClientError> {
-        self.post_json(litebin_common::agent_api::STOP_SERVICE_PATH, req).await
+        self.post_json(litebin_common::agent_api::STOP_SERVICE_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// POST /containers/remove — remove a container (best-effort callers ignore failures).
     pub async fn remove(&self, req: &litebin_common::agent_api::RemoveRequest) -> Result<(), AgentClientError> {
-        self.post_status(litebin_common::agent_api::REMOVE_PATH, req).await
+        self.post_status(litebin_common::agent_api::REMOVE_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// POST /containers/cleanup — remove all project containers, network, and volumes.
     pub async fn cleanup(&self, req: &litebin_common::agent_api::CleanupRequest) -> Result<(), AgentClientError> {
-        self.post_status(litebin_common::agent_api::CLEANUP_PATH, req).await
+        self.post_status(litebin_common::agent_api::CLEANUP_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// GET /health — agent liveness + host capability report.
     pub async fn health(&self) -> Result<litebin_common::types::HealthReport, AgentClientError> {
-        let call = self.get_json(self.url("/health"));
-        tokio::time::timeout(CONTROL_PLANE_TIMEOUT, call).await.map_err(|_| AgentClientError::Timeout)?
+        self.get_json(self.url("/health"), CONTROL_PLANE_TIMEOUT).await
     }
 
     /// GET /health with a per-request timeout (used by fan-out calls that must not hang).
@@ -362,15 +386,13 @@ impl AgentClient {
         &self,
         timeout: std::time::Duration,
     ) -> Result<litebin_common::types::HealthReport, AgentClientError> {
-        let resp =
-            self.client.get(self.url("/health")).timeout(timeout).send().await.map_err(AgentClientError::Transport)?;
+        let resp = self.client.get(self.url("/health")).timeout(timeout).send().await.map_err(Self::map_transport)?;
         Self::decode(resp).await
     }
 
     /// POST /internal/register — push master config (domain, report URLs) to the agent.
     pub async fn register(&self, req: &litebin_common::agent_api::RegisterRequest) -> Result<(), AgentClientError> {
-        let call = self.post_status(litebin_common::types::AGENT_REGISTER_PATH, req);
-        tokio::time::timeout(CONTROL_PLANE_TIMEOUT, call).await.map_err(|_| AgentClientError::Timeout)?
+        self.post_status(litebin_common::types::AGENT_REGISTER_PATH, req, CONTROL_PLANE_TIMEOUT).await
     }
 
     /// POST /internal/project-meta — replace the agent's project lifecycle/capability map.
@@ -378,23 +400,21 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::ProjectMetaRequest,
     ) -> Result<(), AgentClientError> {
-        let call = self.post_status(litebin_common::agent_api::PROJECT_META_PATH, req);
-        tokio::time::timeout(CONTROL_PLANE_TIMEOUT, call).await.map_err(|_| AgentClientError::Timeout)?
+        self.post_status(litebin_common::agent_api::PROJECT_META_PATH, req, CONTROL_PLANE_TIMEOUT).await
     }
 
     /// POST /caddy/sync — push a Caddy JSON config to the agent (raw by design).
     /// Bounded: control-plane pushes must never stall route sync on a dead node.
     pub async fn caddy_sync(&self, config: &serde_json::Value) -> Result<(), AgentClientError> {
-        let send = self
+        let resp = self
             .client
             .post(self.url(litebin_common::agent_api::CADDY_SYNC_PATH))
+            .timeout(CONTROL_PLANE_TIMEOUT)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(config)
-            .send();
-        let resp = tokio::time::timeout(CONTROL_PLANE_TIMEOUT, send)
+            .send()
             .await
-            .map_err(|_| AgentClientError::Timeout)?
-            .map_err(AgentClientError::Transport)?;
+            .map_err(Self::map_transport)?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -408,7 +428,7 @@ impl AgentClient {
         &self,
         container_id: &str,
     ) -> Result<litebin_common::types::ContainerStatus, AgentClientError> {
-        self.get_json(self.url(&format!("/containers/{container_id}/status"))).await
+        self.get_json(self.url(&format!("/containers/{container_id}/status")), DEFAULT_AGENT_TIMEOUT).await
     }
 
     /// GET /containers/{id}/logs — plain-text log tail.
@@ -417,18 +437,18 @@ impl AgentClient {
         if let Some(tail) = tail {
             request = request.query(&[("tail", tail)]);
         }
-        let resp = request.send().await.map_err(AgentClientError::Transport)?;
+        let resp = request.timeout(DEFAULT_AGENT_TIMEOUT).send().await.map_err(Self::map_transport)?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(AgentClientError::Status { code: status, body });
         }
-        resp.text().await.map_err(AgentClientError::Transport)
+        resp.text().await.map_err(Self::map_transport)
     }
 
     /// GET /containers/{id}/disk-usage.
     pub async fn disk_usage(&self, container_id: &str) -> Result<litebin_common::docker::DiskUsage, AgentClientError> {
-        self.get_json(self.url(&format!("/containers/{container_id}/disk-usage"))).await
+        self.get_json(self.url(&format!("/containers/{container_id}/disk-usage")), LIFECYCLE_TIMEOUT).await
     }
 
     /// POST /containers/stats — batch stats for the given container IDs.
@@ -436,12 +456,12 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::BatchStatsRequest,
     ) -> Result<Vec<litebin_common::agent_api::ContainerStatsResponse>, AgentClientError> {
-        self.post_json(litebin_common::agent_api::CONTAINER_STATS_PATH, req).await
+        self.post_json(litebin_common::agent_api::CONTAINER_STATS_PATH, req, DEFAULT_AGENT_TIMEOUT).await
     }
 
     /// GET /containers/scan — foreign container groups present on the node.
     pub async fn scan(&self) -> Result<Vec<litebin_common::scan::ScanGroup>, AgentClientError> {
-        self.get_json(self.url(litebin_common::agent_api::CONTAINER_SCAN_PATH)).await
+        self.get_json(self.url(litebin_common::agent_api::CONTAINER_SCAN_PATH), DEFAULT_AGENT_TIMEOUT).await
     }
 
     /// POST /containers/import — adopt foreign containers into a project.
@@ -449,7 +469,7 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::ImportRequest,
     ) -> Result<litebin_common::agent_api::ImportResponse, AgentClientError> {
-        self.post_json(litebin_common::agent_api::CONTAINER_IMPORT_PATH, req).await
+        self.post_json(litebin_common::agent_api::CONTAINER_IMPORT_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
     /// GET /containers/compose-file?dir= — read a compose file + .env from a project dir.
@@ -461,9 +481,10 @@ impl AgentClient {
             .client
             .get(self.url(litebin_common::agent_api::CONTAINER_COMPOSE_FILE_PATH))
             .query(&[("dir", dir)])
+            .timeout(DEFAULT_AGENT_TIMEOUT)
             .send()
             .await
-            .map_err(AgentClientError::Transport)?;
+            .map_err(Self::map_transport)?;
         Self::decode(resp).await
     }
 
@@ -476,9 +497,10 @@ impl AgentClient {
             .client
             .get(self.url(litebin_common::agent_api::ENV_GET_PATH))
             .query(&[("project_id", project_id)])
+            .timeout(DEFAULT_AGENT_TIMEOUT)
             .send()
             .await
-            .map_err(AgentClientError::Transport)?;
+            .map_err(Self::map_transport)?;
         Self::decode(resp).await
     }
 
@@ -487,7 +509,7 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::EnvWriteRequest,
     ) -> Result<(), AgentClientError> {
-        self.post_status(litebin_common::agent_api::ENV_WRITE_PATH, req).await
+        self.post_status(litebin_common::agent_api::ENV_WRITE_PATH, req, DEFAULT_AGENT_TIMEOUT).await
     }
 
     /// POST /images/load?image_id= — stream a docker-save tar to the agent.
@@ -500,11 +522,12 @@ impl AgentClient {
             .client
             .post(self.url(litebin_common::agent_api::IMAGES_LOAD_PATH))
             .query(&[("image_id", image_id)])
+            .timeout(IMAGE_STREAM_TIMEOUT)
             .header(reqwest::header::CONTENT_TYPE, "application/x-tar")
             .body(body)
             .send()
             .await
-            .map_err(AgentClientError::Transport)?;
+            .map_err(Self::map_transport)?;
         Self::decode(resp).await
     }
 
@@ -513,7 +536,7 @@ impl AgentClient {
         &self,
         req: &litebin_common::upload::MintRequest,
     ) -> Result<litebin_common::upload::MintResponse, AgentClientError> {
-        self.post_json(litebin_common::upload::MINT_PATH, req).await
+        self.post_json(litebin_common::upload::MINT_PATH, req, DEFAULT_AGENT_TIMEOUT).await
     }
 
     /// GET /images/inspect?image= — resolve an image reference to its local digest.
@@ -525,9 +548,10 @@ impl AgentClient {
             .client
             .get(self.url(litebin_common::agent_api::IMAGES_INSPECT_PATH))
             .query(&[("image", image)])
+            .timeout(DEFAULT_AGENT_TIMEOUT)
             .send()
             .await
-            .map_err(AgentClientError::Transport)?;
+            .map_err(Self::map_transport)?;
         Self::decode(resp).await
     }
 
@@ -536,7 +560,7 @@ impl AgentClient {
         &self,
         req: &litebin_common::agent_api::RemoveImageRequest,
     ) -> Result<litebin_common::agent_api::RemoveImageResponse, AgentClientError> {
-        self.post_json(litebin_common::agent_api::IMAGES_REMOVE_UNUSED_PATH, req).await
+        self.post_json(litebin_common::agent_api::IMAGES_REMOVE_UNUSED_PATH, req, DEFAULT_AGENT_TIMEOUT).await
     }
 
     /// POST /images/prune — prune dangling images; returns the agent's raw response text
@@ -545,15 +569,16 @@ impl AgentClient {
         let resp = self
             .client
             .post(self.url(litebin_common::agent_api::IMAGES_PRUNE_PATH))
+            .timeout(LIFECYCLE_TIMEOUT)
             .send()
             .await
-            .map_err(AgentClientError::Transport)?;
+            .map_err(Self::map_transport)?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(AgentClientError::Status { code: status, body });
         }
-        resp.text().await.map_err(AgentClientError::Transport)
+        resp.text().await.map_err(Self::map_transport)
     }
 }
 

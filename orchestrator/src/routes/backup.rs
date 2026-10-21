@@ -539,7 +539,8 @@ pub async fn backup_revert_restore(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("copy pre-restore: {e}")))?;
     let pre_wal = data_dir.join("litebin.db.pre-restore-wal");
     if pre_wal.is_file() {
-        let _ = std::fs::copy(&pre_wal, data_dir.join("litebin.db.restored-wal"));
+        std::fs::copy(&pre_wal, data_dir.join("litebin.db.restored-wal"))
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("copy pre-restore WAL: {e}")))?;
     }
     tracing::info!("revert staged — restarting orchestrator to undo the last restore");
     stage_restart();

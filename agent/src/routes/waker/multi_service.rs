@@ -364,7 +364,7 @@ pub(super) async fn report_wake_to_master(state: &AgentState, project_id: &str, 
         .header("X-Agent-Timestamp", timestamp.to_string())
         .header("X-Agent-Signature", signature)
         .json(&body)
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(litebin_common::timeouts::AGENT_REPORT)
         .send()
         .await
     {

@@ -17,6 +17,37 @@ pub fn is_unique_constraint(e: &sqlx::Error) -> bool {
     matches!(e, sqlx::Error::Database(db_err) if db_err.code().as_deref() == Some("2067"))
 }
 
+/// Strict custom-domain validation shared by deploy and settings paths.
+/// Returns the canonical form (trimmed, lowercased, trailing dot and `www.` stripped).
+pub fn validate_custom_domain(raw: &str) -> Result<String, String> {
+    let mut d = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    if d.is_empty() {
+        return Err("domain must not be empty".into());
+    }
+    if let Some(rest) = d.strip_prefix("www.") {
+        d = rest.to_string();
+    }
+    if d.contains('*') {
+        return Err("wildcard domains are not allowed".into());
+    }
+    if d.len() > 253 {
+        return Err("domain too long (max 253 characters)".into());
+    }
+    if !d.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
+        return Err("domain must be a plain hostname (letters, digits, hyphens, dots)".into());
+    }
+    if d != "localhost" {
+        let labels: Vec<&str> = d.split('.').collect();
+        if labels.len() < 2 {
+            return Err("domain must include a TLD (e.g. app.example.com) or be localhost".into());
+        }
+        if labels.iter().any(|l| l.is_empty() || l.len() > 63 || l.starts_with('-') || l.ends_with('-')) {
+            return Err("invalid domain label (empty, too long, or leading/trailing hyphen)".into());
+        }
+    }
+    Ok(d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,5 +71,28 @@ mod tests {
         assert!(!is_valid_project_id("my_app"));
         assert!(!is_valid_project_id("my.app"));
         assert!(!is_valid_project_id("my app"));
+    }
+
+    #[test]
+    fn valid_custom_domains() {
+        assert_eq!(validate_custom_domain("app.example.com").unwrap(), "app.example.com");
+        assert_eq!(validate_custom_domain("  WWW.Example.COM.  ").unwrap(), "example.com");
+        assert_eq!(validate_custom_domain("localhost").unwrap(), "localhost");
+        assert_eq!(validate_custom_domain("a-b.c-d.example.co").unwrap(), "a-b.c-d.example.co");
+    }
+
+    #[test]
+    fn invalid_custom_domains() {
+        assert!(validate_custom_domain("*").is_err());
+        assert!(validate_custom_domain("*.example.com").is_err());
+        assert!(validate_custom_domain("app.*.com").is_err());
+        assert!(validate_custom_domain("https://example.com").is_err());
+        assert!(validate_custom_domain("app example.com").is_err());
+        assert!(validate_custom_domain("app_example.com").is_err());
+        assert!(validate_custom_domain(".app.example.com").is_err());
+        assert!(validate_custom_domain("app..example.com").is_err());
+        assert!(validate_custom_domain("-app.example.com").is_err());
+        assert!(validate_custom_domain("app").is_err());
+        assert!(validate_custom_domain("").is_err());
     }
 }

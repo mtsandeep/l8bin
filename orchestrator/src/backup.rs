@@ -392,8 +392,16 @@ pub fn apply_pending_restore(data_dir: &Path) -> bool {
     match std::fs::rename(&restored, &db) {
         Ok(()) => {
             let restored_wal = data_dir.join("litebin.db.restored-wal");
-            if restored_wal.exists() {
-                let _ = std::fs::rename(&restored_wal, data_dir.join("litebin.db-wal"));
+            if restored_wal.exists()
+                && let Err(e) = std::fs::rename(&restored_wal, data_dir.join("litebin.db-wal"))
+            {
+                // Incomplete swap — undo it rather than open a db missing its WAL.
+                tracing::error!(error = %e, "restore: could not attach restored WAL; rolling back");
+                let _ = std::fs::rename(&db, &restored);
+                let _ = std::fs::rename(&pre, &db);
+                let _ = std::fs::rename(data_dir.join("litebin.db.pre-restore-wal"), data_dir.join("litebin.db-wal"));
+                let _ = std::fs::rename(data_dir.join("litebin.db.pre-restore-shm"), data_dir.join("litebin.db-shm"));
+                return false;
             }
             tracing::info!(
                 pre_restore = %pre.display(),

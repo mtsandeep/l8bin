@@ -66,7 +66,7 @@ pub async fn node_image_stats(State(state): State<AppState>) -> impl IntoRespons
         async move {
             let client = crate::nodes::client::get_node_client(&node_clients, &node_id).ok()?;
             let agent = crate::nodes::client::AgentClient::new(client, node, &config);
-            let health = match agent.health_within(std::time::Duration::from_secs(5)).await {
+            let health = match agent.health_within(litebin_common::timeouts::AGENT_REPORT).await {
                 Ok(h) => h,
                 Err(crate::nodes::client::AgentClientError::Status { code, .. }) => {
                     tracing::warn!(node_id = %node_id, status = %code, "agent returned non-success for image stats");

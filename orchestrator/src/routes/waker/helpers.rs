@@ -5,6 +5,7 @@ use tokio::sync::Semaphore;
 
 use litebin_common::proxy::is_hop_by_hop;
 use litebin_common::types::ProjectStatus;
+use litebin_common::wake_wait::{PROXY_ATTEMPT_CAP, PROXY_RETRY_TICK};
 
 use crate::AppState;
 use crate::nodes;
@@ -99,7 +100,7 @@ pub(super) async fn proxy_url_with_retry(
     let deadline = tokio::time::Instant::now() + budget;
     let mut last = proxy_url_attempt(client, method.clone(), url, headers, &body).await;
     while last.status() == StatusCode::BAD_GATEWAY && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        tokio::time::sleep(PROXY_RETRY_TICK).await;
         last = proxy_url_attempt(client, method.clone(), url, headers, &body).await;
     }
     last
@@ -113,12 +114,7 @@ async fn proxy_url_attempt(
     headers: &HeaderMap,
     body: &axum::body::Bytes,
 ) -> Response {
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        proxy_request_url(client, method, url, headers, body.clone()),
-    )
-    .await
-    {
+    match tokio::time::timeout(PROXY_ATTEMPT_CAP, proxy_request_url(client, method, url, headers, body.clone())).await {
         Ok(resp) => resp,
         Err(_) => {
             Response::builder().status(StatusCode::BAD_GATEWAY).body(axum::body::Body::from("Bad gateway")).unwrap()
@@ -481,30 +477,22 @@ pub(super) async fn restart_crashed_container(
 pub(super) async fn resolve_alias_project(
     db: &sqlx::SqlitePool,
     rest: &str,
-) -> Result<Option<crate::db::models::Project>, ()> {
+) -> Result<Option<crate::db::models::Project>, sqlx::Error> {
     // Case A: "{alias}.{project_id}" — project-scoped alias
     if let Some((_alias, pid)) = rest.rsplit_once('.') {
-        let route_exists = match sqlx::query_scalar::<_, i64>(
+        let route_exists = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM project_routes WHERE project_id = ? AND route_type = 'alias' AND subdomain = ?",
         )
         .bind(pid)
         .bind(_alias)
         .fetch_one(db)
-        .await
-        {
-            Ok(count) => count,
-            Err(e) => {
-                tracing::warn!(project_id = %pid, alias = %_alias, error = %e, "waker: failed to check alias route existence");
-                return Err(());
-            }
-        };
+        .await?;
 
         if route_exists > 0 {
             return sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
                 .bind(pid)
                 .fetch_optional(db)
-                .await
-                .map_err(|_| ());
+                .await;
         }
     }
 
@@ -514,15 +502,13 @@ pub(super) async fn resolve_alias_project(
     )
     .bind(rest)
     .fetch_optional(db)
-    .await
-    .unwrap_or(None);
+    .await?;
 
     if let Some(pid) = alias_pid {
         return sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
             .bind(&pid)
             .fetch_optional(db)
-            .await
-            .map_err(|_| ());
+            .await;
     }
 
     Ok(None)

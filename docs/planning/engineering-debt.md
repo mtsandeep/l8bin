@@ -2,15 +2,30 @@
 
 Internal code-quality work — no user-facing behavior. Consolidated from the former error-types, hot-function-extraction, query-safety, codebase-hardening, and test-coverage notes.
 
-**Last verified: 2026-10-13**
+**Last verified: 2026-10-20**
 
 | Item | Status |
 |---|---|
+| Correctness: deploy-lock race, janitor leak, lock poisoning | Open |
 | Typed API errors | Not started |
-| Split run_service_container / start_services | Not started |
+| Split run_service_container / start_services | Deferred — take when touching those files |
 | SQL status-literal safety | Not started |
 | Small code-quality items | Partial |
 | Agent + CLI test coverage | Partial |
+
+---
+
+## Correctness / reliability fixes
+
+| Item | Where | What |
+|---|---|---|
+| **Deploy lock dropped before spawn** | `deploy/single/core.rs` `execute_deploy`, `deploy/compose/persist.rs` | permit is a handler local; the heavy work spawns without it, so the waker's lock check sees "free" and races container mutations. Move the permit into the spawned task. |
+| **Janitor leaks containers** | `sleep/janitor.rs` | flips status to Stopped before stopping containers; mid-sweep `?` aborts strand already-flipped projects (candidate query only matches `running`). Isolate per-project errors; stop before/with the flip. Also reconcile stale `stopping` rows at boot. |
+| **Lock poisoning** | agent `project_meta` / `registration` / `last_caddy_config`, orchestrator `platform` / `destination_health` | std locks with `.unwrap()` (~27 sites) — one panic under a write lock 500s every request until restart. Swap to `parking_lot` (no poisoning). |
+| Swallowed writes diverge state | `routes/settings.rs` (service limit sync), `github/project_link.rs` (superseded-token deletes — security-adjacent), agent `multi_service.rs` network connects, `recreate.rs`, `deploy/compose/local.rs` | `let _ =` on DB/status writes. Log at minimum; decide case-by-case which need real failure handling. |
+| Waker hot path | agent `caddy.rs` / `wake.rs`, orchestrator `waker/helpers.rs` | sync fs reads + full compose re-parse per request; new mTLS client per visitor request. Cache the parsed plan (mtime key), pool the proxy client. |
+| Boot sequence duplication | orchestrator/agent `main.rs` | ~120 duplicated lines; orchestrator's upload-GC ignores shutdown and races `db.close()`. Extract `litebin-common::boot`. |
+| Token mint ×4 + weak agent secret | `deploy_tokens.rs`, `github/mod.rs`, `device_auth.rs`, `upload.rs`; `routes/nodes/mod.rs` | one `mint_token()` in litebin-common; agent HMAC secret is `sha256(uuid)` (~122 bits) — generate from 32 random bytes. |
 
 ---
 
@@ -20,7 +35,7 @@ Internal code-quality work — no user-facing behavior. Consolidated from the fo
 
 ### Context
 
-All crate-internal errors use `anyhow::Error` with `bollard::Error` and `sqlx::Error` erased via `.into()`. Callers that need to distinguish error cases (e.g., 404 vs 500) must downcast or string-match. We've already fixed string-matching (P2/P4), but the underlying types are still erased.
+All crate-internal errors use `anyhow::Error` with `bollard::Error` and `sqlx::Error` erased via `.into()`. Callers that need to distinguish error cases (e.g., 404 vs 500) must downcast or string-match. String-matching is already gone, but the underlying types are still erased.
 
 Converting key error paths to `thiserror` enums gives callers typed match arms instead of downcasting.
 
@@ -79,17 +94,17 @@ match docker.stop_container(id).await {
 - `CloudflareError` would replace the `code == Some(81057)` check with `CloudflareError::DuplicateRecord`.
 - The `orchestrator` → `agent` HTTP calls use `reqwest` — these already have a minimal typed error (`AgentClientError` in `orchestrator/src/nodes/client.rs`, see [agent-api.md](../dev/development.md)). This effort should fold it into the fuller `ClientError` design.
 - Callers outside the workspace (none currently) would need the error types re-exported from `litebin-common`.
-- Scope note (2026-08 maintainability review): beyond the internal errors above, 41 orchestrator handler signatures return `(StatusCode, String)` — the same effort should introduce one `ApiError` enum with a central `IntoResponse` impl so error response shapes are consistent for the dashboard.
+- Beyond the internal errors above, ~60 orchestrator handler files return `(StatusCode, String)` — the same effort should introduce one `ApiError` enum with a central `IntoResponse` impl so error response shapes are consistent for the dashboard. Agent side: every Docker failure flattens to an opaque 500 (`lifecycle.rs`), NotFound→200 exists in exactly one handler, the same failure maps to 500/502/503 depending on the handler, and `ComposeError` is erased to anyhow in `compose_run.rs` (an unparseable compose silently reads as "no public service" in caddy route rebuild).
 
 ### Priority
 
-Medium — still code quality / ergonomics only (no behavioral changes), but it unlocks consistent dashboard error handling across the 41 `(StatusCode, String)` handler signatures. The wire-contract dependency is resolved (see [agent-api.md](../dev/development.md)).
+Medium — still code quality / ergonomics only (no behavioral changes), but it unlocks consistent dashboard error handling across the `(StatusCode, String)` handler signatures. The wire-contract dependency is resolved (see [agent-api.md](../dev/development.md)).
 
 ---
 
 ## Split run_service_container / start_services
 
-**Status: NOT STARTED**
+**Status: DEFERRED — take when touching these files anyway**
 
 ### Context
 
@@ -98,7 +113,7 @@ The file-size refactor left exactly two oversized functions — the two highest-
 | Function | Location | Size | Why it's risky |
 |---|---|---|---|
 | `run_service_container` | `litebin-common/src/docker/container/run.rs` | ~390 lines | Interleaves port bindings, raw-ports policy, socket sanitization, security overrides, compose-vs-single create paths, startup stabilization, mapped-port resolution — all in one body with one shared closure |
-| `start_services` level loop | `orchestrator/src/routes/manage/multi_service/start.rs` | ~380 lines | Level-by-level JoinSet scheduling, per-service fast-path/recreate task, proxy loopback verification, three near-identical rollback blocks, DOCKER_HOST rewrite |
+| `start_services` level loop | `orchestrator/src/routes/manage/multi_service/start.rs` | ~470 lines | Level-by-level JoinSet scheduling, per-service fast-path/recreate task, proxy loopback verification, **four** near-identical rollback blocks, DOCKER_HOST rewrite |
 
 Unlike the round-2 extractions (which moved inline blocks of *sequential* handler code), these are stateful: the loop bodies mutate shared Arc<Mutex<...>> trackers and the closure captures seven locals. Extraction means threading that state through a small context struct per function.
 
@@ -171,11 +186,11 @@ Low-medium — step 1 is cheap and worth doing opportunistically; step 2 only wh
 
 ## Small code-quality items
 
-**Status: PARTIAL (1 of 8 done)**
+**Status: PARTIAL — pick items off opportunistically; retire each row when done**
 
 ### Context
 
-Small code-level items left over from the maintainability review — each too small for its own effort, collected here. None are bugs today; all are seams that make future work harder than it should be. Pick items off opportunistically; retire each row when done.
+Small code-level items, each too small for its own effort, collected here. None are bugs today; all are seams that make future work harder than it should be.
 
 ### Items
 
@@ -189,6 +204,14 @@ Small code-level items left over from the maintainability review — each too sm
 | 6 | Dependabot/Renovate config | `.github/dependabot.yml` | Lockfile is committed now; automated bump PRs run the full CI gate (cargo + pnpm for dashboard) |
 | 7 | `ProjectStatus` SQL literal purge | covered in `query-safety.md` step 1 | Listed here only as a cross-reference |
 | 8 | CLI `PublicStats`-style drift check | none remaining — kept that way via the typed agent API ([agent-api.md](../dev/development.md)) | Cross-reference |
+| 9 | Delete dead exports: `types.rs` `project_data_dir`, `proxy.rs` `wants_json` | litebin-common | Zero workspace callers |
+| 10 | Add `[workspace.dependencies]`; align `thiserror` 1→2 | workspace `Cargo.toml`s | Versions re-declared per crate; skew already happened |
+| 11 | `spawn_log_watcher` has no shutdown/backoff | `litebin-common/src/docker/container/sidecar.rs` | Reconnects every 10s forever after receiver drops; bounded variant exists in `heartbeat.rs` |
+| 12 | Rate limiter never evicts; no-XFF requests exempt | `orchestrator/src/rate_limit.rs` | DashMap grows per unique IP for process lifetime |
+| 13 | Deploy log buffers uncapped; cleared only on success | `orchestrator/src/routes/deploy/logs.rs` | Failed deploys leak their buffer until next success |
+| 14 | Env snapshot `lines().skip(5)` header coupling; `file_hash` = 0 on missing file | `agent/src/routes/containers/env.rs` | Header edit recreates every project on wake; missing `.env` ≡ missing snapshot |
+| 15 | Proxy retries replay non-idempotent bodies; `"litebin-agent:8444"` literal ×9 | waker proxy loops; `agent/caddy.rs` + `cloudflare_router/caddy_config.rs` | POST double-submit on 502; constant exists (`AGENT_WAKE_UPSTREAM`) but unused there |
+| 16 | Brittle guarded unwraps in `routes/settings.rs` (flag-then-`unwrap` ×13) | orchestrator settings handlers | One reordered early-return turns them live |
 
 ### Considerations
 
@@ -204,19 +227,19 @@ Low individually; items 1, 2, and 5 are the ones that pay back soonest.
 
 ## Agent + CLI test coverage
 
-**Status: PARTIAL (CLI at 42 tests; agent still thin)**
+**Status: PARTIAL (CLI adequate; agent still thin)**
 
 ### Context
 
-The orchestrator has a real integration suite (81 tests, in-memory SQLite + real migrations). The other crates are nearly untested:
+The orchestrator has a real integration suite (178 tests, in-memory SQLite + real migrations). The other crates:
 
 | Crate | Tests | State |
 |---|---|---|
-| orchestrator | 81 | Integration + unit; healthy |
-| compose-bollard | 51 | Unit + proptest; healthy |
-| litebin-common | 49 | Unit + proptest; healthy |
-| agent | 4 | 1 unit + 3 `#[ignore]`d live-Docker tests |
-| cli | 4 | Ad hoc |
+| orchestrator | 178 | Integration + unit; healthy |
+| compose-bollard | 53 | Unit + proptest; healthy |
+| litebin-common | 87 | Unit + proptest; healthy |
+| agent | 5 | Still the gap — owns container lifecycle (waker, Caddy surgery, rollback) with essentially no CI coverage; highest-value targets are the pure seams in the waker path and caddy route-merge |
+| cli | 50 | Adequate |
 
 The agent's deploy path (`batch_run/prepare.rs`, `execute.rs`) contains the highest-risk pure logic in that crate — proxy reuse/replacement decisions, host-network authorization, partial-redeploy targeting, resource-override application — with zero unit coverage; the only tests need a real Docker engine. The CLI ships easily-testable pure logic (public-service candidates, env precedence, port parsing) untested, and its interactive flows have no seams.
 

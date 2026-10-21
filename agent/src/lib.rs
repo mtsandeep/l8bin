@@ -6,12 +6,26 @@ use std::sync::Arc;
 
 use axum::{
     Router,
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use dashmap::DashMap;
 use litebin_common::caddy::CaddyClient;
 use litebin_common::docker::DockerManager;
 use litebin_common::upload::UploadStore;
+use tower_http::catch_panic::CatchPanicLayer;
+
+/// Panic responder: log the cause, return a generic 500 (never leak internals).
+fn panic_response(err: Box<dyn std::any::Any + Send + 'static>) -> Response {
+    let detail = err
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| err.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload");
+    tracing::error!(panic = %detail, "handler panicked");
+    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({ "error": "internal server error" })))
+        .into_response()
+}
 
 pub use config::{AgentRegistration, Config};
 pub use litebin_common::wake_wait::WakeGuard;
@@ -150,6 +164,7 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/caddy/sync", post(routes::caddy::sync_caddy))
         .route("/internal/env", get(routes::env::get_env).post(routes::env::write_env))
         .fallback(routes::waker::wake)
+        .layer(CatchPanicLayer::custom(panic_response))
         .with_state(state)
 }
 
@@ -162,5 +177,6 @@ pub fn build_upload_router(state: AgentState) -> Router {
         .route(&agent_chunk_route(), post(routes::upload::upload_chunk))
         .route(&agent_commit_route(), post(routes::upload::commit_upload))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BODY))
+        .layer(CatchPanicLayer::custom(panic_response))
         .with_state(state)
 }

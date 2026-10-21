@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Every outbound HTTP call is now time-bounded** — Caddy admin, Cloudflare, GitHub and all agent API calls carry per-operation timeouts (previously unbounded or a blanket 30 minutes); a wedged Caddy, node, or third-party API can no longer hang visitor requests or stall route sync, the janitor, or the dashboard.
+- **Handler panics answer a logged 500 instead of dropping the connection** — panic containment on the orchestrator and agent routers, CORS-correct for browser clients.
+- **DB errors no longer answer 404** — a database hiccup during settings updates or domain-alias resolution returns 500 instead of "not found" (visitor path included).
+- **Restores no longer half-apply on WAL failure** — if the WAL can't be moved into place, the whole swap rolls back instead of silently opening a mismatched database.
+- **Projects can no longer strand in "stopping"** — a panic in the background stop task marks the project errored instead of leaving it stopping forever.
+- **Custom domains are strictly validated** — wildcards (`*`, `*.example.com`) and malformed hostnames are rejected at deploy and in settings, so a stored value can't install a wildcard route that shadows other apps or the dashboard.
 - **Pairing no longer gates approval detection on a keypress** — the device-pairing flow in `ship`/`login` blocked on "Press ENTER to open the browser" before it started polling, so a user who had copied the link and approved manually still had to press ENTER. It now asks up front how to open the URL (browser by default, or "I'll copy the link myself") and starts polling immediately after the choice.
 - Implicit logins now offer both auth methods — `ship`, `init`, and `setup` went straight to dashboard pairing when you weren't logged in; they now show the same chooser as `l8b login` (pairing recommended, or username/password).
 - `l8b init` no longer logs in at all — it only writes `l8b.toml`; picking or entering a server just records it, and auth happens on first use. `ship` pairs directly against the repo's bound server when no credential exists (no URL re-typing).

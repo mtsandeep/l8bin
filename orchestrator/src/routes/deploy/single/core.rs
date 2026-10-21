@@ -419,6 +419,16 @@ pub(super) async fn execute_deploy(
     mut payload: DeployRequest,
     is_update: bool,
 ) -> axum::response::Response {
+    // Validate + canonicalize custom_domain before it reaches the DB or Caddy host matchers.
+    payload.custom_domain = match payload.custom_domain.as_deref() {
+        None => None,
+        Some(d) if d.trim().is_empty() => None,
+        Some(d) => match crate::validation::validate_custom_domain(d) {
+            Ok(canonical) => Some(canonical),
+            Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({"error": e}))).into_response(),
+        },
+    };
+
     let now = chrono::Utc::now().timestamp();
 
     let settings = match resolve_deploy_settings(&state, &payload, is_update).await {

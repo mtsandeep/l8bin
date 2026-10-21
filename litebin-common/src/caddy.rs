@@ -25,7 +25,13 @@ pub struct CaddyClient {
 
 impl CaddyClient {
     pub fn new(admin_url: &str) -> Self {
-        Self { admin_url: admin_url.trim_end_matches('/').to_string(), client: reqwest::Client::new() }
+        // Local admin API — bounded so a wedged Caddy can't hang callers forever.
+        let client = reqwest::Client::builder()
+            .connect_timeout(crate::timeouts::CONNECT_LOCAL)
+            .timeout(crate::timeouts::CADDY_ADMIN_TOTAL)
+            .build()
+            .unwrap_or_default();
+        Self { admin_url: admin_url.trim_end_matches('/').to_string(), client }
     }
 
     pub fn admin_url(&self) -> &str {
