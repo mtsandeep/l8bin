@@ -1,4 +1,7 @@
 @import "tailwindcss";
+html {
+  overflow-y: scroll;
+}
 body {
   background-color: #020618;
 }

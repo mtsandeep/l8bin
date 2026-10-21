@@ -124,7 +124,7 @@ export default function ConnectPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+    <div className="flex-1 bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="flex items-center justify-center gap-3 mb-6">
           <KeyRound size={20} className="text-violet-400" />

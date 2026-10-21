@@ -583,7 +583,7 @@ export default function NodesPage({ onBack }: NodesPageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200">
+    <div className="flex-1 bg-slate-950 text-slate-200">
       <header className="border-b border-slate-800/80 bg-slate-900/50 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center justify-between w-full sm:w-auto">

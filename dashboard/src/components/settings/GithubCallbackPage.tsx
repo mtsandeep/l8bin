@@ -62,7 +62,7 @@ export default function GithubCallbackPage() {
   }, [phase, appSlug, navigate]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 flex items-center justify-center p-6">
+    <div className="flex-1 bg-slate-950 text-slate-200 flex items-center justify-center p-6">
       <div className="w-full max-w-md rounded-lg border border-slate-700/50 bg-slate-900/40 p-5 space-y-4">
         {phase === 'exchanging' && (
           <>

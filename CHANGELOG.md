@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- "Deploy from GitHub" shows a connect prompt when GitHub isn't configured, instead of a dead repo browser.
+- Footer is visible without scrolling on short pages; scrollbar always reserved so layouts don't shift.
+
 ## [0.4.12] - 2026-10-20
 
 ### Fixed

@@ -241,7 +241,7 @@ export default function ScanImportPage({ onBack, onDone }: Props) {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200">
+    <div className="flex-1 bg-slate-950 text-slate-200">
       {/* Header */}
       <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3">

@@ -27,7 +27,7 @@ function AppContent() {
   }
 
   return (
-    <>
+    <div className="min-h-screen flex flex-col bg-slate-950">
       <Routes>
         <Route path="/manage" element={<Navigate to="/" replace />} />
         <Route path="/manage/nodes" element={<NodesPage onBack={() => navigate('/')} />} />
@@ -50,7 +50,7 @@ function AppContent() {
         <Route path="/" element={<HomePage />} />
       </Routes>
       <Footer />
-    </>
+    </div>
   );
 }
 
