@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-10-21
+
 ### Fixed
 - **Every outbound HTTP call is now time-bounded** — Caddy admin, Cloudflare, GitHub and all agent API calls carry per-operation timeouts (previously unbounded or a blanket 30 minutes); a wedged Caddy, node, or third-party API can no longer hang visitor requests or stall route sync, the janitor, or the dashboard.
 - **Handler panics answer a logged 500 instead of dropping the connection** — panic containment on the orchestrator and agent routers, CORS-correct for browser clients.
