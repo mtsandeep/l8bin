@@ -121,7 +121,7 @@ When Docker restarts, ephemeral port bindings (`host_port=0`) may change. This i
 
 ### Concurrent Requests During Wake
 
-Single-flight dedup via `project_locks` (Rust `DashMap`) plus a per-project `WakeGuard`. All concurrent browser visitors hold on the same guard and are served when the app accepts connections (2s silent hold → proxied response; slower → waiting page + long-poll). API clients still get the instant 503 + `Retry-After`. Only one background wake task runs per project.
+Single-flight dedup via `project_locks` (Rust `DashMap`) plus a per-project `WakeGuard`. All concurrent visitors hold on the same guard and are served when the app accepts connections (silent hold `WAKE_HOLD_SECS`, default 2s → proxied response; slower → waiting page + long-poll). API clients are held for the same budget, then get `503 + Retry-After`. Only one background wake task runs per project.
 
 ### Concurrent Deploys to Same Project
 

@@ -120,8 +120,8 @@ Master Caddy ←--------------------→ Agent Caddy
 
                     HTTP (port 8444, internal)
 Agent Caddy ←------------------------→ Agent API
-   (wake trigger for               (starts container,
-    sleeping containers)            returns loading page)
+   (wake trigger for               (starts container, holds
+    sleeping containers)            the request until ready)
 ```
 
 - **Port 5083 → 8443 (mTLS)**: Orchestrator ↔ Agent API only (host 5083 maps to the agent container's 8443). Requires client certificate signed by the Root CA. Never handles user traffic. Open 5083 in the OS/cloud firewall.

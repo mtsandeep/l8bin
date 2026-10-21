@@ -352,7 +352,7 @@ This replaces the old separate `wake_locks` and `deploy_locks` mechanisms. Opera
 - Janitor auto-sleep
 - Multi-service health check recovery
 
-The waker uses `try_acquire_project_lock` (non-blocking) — if the lock is held by a wake, the request holds on that wake's guard; if held by another operation (e.g., a deploy), the waker returns the loading page and lets the browser retry.
+The waker uses `try_acquire_project_lock` (non-blocking) — if the lock is held by a wake, the request holds on that wake's guard; if held by another operation (e.g., a deploy), browsers get the loading page and API clients get `503 + Retry-After`.
 
 ---
 

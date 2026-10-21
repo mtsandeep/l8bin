@@ -229,7 +229,7 @@ wake() receives request with Host: myapp.l8b.in
       └─ Occupied → await the same guard: proxy / waiting page / error page
 ```
 
-Browser requests are held exactly like the orchestrator waker (2s silent hold → proxy on success, waiting page + long-poll otherwise). API clients get the instant 503 + `Retry-After`.
+The agent waker holds every request exactly like the orchestrator waker does: silent hold → proxy on success; past the budget, Documents get the waiting page and API clients get `503 + Retry-After`.
 
 ### Background Wake — Agent (Autonomous)
 
