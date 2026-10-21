@@ -2,14 +2,13 @@ import { useEffect, useRef } from 'react';
 
 /**
  * Like setInterval but pauses when the browser tab is hidden.
- * Fires `callback` immediately on mount, then every `ms` while visible.
+ * Fires `callback` immediately when visible, then every `ms`.
  */
 export function useIntervalWhileVisible(callback: () => void, ms: number) {
   const cb = useRef(callback);
   cb.current = callback;
 
   useEffect(() => {
-    cb.current();
     let id: ReturnType<typeof setInterval>;
 
     const start = () => {

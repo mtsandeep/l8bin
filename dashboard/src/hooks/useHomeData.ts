@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchAllStats,
   fetchProjects,
@@ -33,8 +33,14 @@ export function useHomeData(user: { username: string; is_admin: boolean } | null
     if (user) loadProjectsAndStats();
   }, 5000);
 
+  // Mount load is covered by the interval's immediate fire; this covers refreshKey/user changes.
+  const firstRun = useRef(true);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is a location-state counter, not a reactive input
   useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
     if (user) loadProjectsAndStats();
   }, [loadProjectsAndStats, user, refreshKey]);
 
