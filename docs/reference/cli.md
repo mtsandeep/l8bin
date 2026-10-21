@@ -62,7 +62,7 @@ Build and deploy the current directory to a LiteBin project.
 l8b deploy --project <PROJECT_ID> [options]
 ```
 
-Common flags: `--port` (internal app port), `--path`, `--dockerfile`, `--node` (target node), `--cmd`, `--memory`/`--cpu` (resource limits), `--no-auto-stop`, `--background` (no managed URL, always-on), `--compose`/`--service` (multi-service deploys), `--secret` (repeatable, include a specific .env in the build), `--env-file` (extra env file for the build), `--no-env` (exclude build-time env entirely), `--grant-capability` (repeatable: `docker-observe`, `host-network`, `raw-ports`), and `--upload auto|direct|relay`.
+Common flags: `--port` (internal app port; omitted, the first `EXPOSE` in the Dockerfile is used — port-less web deploys fail fast instead of guessing), `--path`, `--dockerfile`, `--node` (target node), `--cmd`, `--memory`/`--cpu` (resource limits), `--no-auto-stop`, `--background` (no managed URL, always-on), `--compose`/`--service` (multi-service deploys), `--secret` (repeatable, include a specific .env in the build), `--env-file` (extra env file for the build), `--no-env` (exclude build-time env entirely), `--grant-capability` (repeatable: `docker-observe`, `host-network`, `raw-ports`), and `--upload auto|direct|relay`.
 
 > **Every flag, default, and env-var equivalent** (`--server`/`L8B_SERVER`, `--token`/`L8B_TOKEN`, `--ci`/`L8B_CI`, `--json`/`L8B_JSON`, …) is listed in the [CLI Reference](../reference/cli-reference.md) — regenerated from `l8b --generate-markdown` on every release, so it is always current. This page stays narrative on purpose.
 
@@ -349,12 +349,12 @@ The dashboard can manage the whole thing — `Settings → GitHub` connects a Gi
 To wire it by hand, see [l8bin-action](https://github.com/mtsandeep/l8bin-action) for the reusable composite action:
 
 ```yaml
-- uses: mtsandeep/l8bin-action@v0.2.0
+- uses: mtsandeep/l8bin-action@v0.2.1
   with:
     server: ${{ secrets.L8B_SERVER }}
     token: ${{ secrets.L8B_TOKEN_MYAPP }}
     project_id: myapp
-    port: 3000
+    # port: 3000               # optional — omit to detect from the Dockerfile EXPOSE
     # compose: true            # multi-service repos
     # services: api,worker     # target services only (compose)
 ```

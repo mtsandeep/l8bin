@@ -23,6 +23,9 @@ pub const WAKE_WAIT_POLL_CAP: Duration = Duration::from_secs(30);
 /// Probe window before the wake fails. The container is never stopped — later requests serve once the app listens.
 pub const WAKE_READINESS_MAX: Duration = Duration::from_secs(60);
 
+/// Post-deploy probe window — container up but port not answering fails the deploy.
+pub const DEPLOY_READINESS_MAX: Duration = Duration::from_secs(30);
+
 /// How long a completed guard stays in the map so late waiters see the outcome.
 pub const WAKE_GUARD_RETENTION: Duration = Duration::from_secs(60);
 

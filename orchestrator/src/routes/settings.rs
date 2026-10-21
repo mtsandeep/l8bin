@@ -24,12 +24,13 @@ pub struct UpdateSettingsRequest {
     pub cmd: Option<String>,
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
+    pub port: Option<i64>,
 }
 
 #[utoipa::path(
     patch,
     path = "/projects/{id}/settings",
-    description = "Update project settings (name, custom domain, auto-stop/start, resource limits); only provided fields change.",
+    description = "Update project settings (name, custom domain, auto-stop/start, resource limits, app port); only provided fields change.",
     params(
         ("id" = String, Path, description = "Project ID")
     ),
@@ -109,6 +110,21 @@ pub async fn update_project_settings(
     if existing.as_ref().unwrap().is_background && matches!(resolved_domain, Some(Some(_))) {
         return Err((StatusCode::BAD_REQUEST, "background projects cannot configure a custom domain".to_string()));
     }
+    // Port applies to single-service web projects only — compose ports come from the compose file.
+    if let Some(port) = payload.port {
+        if !(1..=65535).contains(&port) {
+            return Err((StatusCode::BAD_REQUEST, "port must be between 1 and 65535".to_string()));
+        }
+        if existing.as_ref().unwrap().is_background {
+            return Err((StatusCode::BAD_REQUEST, "background projects have no HTTP port".to_string()));
+        }
+        if existing.as_ref().unwrap().deploy_type == Some(DeployType::Compose) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "compose projects manage ports via compose.yaml — redeploy with an updated file".to_string(),
+            ));
+        }
+    }
     let old_domain = existing.as_ref().unwrap().custom_domain.clone();
     let now = chrono::Utc::now().timestamp();
 
@@ -124,6 +140,7 @@ pub async fn update_project_settings(
     let mut has_cmd = false;
     let mut has_memory_limit_mb = false;
     let mut has_cpu_limit = false;
+    let mut has_port = false;
 
     if payload.name.is_some() {
         set_clauses.push("name = ?");
@@ -165,6 +182,10 @@ pub async fn update_project_settings(
         set_clauses.push("cpu_limit = ?");
         has_cpu_limit = true;
     }
+    if payload.port.is_some() {
+        set_clauses.push("internal_port = ?");
+        has_port = true;
+    }
 
     if !has_name
         && !has_description
@@ -176,6 +197,7 @@ pub async fn update_project_settings(
         && !has_cmd
         && !has_memory_limit_mb
         && !has_cpu_limit
+        && !has_port
     {
         return Ok(Json(existing.unwrap()));
     }
@@ -185,6 +207,7 @@ pub async fn update_project_settings(
 
     // Track if domain changed (for Caddy resync) before consuming resolved_domain
     let domain_changed = has_custom_domain && resolved_domain.as_ref().unwrap() != &old_domain;
+    let port_changed = has_port && payload.port != existing.as_ref().unwrap().internal_port;
 
     // Bind order must match set_clauses order
     if has_name {
@@ -220,6 +243,9 @@ pub async fn update_project_settings(
     }
     if has_cpu_limit {
         query = query.bind(payload.cpu_limit.unwrap());
+    }
+    if has_port {
+        query = query.bind(payload.port.unwrap());
     }
 
     query
@@ -259,8 +285,20 @@ pub async fn update_project_settings(
         let _ = svc_query.execute(&state.db).await;
     }
 
+    // Route resolution prefers the public service row's port over projects.internal_port — update both + resync.
+    if port_changed {
+        if let Err(e) = sqlx::query("UPDATE project_services SET port = ? WHERE project_id = ? AND is_public = 1")
+            .bind(payload.port.unwrap())
+            .bind(&id)
+            .execute(&state.db)
+            .await
+        {
+            tracing::warn!(project_id = %id, error = %e, "settings: failed to update public service port");
+        }
+        crate::routes::manage::sync_caddy(&state).await;
+    }
     // Resync Caddy if custom_domain changed
-    if domain_changed {
+    else if domain_changed {
         crate::routes::manage::sync_caddy(&state).await;
     }
 

@@ -12,6 +12,25 @@ pub fn find_compose_file(dir: &std::path::Path) -> Option<&'static str> {
     COMPOSE_FILE_NAMES.iter().find(|p| dir.join(p).exists()).copied()
 }
 
+/// Ports from `EXPOSE` lines, file order, deduped; `/tcp` suffixes stripped.
+pub fn detect_exposed_ports(dockerfile: &str) -> Vec<u16> {
+    let mut ports = Vec::new();
+    for line in dockerfile.lines() {
+        let trimmed = line.trim();
+        if trimmed.to_uppercase().starts_with("EXPOSE") {
+            for part in trimmed.split_whitespace().skip(1) {
+                let port_part = part.split('/').next().unwrap_or(part);
+                if let Ok(p) = port_part.parse::<u16>()
+                    && !ports.contains(&p)
+                {
+                    ports.push(p);
+                }
+            }
+        }
+    }
+    ports
+}
+
 // ── Internal orchestrator↔agent API paths (see also `upload::MINT_PATH`) ─────
 
 pub const WAKE_REPORT_PATH: &str = "/internal/wake-report";
@@ -673,6 +692,22 @@ pub fn parse_container_name(name: &str) -> Option<(String, String, Option<String
     }
 
     None
+}
+
+#[cfg(test)]
+mod expose_tests {
+    use super::detect_exposed_ports;
+
+    #[test]
+    fn parses_expose_lines_with_dedup_and_proto_suffix() {
+        let df = "FROM nginx:alpine\nEXPOSE 80\nexpose 443/tcp 80\nEXPOSE notaport\n";
+        assert_eq!(detect_exposed_ports(df), vec![80, 443]);
+    }
+
+    #[test]
+    fn no_expose_yields_empty() {
+        assert!(detect_exposed_ports("FROM scratch\nRUN true\n").is_empty());
+    }
 }
 
 #[cfg(test)]

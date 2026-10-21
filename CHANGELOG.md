@@ -5,9 +5,16 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Wrong-port deploys no longer ship silently** — GitHub link workflows hardcoded `port: '3000'` when no port was set, which broke every app that doesn't listen on 3000 (an nginx:80 site deployed green and then 503-looped forever). The generated workflow now omits the port when unset, the action passes `--port` only when provided, and `l8b deploy` detects the port from the Dockerfile's `EXPOSE` instead of injecting 3000 (a stored port still wins on redeploys; port-less web deploys now fail fast with a hint). The link form prefills the port from the repo's Dockerfile.
+- **Deploys verify the app actually answers** — after the container starts, a 30s readiness probe dials `container:port`; on failure the project goes to Error (CLI exits non-zero → red GitHub run) with a "wrong app port?" deploy log, and the container stays up for inspection. Remote agents' existing readiness verdict (`ready`) is honored instead of discarded.
+- **Project settings can change the app port** — the settings PATCH now accepts `port`, updating the project row, the public service row, and Caddy routes; the dashboard App settings popover actually sends it (the field was editable but dead) and uses a text input so clearing never snaps a value back.
+- **Waker flags port mismatches** — a running single-service project whose proxy 502s gets checked against the container's declared ports and surfaces a "port mismatch" hint on the project card (local nodes; heuristic — the post-deploy probe is the ground truth).
 - "Deploy from GitHub" shows a connect prompt when GitHub isn't configured, instead of a dead repo browser.
 - Footer is visible without scrolling on short pages; scrollbar always reserved so layouts don't shift.
 - Home data fetches once on load — `useIntervalWhileVisible` double-fired on mount and `useHomeData`'s effect added a third copy of the projects/stats burst.
+
+### Changed
+- Generated workflows now use `l8bin-action@v0.2.1`, which supports the port-less deploy input.
 
 ## [0.4.12] - 2026-10-20
 

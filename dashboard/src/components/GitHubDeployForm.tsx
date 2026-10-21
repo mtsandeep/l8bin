@@ -55,13 +55,16 @@ export default function GitHubDeployForm({
   const [folderStatus, setFolderStatus] = useState<'idle' | 'checking' | 'ok' | 'not-found'>('idle');
   const [idTaken, setIdTaken] = useState(false);
   const [deployKind, setDeployKind] = useState<'single' | 'compose'>('single');
-  const [port, setPort] = useState(3000);
+  // '' = auto-detect from Dockerfile EXPOSE at deploy time.
+  const [port, setPort] = useState('');
+  const [portDirty, setPortDirty] = useState(false);
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [commitMessage, setCommitMessage] = useState('LiteBin: add deploy workflow');
   const { showToast } = useToast();
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initial load; portDirty only gates the port prefill
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -74,6 +77,7 @@ export default function GitHubDeployForm({
         setBranches(b.map((x) => x.name));
         setBranch(d.default_branch);
         setDeployKind(d.kind);
+        if (!portDirty) setPort(d.detected_port != null ? String(d.detected_port) : '');
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -82,6 +86,7 @@ export default function GitHubDeployForm({
     })();
   }, [owner, repoName, installationId, connectionId]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: folder re-detect; portDirty only gates the port prefill
   useEffect(() => {
     const folder = repoPath.trim();
     const detect = (path: string | undefined, onDone: () => void) =>
@@ -89,6 +94,8 @@ export default function GitHubDeployForm({
         .then((d) => {
           setDetail(d);
           setDeployKind(d.kind);
+          // Re-detection must never clobber a user-typed port.
+          if (!portDirty) setPort(d.detected_port != null ? String(d.detected_port) : '');
           onDone();
         })
         .catch(() => setFolderStatus('not-found'));
@@ -126,15 +133,33 @@ export default function GitHubDeployForm({
           setBranch(cfg.branch || branch);
           setDeployKind(cfg.deploy_kind);
           setAutoDeploy(cfg.auto_deploy);
-          if (cfg.inputs.port) setPort(cfg.inputs.port);
+          // Stored link port is deliberate — keep it over detection.
+          if (cfg.inputs.port) {
+            setPort(String(cfg.inputs.port));
+            setPortDirty(true);
+          }
           setRepoPath(cfg.inputs.path ?? '');
         }
       })
       .catch(() => {});
   }, [repo.full_name, detail?.default_branch]);
 
+  // Text input so clearing never snaps a value back in; '' = auto-detect at deploy time.
+  const portNum = Number(port);
+  const portValid = port.trim() === '' || (Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535);
+  // No detectable port (no Dockerfile / no EXPOSE) — the deploy would fail anyway.
+  const portMissing = deployKind === 'single' && detail !== null && detail.detected_port == null && port.trim() === '';
+
   const submit = async () => {
     if (!projectId.trim() || !branch || folderStatus === 'not-found') return;
+    if (!portValid) {
+      setError('Internal port must be a whole number between 1 and 65535 (or empty to auto-detect)');
+      return;
+    }
+    if (portMissing) {
+      setError('No port detected for this repo — enter the app port');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -164,7 +189,7 @@ export default function GitHubDeployForm({
         deploy_kind: deployKind,
         compose_file: detail?.compose_file ?? null,
         auto_deploy: autoDeploy,
-        ...(deployKind === 'single' ? { port } : {}),
+        ...(deployKind === 'single' && port.trim() !== '' ? { port: portNum } : {}),
       });
 
       showToast(`Linked ${repo.full_name} → ${project.id}`, 'success');
@@ -348,13 +373,23 @@ export default function GitHubDeployForm({
                 </label>
                 <input
                   id="gh-port"
-                  type="number"
-                  min={1}
-                  max={65535}
+                  type="text"
+                  inputMode="numeric"
                   value={port}
-                  onChange={(e) => setPort(Number(e.target.value) || 0)}
-                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 focus:outline-none focus:border-violet-500/50 transition-colors"
+                  onChange={(e) => {
+                    setPort(e.target.value);
+                    setPortDirty(true);
+                  }}
+                  placeholder="auto-detect (Dockerfile EXPOSE)"
+                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-md text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                 />
+                <p className={`text-xs mt-1 ${portMissing ? 'text-amber-400' : 'text-slate-500'}`}>
+                  {detail?.detected_port != null
+                    ? `Detected ${detail.detected_port} from the Dockerfile — edit to override.`
+                    : portMissing
+                      ? 'No port detected — enter the app port.'
+                      : 'Leave empty to detect from the Dockerfile at deploy time.'}
+                </p>
               </div>
             )}
 
@@ -387,7 +422,12 @@ export default function GitHubDeployForm({
             <button
               type="submit"
               disabled={
-                busy || !projectId.trim() || !branch || folderStatus === 'not-found' || (idTaken && !fixedProjectId)
+                busy ||
+                !projectId.trim() ||
+                !branch ||
+                folderStatus === 'not-found' ||
+                (idTaken && !fixedProjectId) ||
+                portMissing
               }
               className="w-full py-2.5 rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 text-xs font-medium text-white transition-colors cursor-pointer flex items-center justify-center gap-1.5"
             >

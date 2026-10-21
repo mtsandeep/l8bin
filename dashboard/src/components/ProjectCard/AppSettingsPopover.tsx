@@ -26,7 +26,7 @@ export default function AppSettingsPopover({
   const isMultiService = (project.service_count ?? 0) > 1;
 
   const [appImage, setAppImage] = useState(ps?.image ?? '');
-  const [appPort, setAppPort] = useState(ps?.port ?? 3000);
+  const [appPort, setAppPort] = useState(String(ps?.port ?? 3000));
   const [cmd, setCmd] = useState(ps?.cmd ?? '');
   const [memMb, setMemMb] = useState(ps?.memory_limit_mb ?? 256);
   const [cpuLimit, setCpuLimit] = useState(ps?.cpu_limit ?? 0.5);
@@ -39,7 +39,7 @@ export default function AppSettingsPopover({
   // Sync from project prop (e.g. after refresh)
   useEffect(() => {
     setAppImage(ps?.image ?? '');
-    setAppPort(ps?.port ?? 3000);
+    setAppPort(String(ps?.port ?? 3000));
     setCmd(ps?.cmd ?? '');
     setMemMb(ps?.memory_limit_mb ?? 256);
     setCpuLimit(ps?.cpu_limit ?? 0.5);
@@ -56,18 +56,35 @@ export default function AppSettingsPopover({
     return () => document.removeEventListener('mousedown', handler);
   }, [onClose]);
 
+  // Compose ports come from compose.yaml; background projects have none.
+  const canEditPort = !isCompose && !project.is_background;
+  // Text input so clearing never snaps a 0 back in; validate at save time.
+  const parsedPort = Number(appPort);
+  const portValid = appPort.trim() !== '' && Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535;
+
   const handleSave = async () => {
-    const prev = { cmd, memMb, cpuLimit };
+    const prev = { cmd, memMb, cpuLimit, appPort };
     setSettingsError(null);
 
+    if (canEditPort && !portValid) {
+      setSettingsError('App port must be a whole number between 1 and 65535');
+      return;
+    }
+
     try {
-      await updateProjectSettings(project.id, { cmd, memory_limit_mb: memMb, cpu_limit: cpuLimit });
+      await updateProjectSettings(project.id, {
+        cmd,
+        memory_limit_mb: memMb,
+        cpu_limit: cpuLimit,
+        ...(canEditPort ? { port: parsedPort } : {}),
+      });
       onClose();
       onRefresh();
     } catch (e) {
       setCmd(prev.cmd);
       setMemMb(prev.memMb);
       setCpuLimit(prev.cpuLimit);
+      setAppPort(prev.appPort);
       setSettingsError(e instanceof Error ? e.message : 'Failed to update settings');
       showToast(e instanceof Error ? e.message : 'Failed to update settings');
     }
@@ -75,9 +92,20 @@ export default function AppSettingsPopover({
 
   const handleSaveAndRecreate = async () => {
     setSettingsError(null);
+
+    if (canEditPort && !portValid) {
+      setSettingsError('App port must be a whole number between 1 and 65535');
+      return;
+    }
+
     setLoading(true);
     try {
-      await updateProjectSettings(project.id, { cmd, memory_limit_mb: memMb, cpu_limit: cpuLimit });
+      await updateProjectSettings(project.id, {
+        cmd,
+        memory_limit_mb: memMb,
+        cpu_limit: cpuLimit,
+        ...(canEditPort ? { port: parsedPort } : {}),
+      });
       const warnings = await recreateProject(project.id);
       for (const w of warnings) showToast(w, 'warning');
       onClose();
@@ -162,12 +190,12 @@ export default function AppSettingsPopover({
               />
             ) : (
               <input
-                type="number"
-                min={1}
-                max={65535}
+                type="text"
+                inputMode="numeric"
                 value={appPort}
-                onChange={(e) => setAppPort(Number(e.target.value))}
-                className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+                onChange={(e) => setAppPort(e.target.value)}
+                placeholder="3000"
+                className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
               />
             )}
           </div>

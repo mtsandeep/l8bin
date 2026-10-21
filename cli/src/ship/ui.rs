@@ -97,7 +97,9 @@ pub(super) fn resolve_app_port(project_dir: &Path, port_override: Option<u16>) -
         return Ok(0);
     }
 
-    let detected = detect_exposed_ports(project_dir);
+    let detected = std::fs::read_to_string(project_dir.join("Dockerfile"))
+        .map(|content| litebin_common::types::detect_exposed_ports(&content))
+        .unwrap_or_default();
     match detected.as_slice() {
         [single] => {
             println!("  {} Detected exposed port {}", "::".dimmed(), single);
@@ -113,29 +115,6 @@ pub(super) fn resolve_app_port(project_dir: &Path, port_override: Option<u16>) -
             input.parse::<u16>().context("Port must be a number (1-65535)")
         }
     }
-}
-
-fn detect_exposed_ports(project_dir: &Path) -> Vec<u16> {
-    let mut ports = Vec::new();
-
-    let dockerfile = project_dir.join("Dockerfile");
-    if let Ok(content) = std::fs::read_to_string(&dockerfile) {
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.to_uppercase().starts_with("EXPOSE") {
-                for part in trimmed.split_whitespace().skip(1) {
-                    let port_part = part.split('/').next().unwrap_or(part);
-                    if let Ok(p) = port_part.parse::<u16>()
-                        && !ports.contains(&p)
-                    {
-                        ports.push(p);
-                    }
-                }
-            }
-        }
-    }
-
-    ports
 }
 
 pub(super) fn load_compose(project_dir: &Path, compose_name: &str) -> Result<serde_yaml::Value> {

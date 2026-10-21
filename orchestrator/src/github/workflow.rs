@@ -30,7 +30,7 @@ pub enum DeployKind {
 }
 
 /// Pin the exact action version; bump deliberately (managed files reference it).
-pub const ACTION_REF: &str = "mtsandeep/l8bin-action@v0.2.0";
+pub const ACTION_REF: &str = "mtsandeep/l8bin-action@v0.2.1";
 pub const WORKFLOW_NAME: &str = "LiteBin Deploy";
 /// Repo-level secret shared by every project linked to the repo.
 pub const SERVER_SECRET: &str = "L8B_SERVER";
@@ -93,7 +93,10 @@ impl WorkflowSpec {
         }
         match self.deploy_kind {
             DeployKind::Single => {
-                y.push_str(&format!("          port: '{}'\n", self.port.unwrap_or(3000)));
+                // Omitted when unset — the CLI detects from the Dockerfile EXPOSE.
+                if let Some(port) = self.port {
+                    y.push_str(&format!("          port: '{port}'\n"));
+                }
                 if let Some(d) = &self.dockerfile {
                     y.push_str(&format!("          dockerfile: {}\n", q(d)));
                 }
@@ -205,6 +208,17 @@ mod tests {
         assert!(y.contains("path: \"apps/web\""));
         // default spec (no path) omits the input entirely
         assert!(!spec().render().contains("path:"));
+    }
+
+    #[test]
+    fn omits_port_when_unset() {
+        let mut s = spec();
+        s.port = None;
+        let y = s.render();
+        // no silent 3000 default — the CLI detects from Dockerfile EXPOSE
+        assert!(!y.contains("port:"));
+        s.port = Some(80);
+        assert!(s.render().contains("port: '80'"));
     }
 
     #[test]

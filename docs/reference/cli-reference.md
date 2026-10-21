@@ -93,7 +93,7 @@ Deploy the current directory to LiteBin
 ###### **Options:**
 
 * `--project <PROJECT>` — Project ID (default: `project` from l8b.toml)
-* `--port <PORT>` — Internal app port (first deploy only; redeploys keep the existing port)
+* `--port <PORT>` — Internal app port (first deploy only; detected from Dockerfile EXPOSE when omitted)
 * `--background` — Run as a background project with no managed HTTP URL
 * `--path <PATH>` — Path to project directory (default: current dir)
 
@@ -134,7 +134,7 @@ Interactive deploy — guided flow for new or existing projects
 * `--path <PATH>` — Path to project directory (default: current dir)
 
   Default value: `.`
-* `--port <PORT>` — App port (default: 3000)
+* `--port <PORT>` — App port (detected from Dockerfile EXPOSE; prompted otherwise)
 * `--secret <SECRET>` — Include this .env file in the build (repeatable; overrides .env auto-discovery)
 * `--no-env` — Exclude build-time env files entirely (skip .env auto-discovery)
 

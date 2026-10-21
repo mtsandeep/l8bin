@@ -86,6 +86,7 @@ async fn live_orchestrator_state() -> anyhow::Result<AppState> {
         route_sync_tx,
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
+        port_mismatches: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
         domain_jobs: Arc::new(DashMap::new()),
         destination_health: Arc::new(std::sync::RwLock::new(None)),

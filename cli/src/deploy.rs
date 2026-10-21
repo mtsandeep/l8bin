@@ -175,12 +175,14 @@ async fn send_deploy(
     let mut body = serde_json::json!({
         "project_id": project_id,
         "image": image,
-        "port": port,
         "is_background": is_background,
         "grant_capabilities": grant_capabilities,
         "stage_only": stage_only,
     });
 
+    if let Some(p) = port {
+        body["port"] = serde_json::json!(p);
+    }
     if let Some(node) = node_id {
         body["node_id"] = serde_json::json!(node);
     }

@@ -67,6 +67,11 @@ export interface ServiceInfo {
   ports?: number[];
 }
 
+export interface PortMismatch {
+  routed_port: number;
+  container_ports: number[];
+}
+
 export interface Project {
   id: string;
   name: string | null;
@@ -87,6 +92,7 @@ export interface Project {
   created_at: number;
   updated_at: number;
   public_stats: ServiceInfo | null;
+  port_mismatch?: PortMismatch | null;
 }
 
 export interface ProjectStats {
@@ -149,6 +155,7 @@ export interface ProjectSettings {
   cmd?: string;
   memory_limit_mb?: number | null;
   cpu_limit?: number | null;
+  port?: number;
 }
 
 export interface DeployPayload {
@@ -1225,6 +1232,7 @@ export interface GitHubRepoDetail {
   kind: 'compose' | 'single';
   compose_file: string | null;
   dockerfile_present: boolean;
+  detected_port: number | null;
 }
 
 export interface GitHubBranch {

@@ -234,6 +234,14 @@ export default function ProjectCard({
                 {project.name || project.id}
               </h3>
               <StatusBadge status={stats?.status || project.status} />
+              {project.port_mismatch && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[10px] text-amber-300 whitespace-nowrap"
+                  title={`Requests fail: routing sends traffic to port ${project.port_mismatch.routed_port}, but the container declares ${project.port_mismatch.container_ports.join(', ')}. Fix the app port in settings and redeploy.`}
+                >
+                  port mismatch
+                </span>
+              )}
               {(services.length > 1 || project.deploy_type === DeployType.Compose) && (
                 <button
                   type="button"

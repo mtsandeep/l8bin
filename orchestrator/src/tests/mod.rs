@@ -11,6 +11,7 @@ mod health_tests;
 mod janitor_tests;
 mod nodes_tests;
 mod orchestrator_path_tests;
+mod port_settings_tests;
 mod projects_tests;
 mod sleep_settings_tests;
 mod token_scope_tests;

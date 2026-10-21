@@ -58,6 +58,8 @@ pub struct RepoDetail {
     pub kind: String, // "compose" | "single"
     pub compose_file: Option<String>,
     pub dockerfile_present: bool,
+    /// First `EXPOSE` port of the detected Dockerfile — link-form prefill.
+    pub detected_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +77,15 @@ pub struct BranchSummary {
 #[derive(Debug, Deserialize)]
 struct GhContentEntry {
     name: String,
+}
+
+/// `folder/file`, or bare `file` at the repo root.
+fn join_path(folder: &str, file: &str) -> String {
+    if folder.is_empty() {
+        file.to_string()
+    } else {
+        format!("{folder}/{file}")
+    }
 }
 
 impl GitHubClient {
@@ -141,7 +152,16 @@ impl GitHubClient {
         let entries: Vec<GhContentEntry> = self.json(self.get(&contents_path)).await?;
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         let compose_file = COMPOSE_CANDIDATES.iter().copied().find(|c| names.contains(c)).map(|c| c.to_string());
-        let dockerfile_present = names.iter().any(|n| n.starts_with("Dockerfile"));
+        let dockerfile_name = names.iter().find(|n| n.starts_with("Dockerfile")).copied();
+        let detected_port = match dockerfile_name {
+            Some(name) if compose_file.is_none() => self
+                .file_content(owner, repo, &join_path(folder, name), &r.default_branch)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|content| litebin_common::types::detect_exposed_ports(&content).first().copied()),
+            _ => None,
+        };
         Ok(RepoDetail {
             id: r.id,
             full_name: r.full_name,
@@ -150,7 +170,8 @@ impl GitHubClient {
             html_url: r.html_url,
             kind: if compose_file.is_some() { "compose" } else { "single" }.to_string(),
             compose_file,
-            dockerfile_present,
+            dockerfile_present: dockerfile_name.is_some(),
+            detected_port,
         })
     }
 

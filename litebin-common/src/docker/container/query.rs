@@ -77,6 +77,19 @@ impl DockerManager {
         Ok(info)
     }
 
+    /// Declared ports (`EXPOSE` ∪ publish list, "80/tcp" keys), sorted; None when inspect fails.
+    pub async fn exposed_container_ports(&self, container_id: &str) -> Option<Vec<u16>> {
+        let info = self.inspect_container(container_id).await.ok()?;
+        let ports = info.config?.exposed_ports?;
+        let mut list: Vec<u16> = ports
+            .iter()
+            .filter_map(|key| key.split('/').next().and_then(|p| p.parse::<u16>().ok()))
+            .collect();
+        list.sort_unstable();
+        list.dedup();
+        Some(list)
+    }
+
     /// Find a container by its name (e.g. "litebin-myapp") and return its ID.
     /// Returns None if no container with that name exists (in any state).
     pub async fn find_container_by_name(&self, name: &str) -> anyhow::Result<Option<String>> {

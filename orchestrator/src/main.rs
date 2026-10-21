@@ -61,6 +61,8 @@ pub struct AppState {
     pub proxy_client: reqwest::Client,
     // Per-project throttle for multi-service health checks (5s cooldown)
     pub multi_svc_health_check: Arc<DashMap<String, std::time::Instant>>,
+    /// Waker wrong-port signal (id -> (routed port, container's declared ports)); dashboard hint.
+    pub port_mismatches: Arc<DashMap<String, (u16, Vec<u16>)>>,
     // In-memory deploy log buffers (project_id -> log lines)
     pub deploy_logs: Arc<DashMap<String, std::sync::Mutex<Vec<String>>>>,
     /// In-flight platform domain change jobs (job_id -> job).
@@ -346,6 +348,7 @@ async fn main() -> anyhow::Result<()> {
         route_sync_tx,
         proxy_client: reqwest::Client::new(),
         multi_svc_health_check: Arc::new(DashMap::new()),
+        port_mismatches: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
         domain_jobs: Arc::new(DashMap::new()),
         upload_store: Arc::new(litebin_common::upload::UploadStore::new(

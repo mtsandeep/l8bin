@@ -69,8 +69,11 @@ per repo:
   path-filtered** (`paths: [<folder>/**]` for subfolder links; root links
   `paths-ignore` their own workflow file so re-links never self-trigger)
 - per-project concurrency group with cancel-in-progress
-- pinned `mtsandeep/l8bin-action@v0.2.0`, shared `L8B_SERVER` + per-project
+- pinned `mtsandeep/l8bin-action@v0.2.1`, shared `L8B_SERVER` + per-project
   `L8B_TOKEN_<PROJECT>` secrets referenced — never inlined
+- `port:` written only when the link specifies one — otherwise the CLI detects it
+  from the Dockerfile `EXPOSE` at deploy time (the link form prefills from the
+  same detection and requires a port when nothing is detectable)
 
 Managed-file policy: LiteBin rewrites the file on every config change (the banner in
 the file says so); the auto-deploy toggle is just the push block being present.
@@ -134,4 +137,4 @@ runs never lose auth.
 | Routes | `orchestrator/src/routes/github/{mod,connect,repos,project_link,runs,webhook}.rs` |
 | Migrations | `orchestrator/src/db/migrations/0032_github_connect.sql`, `0033_multi_app_connections.sql` |
 | Dashboard | `GitHubPanel.tsx`, `GithubCallbackPage.tsx`, `GitHubRepoBrowser.tsx`, `GitHubDeployForm.tsx`, `ProjectCard/GitHubBadge.tsx`, `ProjectCard/GitHubRunsModal.tsx`, `hooks/useGithubStatus.ts` |
-| Action | [mtsandeep/l8bin-action](https://github.com/mtsandeep/l8bin-action) v0.2.0 |
+| Action | [mtsandeep/l8bin-action](https://github.com/mtsandeep/l8bin-action) v0.2.1 |

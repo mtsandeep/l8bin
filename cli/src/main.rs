@@ -52,7 +52,7 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
 
-        /// Internal app port (first deploy only; redeploys keep the existing port)
+        /// Internal app port (first deploy only; detected from Dockerfile EXPOSE when omitted)
         #[arg(long)]
         port: Option<u16>,
 
@@ -124,7 +124,7 @@ enum Commands {
         #[arg(long, default_value = ".")]
         path: std::path::PathBuf,
 
-        /// App port (default: 3000)
+        /// App port (detected from Dockerfile EXPOSE; prompted otherwise)
         #[arg(long)]
         port: Option<u16>,
 

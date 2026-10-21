@@ -38,7 +38,7 @@ jobs:
             fi
           done
 
-      - uses: mtsandeep/l8bin-action@v0.2.0
+      - uses: mtsandeep/l8bin-action@v0.2.1
         with:
           server: ${{ secrets.L8B_SERVER }}
           token: ${{ secrets.L8B_TOKEN }}

@@ -169,6 +169,7 @@ use utoipa::OpenApi;
             // Projects
             crate::routes::projects::CreateProjectRequest,
             crate::routes::projects::ProjectResponse,
+            crate::routes::projects::PortMismatch,
             crate::routes::projects::CreateRouteRequest,
             crate::routes::projects::ProjectRouteResponse,
             // Stats

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use colored::Colorize;
@@ -153,14 +153,6 @@ pub(crate) async fn run(
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
 
-    // Port is first-deploy only; redeploys omit it and the server keeps the
-    // existing one.
-    let effective_port = if effective_background {
-        None
-    } else {
-        port.or_else(|| if existing_project.is_some() { None } else { Some(3000) })
-    };
-
     // Check for compose file (auto-detect or forced via --compose)
     let compose_file = ship::detect_compose_file(&path);
     if compose || compose_file.is_some() {
@@ -211,6 +203,28 @@ pub(crate) async fn run(
         finish_deploy(out, &project, final_status, url, effective_background, started)?;
         apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
     } else {
+        // Port is first-deploy only; redeploys keep the stored one. No flag and
+        // no stored port: detect from the Dockerfile EXPOSE, never assume 3000.
+        let effective_port = if effective_background || port.is_some() {
+            port
+        } else if existing_project
+            .as_ref()
+            .and_then(|p| p.get("public_stats"))
+            .and_then(|s| s.get("port"))
+            .and_then(|v| v.as_u64())
+            .is_some()
+        {
+            None
+        } else {
+            match detect_first_exposed_port(&path, dockerfile.as_deref(), ci_mode) {
+                Some(p) => Some(p),
+                // Fail before the build — the server would reject it anyway.
+                None => bail!(
+                    "no app port detected — pass --port (or set the workflow `port:` input, or add `EXPOSE <port>` to the Dockerfile)"
+                ),
+            }
+        };
+
         let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
 
         // Resolve target platform from node architecture
@@ -292,6 +306,15 @@ pub(crate) async fn run(
     }
 
     Ok(())
+}
+
+/// First `EXPOSE` port from the build context's Dockerfile, logged when found.
+fn detect_first_exposed_port(path: &Path, dockerfile: Option<&str>, ci_mode: &CiMode) -> Option<u16> {
+    let name = dockerfile.unwrap_or("Dockerfile");
+    let content = std::fs::read_to_string(path.join(name)).ok()?;
+    let first = litebin_common::types::detect_exposed_ports(&content).first().copied()?;
+    ci_mode.println(&format!("Detected app port {first} from {name} EXPOSE"));
+    Some(first)
 }
 
 /// Push `--env-file` after a deploy (merge); recreate to apply when running.

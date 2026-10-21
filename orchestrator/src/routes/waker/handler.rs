@@ -520,7 +520,23 @@ pub async fn wake_for_host(
                     )
                     .await;
                     if resp.status() != StatusCode::BAD_GATEWAY {
+                        state.port_mismatches.remove(&project_id);
                         return resp;
+                    }
+                    // 502 with a running container: flag wrong-port suspicion once
+                    // (cleared on first success); ExposedPorts is a hint, not truth.
+                    if !state.port_mismatches.contains_key(&project_id)
+                        && let Some(exposed) = state.docker.exposed_container_ports(container_id).await
+                        && !exposed.is_empty()
+                        && !exposed.contains(&port)
+                    {
+                        tracing::error!(
+                            project = %project_id,
+                            routed_port = port,
+                            exposed = ?exposed,
+                            "waker: upstream refused — container does not declare the routed port (wrong app port?)"
+                        );
+                        state.port_mismatches.insert(project_id.clone(), (port, exposed));
                     }
                 }
                 return match client {

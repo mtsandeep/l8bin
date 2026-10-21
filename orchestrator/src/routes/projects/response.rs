@@ -34,6 +34,15 @@ pub struct ProjectResponse {
     pub created_at: i64,
     pub updated_at: i64,
     pub public_stats: Option<ServiceInfo>,
+    /// Waker wrong-port hint; absent when no 502 signal (heuristic, not health).
+    pub port_mismatch: Option<PortMismatch>,
+}
+
+/// The port the proxy dials vs the ports the container declares.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PortMismatch {
+    pub routed_port: u16,
+    pub container_ports: Vec<u16>,
 }
 
 /// Build PublicStats for a single-service project (no project_services row).
@@ -93,7 +102,8 @@ type PublicServiceRow = (
     Option<f64>,
 );
 
-pub(super) async fn to_project_response(project: &Project, db: &sqlx::SqlitePool) -> ProjectResponse {
+pub(super) async fn to_project_response(project: &Project, state: &crate::AppState) -> ProjectResponse {
+    let db = &state.db;
     let public_stats = if project.deploy_type == Some(DeployType::Compose) {
         // Multi-service: look up the public service from project_services
         let row: Option<PublicServiceRow> = sqlx::query_as(
@@ -184,5 +194,9 @@ pub(super) async fn to_project_response(project: &Project, db: &sqlx::SqlitePool
         created_at: project.created_at,
         updated_at: project.updated_at,
         public_stats,
+        port_mismatch: state.port_mismatches.get(&project.id).map(|entry| PortMismatch {
+            routed_port: entry.0,
+            container_ports: entry.1.clone(),
+        }),
     }
 }

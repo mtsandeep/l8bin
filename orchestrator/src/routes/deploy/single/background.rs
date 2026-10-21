@@ -37,8 +37,8 @@ pub(super) async fn run_deploy_task(
         None
     };
 
-    // 5a. Pull image / start container
-    let (container_id, mapped_port) = if node_id_clone == "local" {
+    // 5a. Pull image / start container; remote agents return their readiness verdict.
+    let (container_id, mapped_port, remote_ready) = if node_id_clone == "local" {
         // --- Local path ---
         crate::routes::manage::ensure_project_dir_and_env(&payload_clone.project_id);
 
@@ -90,7 +90,7 @@ pub(super) async fn run_deploy_task(
             &payload_clone.project_id,
             &format!("Container started on port {}", result.1),
         );
-        (result.0, result.1 as u16)
+        (result.0, result.1 as u16, None)
     } else {
         // --- Remote node path ---
         crate::routes::deploy::logs::push_deploy_log(
@@ -127,7 +127,7 @@ pub(super) async fn run_deploy_task(
             }
             Err(e) => return Err(e.into()),
         };
-        (run_resp.container_id, run_resp.mapped_port.unwrap_or(0))
+        (run_resp.container_id, run_resp.mapped_port.unwrap_or(0), run_resp.ready)
     };
 
     // 6. Update DB with container info
@@ -161,6 +161,60 @@ pub(super) async fn run_deploy_task(
     .bind(project_clone.cpu_limit)
     .execute(&state_clone.db)
     .await?;
+
+    // 6b. Readiness gate — fail the deploy when the port never answers (container stays up).
+    let ready = if node_id_clone == "local" {
+        match payload_clone.port {
+            Some(port) if !is_background_clone => {
+                let upstream = format!(
+                    "{}:{}",
+                    litebin_common::types::container_name(&payload_clone.project_id, "web", None),
+                    port as u16
+                );
+                let probe_set = vec![upstream];
+                let docker = state_clone.docker.clone();
+                litebin_common::wake_wait::readiness_probe_all(
+                    &state_clone.proxy_client,
+                    &probe_set,
+                    litebin_common::wake_wait::DEPLOY_READINESS_MAX,
+                    || {
+                        let docker = docker.clone();
+                        let probe_set = probe_set.clone();
+                        async move { litebin_common::wake_wait::all_upstreams_alive(&docker, &probe_set).await }
+                    },
+                )
+                .await
+            }
+            _ => true,
+        }
+    } else {
+        // Older agents don't report readiness — unknown counts as ready.
+        remote_ready.unwrap_or(true)
+    };
+
+    if !ready {
+        let port_label = payload_clone.port.map(|p| p.to_string()).unwrap_or_else(|| "?".into());
+        crate::routes::deploy::logs::push_deploy_log(
+            &state_clone,
+            &payload_clone.project_id,
+            &format!(
+                "Container is up but port {port_label} never answered — wrong app port? Fix the port in settings and redeploy."
+            ),
+        );
+        tracing::error!(project_id = %payload_clone.project_id, port = ?payload_clone.port, "deploy readiness probe failed");
+        if let Err(e) = status::transition(
+            &state_clone.db,
+            &payload_clone.project_id,
+            ProjectStatus::Error,
+            &ProjectUpdateFields::default(),
+            None,
+        )
+        .await
+        {
+            tracing::warn!(project_id = %payload_clone.project_id, error = %e, "deploy: failed to transition to Error after readiness failure");
+        }
+        anyhow::bail!("readiness probe failed: container up but port {port_label} not answering");
+    }
 
     // 7. Sync Caddy routes
     crate::routes::deploy::logs::push_deploy_log(&state_clone, &payload_clone.project_id, "Syncing routes...");

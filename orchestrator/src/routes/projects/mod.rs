@@ -115,7 +115,7 @@ pub async fn create_project(
                 .fetch_one(&state.db)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("{e}")}))))?;
-            let response = to_project_response(&project, &state.db).await;
+            let response = to_project_response(&project, &state).await;
             Ok((StatusCode::CREATED, Json(response)))
         }
         Err(e) => {
@@ -155,7 +155,7 @@ pub async fn get_project(
 
     match project {
         Some(p) => {
-            let response = to_project_response(&p, &state.db).await;
+            let response = to_project_response(&p, &state).await;
             Ok(Json(response))
         }
         None => Err((StatusCode::NOT_FOUND, format!("project '{id}' not found"))),
@@ -181,7 +181,7 @@ pub async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<Pro
 
     let mut responses = Vec::with_capacity(projects.len());
     for project in &projects {
-        let response = to_project_response(project, &state.db).await;
+        let response = to_project_response(project, &state).await;
         responses.push(response);
     }
 
