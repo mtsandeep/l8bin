@@ -10,6 +10,8 @@ pub struct DeployResponse {
     #[serde(default)]
     pub url: Option<String>,
     #[serde(default)]
+    pub custom_domain: Option<String>,
+    #[serde(default)]
     pub message: Option<String>,
     #[serde(default)]
     pub mapped_port: Option<u16>,

@@ -2,7 +2,7 @@
 
 const DOC_MAP = {
   'api': null, // Scalar view
-  'cli': '/docs/guides/cli-reference.md',
+  'cli-reference': '/docs/guides/cli-reference.md',
   // External pages — open in a new tab (marked with an arrow in the sidebar)
   'quickstart': '/quickstart.html',
   'agents': '/agents.html',
@@ -19,7 +19,7 @@ const DOC_MAP = {
   'architecture': '/docs/guides/architecture.md',
   'decisions': '/docs/guides/decisions.md',
   'failure-model': '/docs/guides/failure-model.md',
-  'scale-zero': '/docs/guides/scale-zero.md',
+  'scale-to-zero': '/docs/guides/scale-to-zero.md',
   'user-flows': '/docs/guides/user-flows.md',
 };
 
@@ -90,7 +90,7 @@ async function loadMarkdown(name, anchor) {
   content.innerHTML = '<div class="flex items-center gap-3 text-zinc-500"><div class="animate-spin h-5 w-5 border-2 border-violet-500/30 border-t-violet-500 rounded-full"></div>Loading...</div>';
 
   try {
-    const resp = await fetch(url);
+    const resp = await fetch(url, { cache: 'no-cache' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     // Vite SPA fallback can return index.html (200) for missing files — reject it
     const ct = resp.headers.get('content-type') || '';

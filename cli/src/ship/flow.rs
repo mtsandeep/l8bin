@@ -23,6 +23,8 @@ pub(super) struct ProjectInfo {
     #[serde(default)]
     pub is_staged: bool,
     #[serde(default)]
+    pub custom_domain: Option<String>,
+    #[serde(default)]
     pub public_stats: Option<litebin_common::types::ServiceInfo>,
 }
 
@@ -136,8 +138,10 @@ async fn resume_existing(client: &reqwest::Client, server: &str, project: &Proje
         if project.is_background {
             print_no_managed_url();
         } else {
-            let domain = auth::fetch_platform_domain(client, server).await;
-            let live_url = auth::project_live_url(&project.id, &domain);
+            let live_url = match project.custom_domain.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                Some(d) => format!("https://{d}"),
+                None => auth::project_live_url(&project.id, &auth::fetch_platform_domain(client, server).await),
+            };
             print_live_url(&live_url);
         }
     }

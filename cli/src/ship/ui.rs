@@ -28,7 +28,15 @@ pub(super) async fn resolve_live_url(
     server: &str,
     project_id: &str,
     api_url: Option<&str>,
+    api_custom_domain: Option<&str>,
 ) -> String {
+    // Custom domain first; older servers don't send the fact, so look it up.
+    if let Some(d) = api_custom_domain.map(str::trim).filter(|d| !d.is_empty()) {
+        return format!("https://{d}");
+    }
+    if let Some(url) = crate::auth::custom_domain_url(client, server, project_id).await {
+        return url;
+    }
     if let Some(url) = api_url {
         let url = url.trim();
         if !url.is_empty() && !url.contains("https://https://") && !url.contains(".https://") {

@@ -237,7 +237,8 @@ pub async fn deploy_compose(
         Json(json!({
             "status": "deploying",
             "project_id": form.project_id,
-            "url": if v.is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", form.project_id, state.platform.domain())) },
+            "url": if v.is_background { serde_json::Value::Null } else { json!(crate::routes::deploy::resolved_project_url(&form.project_id, p.project.custom_domain.as_deref(), &state.platform.domain())) },
+            "custom_domain": p.project.custom_domain,
             "message": "Compose deployment started in background",
             "warnings": sock_warnings,
         })),

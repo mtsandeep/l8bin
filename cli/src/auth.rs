@@ -511,6 +511,35 @@ pub fn project_live_url(project_id: &str, domain: &str) -> String {
     format!("https://{}.{}", project_id, domain.trim().trim_start_matches('.'))
 }
 
+/// `https://{custom_domain}` when the project has one set (best-effort).
+pub async fn custom_domain_url(client: &reqwest::Client, server: &str, project_id: &str) -> Option<String> {
+    let project = api_get(client, server, &format!("/projects/{project_id}")).await.ok()?;
+    let domain = project["custom_domain"].as_str().map(str::trim).filter(|d| !d.is_empty())?;
+    Some(format!("https://{domain}"))
+}
+
+/// Public URL preferring the custom domain, else the managed subdomain.
+pub async fn project_public_url(client: &reqwest::Client, server: &str, project_id: &str) -> String {
+    project_public_url_with(client, server, project_id, None).await
+}
+
+/// Same, with a caller-supplied custom domain (e.g. from a deploy response).
+pub async fn project_public_url_with(
+    client: &reqwest::Client,
+    server: &str,
+    project_id: &str,
+    known_custom_domain: Option<&str>,
+) -> String {
+    if let Some(d) = known_custom_domain.map(str::trim).filter(|d| !d.is_empty()) {
+        return format!("https://{d}");
+    }
+    if let Some(url) = custom_domain_url(client, server, project_id).await {
+        return url;
+    }
+    let domain = fetch_platform_domain(client, server).await;
+    project_live_url(project_id, &domain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{derive_domain_from_server, project_live_url};

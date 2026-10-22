@@ -147,6 +147,7 @@ pub(super) async fn build_and_deploy(
         deploy_resp.status,
         deploy_resp.node_id.as_deref().or(selected_node.as_deref()),
         deploy_resp.url.as_deref(),
+        deploy_resp.custom_domain.as_deref(),
         is_background,
         &deploy_spinner,
         "Deployment staged",
@@ -168,6 +169,7 @@ pub(super) async fn finish_deploy_response(
     status: ProjectStatus,
     stage_node: Option<&str>,
     api_url: Option<&str>,
+    api_custom_domain: Option<&str>,
     is_background: bool,
     deploy_spinner: &indicatif::ProgressBar,
     staged_label: &str,
@@ -189,7 +191,7 @@ pub(super) async fn finish_deploy_response(
         if is_background {
             return Ok(None);
         }
-        return Ok(Some(resolve_live_url(client, server, project_id, api_url).await));
+        return Ok(Some(resolve_live_url(client, server, project_id, api_url, api_custom_domain).await));
     }
 
     if status == ProjectStatus::Deploying {
@@ -212,7 +214,7 @@ pub(super) async fn finish_deploy_response(
     if is_background {
         return Ok(None);
     }
-    Ok(Some(resolve_live_url(client, server, project_id, api_url).await))
+    Ok(Some(resolve_live_url(client, server, project_id, api_url, api_custom_domain).await))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -334,6 +336,7 @@ async fn deploy_compose(
         resp_status,
         resp_node,
         resp["url"].as_str(),
+        resp["custom_domain"].as_str(),
         is_background,
         &deploy_spinner,
         "Compose deployment staged",

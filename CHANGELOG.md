@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Deploy output (`l8b ship`, `l8b deploy`, MCP `deploy`) shows the project's custom domain when one is set, matching `l8b status`, instead of always the managed subdomain.
+- **Docs no longer serve stale after a redeploy** — guide markdown, `openapi.json` and `llms*.txt` now carry `Cache-Control: no-cache` (and the docs SPA fetches with revalidation), so browsers revalidate instead of serving heuristic-cached pre-deploy docs; hashed JS/CSS keep normal caching.
+- **Docs guides load again** — sidebar anchors synced to the deployed file names.
+
+### Changed
+- Deploy API responses now carry the raw `custom_domain` fact alongside `url`, and `url` is resolved (custom domain when set, else the managed subdomain); the CLI reads it from the response and only falls back to a project lookup on older servers.
+
 ## [0.4.13] - 2026-10-21
 
 ### Fixed

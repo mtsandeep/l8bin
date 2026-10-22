@@ -197,8 +197,7 @@ pub(crate) async fn run(
         let url = if effective_background {
             None
         } else {
-            let domain = auth::fetch_platform_domain(&client, &server).await;
-            Some(auth::project_live_url(&project, &domain))
+            Some(auth::project_public_url(&client, &server, &project).await)
         };
         finish_deploy(out, &project, final_status, url, effective_background, started)?;
         apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
@@ -286,17 +285,18 @@ pub(crate) async fn run(
             let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
             let url = if effective_background {
                 None
-            } else if let Some(u) = response.url.as_deref().filter(|u| !u.is_empty()) {
-                Some(u.to_string())
             } else {
-                let domain = auth::fetch_platform_domain(&client, &server).await;
-                Some(auth::project_live_url(&project, &domain))
+                Some(auth::project_public_url_with(&client, &server, &project, response.custom_domain.as_deref()).await)
             };
             finish_deploy(out, &project, final_status, url, effective_background, started)?;
             apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
         } else {
             let final_status = Some(response.status);
-            let url = response.url.clone().filter(|u| !u.is_empty());
+            let url = if effective_background {
+                None
+            } else {
+                Some(auth::project_public_url_with(&client, &server, &project, response.custom_domain.as_deref()).await)
+            };
             finish_deploy(out, &project, final_status, url, effective_background, started)?;
             apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
         }

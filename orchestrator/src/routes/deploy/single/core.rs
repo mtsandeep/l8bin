@@ -405,7 +405,8 @@ async fn stage_only_path(
             "status": "unconfigured",
             "project_id": payload.project_id,
             "node_id": node_id,
-            "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", payload.project_id, state.platform.domain())) },
+            "url": if is_background { serde_json::Value::Null } else { json!(crate::routes::deploy::resolved_project_url(&payload.project_id, project.custom_domain.as_deref(), &state.platform.domain())) },
+            "custom_domain": project.custom_domain,
             "message": "Deployment staged. Configure runtime secrets, then start the project.",
         })),
     )
@@ -552,7 +553,8 @@ pub(super) async fn execute_deploy(
         Json(json!({
             "status": "deploying",
             "project_id": payload.project_id,
-            "url": if is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", payload.project_id, state.platform.domain())) },
+            "url": if is_background { serde_json::Value::Null } else { json!(crate::routes::deploy::resolved_project_url(&payload.project_id, project.custom_domain.as_deref(), &state.platform.domain())) },
+            "custom_domain": project.custom_domain,
             "message": "Deployment started in background"
         })),
     )

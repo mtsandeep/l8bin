@@ -164,7 +164,8 @@ pub(super) async fn remote_deploy_path(
         Json(json!({
             "status": "deployed",
             "project_id": project_id,
-            "url": if v.is_background { serde_json::Value::Null } else { json!(format!("https://{}.{}", project_id, state.platform.domain())) },
+            "url": if v.is_background { serde_json::Value::Null } else { json!(crate::routes::deploy::resolved_project_url(project_id, p.project.custom_domain.as_deref(), &state.platform.domain())) },
+            "custom_domain": p.project.custom_domain,
             "warnings": agent_warnings,
         })),
     )
