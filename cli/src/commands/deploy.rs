@@ -194,11 +194,8 @@ pub(crate) async fn run(
 
         // Poll for completion (2 min timeout, non-interactive)
         let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
-        let url = if effective_background {
-            None
-        } else {
-            Some(auth::project_public_url(&client, &server, &project).await)
-        };
+        let url =
+            if effective_background { None } else { Some(auth::project_public_url(&client, &server, &project).await) };
         finish_deploy(out, &project, final_status, url, effective_background, started)?;
         apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
     } else {

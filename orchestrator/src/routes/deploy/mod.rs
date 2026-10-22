@@ -18,10 +18,7 @@ mod tests {
 
     #[test]
     fn prefers_custom_domain() {
-        assert_eq!(
-            resolved_project_url("app", Some(" example.com "), "l8b.in"),
-            "https://example.com"
-        );
+        assert_eq!(resolved_project_url("app", Some(" example.com "), "l8b.in"), "https://example.com");
     }
 
     #[test]
