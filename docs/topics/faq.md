@@ -14,6 +14,7 @@
 - [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake)
 - [Volumes & Persistent Data](#volumes--persistent-data)
 - [Custom Routes Not Working](#custom-routes-not-working)
+- [Custom Domains & www](#custom-domains--www)
 - [Docker Images & Disk Space](#docker-images--disk-space)
 - [Memory Usage](#memory-usage)
 
@@ -519,6 +520,39 @@ curl -X POST https://l8bin.example.com/projects/myapp/routes \
   -H "Content-Type: application/json" \
   -d '{"route_type": "path", "path": "/api", "upstream": "litebin-myapp.backend:9090"}'
 ```
+
+---
+
+## Custom Domains & www
+
+### Which host becomes canonical?
+
+The domain you enter is the canonical one; the other variant gets a 301 redirect to it, path and query preserved:
+
+| You enter | Canonical | Redirects |
+|---|---|---|
+| `domain.com` | `domain.com` | `www.domain.com` → `domain.com` |
+| `www.domain.com` | `www.domain.com` | `domain.com` → `www.domain.com` |
+
+Set it with `l8b domain set myapp domain.com` or in the dashboard's project settings. A sleeping project wakes on either variant; the redirect applies once it's running.
+
+### DNS entries
+
+The redirect happens at your server, so **both hostnames must resolve to it** — a missing record on the non-canonical variant means no redirect, just a failed lookup:
+
+| Hostname | Record |
+|---|---|
+| `domain.com` (apex) | A → your server's public IP |
+| `www.domain.com` | CNAME → `domain.com` (or its own A → server IP) |
+
+These two records cover both rows of the table above, whichever one you entered. Notes:
+
+- In `cloudflare_dns` routing mode, LiteBin creates A records for both variants automatically when the custom domain's zone is managed by the configured Cloudflare token; otherwise create them yourself as above.
+- TLS certificates are issued on demand for both hostnames — nothing extra to set up. Proxied (orange-cloud) records in front of the server work fine.
+
+### www isn't redirecting
+
+Almost always DNS: check that the non-canonical hostname resolves (`dig www.domain.com +short`) before debugging redirects — the redirect only fires once the request reaches the server. If it resolves but redirects to a URL ending in `}`, update the orchestrator (fixed redirect template).
 
 ---
 

@@ -315,7 +315,7 @@ impl MasterProxyRouter {
                             "handler": "static_response",
                             "status_code": 301,
                             "headers": {
-                                "Location": [format!("https://{}{{{{uri}}}}", canonical)]
+                                "Location": [format!("https://{}{{uri}}", canonical)]
                             }
                         }]
                     }));
@@ -466,5 +466,35 @@ mod tests {
         assert_eq!(dashboard["handle"][0]["upstreams"][0]["dial"], "litebin-orchestrator:5080");
         assert!(dashboard["handle"][0].get("subroute").is_none(), "no subroute split");
         assert!(dashboard["match"][0].get("path").is_none(), "no path matcher");
+    }
+
+    /// A running custom domain's www variant gets a 301 to the canonical host,
+    /// preserving the `{uri}` placeholder in the Location header.
+    #[test]
+    fn www_redirect_location_keeps_uri_placeholder() {
+        let router = MasterProxyRouter::new(CaddyClient::new("http://127.0.0.1:1"), String::new());
+        let project = ProjectRoute {
+            project_id: "app".into(),
+            upstream: "litebin-app:80".into(),
+            subdomain_host: "app.example.com".into(),
+            custom_domain: Some("app.customer.com".into()),
+            node_id: None,
+            node_public_ip: None,
+            host_rewrite: None,
+            upstream_tls: false,
+            container_upstream: None,
+            custom_routes: vec![],
+        };
+        let config = router.build_config(&[project], "example.com", "litebin-orchestrator:5080", "l8bin", "poke");
+        let routes = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array().unwrap();
+
+        let redirect = routes
+            .iter()
+            .find(|r| r["match"][0]["host"].as_array().is_some_and(|h| h.contains(&json!("www.app.customer.com"))))
+            .expect("www redirect route exists");
+
+        assert_eq!(redirect["handle"][0]["handler"], "static_response");
+        assert_eq!(redirect["handle"][0]["status_code"], 301);
+        assert_eq!(redirect["handle"][0]["headers"]["Location"][0], "https://app.customer.com{uri}");
     }
 }

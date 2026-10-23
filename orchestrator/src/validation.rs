@@ -18,14 +18,13 @@ pub fn is_unique_constraint(e: &sqlx::Error) -> bool {
 }
 
 /// Strict custom-domain validation shared by deploy and settings paths.
-/// Returns the canonical form (trimmed, lowercased, trailing dot and `www.` stripped).
+/// Returns the canonical form (trimmed, lowercased, trailing dot stripped).
+/// `www.` is kept as entered — www vs bare decides which host is canonical
+/// (the other variant redirects to it).
 pub fn validate_custom_domain(raw: &str) -> Result<String, String> {
-    let mut d = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    let d = raw.trim().trim_end_matches('.').to_ascii_lowercase();
     if d.is_empty() {
         return Err("domain must not be empty".into());
-    }
-    if let Some(rest) = d.strip_prefix("www.") {
-        d = rest.to_string();
     }
     if d.contains('*') {
         return Err("wildcard domains are not allowed".into());
@@ -76,7 +75,7 @@ mod tests {
     #[test]
     fn valid_custom_domains() {
         assert_eq!(validate_custom_domain("app.example.com").unwrap(), "app.example.com");
-        assert_eq!(validate_custom_domain("  WWW.Example.COM.  ").unwrap(), "example.com");
+        assert_eq!(validate_custom_domain("  WWW.Example.COM.  ").unwrap(), "www.example.com");
         assert_eq!(validate_custom_domain("localhost").unwrap(), "localhost");
         assert_eq!(validate_custom_domain("a-b.c-d.example.co").unwrap(), "a-b.c-d.example.co");
     }
