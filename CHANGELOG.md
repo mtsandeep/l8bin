@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **Docs guides load again** — sidebar anchors synced to the deployed file names.
 
 ### Changed
+- Custom-domain DNS instructions in project settings now list the record for the redirected variant too (www or non-www), with the redirect direction marked.
 - Custom domains: `www.` is no longer stripped on entry — entering `www.domain.com` makes www canonical (bare 301s to www); entering the bare domain keeps bare canonical.
 - Deploy API responses now carry the raw `custom_domain` fact alongside `url`, and `url` is resolved (custom domain when set, else the managed subdomain); the CLI reads it from the response and only falls back to a project lookup on older servers.
 

@@ -423,34 +423,41 @@ export default function SettingsPopover({
                   {(() => {
                     const cd = customDomainInput.trim() || project.custom_domain;
                     if (!cd) return null;
-                    const parts = cd.split('.');
-                    const isApex = parts.length <= 2;
-                    if (isApex) {
-                      return (
-                        <>
-                          {dnsTarget && (
-                            <div>
-                              A record <span className="text-slate-400 font-mono">{cd}</span> →{' '}
-                              <span className="text-slate-400 font-mono">{dnsTarget}</span>
-                            </div>
-                          )}
-                          <div>
-                            CNAME <span className="text-slate-400 font-mono">{cd}</span> →{' '}
-                            <span className="text-slate-400 font-mono">
-                              {project.id}.{domain}
-                            </span>{' '}
-                            <span className="text-slate-500">(Cloudflare only)</span>
-                          </div>
-                        </>
-                      );
-                    }
-                    return (
-                      <div>
-                        CNAME <span className="text-slate-400 font-mono">{cd}</span> →{' '}
-                        <span className="text-slate-400 font-mono">
-                          {project.id}.{domain}
+                    const target = `${project.id}.${domain}`;
+                    // Both hosts of the www↔bare pair need records; the note marks
+                    // the non-canonical one (it redirects to what you entered).
+                    const bare =
+                      cd.startsWith('www.') && cd.slice(4).includes('.') ? cd.slice(4) : cd;
+                    const www = `www.${bare}`;
+                    const isApex = bare.split('.').length <= 2;
+                    const mono = (s: string) => <span className="text-slate-400 font-mono">{s}</span>;
+                    const redirected = cd === bare ? www : bare;
+                    const note = (host: string) =>
+                      host === redirected ? (
+                        <span className="text-slate-500">
+                          {' '}
+                          ({redirected === www ? 'www' : 'non-www'} redirect)
                         </span>
-                      </div>
+                      ) : null;
+                    return (
+                      <>
+                        <div>
+                          {isApex ? (
+                            <>
+                              A record {mono(bare)} → {mono(dnsTarget || '{server IP}')}
+                            </>
+                          ) : (
+                            <>
+                              CNAME {mono(bare)} → {mono(target)}
+                            </>
+                          )}
+                          {note(bare)}
+                        </div>
+                        <div>
+                          CNAME {mono(www)} → {mono(target)}
+                          {note(www)}
+                        </div>
+                      </>
                     );
                   })()}
                 </div>

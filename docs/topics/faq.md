@@ -548,6 +548,7 @@ The redirect happens at your server, so **both hostnames must resolve to it** �
 These two records cover both rows of the table above, whichever one you entered. Notes:
 
 - In `cloudflare_dns` routing mode, LiteBin creates A records for both variants automatically when the custom domain's zone is managed by the configured Cloudflare token; otherwise create them yourself as above.
+- On Cloudflare you can use a flattened CNAME at the apex (`domain.com → myapp.example-server.com`) instead of the A record; at other providers the apex needs the A record.
 - TLS certificates are issued on demand for both hostnames — nothing extra to set up. Proxied (orange-cloud) records in front of the server work fine.
 
 ### www isn't redirecting
