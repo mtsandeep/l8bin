@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- `l8b ship` with several stored logins now offers a pick list of logged-in servers (plus "Add a new server…") instead of a free-text Server URL prompt.
 - Fix www→bare redirect in master-proxy mode emitting `https://host}` — the `{uri}` placeholder was double-escaped there.
 - Deploy output (`l8b ship`, `l8b deploy`, MCP `deploy`) shows the project's custom domain when one is set, matching `l8b status`, instead of always the managed subdomain.
 - **Docs no longer serve stale after a redeploy** — guide markdown, `openapi.json` and `llms*.txt` now carry `Cache-Control: no-cache` (and the docs SPA fetches with revalidation), so browsers revalidate instead of serving heuristic-cached pre-deploy docs; hashed JS/CSS keep normal caching.

@@ -553,15 +553,40 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     // Not-logged-in/ambiguous is interactive ship's cue to pair;
                     // a repo-bound server skips the URL question.
                     let (message, _) = crate::out::split_hint(&e);
-                    let server = match (message.contains("not logged in"), message.contains("ambiguous")) {
-                        (true, _) if toml_server.is_some() => toml_server.clone().unwrap(),
-                        (true, _) | (_, true) => dialoguer::Input::<String>::new()
+                    let not_logged_in = message.contains("not logged in");
+                    let ambiguous = message.contains("ambiguous");
+                    if !not_logged_in && !ambiguous {
+                        return Err(e);
+                    }
+                    // Ambiguous = logged in to several servers: pick one, don't re-auth.
+                    let server = if ambiguous {
+                        let mut items: Vec<String> =
+                            config::CredentialStore::load().logged_in_servers().into_iter().cloned().collect();
+                        let mut choices = items.clone();
+                        choices.push("Add a new server…".to_string());
+                        let pick =
+                            dialoguer::Select::new().with_prompt("Which server?").items(&choices).default(0).interact()?;
+                        if pick < items.len() { items.remove(pick) } else {
+                            dialoguer::Input::<String>::new()
+                                .with_prompt("Server URL")
+                                .default(cfg.server.clone().unwrap_or_default())
+                                .interact_text()?
+                        }
+                    } else if let Some(s) = toml_server {
+                        s
+                    } else {
+                        dialoguer::Input::<String>::new()
                             .with_prompt("Server URL")
                             .default(cfg.server.clone().unwrap_or_default())
-                            .interact_text()?,
-                        _ => return Err(e),
+                            .interact_text()?
                     };
-                    auth::login_interactive(&server, "manage").await?;
+                    // A stored credential for this server means no login needed.
+                    let already_logged_in = config::CredentialStore::load()
+                        .get(&config::normalize_server(&server))
+                        .is_some_and(|c| c.auth_header().is_some());
+                    if !already_logged_in {
+                        auth::login_interactive(&server, "manage").await?;
+                    }
                     let cfg = config::CliConfig::load(Some(&server), None);
                     auth::resolve_target(&cfg, dir)?
                 }
