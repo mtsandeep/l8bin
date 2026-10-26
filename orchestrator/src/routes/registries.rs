@@ -633,10 +633,7 @@ mod tests {
     fn username_password_is_encoded_to_base64() {
         let auth = resolve_auth_input(Some("user"), Some("pa:ss"), None).unwrap().unwrap();
         assert_eq!(auth, "dXNlcjpwYTpzcw=="); // base64 of "user:pa:ss"
-        assert_eq!(
-            litebin_common::registry::decode_auth(&auth).map(|(u, p)| (u, p)),
-            Some(("user".to_string(), "pa:ss".to_string()))
-        );
+        assert_eq!(litebin_common::registry::decode_auth(&auth), Some(("user".to_string(), "pa:ss".to_string())));
     }
 
     #[test]
