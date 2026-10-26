@@ -89,6 +89,7 @@ fn request(project_id: &str, compose_yaml: String) -> BatchRunRequest {
         service_resources: None,
         default_memory_limit_mb: None,
         default_cpu_limit: None,
+        registry_config: None,
     }
 }
 

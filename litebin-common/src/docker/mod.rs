@@ -81,6 +81,13 @@ pub struct DockerManager {
     pub(crate) host_projects_dir: Option<String>,
     /// Cached CPU stat samples per container_id for delta computation.
     pub(crate) cpu_samples: Arc<Mutex<HashMap<String, CpuSample>>>,
+    /// Registry pull state: configured registries, credentials, mirror chains
+    /// (orchestrator: from the `registries` table; agents: from deploy requests).
+    pub(crate) registry_state: Arc<std::sync::RwLock<crate::registry::RegistryState>>,
+    /// Original image name → winning pull reference (mirrors rewrite names).
+    /// Container creation consults this so containers use the reference the
+    /// image actually exists under locally.
+    pub(crate) resolved_refs: Arc<std::sync::RwLock<HashMap<String, String>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +123,8 @@ impl Clone for DockerManager {
             cpu_limit: Arc::clone(&self.cpu_limit),
             host_projects_dir: self.host_projects_dir.clone(),
             cpu_samples: Arc::clone(&self.cpu_samples),
+            registry_state: Arc::clone(&self.registry_state),
+            resolved_refs: Arc::clone(&self.resolved_refs),
         }
     }
 }
@@ -134,6 +143,8 @@ impl DockerManager {
             cpu_limit: Arc::new(AtomicU64::new(cpu_limit.to_bits())),
             host_projects_dir: None,
             cpu_samples: Arc::new(Mutex::new(HashMap::new())),
+            registry_state: Arc::new(std::sync::RwLock::new(crate::registry::RegistryState::default())),
+            resolved_refs: Arc::new(std::sync::RwLock::new(HashMap::new())),
         })
     }
 
@@ -148,6 +159,8 @@ impl DockerManager {
             cpu_limit: Arc::new(AtomicU64::new(0.0_f64.to_bits())),
             host_projects_dir: None,
             cpu_samples: Arc::new(Mutex::new(HashMap::new())),
+            registry_state: Arc::new(std::sync::RwLock::new(crate::registry::RegistryState::default())),
+            resolved_refs: Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
     }
 

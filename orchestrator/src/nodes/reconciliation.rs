@@ -254,6 +254,7 @@ mod tests {
                 host TEXT NOT NULL,
                 architecture TEXT,
                 version TEXT,
+                protocol_version INTEGER NOT NULL DEFAULT 0,
                 public_ip TEXT,
                 agent_port INTEGER NOT NULL DEFAULT 8443,
                 region TEXT,

@@ -8,6 +8,7 @@ pub mod docker;
 pub mod heartbeat;
 pub mod net;
 pub mod proxy;
+pub mod registry;
 pub mod routing;
 pub mod scan;
 pub mod sys;

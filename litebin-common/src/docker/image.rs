@@ -5,7 +5,6 @@ use bollard::query_parameters::{
     RemoveVolumeOptions, StatsOptions,
 };
 use futures_util::StreamExt;
-use serde::Deserialize;
 
 use crate::types::{VolumeKind, classify_volume, project_network_name};
 
@@ -15,6 +14,11 @@ use super::{ContainerStats, CpuSample, DiskUsage, DockerErrorKind, DockerManager
 /// Excludes the shared default network and private Docker observation networks.
 /// Callback receiving Docker's native pull output lines.
 pub type ProgressCallback = Box<dyn Fn(&str) + Send + Sync>;
+
+/// Docker Engine API pulls ALL tags when no tag is specified — default to :latest.
+fn default_tag(image: &str) -> String {
+    if image.contains(':') && !image.starts_with("sha256:") { image.to_string() } else { format!("{image}:latest") }
+}
 
 pub(crate) fn is_app_project_network(name: &str) -> bool {
     name.starts_with("litebin-") && name != crate::types::DEFAULT_DOCKER_NETWORK && !name.ends_with("-docker-observe")
@@ -68,50 +72,60 @@ impl DockerManager {
         }
     }
 
-    /// Pull a Docker image, optionally forcing a registry check.
-    /// When `force` is false, checks if the image exists locally first and skips the pull.
-    /// Read Docker registry credentials from LITEBIN_REGISTRY_URL + LITEBIN_REGISTRY_AUTH env vars.
-    /// Falls back to ~/.docker/config.json for inline auth entries.
-    fn read_docker_credentials() -> Option<DockerCredentials> {
-        // 1. Check env vars (base64 user:password)
-        if let Ok(auth_b64) = std::env::var("LITEBIN_REGISTRY_AUTH")
-            && !auth_b64.is_empty()
-        {
-            let serveraddress =
-                std::env::var("LITEBIN_REGISTRY_URL").unwrap_or_else(|_| "https://index.docker.io/v1/".to_string());
-            return Some(DockerCredentials {
-                auth: Some(auth_b64),
-                serveraddress: Some(serveraddress),
-                ..Default::default()
-            });
+    /// Replace the registry pull state (orchestrator side).
+    pub fn set_registry_state(&self, wire: &crate::registry::RegistryWireConfig) {
+        let state = crate::registry::registry_state(wire);
+        if let Ok(mut guard) = self.registry_state.write() {
+            *guard = state;
         }
+    }
 
-        // 2. Read ~/.docker/config.json for inline auth
-        let home = std::env::var("HOME").ok()?;
-        let path = std::path::Path::new(&home).join(".docker/config.json");
-        let content = std::fs::read_to_string(&path).ok()?;
-
-        #[derive(Deserialize)]
-        struct DockerConfig {
-            auths: Option<std::collections::HashMap<String, serde_json::Value>>,
-        }
-
-        let config: DockerConfig = serde_json::from_str(&content).ok()?;
-        let auths = config.auths?;
-
-        for key in &["https://index.docker.io/v1/", "https://registry-1.docker.io/v1/"] {
-            if let Some(entry) = auths.get(*key) {
-                let auth = entry.get("auth")?.as_str()?;
-                if !auth.is_empty() {
-                    return Some(DockerCredentials {
-                        auth: Some(auth.to_string()),
-                        serveraddress: Some(key.to_string()),
-                        ..Default::default()
-                    });
-                }
+    /// Merge pull state carried in a deploy request (agent side).
+    pub fn merge_registry_state(&self, wire: &crate::registry::RegistryWireConfig) {
+        let Ok(mut guard) = self.registry_state.write() else { return };
+        let mut state = std::mem::take(&mut *guard);
+        for config in &wire.registries {
+            if let Some(host) = crate::registry::host_from_url(&config.serveraddress) {
+                state.registries.insert(crate::registry::canonical_host(&host).to_string(), config.clone());
             }
         }
-        None
+        if let Some(default) = wire.default.as_deref().and_then(crate::registry::host_from_url) {
+            let host = crate::registry::canonical_host(&default).to_string();
+            if state.registries.contains_key(&host) {
+                state.default_host = Some(host);
+            }
+        }
+        *guard = state;
+    }
+
+    /// The local reference an original image name resolved to (a mirror may
+    /// rewrite the name). Container creation uses this so the container refers
+    /// to the reference the image actually exists under.
+    pub fn resolved_image_ref(&self, image_ref: &str) -> String {
+        self.resolved_refs
+            .read()
+            .ok()
+            .and_then(|refs| refs.get(image_ref).cloned())
+            .unwrap_or_else(|| image_ref.to_string())
+    }
+
+    fn remember_resolved(&self, original: &str, resolved: &str) {
+        if let Ok(mut refs) = self.resolved_refs.write() {
+            refs.insert(original.to_string(), resolved.to_string());
+        }
+    }
+
+    fn pull_candidates(&self, image: &str) -> Vec<crate::registry::PullCandidate> {
+        let tagged = default_tag(image);
+        let Ok(state) = self.registry_state.read() else {
+            return vec![crate::registry::PullCandidate {
+                image_ref: tagged,
+                host: crate::registry::image_ref_canonical_host(image).to_string(),
+                auth: None,
+                is_mirror: false,
+            }];
+        };
+        crate::registry::pull_candidates(&tagged, &state)
     }
 
     fn format_bytes(bytes: i64) -> String {
@@ -126,45 +140,76 @@ impl DockerManager {
         } else if b >= 1024 {
             format!("{:.1}KB", b as f64 / 1024.0)
         } else {
-            format!("{}B", b)
+            format!("{}B", b as f64 / 1024.0)
         }
     }
 
     /// Pull a Docker image with an optional progress callback that receives Docker's
     /// native pull output (status messages, layer progress, etc.).
+    ///
+    /// Tries the registry's mirrors in order before the registry itself and
+    /// returns the reference the image now exists under locally (mirrors
+    /// rewrite the name).
     pub async fn pull_image_with_progress(
         &self,
         image: &str,
         force: bool,
         on_progress: Option<ProgressCallback>,
-    ) -> anyhow::Result<()> {
-        // Docker Engine API pulls ALL tags when no tag is specified — always default to :latest
-        let image_ref = if image.contains(':') && !image.starts_with("sha256:") {
-            image.to_string()
-        } else {
-            format!("{}:latest", image)
-        };
+    ) -> anyhow::Result<String> {
+        let candidates = self.pull_candidates(image);
 
+        // Local fast path: any candidate already present wins, in mirror order.
         if !force {
-            match self.docker.inspect_image(&image_ref).await {
-                Ok(_) => {
-                    tracing::info!(image = %image_ref, "image exists locally, skipping pull");
-                    if let Some(ref cb) = on_progress {
-                        cb(&format!("Image {} exists locally, skipping pull", image_ref));
+            for candidate in &candidates {
+                match self.docker.inspect_image(&candidate.image_ref).await {
+                    Ok(_) => {
+                        tracing::info!(image = %candidate.image_ref, "image exists locally, skipping pull");
+                        if let Some(ref cb) = on_progress {
+                            cb(&format!("Image {} exists locally, skipping pull", candidate.image_ref));
+                        }
+                        self.remember_resolved(image, &candidate.image_ref);
+                        return Ok(candidate.image_ref.clone());
                     }
-                    return Ok(());
-                }
-                Err(_) => {
-                    tracing::debug!(image = %image_ref, "image not found locally, will pull");
+                    Err(_) => tracing::debug!(image = %candidate.image_ref, "image not found locally"),
                 }
             }
         }
 
-        tracing::info!(image = %image_ref, "pulling image");
+        let mut failures: Vec<String> = Vec::new();
+        for candidate in &candidates {
+            tracing::info!(image = %candidate.image_ref, mirror = candidate.is_mirror, "pulling image");
+            if let Some(ref cb) = on_progress {
+                cb(&format!("Pulling {}…", candidate.image_ref));
+            }
+            match self.pull_single(candidate, on_progress.as_ref()).await {
+                Ok(()) => {
+                    self.remember_resolved(image, &candidate.image_ref);
+                    return Ok(candidate.image_ref.clone());
+                }
+                Err(e) => {
+                    tracing::warn!(image = %candidate.image_ref, error = %e, "pull failed, trying next source");
+                    failures.push(format!("{}: {e}", candidate.image_ref));
+                }
+            }
+        }
 
+        anyhow::bail!("pull failed for {image} (tried {})", failures.join("; "))
+    }
+
+    /// Stream a single pull attempt. The daemon's token-auth exchange needs
+    /// decoded username/password — the raw base64 `auth` field alone is
+    /// ignored (401 on ghcr & co).
+    async fn pull_single(
+        &self,
+        candidate: &crate::registry::PullCandidate,
+        on_progress: Option<&ProgressCallback>,
+    ) -> anyhow::Result<()> {
+        let image_ref = candidate.image_ref.clone();
         let options = CreateImageOptions { from_image: Some(image_ref.clone()), ..Default::default() };
-
-        let credentials = Self::read_docker_credentials();
+        let credentials =
+            candidate.auth.as_deref().and_then(crate::registry::decode_auth).map(|(username, password)| {
+                DockerCredentials { username: Some(username), password: Some(password), ..Default::default() }
+            });
         let mut stream = self.docker.create_image(Some(options), None, credentials);
 
         let mut last_pct: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
@@ -209,7 +254,7 @@ impl DockerManager {
 
                         if let Some(m) = msg {
                             tracing::debug!(image = %image_ref, "pull: {}", m);
-                            if let Some(ref cb) = on_progress {
+                            if let Some(cb) = on_progress {
                                 cb(&m);
                             }
                         }
@@ -227,12 +272,13 @@ impl DockerManager {
     }
 
     /// Pull a Docker image, optionally skipping if it exists locally.
-    pub async fn pull_image_with_opts(&self, image: &str, force: bool) -> anyhow::Result<()> {
+    /// Returns the local reference the image now exists under.
+    pub async fn pull_image_with_opts(&self, image: &str, force: bool) -> anyhow::Result<String> {
         self.pull_image_with_progress(image, force, None).await
     }
 
     /// Pull a Docker image (always contacts the registry).
-    pub async fn pull_image(&self, image: &str) -> anyhow::Result<()> {
+    pub async fn pull_image(&self, image: &str) -> anyhow::Result<String> {
         self.pull_image_with_opts(image, true).await
     }
 

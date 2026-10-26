@@ -103,6 +103,7 @@ pub(super) async fn run_deploy_task(
             return Ok(());
         }
         let agent = nodes::client::AgentClient::resolve(&state_clone, &node_id_clone).await?;
+        let registry_config = nodes::registry_auth::registry_config_for_node(&state_clone.db, &node_id_clone).await?;
 
         let run_request = litebin_common::agent_api::RunRequest {
             image: payload_clone.image.clone(),
@@ -118,6 +119,7 @@ pub(super) async fn run_deploy_task(
             docker_observe: granted_capabilities
                 .contains(&litebin_common::capabilities::ProjectCapability::DockerObserve),
             stage_only: false,
+            registry_config,
         };
 
         let run_resp = match agent.run(&run_request).await {

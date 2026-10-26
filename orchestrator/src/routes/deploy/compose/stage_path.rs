@@ -44,7 +44,7 @@ pub(super) async fn stage_only_path(
             }
         };
 
-        let payload = crate::routes::manage::multi_service::build_batch_run_payload(
+        let payload = match crate::routes::manage::multi_service::build_batch_run_payload(
             &state.db,
             crate::routes::manage::multi_service::BatchRunInputs {
                 project_id: project_id.clone(),
@@ -57,9 +57,27 @@ pub(super) async fn stage_only_path(
                 is_background: v.is_background,
                 force_pull: false,
                 stage_only: true,
+                node_id: None,
             },
         )
-        .await;
+        .await
+        {
+            Ok(payload) => payload,
+            Err(e) => {
+                if let Err(e) = status::transition(
+                    &state.db,
+                    project_id,
+                    ProjectStatus::Error,
+                    &ProjectUpdateFields::default(),
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!(project_id = %project_id, error = %e, "compose stage: failed to transition to Error");
+                }
+                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": e.to_string()}))).into_response();
+            }
+        };
         if let Err(e) = agent.batch_run(&payload).await {
             if let nodes::client::AgentClientError::Status { body, .. } = &e {
                 tracing::error!(body = %body, "remote compose stage failed");

@@ -20,6 +20,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::registry::RegistryWireConfig;
 use crate::types::VolumeMount;
 
 // ── Endpoint paths ────────────────────────────────────────────────────────────
@@ -75,6 +76,11 @@ pub struct RunRequest {
     /// No image pull or container start.
     #[serde(default = "default_false")]
     pub stage_only: bool,
+    /// Registry pull config (default registry, credentials, mirror chains) for
+    /// `image` and any managed sidecars. Absent on older orchestrators; agents
+    /// merge it in memory and never persist it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_config: Option<RegistryWireConfig>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -184,6 +190,11 @@ pub struct BatchRunRequest {
     /// Global default CPU limit from orchestrator settings. Used when neither
     /// the compose YAML nor per-service overrides specify a CPU limit.
     pub default_cpu_limit: Option<f64>,
+    /// Registry pull config (default registry, credentials, mirror chains) for
+    /// the compose services' images. Absent on older orchestrators; agents
+    /// merge it in memory and never persist it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_config: Option<RegistryWireConfig>,
 }
 
 /// Per-service resource overrides sent by the orchestrator.
@@ -382,6 +393,7 @@ mod tests {
             service_resources: None,
             default_memory_limit_mb: Some(256),
             default_cpu_limit: None,
+            registry_config: None,
         };
 
         let v = serde_json::to_value(&req).unwrap();
@@ -397,6 +409,44 @@ mod tests {
         assert_eq!(v["stage_only"], false);
         assert_eq!(v["default_memory_limit_mb"], 256);
         assert_eq!(v["default_cpu_limit"], serde_json::Value::Null);
+        assert!(v.get("registry_config").is_none(), "None registry_config must be omitted");
+    }
+
+    #[test]
+    fn batch_run_request_carries_registry_config() {
+        let req = BatchRunRequest {
+            registry_config: Some(RegistryWireConfig {
+                default: Some("https://index.docker.io/v1/".into()),
+                registries: vec![crate::registry::RegistryConfig {
+                    serveraddress: "https://index.docker.io/v1/".into(),
+                    auth: Some("dXNlcjpwYXNz".into()),
+                    mirrors: vec![crate::registry::MirrorConfig { url: "https://mirror.gcr.io".into(), auth: None }],
+                }],
+            }),
+            project_id: "p".into(),
+            compose_yaml: String::new(),
+            service_order: vec![],
+            target_services: None,
+            allow_raw_ports: None,
+            docker_observe: None,
+            host_network: None,
+            is_background: false,
+            force_pull: false,
+            stage_only: false,
+            service_resources: None,
+            default_memory_limit_mb: None,
+            default_cpu_limit: None,
+        };
+
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["registry_config"]["default"], "https://index.docker.io/v1/");
+        assert_eq!(v["registry_config"]["registries"][0]["mirrors"][0]["url"], "https://mirror.gcr.io");
+        assert_eq!(v["registry_config"]["registries"][0]["auth"], "dXNlcjpwYXNz");
+
+        // An older orchestrator's payload without the field still deserializes.
+        let legacy: BatchRunRequest =
+            serde_json::from_str(r#"{"project_id":"p","compose_yaml":"y","service_order":[]}"#).unwrap();
+        assert!(legacy.registry_config.is_none());
     }
 
     #[test]
@@ -445,6 +495,14 @@ mod tests {
             volumes: None,
             docker_observe: false,
             stage_only: true,
+            registry_config: Some(RegistryWireConfig {
+                default: Some("https://index.docker.io/v1/".into()),
+                registries: vec![crate::registry::RegistryConfig {
+                    serveraddress: "https://index.docker.io/v1/".into(),
+                    auth: Some("dXNlcjpwYXNz".into()),
+                    mirrors: vec![],
+                }],
+            }),
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["image"], "nginx");
@@ -453,6 +511,7 @@ mod tests {
         assert_eq!(v["memory_limit_mb"], 128);
         assert_eq!(v["docker_observe"], false);
         assert_eq!(v["stage_only"], true);
+        assert_eq!(v["registry_config"]["registries"][0]["serveraddress"], "https://index.docker.io/v1/");
     }
 
     #[test]

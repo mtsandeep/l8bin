@@ -289,7 +289,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
         (_, agent_ip) => agent_ip.clone(),
     };
     if let Err(e) = sqlx::query(
-        "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, public_ip = ?, architecture = ?, version = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, public_ip = ?, architecture = ?, version = ?, protocol_version = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
     )
     .bind(health.memory_total as i64)
     .bind(health.cpu_cores as f64)
@@ -300,6 +300,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
     .bind(&public_ip)
     .bind(&health.architecture)
     .bind(&health.version)
+    .bind(health.protocol_version as i64)
     .bind(now)
     .bind(now)
     .bind(&node.id)
@@ -326,6 +327,7 @@ mod tests {
                 host TEXT NOT NULL,
                 architecture TEXT,
                 version TEXT,
+                protocol_version INTEGER NOT NULL DEFAULT 0,
                 public_ip TEXT,
                 agent_port INTEGER NOT NULL DEFAULT 8443,
                 region TEXT,

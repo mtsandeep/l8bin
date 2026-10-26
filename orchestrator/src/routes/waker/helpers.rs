@@ -186,6 +186,7 @@ pub(super) async fn remote_recreate(
         }),
         docker_observe,
         stage_only: false,
+        registry_config: None,
     };
     let result = match agent.recreate(&run_request).await {
         Ok(result) => result,

@@ -118,33 +118,56 @@ pub(crate) struct BatchRunInputs {
     pub is_background: bool,
     pub force_pull: bool,
     pub stage_only: bool,
+    /// Target node; used for registry credential resolution. None/local skips it.
+    pub node_id: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ServiceRow {
+    service_name: String,
+    memory_limit_mb: Option<i64>,
+    cpu_limit: Option<f64>,
 }
 
 /// Assemble the agent batch-run request shared by start/recreate/deploy/stage.
 ///
 /// Per-service resource overrides and global default limits are read here —
 /// tolerantly: a read failure degrades to no overrides / platform defaults.
+/// Registry state errors propagate instead of degrading, so a broken registry
+/// config fails the deploy visibly.
 /// Capability flags are resolved by the caller (fresh lookups for lifecycle
 /// paths, persisted values during deploy) and passed in via `inputs`.
-pub(crate) async fn build_batch_run_payload(db: &sqlx::SqlitePool, inputs: BatchRunInputs) -> BatchRunRequest {
-    let service_resources: HashMap<String, ServiceResources> = sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
+pub(crate) async fn build_batch_run_payload(
+    db: &sqlx::SqlitePool,
+    inputs: BatchRunInputs,
+) -> anyhow::Result<BatchRunRequest> {
+    let service_rows: Vec<ServiceRow> = sqlx::query_as::<_, ServiceRow>(
         "SELECT service_name, memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ?",
     )
     .bind(&inputs.project_id)
     .fetch_all(db)
     .await
-    .unwrap_or_default()
-    .into_iter()
-    .filter_map(|(name, memory_limit_mb, cpu_limit)| {
-        (memory_limit_mb.is_some() || cpu_limit.is_some())
-            .then_some((name, ServiceResources { memory_limit_mb, cpu_limit }))
-    })
-    .collect();
+    .unwrap_or_default();
+    let service_resources: HashMap<String, ServiceResources> = service_rows
+        .iter()
+        .filter(|row| row.memory_limit_mb.is_some() || row.cpu_limit.is_some())
+        .map(|row| {
+            (
+                row.service_name.clone(),
+                ServiceResources { memory_limit_mb: row.memory_limit_mb, cpu_limit: row.cpu_limit },
+            )
+        })
+        .collect();
 
     let default_memory_limit_mb = read_setting(db, "default_memory_limit_mb", 256).await;
     let default_cpu_limit = read_setting(db, "default_cpu_limit", 0.5).await;
 
-    BatchRunRequest {
+    let registry_config = match inputs.node_id.as_deref().filter(|node| *node != "local") {
+        Some(node_id) => crate::nodes::registry_auth::registry_config_for_node(db, node_id).await?,
+        None => None,
+    };
+
+    Ok(BatchRunRequest {
         project_id: inputs.project_id,
         compose_yaml: inputs.compose_yaml,
         service_order: inputs.service_order,
@@ -158,7 +181,8 @@ pub(crate) async fn build_batch_run_payload(db: &sqlx::SqlitePool, inputs: Batch
         service_resources: Some(service_resources),
         default_memory_limit_mb: Some(default_memory_limit_mb),
         default_cpu_limit: Some(default_cpu_limit),
-    }
+        registry_config,
+    })
 }
 
 async fn read_setting<T: std::str::FromStr>(db: &sqlx::SqlitePool, key: &str, default: T) -> T {

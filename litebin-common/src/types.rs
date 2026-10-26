@@ -274,6 +274,8 @@ pub struct Node {
     pub host: String,
     pub architecture: Option<String>,
     pub version: Option<String>,
+    /// Agent API protocol version from health reports (0 = not reported).
+    pub protocol_version: i64,
     pub public_ip: Option<String>,
     pub agent_port: i64,
     pub region: Option<String>,

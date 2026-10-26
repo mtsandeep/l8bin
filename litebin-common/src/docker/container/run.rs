@@ -39,6 +39,9 @@ impl DockerManager {
     /// Returns (container_id, mapped_port). mapped_port is only meaningful for public services.
     pub async fn run_service_container(&self, config: &RunServiceConfig) -> anyhow::Result<(String, u16)> {
         let name = container_name(&config.project_id, &config.service_name, config.instance_id.as_deref());
+        // The image may live locally under a mirror's rewritten reference —
+        // pull resolution records it, and the container must use that name.
+        let image = self.resolved_image_ref(&config.image);
 
         let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
         let mut exposed_ports: Vec<String> = Vec::new();
@@ -134,7 +137,7 @@ impl DockerManager {
         };
 
         // Fix volume permissions for non-root containers.
-        let image_user = self.inspect_image_user(&config.image).await;
+        let image_user = self.inspect_image_user(&image).await;
         self.chown_bind_mounts(config, filtered_binds.as_ref(), image_user.as_deref());
 
         // Per-service resource limits (fall back to global defaults when not specified)
@@ -318,7 +321,7 @@ impl DockerManager {
                 });
 
             ContainerCreateBody {
-                image: Some(config.image.clone()),
+                image: Some(image.clone()),
                 exposed_ports: if exposed_ports.is_empty() { None } else { Some(exposed_ports) },
                 host_config: Some(host_config),
                 env: if env.is_empty() { None } else { Some(env) },

@@ -1850,6 +1850,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "base64",
  "bollard",
  "bytes",
  "chrono",

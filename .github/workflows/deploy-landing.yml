@@ -29,7 +29,7 @@ jobs:
           cp docs/reference/cli-reference.md landing/public/docs/guides/cli-reference.md
           cp docs/llms.txt landing/public/llms.txt
           cp llms-full.txt landing/public/llms-full.txt
-          for f in topics/multi-service topics/multi-server topics/volumes topics/env-secrets topics/configuration topics/security topics/faq topics/backup topics/github-connect topics/ai-native architecture/architecture architecture/decisions architecture/failure-model architecture/user-flows architecture/scale-to-zero; do
+          for f in topics/multi-service topics/multi-server topics/volumes topics/registries topics/env-secrets topics/configuration topics/security topics/faq topics/backup topics/github-connect topics/ai-native architecture/architecture architecture/decisions architecture/failure-model architecture/user-flows architecture/scale-to-zero; do
             if [ -f "docs/${f}.md" ]; then
               cp "docs/${f}.md" "landing/public/docs/guides/$(basename ${f}).md"
             else

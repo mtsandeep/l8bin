@@ -307,9 +307,11 @@ pub async fn start_project(
                 is_background: project.is_background,
                 force_pull: false,
                 stage_only: false,
+                node_id: Some(node_id.to_string()),
             },
         )
-        .await;
+        .await
+        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("registry credentials unavailable: {e}")))?;
         let batch_result = match agent.batch_run(&payload).await {
             Ok(result) => result,
             Err(nodes::client::AgentClientError::Status { body, .. }) => {
@@ -389,6 +391,9 @@ pub async fn start_project(
             .volumes
             .as_deref()
             .and_then(|volumes| serde_json::from_str::<Vec<litebin_common::types::VolumeMount>>(volumes).ok());
+        let registry_config = nodes::registry_auth::registry_config_for_node(&state.db, node_id)
+            .await
+            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("registry config unavailable: {e}")))?;
 
         let run_request = litebin_common::agent_api::RunRequest {
             image: image.to_string(),
@@ -400,6 +405,7 @@ pub async fn start_project(
             volumes: volumes.clone(),
             docker_observe,
             stage_only: false,
+            registry_config,
         };
 
         // Observation-enabled services are recreated so their private proxy and

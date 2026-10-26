@@ -17,6 +17,7 @@
 - [Custom Domains & www](#custom-domains--www)
 - [Docker Images & Disk Space](#docker-images--disk-space)
 - [Memory Usage](#memory-usage)
+- [Registries & Mirrors](#registries--mirrors)
 
 For a comprehensive view of how LiteBin handles failures at every layer, see [Failure Model](../architecture/failure-model.md). For why these architectural choices were made, see [Design Decisions](../architecture/decisions.md).
 
@@ -628,3 +629,13 @@ Yes — both knobs are environment variables in the `.env` your compose loads (`
 
 Deploys briefly spike ~20MB and settle back within seconds; a platform restart always returns the stack to its idle footprint.
 
+
+## Registries & Mirrors
+
+### Why are mirrors tried before the registry itself?
+
+A mirror is a pull-through cache serving the exact same digests as the registry, so pulling from one is equivalent — and it keeps traffic (and Docker Hub rate limits) off the origin. Mirrors are tried in your chosen order and the registry itself is always the final fallback, so a dead mirror never breaks a deploy. This mirrors-first ordering is what Docker Engine and podman use as well. Mutable tags can lag on a mirror's cache; digest references (`@sha256:…`) are immune. See [Registries](registries.md).
+
+### What does the default registry do?
+
+Image names without a registry host — `nginx:alpine`, `myorg/app` — resolve through the starred default registry (Docker Hub out of the box), including its mirror chain. Bare names like `nginx` mean Docker Hub's `library/*` official images, which exist only on Docker Hub, so flagging a different registry as default only works if it mirrors Docker Hub's image paths. Fully-qualified names (`ghcr.io/owner/app`) always go to their own registry and ignore the default. See [Registries](registries.md).

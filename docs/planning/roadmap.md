@@ -733,6 +733,7 @@ LiteBin today              LiteBin + WireGuard mesh       Graduate → K8s / Clo
 
 ## Future Considerations
 
+- **Registry push destination (opt-in)** — follow-up to registry management ([topics/registries.md](../topics/registries.md)): a `push_registry_id` setting; when set, the orchestrator pushes `l8b deploy` chunk-uploads to that registry server-side as `litebin/{project_id}:{build_tag}` and records the project's image as `{registry}/litebin/{project_id}@sha256:{digest}` (digest-pinned, tag kept for humans/rollback). Nodes then get images by pull instead of master→agent chunk transfer, and migration's `migrate_image: false` covers everything. CLI unchanged; off by default — a registry outage must not break deploys for installs that never opted in. Needs push-scoped credentials and a tag-retention story.
 - **Security hardening** — core-network isolation, per-project networks for single-service apps, read-only FS docs, seccomp/AppArmor profiles, userns-remap, audit logging, disk quotas. Not on the active roadmap. The current baseline (volume translation + `cap_drop ALL` + multi-service per-project networks) is sufficient for litebin's compromised-app containment threat model.
 
 ---

@@ -136,6 +136,11 @@ pub async fn run_container(State(state): State<AgentState>, Json(req): Json<RunR
     // Remove existing container for this project if present (handles redeploy)
     let _ = state.docker.remove_by_name(&req.project_id).await;
 
+    // Registry pull config from the deploy request; in-memory for this pull only.
+    if let Some(config) = req.registry_config.clone() {
+        state.docker.merge_registry_state(&config);
+    }
+
     // Pull image before running (skip sha256: — pre-loaded via /images/upload, not from a registry)
     if !req.image.starts_with("sha256:")
         && let Err(e) = state.docker.pull_image(&req.image).await

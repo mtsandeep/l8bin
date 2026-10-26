@@ -17,6 +17,7 @@ pub mod meta;
 pub mod nodes;
 pub mod openapi;
 pub mod projects;
+pub mod registries;
 pub mod scan;
 pub mod settings;
 pub mod stats;

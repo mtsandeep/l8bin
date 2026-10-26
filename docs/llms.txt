@@ -126,6 +126,7 @@ Already have the `l8b` binary? Register it directly:
 - [Multi-server setup](topics/multi-server.md) — Remote node configuration via mTLS
 - [Multi-service projects](topics/multi-service.md) — Compose-based deployments
 - [Volumes](topics/volumes.md) — Named volumes, bind mounts, and cleanup
+- [Registries](topics/registries.md) — Managed registry credentials, multi-registry pulls, agent distribution
 - [Configuration](topics/configuration.md) — All LITEBIN_* config options
 - [Env & secrets](topics/env-secrets.md) — Per-project .env files and injection
 - [Security internals](topics/security.md) — Auth, mTLS, deploy tokens

@@ -30,6 +30,11 @@ pub async fn batch_run(State(state): State<AgentState>, Json(req): Json<BatchRun
         Err(resp) => return resp,
     };
 
+    // Registry pull config from the deploy request; in-memory for the pulls only.
+    if let Some(config) = req.registry_config.clone() {
+        state.docker.merge_registry_state(&config);
+    }
+
     // Ensure project directory + metadata + compose.yaml on disk.
     if let Err(resp) = persist_project_files(&state, &req).await {
         return resp;

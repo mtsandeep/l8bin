@@ -35,7 +35,7 @@ pub(super) async fn remote_deploy_path(
         }
     };
 
-    let payload = crate::routes::manage::multi_service::build_batch_run_payload(
+    let payload = match crate::routes::manage::multi_service::build_batch_run_payload(
         &state.db,
         crate::routes::manage::multi_service::BatchRunInputs {
             project_id: project_id.clone(),
@@ -48,9 +48,23 @@ pub(super) async fn remote_deploy_path(
             is_background: p.project.is_background,
             force_pull: true,
             stage_only: false,
+            node_id: Some(target_node_id.clone()),
         },
     )
-    .await;
+    .await
+    {
+        Ok(payload) => payload,
+        Err(e) => {
+            tracing::error!(project_id = %project_id, error = %e, "compose deploy: payload build failed");
+            if let Err(e) =
+                status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None)
+                    .await
+            {
+                tracing::warn!(project_id = %project_id, error = %e, "compose deploy: failed to transition to Error");
+            }
+            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": e.to_string()}))).into_response();
+        }
+    };
 
     let batch_result = match agent.batch_run(&payload).await {
         Ok(resp) => resp,

@@ -9,6 +9,7 @@ const DOC_MAP = {
   'multi-service': '/docs/guides/multi-service.md',
   'multi-server': '/docs/guides/multi-server.md',
   'volumes': '/docs/guides/volumes.md',
+  'registries': '/docs/guides/registries.md',
   'env-secrets': '/docs/guides/env-secrets.md',
   'configuration': '/docs/guides/configuration.md',
   'security': '/docs/guides/security.md',

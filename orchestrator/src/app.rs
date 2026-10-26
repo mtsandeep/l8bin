@@ -153,6 +153,15 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/deploy-tokens/{id}", delete(crate::routes::deploy_tokens::revoke_token))
         .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
 
+    // Routes - Registry management (session only — instance-level credentials)
+    let registry_routes = Router::new()
+        .route("/registries", get(crate::routes::registries::list_registries))
+        .route("/registries", post(crate::routes::registries::create_registry))
+        .route("/registries/{id}", put(crate::routes::registries::update_registry))
+        .route("/registries/{id}", delete(crate::routes::registries::delete_registry))
+        .route("/registries/{id}/test", post(crate::routes::registries::test_registry))
+        .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));
+
     // Routes - GitHub connection management (session or admin token —
     // connects instance-level credentials)
     let github_admin_routes = Router::new()
@@ -173,6 +182,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .merge(admin_routes)
         .merge(deploy_routes)
         .merge(token_routes)
+        .merge(registry_routes)
         .merge(github_admin_routes)
         .route("/health", get(crate::routes::health::health_check))
         .route("/github/webhook", post(crate::routes::github::webhook::github_webhook))

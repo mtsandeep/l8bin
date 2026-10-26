@@ -245,6 +245,11 @@ async fn main() -> anyhow::Result<()> {
         DockerManager::new(config.docker_network.clone(), default_mem_mb * 1024 * 1024, default_cpu_limit)?;
     docker.detect_host_projects_dir().await;
 
+    // Registry credentials for local pulls (kept fresh by the /registries endpoints)
+    if let Err(e) = routes::registries::refresh_registry_state(&db, &docker).await {
+        tracing::warn!(error = %e, "failed to load registry state");
+    }
+
     // Refresh litestream.yml and re-ensure the backup sidecar when enabled
     backup::reconcile(&db, &config, &docker).await;
 

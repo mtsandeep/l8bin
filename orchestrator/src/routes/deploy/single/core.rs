@@ -342,6 +342,7 @@ async fn stage_only_path(
             docker_observe: granted_capabilities
                 .contains(&litebin_common::capabilities::ProjectCapability::DockerObserve),
             stage_only: true,
+            registry_config: None,
         };
         if let Err(e) = agent.run(&stage_request).await {
             if let nodes::client::AgentClientError::Status { body, .. } = &e {

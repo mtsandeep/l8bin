@@ -16,6 +16,7 @@ use utoipa::OpenApi;
         (name = "nodes", description = "Node management (multi-server)"),
         (name = "settings", description = "Project and global settings"),
         (name = "deploy-tokens", description = "Deploy token management for CI/CD"),
+        (name = "registries", description = "Image registry management (credentials, connectivity tests)"),
         (name = "global-settings", description = "Global platform settings and DNS"),
         (name = "backup", description = "Platform SQLite backup (Litestream sidecar)"),
         (name = "volumes", description = "Volume management"),
@@ -77,6 +78,12 @@ use utoipa::OpenApi;
         crate::routes::deploy_tokens::create_token,
         crate::routes::deploy_tokens::list_tokens,
         crate::routes::deploy_tokens::revoke_token,
+        // Registries
+        crate::routes::registries::list_registries,
+        crate::routes::registries::create_registry,
+        crate::routes::registries::update_registry,
+        crate::routes::registries::delete_registry,
+        crate::routes::registries::test_registry,
         // Global settings
         crate::routes::global_settings::get_settings,
         crate::routes::global_settings::update_settings,
@@ -201,6 +208,13 @@ use utoipa::OpenApi;
             crate::routes::deploy_tokens::CreateTokenResponse,
             crate::routes::deploy_tokens::ListTokensQuery,
             crate::db::models::DeployTokenResponse,
+            // Registries
+            crate::routes::registries::CreateRegistryRequest,
+            crate::routes::registries::MirrorInput,
+            crate::routes::registries::UpdateRegistryRequest,
+            crate::routes::registries::RegistryTestResponse,
+            crate::db::models::MirrorResponse,
+            crate::db::models::RegistryResponse,
             // Settings
             crate::routes::settings::UpdateSettingsRequest,
             crate::routes::settings::UpdateServiceSettingsRequest,

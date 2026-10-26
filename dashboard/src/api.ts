@@ -972,6 +972,123 @@ export async function revokeDeployToken(tokenId: string): Promise<void> {
   }
 }
 
+// --- Registries ---
+
+export interface MirrorInfo {
+  url: string;
+  has_auth: boolean;
+  auth_hint?: string | null;
+}
+
+export interface RegistryInfo {
+  id: string;
+  name: string;
+  url: string;
+  has_auth: boolean;
+  auth_hint?: string | null;
+  mirrors: MirrorInfo[];
+  is_default: boolean;
+  is_builtin: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface RegistryTestResult {
+  status: 'ok' | 'unauthorized' | 'unexpected_status' | 'unreachable';
+  http_status?: number | null;
+  message: string;
+}
+
+export interface MirrorInput {
+  url: string;
+  username?: string;
+  password?: string;
+}
+
+export interface RegistryCredentials {
+  username: string;
+  password: string;
+}
+
+export interface RegistryChanges {
+  name?: string;
+  url?: string;
+  credentials?: RegistryCredentials;
+  clear_auth?: boolean;
+  mirrors?: MirrorInput[];
+  is_default?: boolean;
+}
+
+export async function fetchRegistries(): Promise<RegistryInfo[]> {
+  const res = await fetch(`${API_BASE}/registries`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch registries');
+  return res.json();
+}
+
+export async function createRegistry(
+  name: string,
+  url: string,
+  credentials?: RegistryCredentials,
+  mirrors?: MirrorInput[],
+  isDefault?: boolean,
+): Promise<RegistryInfo> {
+  const res = await fetch(`${API_BASE}/registries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      name,
+      url,
+      username: credentials?.username,
+      password: credentials?.password,
+      mirrors: mirrors?.filter((m) => m.url.trim()),
+      is_default: isDefault || undefined,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to create registry');
+  }
+  return res.json();
+}
+
+export async function updateRegistry(id: string, changes: RegistryChanges): Promise<RegistryInfo> {
+  const res = await fetch(`${API_BASE}/registries/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(changes),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to update registry');
+  }
+  return res.json();
+}
+
+export async function deleteRegistry(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/registries/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to delete registry');
+  }
+}
+
+export async function testRegistry(id: string): Promise<RegistryTestResult> {
+  const res = await fetch(`${API_BASE}/registries/${encodeURIComponent(id)}/test`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to test registry');
+  }
+  return res.json();
+}
+
 // --- Volumes ---
 
 export interface VolumeMount {

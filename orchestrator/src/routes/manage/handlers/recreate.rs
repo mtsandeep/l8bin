@@ -132,9 +132,11 @@ pub async fn recreate_project(
                     is_background: project.is_background,
                     force_pull: pull,
                     stage_only: false,
+                    node_id: Some(node_id.to_string()),
                 },
             )
-            .await;
+            .await
+            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("registry credentials unavailable: {e}")))?;
             let batch_result = match agent.batch_run(&payload).await {
                 Ok(result) => result,
                 Err(nodes::client::AgentClientError::Status { body: resp_body, .. }) => {
@@ -275,6 +277,7 @@ pub async fn recreate_project(
             volumes: volumes.clone(),
             docker_observe,
             stage_only: false,
+            registry_config: None,
         };
         let result = match agent.recreate(&run_request).await {
             Ok(result) => result,
