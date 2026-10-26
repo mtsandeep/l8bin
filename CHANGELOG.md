@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.14] - 2026-10-26
+
 ### Fixed
 - `l8b ship` with several stored logins now offers a pick list of logged-in servers (plus "Add a new server…") instead of a free-text Server URL prompt.
 - Fix www→bare redirect in master-proxy mode emitting `https://host}` — the `{uri}` placeholder was double-escaped there.
