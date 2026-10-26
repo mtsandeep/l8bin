@@ -9,6 +9,7 @@ export const ProjectStatus = {
   Deploying: 'deploying',
   Importing: 'importing',
   Stopping: 'stopping',
+  Migrating: 'migrating',
   Error: 'error',
   Degraded: 'degraded',
   Unconfigured: 'unconfigured',
@@ -533,6 +534,30 @@ export async function startProject(projectId: string): Promise<string[] | undefi
     throw new Error(parseErrorMessage(text, 'Start failed'));
   }
   return undefined;
+}
+
+export interface MigrateResponse {
+  project_id: string;
+  message: string;
+  status: string;
+}
+
+export async function migrateProject(
+  projectId: string,
+  targetNodeId: string,
+  migrateVolumes: boolean,
+): Promise<MigrateResponse> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/migrate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ target_node_id: targetNodeId, migrate_volumes: migrateVolumes }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Migration failed');
+  }
+  return res.json();
 }
 
 export async function startService(projectId: string, serviceName: string): Promise<void> {

@@ -40,8 +40,11 @@ pub const CONTAINER_IMPORT_PATH: &str = "/containers/import";
 pub const CONTAINER_COMPOSE_FILE_PATH: &str = "/containers/compose-file";
 pub const IMAGES_LOAD_PATH: &str = "/images/load";
 pub const IMAGES_INSPECT_PATH: &str = "/images/inspect";
+pub const IMAGES_EXPORT_PATH: &str = "/images/export";
 pub const IMAGES_REMOVE_UNUSED_PATH: &str = "/images/remove-unused";
 pub const IMAGES_PRUNE_PATH: &str = "/images/prune";
+pub const VOLUME_EXPORT_PATH: &str = "/volumes/export";
+pub const VOLUME_IMPORT_PATH: &str = "/volumes/import";
 pub const CADDY_SYNC_PATH: &str = "/caddy/sync";
 pub const PROJECT_META_PATH: &str = "/internal/project-meta";
 pub const ENV_GET_PATH: &str = "/internal/env";
@@ -226,6 +229,18 @@ pub struct BatchRunErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub affected_services: Vec<String>,
+}
+
+// ── Node-to-node transfer (/volumes/export|import, /images/export) ───────────
+
+/// Identifies a migration transfer payload. Sent as query parameters; the
+/// request body (import) or response body (export) is the tar stream.
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+pub struct TransferRequest {
+    /// `volume`, `project-dir`, or `image`.
+    pub kind: String,
+    /// Volume name, project id, or image reference.
+    pub name: String,
 }
 
 // ── Stats (/containers/stats, per-container GETs) ─────────────────────────────

@@ -94,7 +94,7 @@ pub async fn transition(
                     .await?;
             }
         }
-        ProjectStatus::Stopped | ProjectStatus::Stopping | ProjectStatus::Error => {
+        ProjectStatus::Stopped | ProjectStatus::Stopping | ProjectStatus::Migrating | ProjectStatus::Error => {
             // Always cascade to ALL services for terminal/error states
             sqlx::query("UPDATE project_services SET status = ? WHERE project_id = ?")
                 .bind(&new_status)

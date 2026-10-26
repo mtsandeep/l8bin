@@ -1,4 +1,4 @@
-mod agent_push;
+pub(crate) mod agent_push;
 mod caddy_config;
 mod dns;
 

@@ -10,22 +10,20 @@ pub async fn run_reconciliation(state: AppState, node_id: Option<String>) {
     let start = Instant::now();
     info!(node_id = ?node_id, "reconciliation: starting pass");
 
-    // Query stuck projects (deploying/migrating = incomplete deploy; stopping = incomplete stop)
+    // Query stuck projects (deploying = incomplete deploy; stopping = incomplete stop)
     let stuck_projects = match node_id {
         Some(ref nid) => {
             sqlx::query_as::<_, Project>(
-                "SELECT * FROM projects WHERE status IN ('deploying', 'migrating', 'stopping') AND node_id = ?",
+                "SELECT * FROM projects WHERE status IN ('deploying', 'stopping') AND node_id = ?",
             )
             .bind(nid)
             .fetch_all(&state.db)
             .await
         }
         None => {
-            sqlx::query_as::<_, Project>(
-                "SELECT * FROM projects WHERE status IN ('deploying', 'migrating', 'stopping')",
-            )
-            .fetch_all(&state.db)
-            .await
+            sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE status IN ('deploying', 'stopping')")
+                .fetch_all(&state.db)
+                .await
         }
     };
 

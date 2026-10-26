@@ -69,6 +69,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/projects/{id}/env", put(crate::routes::env::update_project_env))
         .route("/projects/{id}/stop", post(crate::routes::manage::handlers::stop_project))
         .route("/projects/{id}/start", post(crate::routes::manage::handlers::start_project))
+        .route("/projects/{id}/migrate", post(crate::routes::manage::handlers::migrate_project))
         .route("/projects/{id}/recreate", post(crate::routes::manage::handlers::recreate_project))
         .route("/projects/{id}/settings", patch(crate::routes::settings::update_project_settings))
         .route("/projects/{id}/services/{name}/start", post(crate::routes::manage::handlers::start_service))

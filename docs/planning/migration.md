@@ -1,4 +1,4 @@
-> **Status: NOT STARTED — roadmap Phase 2 / item 4** · verified 2026-10-13
+> **Status: Phase 1 SHIPPED (minimal) — 2026-10-26** · single-project migration, same-architecture focus, local↔agent all directions · verified 2026-10-26
 
 # Project Migration & Master Migration
 
@@ -11,12 +11,12 @@ Two-part system:
 
 ```
 Server A (master)                    Server B (agent)
-┌─────────────────┐                 ┌─────────────────┐
-│ orchestrator     │                 │ agent            │
-│ caddy            │    ─── mTLS ──  │ agent-caddy      │
+┌──────────────────┐                 ┌───────────────────┐
+│ orchestrator     │                 │ agent             │
+│ caddy            │  ──── mTLS ───  │ agent-caddy       │
 │ dashboard        │                 │ project containers│
-│ (local projects) │                 │                  │
-└─────────────────┘                 └─────────────────┘
+│ (local projects) │                 │                   │
+└──────────────────┘                 └───────────────────┘
 
 Step 1: Migrate projects ──────►    (projects move A→B)
 Step 2: Migrate master data ────►   (DB, settings, files)
@@ -26,220 +26,71 @@ Step 4: Decommission A (manual)
 
 ---
 
-## Phase 1: Project Migration Across Nodes
+## Phase 1: Project Migration Across Nodes (SHIPPED)
 
 ### Architecture Check
 
-- **Warning** (not a hard block) if source and target have different architectures (arm64↔x86)
-- Checked via `nodes.architecture` field (populated by agent health reports)
-- Same architecture: all migration options available (config + image + volumes)
-- Different architecture: warn that volumes may contain arch-incompatible data (e.g., PostgreSQL/MySQL data directories). Recommend migrating config only and handling data transfer through the app's own export/import tools
+Cross-arch moves with `sha256:` (uploaded) images are rejected — redeploy from source on the target instead. Cross-arch with registry images is allowed (multi-arch images pull the right variant); unknown architecture on either side doesn't block.
 
-### New Orchestrator Endpoint: `POST /projects/:id/migrate`
+### Endpoint: `POST /projects/:id/migrate`
 
-**Request:** `{ "target_node_id": "...", "migrate_volumes": true, "migrate_image": true, "maintenance_mode": true, "source": "live" }`
+**Request:** `{ "target_node_id": "...", "migrate_volumes": true }`
 
-**Migration options** (user picks what to move):
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| Config (always) | — | compose.yaml, metadata.json, bind mount data. Required for deploy. `.env*` excluded (user places manually). |
-| `migrate_image` | `false` | Transfer `sha256:` images via `docker save`/`load`. Skip if images are in a registry (target pulls them natively). |
-| `migrate_volumes` | `false` | Transfer Docker named volumes. Skip for cross-arch or if user prefers app-level data migration. |
-| `source` | `"live"` | `"live"` (default) — export volumes from running source agent. `"backup"` — restore volumes from Rustic backup instead (used in disaster recovery when source agent is dead). See [disaster-recovery.md](disaster-recovery.md). |
+`migrate_volumes` (default true) controls whether Docker named volume contents transfer. Project files and `.env` always transfer. `sha256:` images always transfer. Registry images are never transferred — the target pulls them fresh.
 
 **Flow:**
 
-1. **Validate** — project exists, target node online, not already on target. Warn if architectures differ.
-2. **Set status → "migrating"** — with `container_id = NULL` (see reconciliation notes below)
-3. **Transfer project config to target agent** — all `.env*` files excluded. Transfers `metadata.json`, `compose.yaml`, and bind mount data. See Project File Transfer below.
-4. **Wait for user to place `.env`** — migration pauses. Dashboard shows: "Place your `.env` on the target agent at `projects/{id}/.env`, then click Continue." User handles secrets manually. `.env.l8bin` is regenerated automatically on first deploy.
-5. **If `migrate_volumes: true`:** export Docker named volumes from source, import on target (see volume export/import below). Pre-create volumes on target so they're populated when containers start.
-6. **If `migrate_image: true`:** orchestrator exports image via `docker save`, sends to agent's `POST /images/load`.
-7. **Deploy on target** (without touching source) — deploy the project on the target node using existing deploy logic. The agent reads `.env` from its own filesystem, pulls images, starts containers with pre-populated volumes. The source continues running normally.
-8. **Verify target** — health check: confirm all service containers are running on target, ports are mapped, public service is reachable.
-9. **Update DB** — `projects.node_id` → target, `container_id`/`mapped_port` from new deploy, set `migrated = 1`, restore original status (`"running"` or `"stopped"`)
-10. **Push project-meta** to target agent (add project with flags)
-11. **Sync routes + DNS** — if cloudflare mode, trigger DNS sync
-12. **If `maintenance_mode: true`:** push updated Caddy config to source agent that replaces the project's proxy routes with a `static_response` handler returning 503 + maintenance HTML page (see Maintenance Mode below). This prevents new data writes to the source, eliminating the data delta problem. The source containers stay running but are unreachable through Caddy.
+1. **Validate** — project exists, target online, not same node. Reject cross-arch `sha256:` moves. Return 202 immediately.
+2. **Set status → `migrating`** — the migrate endpoint owns the lifecycle; reconciliation skips this status.
+3. **Stop on source.**
+4. **Transfer project directory** (`projects/{id}/` — compose.yaml, metadata.json, .env, bind-mount data) via `POST /volumes/export?kind=project-dir`.
+5. **Transfer volumes** (if `migrate_volumes`) — each scoped volume (`litebin_{pid}_{name}`) streams as a tar.
+6. **Transfer `sha256:` images** via docker save → `POST /images/load`.
+7. **Clean up source** containers and networks (volumes stay — both nodes may share a Docker daemon).
+8. **Switch `node_id`** in DB, clear container state, set status to `stopped`.
+9. **Start on target** via the existing start path (registry pulls included).
+10. **Push project-meta** to both agents, rebuild routes.
 
-**Source is still running at this point** (unless maintenance mode is enabled). The project is now dual-running on both source and target. The `migrated = 1` flag in the DB signals that the project has been migrated to a new node but the source has not been cleaned up yet. The source will keep running indefinitely until the user explicitly triggers cleanup.
+On failure before step 8: project stays intact on source (stopped), user can restart or retry migration. On failure at step 9: project is on the target in error state, user can retry start.
 
-**With `maintenance_mode: true`:** Source containers are running but unreachable. Any DNS-cache stragglers hitting the old server see the maintenance page. No data divergence between source and target — safe to switch DNS at any time.
+Source volumes are not deleted — on real servers they're harmless orphans; on shared-daemon setups deleting them would also delete the transferred copies.
 
-**On migration failure (steps 3-7):** cleanup target (stop containers, remove volumes/network), restore source status, keep project on source. No data loss.
+### Reconciliation
 
-### Source Cleanup: `POST /projects/:id/migrate/cleanup`
+`ProjectStatus::Migrating` is excluded from the reconciliation query — the migrate endpoint owns the full lifecycle.
 
-Separate endpoint the user calls **anytime** after verifying the migration works. This is never automatic — the user decides when they're satisfied the target is working correctly.
+### Volume Export/Import
 
-**Only projects with `migrated = 1` can be cleaned up.** This flag is set by the migrate endpoint and cleared after successful cleanup.
+Volumes transfer as single-shot tar streams over the existing mTLS channel — no chunking, no resume. Bounded by the 30-minute agent work timeout; practical ceiling is roughly 20 GB on a 100 Mbps link, more on faster links. A failed transfer restarts from zero.
 
-**Flow:**
+**`POST /volumes/export?kind=volume&name={volume_name}`** — `agent/src/routes/volumes.rs`
+- Streams a tar of the volume contents (busybox container archive API, never started).
 
-1. **Stop on source** — stop all service containers on the source node
-2. **Push project-meta** to source agent (remove migrated project from meta)
-3. **Cleanup source** — remove containers, volumes, network on source node
-4. If `migrate_volumes: true` — also remove source volumes after confirming target volumes are populated
-5. **Rebuild source Caddy config** — push updated config to source agent without the migrated project's routes (maintenance mode routes are removed along with the project)
-6. **Set `migrated = 0`** in DB — cleanup complete, no longer dual-running
+**`POST /volumes/import?kind=volume&name={volume_name}`** — `agent/src/routes/volumes.rs`
+- Body: tar stream, extracted into the volume (created if missing) via the same archive API.
 
-**On cleanup failure:** source containers may be stopped but not fully removed. User can retry cleanup — the `migrated` flag remains `1` so the cleanup endpoint can be called again. The target is unaffected.
-
-### DB Schema Addition
-
-Add a `migrated` boolean column to the `projects` table:
-
-```sql
-ALTER TABLE projects ADD COLUMN migrated INTEGER NOT NULL DEFAULT 0;
-```
-
-- `migrated = 1` → project has been migrated to a new node, source still has running containers (dual-running state). The dashboard can show a visual indicator (e.g., "Migrated — cleanup pending").
-- `migrated = 0` → normal state (default, or after cleanup completes).
-
-### Maintenance Mode (optional, during migration)
-
-When `maintenance_mode: true` is passed to the migrate endpoint, the orchestrator pushes an updated Caddy config to the **source agent** after the target is verified running. This config replaces the migrated project's proxy routes with a `static_response` handler:
-
-```json
-{
-    "match": [{
-        "host": ["mc.example.com"],
-        "not": [{ "cookie": { "l8b_maint": "<token>" } }]
-    }],
-    "handle": [{
-        "handler": "static_response",
-        "status_code": 503,
-        "body": "<maintenance page HTML>"
-    }]
-}
-```
-
-Requests with a valid `l8b_maint` cookie bypass maintenance and reach the app normally.
-
-**How it works:**
-- The source agent's Caddy serves a 503 maintenance page for all the project's domains (subdomain, custom domain, custom routes)
-- Source containers remain running but are unreachable through Caddy — no new data is written
-- DNS-cache stragglers hitting the old server see the maintenance page instead of the live app
-- The target server serves real traffic normally
-- No data divergence between source and target — the user can switch DNS at any time
-
-**Admin bypass (cookie-based):**
-- Maintenance page HTML includes a collapsed "Admin Access" section with a token input field
-- Dashboard shows the bypass token (e.g., `x7k9m2`)
-- Admin enters token → JS sets `document.cookie = "l8b_maint=x7k9m2; path=/; max-age=86400"` → page reloads
-- Caddy's `not` matcher sees the cookie → proxies to app normally
-- Token is random, only shown in auth-protected dashboard, transmitted over HTTPS — no hashing needed
-
-**Implementation:**
-- Add `maintenance_page_html(name)` to `litebin-common/src/waker_pages.rs` — a styled 503 page ("This site is currently under maintenance.") alongside the existing loading/error/offline page templates. Includes collapsed admin bypass section with JS to set cookie and reload.
-- Add `maintenance_mode` boolean column to `projects` table. When `true`, orchestrator's Caddy config builders (`routing.rs`, `cloudflare_router.rs`) generate `static_response` routes with cookie bypass instead of normal proxy routes.
-- Generate a random bypass token when maintenance mode is enabled, stored in `projects` table, shown in dashboard. Token is embedded in the Caddy `not` cookie matcher and in the maintenance HTML's JS (so the admin knows what to enter — shown in dashboard, validated by Caddy via cookie match).
-- For `master_proxy` mode: the master Caddy serves the 503 directly — no traffic reaches the agent
-- For `cloudflare_dns` mode: the agent's Caddy directly returns 503
-- Maintenance mode is cleared during the cleanup step (source Caddy config is no longer relevant after cleanup)
-
-**Why not just stop the source containers?** Stopping containers would cause the waker to try auto-starting them (if `auto_start_enabled`). Maintenance mode at the Caddy level avoids this — containers stay running, waker is bypassed, and the response is immediate (no wake delay).
-
-### Reconciliation "migrating" Handling
-
-**Problem:** The reconciler currently treats "migrating" identically to "deploying"/"stopping". It checks if the container is running on the assigned node, and if not, sets status to `"error"`. Since migration intentionally stops the source container before the target is running, the reconciler would incorrectly mark the project as error.
-
-**Fix:** Update reconciliation (`orchestrator/src/nodes/reconciliation.rs`) to skip projects in "migrating" status. Migration is managed end-to-end by the migrate endpoint, not the reconciler. The migrate endpoint handles its own error recovery.
-
-```
-// reconciliation.rs — skip "migrating" projects
-"SELECT * FROM projects WHERE status IN ('deploying', 'stopping') AND node_id = ?"
-// Remove 'migrating' from this query — it's handled by the migrate endpoint
-```
-
-### Volume Export/Import (chunked, resumable)
-
-Volumes are transferred as chunked tar streams for resumability. A failed transfer restarts from the last chunk instead of re-uploading the entire volume.
-
-**Chunk size:** 100MB default. Covers most LiteBin app volumes (typically under a few GB) with minimal chunk count while keeping progress loss acceptable on failure.
-
-**`POST /volumes/export`** — `agent/src/routes/volumes.rs`
-- Request: `{ "volume_name": "litebin_mc_pgdata" }`
-- Response: tar stream (`application/x-tar`), streamed in 100MB chunks
-- Implementation: create temp alpine container with volume mounted, tar contents to stdout. The tar is streamed — never fully loaded into memory. Orchestrator reads chunks and forwards to target.
-
-**`POST /volumes/import/start`** — `agent/src/routes/volumes.rs`
-- Request: `{ "volume_name": "litebin_mc_pgdata", "total_chunks": 10 }`
-- Response: `{ "import_id": "abc123" }`
-- Implementation: create volume (via `docker volume create`), create a temp file to accumulate chunks, return an import ID for subsequent chunk uploads
-
-**`POST /volumes/import/chunk`** — `agent/src/routes/volumes.rs`
-- Request: multipart with `import_id` field + chunk body (binary)
-- Response: `{ "received": 4, "total": 10 }` (progress)
-- Implementation: append chunk to temp file, track sequence number
-
-**`POST /volumes/import/finish`** — `agent/src/routes/volumes.rs`
-- Request: `{ "import_id": "abc123" }`
-- Response: 200 OK
-- Implementation: create temp alpine container with volume mounted, extract accumulated tar from temp file into volume, delete temp file. On failure, temp file remains for retry.
-
-**Resume on failure:** If the orchestrator loses connection during chunk upload, it queries the import progress (`GET /volumes/import/status?import_id=abc123`) to find the last received chunk and resumes from there.
+Chunked, resumable transfer (100 MB chunks, resume-from-last-received) is a future enhancement for large volumes — not in Phase 1.
 
 ### Project File Transfer
 
-**All `.env*` files are never transferred across the network.** This is a core LiteBin principle — `.env` files contain secrets (API keys, database passwords, tokens) and should not be sent over the wire, even over mTLS. The user is responsible for placing the `.env` file on the target agent before deployment. `.env.l8bin` (LiteBin's applied/live env) and any other `.env*` variants are also excluded — `.env.l8bin` is regenerated from `.env` on first deploy.
-
-**Critical: the agent reads .env from its own filesystem, not from the deploy request.** Both `POST /containers/run` and `POST /containers/batch-run` call `read_project_env()` which reads `projects/{id}/.env` from the agent's local disk. The orchestrator never sends .env content in the deploy request.
-
-**New agent endpoint needed:** `POST /projects/:id/files`
-
-This is a pre-deploy step — called before the actual deploy to ensure the agent has the project's non-secret files:
-
-**Request:** multipart form with:
-- `metadata.json` file (text, optional — for single-service)
-- `compose.yaml` file (text, optional — already sent in batch-run body but good to have here for consistency)
-- `bind-mount-data.tar` file (binary, optional — tar of `projects/{id}/data/` and other bind mount directories)
-
-**Response:** 200 OK
-
-**.env NOT included.** The migration flow pauses after file transfer and waits for the user to confirm the `.env` is in place on the target agent's `projects/{id}/.env` path before proceeding with deployment. The dashboard can show a clear prompt: "Place your .env file on the target agent at `projects/{id}/.env`, then click Continue."
-
-The orchestrator reads these from its own `projects/{id}/` directory (for local projects, excluding `.env*`) or from the source agent (for future agent-to-agent migration, excluding `.env*`), and sends them to the target agent via mTLS before deploying.
-
-**Local→remote (master to agent):** Orchestrator reads from its own `projects/{id}/` filesystem (excluding `.env*`), sends to target agent's `POST /projects/:id/files`.
-
-**Remote→remote (agent to agent):** Not needed for master migration. Projects already on the target agent stay there — after promotion, that agent's Docker becomes the master's Docker.
-
-**Future (general move between two agents):** Orchestrator calls `GET /projects/:id/files/export` on source agent (returns tar of project directory, excluding `.env*`), then sends to target agent's `POST /projects/:id/files`.
-
-### Orchestrator Volume Helpers (for local node)
-
-The orchestrator acts as a "local node" for volume operations when it's the source or target:
-
-- `DockerManager::export_volume(volume_name) -> Vec<u8>` — tar the volume contents via temp container
-- `DockerManager::import_volume(volume_name, tar_data)` — create/import volume from tar via temp container
+The project directory (`projects/{id}/`) transfers as a single tar via `POST /volumes/export?kind=project-dir` — includes `compose.yaml`, `metadata.json`, `.env`, and any relative bind-mount data. `.env` transfers over the existing mTLS channel (same trust boundary as registry credentials).
 
 ### Image Handling
 
-When `migrate_image: true`, the orchestrator exports images via `docker save` and sends the tar stream to the agent's `POST /images/load` before deploying. This is needed for `sha256:` images (uploaded via `/images/load`) that can't be pulled from a registry.
-
-When `migrate_image: false` (default), the target agent pulls images from the registry during deploy — works for public and private registries the agent has access to.
-- For registry images, let the agent pull normally (works for public and private registries the agent has access to).
-
-For remote→remote migration (future): source agent exports via `docker save`, orchestrator proxies the stream to target agent's `/images/load`.
+`sha256:` images (uploaded via `l8b deploy`) transfer via `docker save` → stream → `POST /images/load` on the target. Registry-referenced images are not transferred — the target pulls them fresh using the distributed registry state (credentials and mirrors included in the deploy request).
 
 ### project-meta Sync
 
-After migration, the orchestrator must push updated `project-meta` to both agents:
-- **Target agent:** include the migrated project with its flags (`auto_start_enabled`, `allow_raw_ports`, `docker_observe`)
-- **Source agent:** exclude the migrated project (so source doesn't try to auto-wake it). Done after cleanup step, not during migration — source stays in meta while dual-running so it can still be stopped/restarted normally if needed. If maintenance mode is enabled, the source Caddy handles the project's domains directly (503 page), so the waker/meta is less relevant but still kept for consistency.
-
-The existing `POST /internal/project-meta` endpoint replaces the entire map, so this is safe.
+After migration, `push_project_meta_to_agent` runs for both the source and target nodes, refreshing the metadata from the DB (the project now has the target's `node_id`, so it appears in the target's map and drops from the source's).
 
 ### DNS/Routes
 
-- **`master_proxy` mode:** No DNS change needed. All traffic routes through the master's Caddy which TLS-proxies to the agent. The Caddy config is rebuilt from the DB on every deploy/status change.
-- **`cloudflare_dns` mode:** After updating `node_id`, trigger `sync_routes(sync_dns: true)`. This updates the A record to the target node's `public_ip`.
+- **`master_proxy` mode:** No DNS change needed. Caddy rebuilds from the DB on route sync.
+- **`cloudflare_dns` mode:** Route sync updates the A record to the target node's `public_ip`.
 
 ### Network Cleanup
 
-Source agent's `litebin-{project_id}` Docker network is cleaned up during the **cleanup step** (not during migration). The orchestrator calls `POST {source_agent}/containers/cleanup` for the project as part of `POST /projects/:id/migrate/cleanup`. Target auto-creates the network during deploy.
+Source containers and networks are removed during migration (step 7 of the flow). Source volumes stay in place — on real servers they're harmless orphans; on shared-daemon setups deleting them would also delete the transferred copies.
 
 ---
 
@@ -368,20 +219,19 @@ After promote succeeds, user manually:
 
 ## Implementation Order
 
-| # | Task | Depends On | Complexity |
-|---|------|-----------|------------|
-| 1 | Standalone maintenance mode (DB flag, Caddy static_response, admin bypass) | — | Low |
-| 2 | Agent volume export/import | — | Medium |
-| 3 | Orchestrator volume helpers (local) | — | Low |
-| 4 | Update reconciliation to skip "migrating" | — | Low |
-| 5 | Agent `POST /projects/:id/files` endpoint | — | Low |
-| 6 | Project migration endpoint (local→remote) | 1, 2, 3, 4, 5 | Medium |
-| 7 | Agent migration receive endpoints | — | Low |
-| 8 | Master migration endpoint | 6 | Medium |
-| 9 | `install.sh promote` mode | 8 | Medium |
-| 10 | Dashboard UI for migration | 6 | Future |
-| 11 | General agent-to-agent migration | 6 | Future |
-| 12 | Project duplication (clone to same/different node) | 6 | Future |
+| # | Task | Status |
+|---|------|--------|
+| 1 | Agent volume/project-dir/image export + import endpoints | ✅ Shipped |
+| 2 | AgentClient streaming relay methods | ✅ Shipped |
+| 3 | Transfer engine (busybox container archive API) | ✅ Shipped |
+| 4 | Reconciliation skips `migrating` status | ✅ Shipped |
+| 5 | `POST /projects/:id/migrate` (all directions) | ✅ Shipped |
+| 6 | Dashboard migration UI (settings popover + modal) | ✅ Shipped |
+| 7 | Chunked/resumable volume transfer | Future |
+| 8 | Maintenance mode (503 during migration) | Future |
+| 9 | Master migration (Phase 2) | Future |
+| 10 | `install.sh promote` (Phase 3) | Future |
+| 11 | Project duplication (clone to same/different node) | Future |
 
 ---
 

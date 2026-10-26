@@ -44,6 +44,7 @@ import DeleteConfirmModal from './DeleteConfirmModal';
 import EnvModal from './EnvModal';
 import GitHubBadge from './GitHubBadge';
 import GitHubRunsModal from './GitHubRunsModal';
+import MigrateModal from './MigrateModal';
 import ProjectDetailsModal from './ProjectDetailsModal';
 import StatsGrid from './ProjectStats';
 import RedeployModal from './RedeployModal';
@@ -81,6 +82,7 @@ export default function ProjectCard({
 }: ProjectCardProps) {
   const [loading, setLoading] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showMigrate, setShowMigrate] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [showEnv, setShowEnv] = useState(false);
   const [showGithubRuns, setShowGithubRuns] = useState(false);
@@ -472,6 +474,13 @@ export default function ProjectCard({
                 customDomainInput={customDomainInput}
                 settingsError={settingsError}
                 customDomainSaving={customDomainSaving}
+                canMigrate={
+                  nodes.filter((n) => n.id !== (project.node_id || 'local') && n.status === 'online').length > 0
+                }
+                onOpenMigrate={() => {
+                  setOpenPopover(null);
+                  setShowMigrate(true);
+                }}
                 onProjectNameChange={setProjectName}
                 onProjectDescriptionChange={setProjectDescription}
                 onCustomDomainChange={setCustomDomainInput}
@@ -770,6 +779,21 @@ export default function ProjectCard({
             handleAction('delete', () => deleteProject(project.id)).then(() => setShowDeleteConfirm(false))
           }
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* Migration modal */}
+      {showMigrate && (
+        <MigrateModal
+          projectId={project.id}
+          projectName={project.name || project.id}
+          currentNodeId={project.node_id || 'local'}
+          nodes={nodes}
+          sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB data` : ''}
+          serviceCount={services.length || 1}
+          volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
+          onClose={() => setShowMigrate(false)}
+          onStarted={() => onRefresh()}
         />
       )}
 

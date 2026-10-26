@@ -53,6 +53,7 @@ use utoipa::OpenApi;
         // Manage
         crate::routes::manage::handlers::stop_project,
         crate::routes::manage::handlers::start_project,
+        crate::routes::manage::handlers::migrate_project,
         crate::routes::manage::handlers::delete_project,
         crate::routes::manage::handlers::recreate_project,
         crate::routes::manage::handlers::start_service,
@@ -205,6 +206,7 @@ use utoipa::OpenApi;
             crate::routes::images::UploadResponse,
             // Deploy tokens
             crate::routes::deploy_tokens::CreateTokenRequest,
+            crate::routes::manage::handlers::MigrateRequest,
             crate::routes::deploy_tokens::CreateTokenResponse,
             crate::routes::deploy_tokens::ListTokensQuery,
             crate::db::models::DeployTokenResponse,

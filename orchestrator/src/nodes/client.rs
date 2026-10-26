@@ -539,6 +539,76 @@ impl AgentClient {
         self.post_json(litebin_common::upload::MINT_PATH, req, DEFAULT_AGENT_TIMEOUT).await
     }
 
+    /// POST /volumes/export (or /images/export) — stream a transfer tar out of the agent.
+    pub async fn transfer_export_stream(
+        &self,
+        kind: &litebin_common::docker::TransferKind,
+    ) -> Result<impl futures_util::Stream<Item = reqwest::Result<bytes::Bytes>> + Send + 'static, AgentClientError>
+    {
+        let path = match kind {
+            litebin_common::docker::TransferKind::Image(_) => litebin_common::agent_api::IMAGES_EXPORT_PATH,
+            _ => litebin_common::agent_api::VOLUME_EXPORT_PATH,
+        };
+        let req =
+            litebin_common::agent_api::TransferRequest { kind: kind.kind().to_string(), name: kind.name().to_string() };
+        let resp = self
+            .client
+            .post(self.url(path))
+            .query(&req)
+            .timeout(IMAGE_STREAM_TIMEOUT)
+            .send()
+            .await
+            .map_err(Self::map_transport)?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AgentClientError::Status { code: status, body });
+        }
+        Ok(resp.bytes_stream())
+    }
+
+    /// POST /volumes/import (or /images/load) — stream a transfer tar into the agent.
+    pub async fn transfer_import<S>(
+        &self,
+        kind: &litebin_common::docker::TransferKind,
+        tar: S,
+    ) -> Result<(), AgentClientError>
+    where
+        S: futures_util::Stream<Item = bytes::Bytes> + Send + 'static,
+    {
+        use futures_util::StreamExt;
+        let tar = tar.map(Ok::<_, std::io::Error>);
+        let path = match kind {
+            litebin_common::docker::TransferKind::Image(image) => {
+                return self.load_image_stream(image, reqwest::Body::wrap_stream(tar)).await.map(|_| ());
+            }
+            _ => litebin_common::agent_api::VOLUME_IMPORT_PATH,
+        };
+        let req =
+            litebin_common::agent_api::TransferRequest { kind: kind.kind().to_string(), name: kind.name().to_string() };
+        let resp = self
+            .client
+            .post(self.url(path))
+            .query(&req)
+            .timeout(IMAGE_STREAM_TIMEOUT)
+            .header(reqwest::header::CONTENT_TYPE, "application/x-tar")
+            .body(reqwest::Body::wrap_stream(tar))
+            .send()
+            .await
+            .map_err(Self::map_transport)?;
+        Self::post_expect_empty(resp).await
+    }
+
+    /// Assert a 2xx response with no body of interest.
+    async fn post_expect_empty(resp: reqwest::Response) -> Result<(), AgentClientError> {
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AgentClientError::Status { code: status, body });
+        }
+        Ok(())
+    }
+
     /// GET /images/inspect?image= — resolve an image reference to its local digest.
     pub async fn inspect_image(
         &self,

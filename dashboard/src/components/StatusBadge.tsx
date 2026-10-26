@@ -41,6 +41,12 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string; labe
     dot: 'bg-orange-400 animate-pulse',
     label: 'Stopping',
   },
+  [ProjectStatus.Migrating]: {
+    bg: 'bg-cyan-500/10',
+    text: 'text-cyan-400',
+    dot: 'bg-cyan-400 animate-pulse',
+    label: 'Migrating',
+  },
   [ProjectStatus.Degraded]: {
     bg: 'bg-yellow-500/10',
     text: 'text-yellow-400',

@@ -564,9 +564,14 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                             config::CredentialStore::load().logged_in_servers().into_iter().cloned().collect();
                         let mut choices = items.clone();
                         choices.push("Add a new server…".to_string());
-                        let pick =
-                            dialoguer::Select::new().with_prompt("Which server?").items(&choices).default(0).interact()?;
-                        if pick < items.len() { items.remove(pick) } else {
+                        let pick = dialoguer::Select::new()
+                            .with_prompt("Which server?")
+                            .items(&choices)
+                            .default(0)
+                            .interact()?;
+                        if pick < items.len() {
+                            items.remove(pick)
+                        } else {
                             dialoguer::Input::<String>::new()
                                 .with_prompt("Server URL")
                                 .default(cfg.server.clone().unwrap_or_default())

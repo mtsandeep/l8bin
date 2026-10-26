@@ -16,6 +16,7 @@ tokio = { version = "1.51", features = ["full"] }
 
 # Docker
 bollard = "0.20"
+bytes = "1"
 futures-util = "0.3"
 tokio-stream = "0.1"
 

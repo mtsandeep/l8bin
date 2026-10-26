@@ -1,4 +1,4 @@
-import { ExternalLink, Loader2, Plus, Route, Settings, Trash2, X as XIcon } from 'lucide-react';
+import { ArrowRightLeft, ExternalLink, Loader2, Plus, Route, Settings, Trash2, X as XIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -30,6 +30,8 @@ interface SettingsPopoverProps {
   customDomainInput: string;
   settingsError: string | null;
   customDomainSaving: boolean;
+  canMigrate: boolean;
+  onOpenMigrate: () => void;
   onProjectNameChange: (v: string) => void;
   onProjectDescriptionChange: (v: string) => void;
   onCustomDomainChange: (v: string) => void;
@@ -51,6 +53,8 @@ export default function SettingsPopover({
   customDomainInput,
   settingsError,
   customDomainSaving,
+  canMigrate,
+  onOpenMigrate,
   onProjectNameChange,
   onProjectDescriptionChange,
   onCustomDomainChange,
@@ -490,6 +494,21 @@ export default function SettingsPopover({
                 </button>
               )}
             </div>
+
+            {/* Migration */}
+            {canMigrate && (
+              <div className="border-t border-slate-700/50 pt-3 space-y-1.5">
+                <div className="text-xs text-slate-400">Migrate to another node</div>
+                <button
+                  type="button"
+                  onClick={onOpenMigrate}
+                  className="w-full py-1.5 rounded text-xs font-medium bg-sky-600/20 border border-sky-600/40 text-sky-300 hover:bg-sky-600/30 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <ArrowRightLeft size={12} />
+                  Migrate…
+                </button>
+              </div>
+            )}
           </div>
         )}
 

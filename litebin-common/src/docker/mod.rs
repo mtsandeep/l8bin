@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 mod container;
 mod image;
 mod scan;
+mod transfer;
 
 #[cfg(test)]
 mod tests;
@@ -17,6 +18,7 @@ mod tests;
 pub use container::*;
 #[allow(unused_imports)]
 pub use image::*;
+pub use transfer::*;
 
 /// Classification of a bollard::Error for control-flow decisions.
 #[derive(Debug, Clone, PartialEq, Eq)]
