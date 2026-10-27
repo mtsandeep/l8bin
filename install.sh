@@ -146,12 +146,19 @@ ensure_docker_compose() {
 # Daemon resource protection — docs/architecture/resource-protection.md.
 harden_daemons() {
   is_linux || return 0
-  if ! systemctl set-property docker.service CPUWeight=2000 MemoryLow=150M >/dev/null 2>&1; then
+  if [ "$(id -u)" -ne 0 ]; then
+    warn "Daemon resource protection needs root — skipped. Apply later with:"
+    echo "    sudo systemctl set-property docker.service CPUWeight=2000 MemoryLow=150M"
+    echo "    sudo systemctl set-property containerd.service CPUWeight=2000 MemoryLow=100M"
+    echo "    sudo systemctl set-property ssh.service CPUWeight=1000"
+    return 0
+  fi
+  if ! systemctl set-property --no-ask-password docker.service CPUWeight=2000 MemoryLow=150M >/dev/null 2>&1; then
     warn "could not apply docker.service resource protection"
   fi
-  systemctl set-property containerd.service CPUWeight=2000 MemoryLow=100M >/dev/null 2>&1 || true
-  systemctl set-property ssh.service CPUWeight=1000 >/dev/null 2>&1 \
-    || systemctl set-property sshd.service CPUWeight=1000 >/dev/null 2>&1 || true
+  systemctl set-property --no-ask-password containerd.service CPUWeight=2000 MemoryLow=100M >/dev/null 2>&1 || true
+  systemctl set-property --no-ask-password ssh.service CPUWeight=1000 >/dev/null 2>&1 \
+    || systemctl set-property --no-ask-password sshd.service CPUWeight=1000 >/dev/null 2>&1 || true
 }
 
 get_latest_release() {
