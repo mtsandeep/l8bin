@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.15] - 2026-10-27
+
 ### Fixed
 - **Project disk usage now shows real data** — the per-service disk figure on project cards counted only the container's filesystem (image layers), which is wrong for any volume-backed app; it now reports the project total (named volumes via `du` + container filesystem incl. image layers), with a `data_gb` breakdown (volumes + writable layer) so the disk tile's tooltip shows `image: X | data: Y`. Samples cached 10 minutes on master and agents; `/projects/{id}/disk-usage` reports the same total.
 - CPU % no longer dips negative when a container restarts mid-sampling (counter reset vs the cached previous sample).
