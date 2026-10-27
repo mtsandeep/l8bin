@@ -593,7 +593,9 @@ generate_compose() {
 
   local orch_volumes="      - /var/run/docker.sock:/var/run/docker.sock
       - orchestrator-data:/app/data
-      - ./projects:/app/projects"
+      - ./projects:/app/projects
+      - ./exports:/app/data/exports
+      - ./imports:/app/data/imports"
   [ -n "$certs_dir" ] && orch_volumes="${orch_volumes}
       - ${certs_dir}:/certs:ro"
 
@@ -822,6 +824,7 @@ install_master() {
   mkdir -p "${install_dir}/orchestrator"
   mkdir -p "${install_dir}/dashboard"
   mkdir -p "${install_dir}/projects"
+  mkdir -p "${install_dir}/exports" "${install_dir}/imports"
   mkdir -p "$certs_dir"
 
   # Download orchestrator binary (always Linux — runs inside Docker container)
@@ -1599,6 +1602,10 @@ update_master() {
     info "docker-compose.yml updated"
   fi
   rm -f "$tmp_compose"
+
+  # Export/import bundle folders (host-visible for scp) — created regardless
+  # of whether the compose diff was applied, so binds never point at nothing.
+  mkdir -p "${install_dir}/exports" "${install_dir}/imports"
 
   tmp_compose=$(mktemp)
   generate_compose_override "$tmp_compose"

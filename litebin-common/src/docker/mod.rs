@@ -198,6 +198,20 @@ impl DockerManager {
         tracing::debug!("no /app/projects mount found on this container");
     }
 
+    /// Resolve the HOST-side path of a bind mount on this container (e.g.
+    /// `/app/data/exports`). Returns None when not running inside Docker, when
+    /// the mount is absent, or when the source is a named volume instead of a
+    /// bind (volume storage paths live under /var/lib/docker/volumes).
+    pub async fn host_bind_source(&self, container_destination: &str) -> Option<String> {
+        let hostname = std::fs::read_to_string("/etc/hostname").ok()?;
+        let inspect = self.docker.inspect_container(hostname.trim(), None).await.ok()?;
+        inspect
+            .mounts?
+            .into_iter()
+            .find(|m| m.destination.as_deref() == Some(container_destination))
+            .and_then(|m| m.source.filter(|s| !s.starts_with("/var/lib/docker/volumes")))
+    }
+
     /// Update the default memory and CPU limits used as fallbacks
     /// when per-service limits are not specified.
     pub fn update_defaults(&self, memory_limit: i64, cpu_limit: f64) {

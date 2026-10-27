@@ -70,6 +70,22 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/projects/{id}/stop", post(crate::routes::manage::handlers::stop_project))
         .route("/projects/{id}/start", post(crate::routes::manage::handlers::start_project))
         .route("/projects/{id}/migrate", post(crate::routes::manage::handlers::migrate_project))
+        .route("/projects/{id}/duplicate", post(crate::routes::manage::handlers::duplicate_project))
+        .route("/projects/{id}/export", post(crate::routes::manage::handlers::export_project))
+        .route("/exports", get(crate::routes::exports::list_exports))
+        .route(
+            "/exports/{file}",
+            get(crate::routes::exports::download_export).delete(crate::routes::exports::delete_export),
+        )
+        .route("/exports/jobs/{id}", get(crate::routes::exports::export_job_status))
+        .route("/imports", get(crate::routes::imports::list_import_archives))
+        .route("/imports", post(crate::routes::imports::import_bundle))
+        // Streamed raw-body upload of a bundle (large bundles: scp to the folder).
+        .route(
+            "/imports/upload",
+            post(crate::routes::imports::upload_import_archive)
+                .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024 * 1024)),
+        )
         .route("/projects/{id}/recreate", post(crate::routes::manage::handlers::recreate_project))
         .route("/projects/{id}/settings", patch(crate::routes::settings::update_project_settings))
         .route("/projects/{id}/services/{name}/start", post(crate::routes::manage::handlers::start_service))

@@ -88,6 +88,7 @@ pub(crate) async fn build_test_state(config: Config) -> (AppState, SqlitePool) {
         port_mismatches: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
         domain_jobs: Arc::new(DashMap::new()),
+        export_jobs: Arc::new(DashMap::new()),
         destination_health: Arc::new(std::sync::RwLock::new(None)),
         upload_store: Arc::new(
             litebin_common::upload::UploadStore::new(
@@ -152,6 +153,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/projects/{id}/env", axum::routing::put(routes::env::update_project_env))
         .route("/projects/{id}/stop", post(routes::manage::handlers::stop_project))
         .route("/projects/{id}/start", post(routes::manage::handlers::start_project))
+        .route("/projects/{id}/duplicate", post(routes::manage::handlers::duplicate_project))
+        .route("/projects/{id}/export", post(routes::manage::handlers::export_project))
+        .route("/exports", get(routes::exports::list_exports))
+        .route("/exports/{file}", get(routes::exports::download_export).delete(routes::exports::delete_export))
+        .route("/exports/jobs/{id}", get(routes::exports::export_job_status))
+        .route("/imports", get(routes::imports::list_import_archives))
+        .route("/imports", post(routes::imports::import_bundle))
+        .route("/imports/upload", post(routes::imports::upload_import_archive))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::guard::require_manage));
 
     // Admin routes (session OR deploy token with scope = admin)

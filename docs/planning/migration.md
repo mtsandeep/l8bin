@@ -1,4 +1,4 @@
-> **Status: Phase 1 SHIPPED (minimal) — 2026-10-26** · single-project migration, same-architecture focus, local↔agent all directions · verified 2026-10-26
+> **Status: node-to-node migration SHIPPED (2026-10-26); duplication + export/import bundles SHIPPED (2026-10-27, shared copy engine); master migration (Phase 2/3) pending** · verified 2026-10-27
 
 # Project Migration & Master Migration
 
@@ -231,11 +231,16 @@ After promote succeeds, user manually:
 | 8 | Maintenance mode (503 during migration) | Future |
 | 9 | Master migration (Phase 2) | Future |
 | 10 | `install.sh promote` (Phase 3) | Future |
-| 11 | Project duplication (clone to same/different node) | Future |
+| 11 | Project duplication (clone to same/different node) | ✅ Shipped |
+| 12 | Export/import bundles (cross-master move + full project backup) | ✅ Shipped |
 
 ---
 
-## Future: Project Duplication
+## Project Duplication — SHIPPED (2026-10-27)
+
+`POST /projects/{id}/duplicate` — implemented on the shared copy engine (`orchestrator/src/copy_engine/`) with export/import. Differences from the original sketch below: `.env` is **included by default** (toggle `include_env`) — the staging-copy use case wants a runnable copy, and the "never transfer `.env`" principle belongs to the cross-master trust boundary, where the export toggle already guards it. Same node is allowed; port-pinned (`allow_raw_ports`) / host-network copies warn instead of blocking.
+
+The original sketch (kept for context):
 
 Shares all the same building blocks as migration (file transfer, volume export/import, image transfer, deploy). The difference:
 
@@ -275,6 +280,40 @@ Both migration and duplication use the same internal helpers (extract from migra
 - `transfer_volumes(source, target, project_id)` — volume export/import
 - `transfer_image(source, target, image_ref)` — docker save/load
 - `deploy_on_target(target, project_id)` — deploy using existing logic
+
+## Export / Import Bundles — SHIPPED (2026-10-27)
+
+Master-to-master project moves and full (cold) project backups without any
+connectivity or trust between the two masters. The user carries the file.
+
+- **Archive**: `{id}-{timestamp}.l8b.tar.gz` (gzip level 1 over a tar) =
+  `manifest.json` (the durable DB shape) + `project.tar` (project dir, original
+  id as top-level dir; `.env*` excluded at write time when toggled off) +
+  `volumes/{scoped}.tar` + `images/{slug}.tar` (`sha256:` uploads only;
+  registry refs pull fresh on import). All renaming happens at import time on
+  the importing master — the archive always keeps the original id, so one
+  bundle can be imported several times under different ids.
+- **Endpoints**: `POST /projects/{id}/export` (job-polled via `GET
+  /exports/jobs/{id}`, `exporting` project status; source stops briefly for a
+  consistent snapshot and restarts), `GET/DELETE /exports/{file}` +
+  `GET /exports` (folder), `POST /imports` (folder file or uploaded bundle;
+  auto-suffix `-2`… on id collision; arch mismatch with embedded images
+  rejected), `POST /imports/upload` (streamed raw body), `GET /imports`.
+- **Folders**: `data/exports` and `data/imports` are host-bind mounted
+  (`./exports`, `./imports` next to `projects/` in the compose file) so
+  bundles can be scp'd in/out: `scp app.l8b.tar.gz server:~/litebin/imports/`.
+  Folders are created by install/upgrade with the installing user's ownership
+  (a docker-auto-created bind source would be root-owned and break scp).
+- **UI**: Duplicate… / Export bundle… in project settings; Import from bundle
+  page (`/manage/import-bundle`, archive icon in the home toolbar) with
+  server-folder and upload tabs.
+- Carried across masters: custom domain and path/alias routes (claimed on
+  import unless another project already holds them — skipped with a warning).
+  Not carried: deploy tokens, GitHub links (instance-level credentials). The
+  rename cascade (containers,
+  network, `litebin_{id}_{vol}` volumes, data dir, subdomain) is free — every
+  unique name derives from the project id at run time; only the project-dir
+  tar's top-level folder is re-rooted.
 
 ## Verification
 

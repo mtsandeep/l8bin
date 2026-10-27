@@ -13,6 +13,8 @@ interface Props {
   volumeCount: number;
   onClose: () => void;
   onStarted: () => void;
+  /** Fired on success only — closes the settings popover behind this modal. */
+  onSucceeded: () => void;
 }
 
 export default function MigrateModal({
@@ -25,6 +27,7 @@ export default function MigrateModal({
   volumeCount,
   onClose,
   onStarted,
+  onSucceeded,
 }: Props) {
   const sourceArch = nodes.find((n) => n.id === currentNodeId)?.architecture ?? null;
   const onlineNodes = nodes.filter((n) => n.id !== currentNodeId && n.status === 'online');
@@ -49,6 +52,7 @@ export default function MigrateModal({
     try {
       const resp = await migrateProject(projectId, targetId, migrateVolumes);
       showToast(resp.message || 'Migration started', 'success');
+      onSucceeded();
       onStarted();
       onClose();
     } catch (e) {
@@ -87,13 +91,10 @@ export default function MigrateModal({
 
   return (
     <div
+      data-l8b-modal
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={onClose}
     >
-      <div
-        className="bg-slate-900 border border-slate-700/50 rounded-lg p-5 max-w-md w-full mx-4 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="bg-slate-900 border border-slate-700/50 rounded-lg p-5 max-w-md w-full mx-4 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <ArrowRightLeft size={14} className="text-sky-400" />

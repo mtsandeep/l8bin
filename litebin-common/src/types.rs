@@ -127,6 +127,7 @@ pub enum ProjectStatus {
     Importing,
     Stopping,
     Migrating,
+    Exporting,
     Error,
     Degraded,
     Unconfigured,
@@ -145,6 +146,7 @@ impl ProjectStatus {
                 | ProjectStatus::Importing
                 | ProjectStatus::Stopping
                 | ProjectStatus::Migrating
+                | ProjectStatus::Exporting
                 | ProjectStatus::Error
                 | ProjectStatus::Unconfigured
         )
@@ -166,6 +168,7 @@ impl fmt::Display for ProjectStatus {
             ProjectStatus::Importing => write!(f, "importing"),
             ProjectStatus::Stopping => write!(f, "stopping"),
             ProjectStatus::Migrating => write!(f, "migrating"),
+            ProjectStatus::Exporting => write!(f, "exporting"),
             ProjectStatus::Error => write!(f, "error"),
             ProjectStatus::Degraded => write!(f, "degraded"),
             ProjectStatus::Unconfigured => write!(f, "unconfigured"),

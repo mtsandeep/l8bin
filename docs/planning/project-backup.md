@@ -1,12 +1,16 @@
-> **Status: NOT STARTED (rustic) — roadmap item 15; gates disaster recovery** · verified 2026-10-13
+> **Status: v1 SHIPPED as export bundles (full, cold, manual — 2026-10-27); incremental rustic backup (v2) not started — roadmap item 15; gates disaster recovery** · updated 2026-10-27
 
 # Project Backup (Rustic)
 
 Incremental backup of project data — Docker volumes, compose files, and user-uploaded images — using Rustic.
 
-## Context
+## First version — SHIPPED (2026-10-27)
 
-LiteBin currently backs up only the SQLite database via Litestream ([backup.md](../topics/backup.md)). Project data — Docker volumes, compose files, and user-uploaded images — has no backup story. This plan adds incremental project backups with configurable retention policies, local + external storage (S3/SFTP), and a separate image vault for user-uploaded `sha256:` images.
+Export/import bundles ([migration.md](migration.md), [multi-server.md](../topics/multi-server.md)) already give every project a full backup: `POST /projects/{id}/export` writes a self-contained `.l8b.tar.gz` (compose, `.env`, volumes, uploaded images) to the exports folder or a download; `POST /imports` restores it on any master. Cold (the project stops briefly) and manual (no schedule, no retention — files live until deleted), but a real project-data backup where there was none.
+
+What this plan (v2) adds on top: incremental/deduplicated snapshots, schedules, retention policies, external storage (S3/SFTP), and the image vault. The shipped copy engine (`orchestrator/src/copy_engine/`) already implements the volume-export-via-temp-container mechanics this plan sketches — v2 should build on it rather than reinvent.
+
+## Context (v2)
 
 ## Tool: Rustic
 

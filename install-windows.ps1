@@ -201,6 +201,8 @@ $orchPorts    volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - orchestrator-data:/app/data
       - ./projects:/app/projects
+      - ./exports:/app/data/exports
+      - ./imports:/app/data/imports
     env_file:
       - .env
     depends_on:
@@ -372,6 +374,8 @@ function Install-Master {
     $OrchDir = Join-Path $TargetDir "orchestrator"
     $DashDir = Join-Path $TargetDir "dashboard"
     $ProjectsDir = Join-Path $TargetDir "projects"
+    $ExportsDir = Join-Path $TargetDir "exports"
+    $ImportsDir = Join-Path $TargetDir "imports"
 
     # An existing running installation goes to the update flow
     if ((Test-Path "$TargetDir\docker-compose.yml") -and (-not $Clean)) {
@@ -385,7 +389,7 @@ function Install-Master {
     Get-LatestRelease
 
     # -- Create directories ------------------------------------------------------
-    foreach ($d in @($TargetDir, $OrchDir, $DashDir, $ProjectsDir)) {
+    foreach ($d in @($TargetDir, $OrchDir, $DashDir, $ProjectsDir, $ExportsDir, $ImportsDir)) {
         New-Item -ItemType Directory -Force -Path $d | Out-Null
     }
 
@@ -575,6 +579,12 @@ function Update-Master {
     } else {
         $reply = Read-Host "  Update from $CurrentVersion to $TargetTag? [Y/n]"
         if ($reply -match '^[Nn]') { Write-Info "Cancelled."; return }
+    }
+
+    # Export/import bundle folders (bind targets) exist regardless of whether
+    # the compose diff below is applied.
+    foreach ($d in @((Join-Path $TargetDir "exports"), (Join-Path $TargetDir "imports"))) {
+        New-Item -ItemType Directory -Force -Path $d | Out-Null
     }
 
     $newCompose = New-ComposeContent -IsLocal $LocalInstall

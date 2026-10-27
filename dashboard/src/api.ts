@@ -10,6 +10,7 @@ export const ProjectStatus = {
   Importing: 'importing',
   Stopping: 'stopping',
   Migrating: 'migrating',
+  Exporting: 'exporting',
   Error: 'error',
   Degraded: 'degraded',
   Unconfigured: 'unconfigured',
@@ -556,6 +557,171 @@ export async function migrateProject(
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || 'Migration failed');
+  }
+  return res.json();
+}
+
+export interface DuplicateResponse {
+  project_id: string;
+  status: string;
+  warnings: string[];
+}
+
+export async function duplicateProject(
+  projectId: string,
+  payload: {
+    new_id?: string;
+    name?: string;
+    target_node_id?: string;
+    copy_volumes: boolean;
+    include_env: boolean;
+    start_after: boolean;
+  },
+): Promise<DuplicateResponse> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/duplicate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Duplication failed');
+  }
+  return res.json();
+}
+
+// ── Export bundles ────────────────────────────────────────────────────────────
+
+export interface ExportJobInfo {
+  id: string;
+  project_id: string;
+  status: 'running' | 'completed' | 'failed';
+  error?: string | null;
+  artifact?: string | null;
+  size_bytes?: number | null;
+  created_at: number;
+  finished_at?: number | null;
+}
+
+export interface ExportSummary {
+  file: string;
+  size_bytes: number;
+  created_at: number;
+}
+
+export async function exportProject(
+  projectId: string,
+  options: { include_env: boolean; include_volumes: boolean },
+): Promise<{ job_id: string; project_id: string; status: string }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(options),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Export failed');
+  }
+  return res.json();
+}
+
+export async function getExportJob(jobId: string): Promise<ExportJobInfo> {
+  const res = await fetch(`${API_BASE}/exports/jobs/${encodeURIComponent(jobId)}`, {
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Export job not found');
+  return res.json();
+}
+
+export async function listExports(): Promise<{ exports: ExportSummary[]; folder_path: string | null }> {
+  const res = await fetch(`${API_BASE}/exports`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to list exports');
+  const data = await res.json();
+  return { exports: data.exports ?? [], folder_path: data.folder_path ?? null };
+}
+
+export async function deleteExport(file: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/exports/${encodeURIComponent(file)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to delete export');
+}
+
+// Download an export bundle in the browser — fetched as a blob (auth cookies
+// apply) and saved via a temporary anchor click.
+export async function downloadExport(file: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/exports/${encodeURIComponent(file)}`, {
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to download export');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ── Import bundles ────────────────────────────────────────────────────────────
+
+export interface ImportArchiveSummary {
+  file: string;
+  size_bytes: number;
+  created_at: number;
+}
+
+export async function listImportArchives(): Promise<{
+  archives: ImportArchiveSummary[];
+  folder_path: string | null;
+}> {
+  const res = await fetch(`${API_BASE}/imports`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to list import bundles');
+  const data = await res.json();
+  return { archives: data.archives ?? [], folder_path: data.folder_path ?? null };
+}
+
+export async function uploadImportArchive(file: File): Promise<{ file: string }> {
+  const res = await fetch(`${API_BASE}/imports/upload?name=${encodeURIComponent(file.name)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    credentials: 'include',
+    body: file,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Upload failed');
+  }
+  return res.json();
+}
+
+export async function importBundle(
+  payload: {
+    file: string;
+    new_id?: string;
+    name?: string;
+    description?: string;
+    target_node_id: string;
+    include_env: boolean;
+    include_volumes: boolean;
+    start_after_import: boolean;
+    delete_after_import: boolean;
+  },
+): Promise<{ project_id: string; status: string; warnings: string[] }> {
+  const res = await fetch(`${API_BASE}/imports`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Import failed');
   }
   return res.json();
 }

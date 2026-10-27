@@ -358,6 +358,7 @@ mod tests {
             port_mismatches: Arc::new(DashMap::new()),
             deploy_logs: Arc::new(DashMap::new()),
             domain_jobs: Arc::new(DashMap::new()),
+            export_jobs: Arc::new(DashMap::new()),
             destination_health: Arc::new(std::sync::RwLock::new(None)),
             upload_store: Arc::new(litebin_common::upload::UploadStore::new(
                 std::env::temp_dir().join("l8b-test-upload-store"),

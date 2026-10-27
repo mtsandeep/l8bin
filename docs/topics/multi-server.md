@@ -310,6 +310,39 @@ The agent reports its IP in every `/health` response. The orchestrator only writ
 
 ---
 
+## Moving Projects to Another Master (Export / Import)
+
+Projects move between independent LiteBin masters as a carried file — no
+connectivity or trust between the servers is needed. The bundle is also a
+full (cold) project backup.
+
+1. On the **source** master: project settings → **Export bundle…** (or
+   `POST /projects/{id}/export`). The project stops briefly for a consistent
+   snapshot and restarts; the bundle lands in the server's `exports/` folder
+   (`~/litebin/exports/{id}-{date}.l8b.tar.gz`) and is also downloadable from
+   the dashboard.
+2. Copy it over, e.g. `scp app.l8b.tar.gz target:~/litebin/imports/`
+   (any file in the target's `imports/` folder works; the dashboard's
+   *Import from bundle* page lists them).
+3. On the **target** master: *Import from bundle* (archive icon in the
+   toolbar) or plain API:
+   `curl -X POST https://target/imports -H 'Content-Type: application/json' \
+   -d '{"file":"app.l8b.tar.gz","target_node_id":"local"}'`
+   — optionally with `new_id` (taken ids get a `-2` suffix), `name`,
+   `include_env`, `include_volumes`, `start_after_import`.
+4. Repeat per project, then decommission the old master.
+
+Notes: the project keeps its id (new subdomain under the target's domain) —
+set the old URL as a custom domain if you need it preserved. The bundle
+carries the project's custom domain and path/alias routes (claimed on import
+unless another project already holds them); re-point the custom domain's DNS
+at the new master. Deploy tokens and GitHub links do not transfer; re-link
+them on the target. `.env` travels inside the bundle unless excluded at
+export — treat the file as a secret. Same-node staging copies without any
+bundle: project settings → **Duplicate…**.
+
+---
+
 ## Further Reading
 
 - [Architecture](../architecture/architecture.md) — full system overview, component responsibilities, database schema

@@ -9,6 +9,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - orchestrator-data:/app/data
       - ./projects:/app/projects
+      # Export/import bundle folders (host-visible for scp)
+      - ./data/exports:/app/data/exports
+      - ./data/imports:/app/data/imports
     env_file:
       - .env
     depends_on:

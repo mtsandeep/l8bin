@@ -65,7 +65,10 @@ pub async fn migrate_project(
     if payload.target_node_id == source_node {
         return err(StatusCode::BAD_REQUEST, format!("project is already on node '{source_node}'"));
     }
-    if matches!(project.status, ProjectStatus::Deploying | ProjectStatus::Migrating | ProjectStatus::Stopping) {
+    if matches!(
+        project.status,
+        ProjectStatus::Deploying | ProjectStatus::Migrating | ProjectStatus::Exporting | ProjectStatus::Stopping
+    ) {
         return err(StatusCode::CONFLICT, format!("project is {} — wait for it to settle", project.status));
     }
 

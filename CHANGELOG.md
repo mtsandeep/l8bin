@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Project export bundles** — `POST /projects/{id}/export` writes a self-contained `{id}-{date}.l8b.tar.gz` (manifest + project files + volumes + uploaded images) into the server's `exports/` folder, host-bind mounted next to `projects/`. `GET /exports` lists, `GET /exports/{file}` downloads, `DELETE` removes, `GET /exports/jobs/{id}` polls the job. Doubles as a cold full-project backup; `.env` rides along unless excluded at export — the bundle is a secret.
+- **Import bundles — move projects between masters** — `POST /imports` recreates a bundled project on any master: from the `imports/` folder (scp a bundle in and import via plain API, no dashboard needed) or a streamed upload (`POST /imports/upload`, `GET /imports` lists waiting bundles). Optional new id — taken ids get a `-2` suffix — and everything derived from the id (volumes, network, containers, subdomain) re-scales automatically; the archive keeps the original id, so one bundle imports repeatedly under different ids. Cross-arch bundles with uploaded images are rejected; registry refs pull fresh. Custom domain and path/alias routes carry over (claimed on import unless another project already holds them); deploy tokens and GitHub links stay behind.
+- **Settings → Export / Import panel** — bulk export with a project picker (sequential, per-project progress) and the exports-folder table with download, copy-server-path (the real host path, resolved from the container's own bind mounts), and delete; import from the folder or an upload with id/node/toggles. Project settings gains a **Tools** section (Duplicate / Export / Migrate) replacing the separate action blocks.
+- **Project duplication — staging copies without touching the original** — `POST /projects/{id}/duplicate` copies a project under a new id (default `{id}-copy`, auto-suffix on collision) to the same or another node: files, volumes, uploaded images, and optionally `.env`, then starts both side by side (fresh volumes/network/subdomain; port-pinned projects warn). Shares the new copy engine with export/import; node-to-node migration is unchanged.
+- `exporting` project status (source stops briefly for a consistent snapshot; settles to `stopped` on restart if the master reboots mid-export).
 ## [0.4.14] - 2026-10-26
 
 ### Fixed

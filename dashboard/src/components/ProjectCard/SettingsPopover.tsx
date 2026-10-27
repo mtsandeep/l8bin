@@ -1,4 +1,4 @@
-import { ArrowRightLeft, ExternalLink, Loader2, Plus, Route, Settings, Trash2, X as XIcon } from 'lucide-react';
+import { ArrowRightLeft, Copy, ExternalLink, FileArchive, Loader2, Plus, Route, Settings, Trash2, X as XIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -32,6 +32,8 @@ interface SettingsPopoverProps {
   customDomainSaving: boolean;
   canMigrate: boolean;
   onOpenMigrate: () => void;
+  onOpenDuplicate: () => void;
+  onOpenExport: () => void;
   onProjectNameChange: (v: string) => void;
   onProjectDescriptionChange: (v: string) => void;
   onCustomDomainChange: (v: string) => void;
@@ -55,6 +57,8 @@ export default function SettingsPopover({
   customDomainSaving,
   canMigrate,
   onOpenMigrate,
+  onOpenDuplicate,
+  onOpenExport,
   onProjectNameChange,
   onProjectDescriptionChange,
   onCustomDomainChange,
@@ -114,9 +118,11 @@ export default function SettingsPopover({
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        onClose();
-      }
+      if (!ref.current || ref.current.contains(e.target as Node)) return;
+      // Clicks inside a tool modal (migrate/duplicate/export) must not close
+      // the popover behind it — the user returns to it when the modal closes.
+      if ((e.target as HTMLElement).closest?.('[data-l8b-modal]')) return;
+      onClose();
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -495,20 +501,40 @@ export default function SettingsPopover({
               )}
             </div>
 
-            {/* Migration */}
-            {canMigrate && (
-              <div className="border-t border-slate-700/50 pt-3 space-y-1.5">
-                <div className="text-xs text-slate-400">Migrate to another node</div>
+            {/* Tools */}
+            <div className="border-t border-slate-700/50 pt-3 space-y-1.5">
+              <div className="text-xs text-slate-400">Tools</div>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  type="button"
+                  onClick={onOpenDuplicate}
+                  title="Copy this project to a new id (staging copy)"
+                  className="flex flex-col items-center gap-1 py-2 rounded text-[10px] font-medium bg-slate-800/60 border border-slate-700/50 text-slate-300 hover:border-sky-500/40 hover:text-sky-300 transition-colors cursor-pointer"
+                >
+                  <Copy size={13} />
+                  Duplicate
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenExport}
+                  title="Downloadable / scp-able full backup bundle"
+                  className="flex flex-col items-center gap-1 py-2 rounded text-[10px] font-medium bg-slate-800/60 border border-slate-700/50 text-slate-300 hover:border-teal-500/40 hover:text-teal-300 transition-colors cursor-pointer"
+                >
+                  <FileArchive size={13} />
+                  Export
+                </button>
                 <button
                   type="button"
                   onClick={onOpenMigrate}
-                  className="w-full py-1.5 rounded text-xs font-medium bg-sky-600/20 border border-sky-600/40 text-sky-300 hover:bg-sky-600/30 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                  disabled={!canMigrate}
+                  title={canMigrate ? 'Move this project to another node' : 'No other online nodes'}
+                  className="flex flex-col items-center gap-1 py-2 rounded text-[10px] font-medium bg-slate-800/60 border border-slate-700/50 text-slate-300 hover:border-violet-500/40 hover:text-violet-300 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  <ArrowRightLeft size={12} />
-                  Migrate…
+                  <ArrowRightLeft size={13} />
+                  Migrate
                 </button>
               </div>
-            )}
+            </div>
           </div>
         )}
 

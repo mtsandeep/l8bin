@@ -243,7 +243,9 @@ l8b preview delete <project> <id>   -- Delete a preview
 
 ---
 
-## Phase 2: App Migration
+## Phase 2: App Migration — SHIPPED (core)
+
+Core shipped (2026-10-26/27): `POST /projects/:id/migrate` (all directions), `POST /projects/:id/duplicate` (staging copies), and export/import bundles for cross-master moves + full project backups — see [migration.md](migration.md) and [multi-server.md](../topics/multi-server.md). Still pending from the original plan: the `migrated` flag + on-demand cleanup endpoint, maintenance mode, and chunked/resumable transfer.
 
 Move projects between nodes with configurable options. Makes multi-node useful for rebalancing and server upgrades. Full plan: [migration.md](migration.md).
 
@@ -712,7 +714,7 @@ LiteBin today              LiteBin + WireGuard mesh       Graduate → K8s / Clo
 | 1 | Full real-time log streaming | Quick Win | Low | Planned |
 | 2 | Environment variable editor | Quick Win | Low | **Done** |
 | 3 | Preview environments | Phase 1 | Medium | Planned |
-| 4 | App migration + duplication | Phase 2 | Medium | Planned ([migration.md](migration.md)) |
+| 4 | App migration + duplication | Phase 2 | Medium | **Done** — migrate, duplicate, export/import bundles ([migration.md](migration.md)) |
 | 5 | Access control (maintenance + password) | Phase 3 | Low | Planned ([access-control.md](access-control.md)) |
 | 6 | Platform backup (Litestream) | Phase 4 | Low | **Done** — [backup.md](../topics/backup.md) |
 | 7 | One-click apps | Phase 5 | Low | Planned ([template-catalog.md](template-catalog.md)) |

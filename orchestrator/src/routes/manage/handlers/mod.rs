@@ -1,4 +1,6 @@
 mod delete;
+mod duplicate;
+mod export;
 mod migrate;
 mod recreate;
 mod service_ops;
@@ -6,6 +8,8 @@ mod shared;
 mod stop_start;
 
 pub use delete::*;
+pub use duplicate::*;
+pub use export::*;
 pub use migrate::*;
 pub use recreate::*;
 pub use service_ops::*;

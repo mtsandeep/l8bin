@@ -47,6 +47,12 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string; labe
     dot: 'bg-cyan-400 animate-pulse',
     label: 'Migrating',
   },
+  [ProjectStatus.Exporting]: {
+    bg: 'bg-teal-500/10',
+    text: 'text-teal-400',
+    dot: 'bg-teal-400 animate-pulse',
+    label: 'Exporting',
+  },
   [ProjectStatus.Degraded]: {
     bg: 'bg-yellow-500/10',
     text: 'text-yellow-400',

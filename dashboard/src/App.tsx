@@ -44,6 +44,7 @@ function AppContent() {
         <Route path="/settings/general" element={<SettingsPage section="general" key="general" />} />
         <Route path="/settings/tokens" element={<SettingsPage section="tokens" key="tokens" />} />
         <Route path="/settings/registries" element={<SettingsPage section="registries" key="registries" />} />
+        <Route path="/settings/transfer" element={<SettingsPage section="transfer" key="transfer" />} />
         <Route path="/settings/backup" element={<SettingsPage section="backup" key="backup" />} />
         <Route path="/settings/github" element={<SettingsPage section="github" key="github" />} />
         <Route path="/settings/github/callback" element={<GithubCallbackPage key="github-callback" />} />

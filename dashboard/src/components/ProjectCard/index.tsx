@@ -44,6 +44,8 @@ import DeleteConfirmModal from './DeleteConfirmModal';
 import EnvModal from './EnvModal';
 import GitHubBadge from './GitHubBadge';
 import GitHubRunsModal from './GitHubRunsModal';
+import DuplicateModal from './DuplicateModal';
+import ExportModal from './ExportModal';
 import MigrateModal from './MigrateModal';
 import ProjectDetailsModal from './ProjectDetailsModal';
 import StatsGrid from './ProjectStats';
@@ -83,6 +85,8 @@ export default function ProjectCard({
   const [loading, setLoading] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showMigrate, setShowMigrate] = useState(false);
+  const [showDuplicate, setShowDuplicate] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [showEnv, setShowEnv] = useState(false);
   const [showGithubRuns, setShowGithubRuns] = useState(false);
@@ -477,10 +481,9 @@ export default function ProjectCard({
                 canMigrate={
                   nodes.filter((n) => n.id !== (project.node_id || 'local') && n.status === 'online').length > 0
                 }
-                onOpenMigrate={() => {
-                  setOpenPopover(null);
-                  setShowMigrate(true);
-                }}
+                onOpenMigrate={() => setShowMigrate(true)}
+                onOpenDuplicate={() => setShowDuplicate(true)}
+                onOpenExport={() => setShowExport(true)}
                 onProjectNameChange={setProjectName}
                 onProjectDescriptionChange={setProjectDescription}
                 onCustomDomainChange={setCustomDomainInput}
@@ -794,6 +797,34 @@ export default function ProjectCard({
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
           onClose={() => setShowMigrate(false)}
           onStarted={() => onRefresh()}
+          onSucceeded={() => setOpenPopover(null)}
+        />
+      )}
+
+      {/* Duplication modal */}
+      {showDuplicate && (
+        <DuplicateModal
+          projectId={project.id}
+          projectName={project.name || project.id}
+          currentNodeId={project.node_id || 'local'}
+          nodes={nodes}
+          sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB data` : ''}
+          serviceCount={services.length || 1}
+          volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
+          onClose={() => setShowDuplicate(false)}
+          onStarted={() => onRefresh()}
+          onSucceeded={() => setOpenPopover(null)}
+        />
+      )}
+
+      {/* Export bundle modal */}
+      {showExport && (
+        <ExportModal
+          projectId={project.id}
+          projectName={project.name || project.id}
+          volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
+          onClose={() => setShowExport(false)}
+          onSucceeded={() => setOpenPopover(null)}
         />
       )}
 

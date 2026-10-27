@@ -6,6 +6,7 @@ mod capabilities;
 mod cli;
 mod cloudflare_router;
 mod config;
+mod copy_engine;
 use utoipa::OpenApi;
 mod db;
 mod dns_ledger;
@@ -67,6 +68,8 @@ pub struct AppState {
     pub deploy_logs: Arc<DashMap<String, std::sync::Mutex<Vec<String>>>>,
     /// In-flight platform domain change jobs (job_id -> job).
     pub domain_jobs: Arc<DashMap<String, platform::DomainJob>>,
+    /// Export bundle jobs (job_id -> job); artifacts live in the exports folder.
+    pub export_jobs: Arc<DashMap<String, routes::exports::ExportJob>>,
     /// Chunked upload store + staging for local-node and relay uploads.
     pub upload_store: Arc<litebin_common::upload::UploadStore>,
     /// Live s3/r2 destination health (probe- and sidecar-error-driven).
@@ -356,6 +359,7 @@ async fn main() -> anyhow::Result<()> {
         port_mismatches: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
         domain_jobs: Arc::new(DashMap::new()),
+        export_jobs: Arc::new(DashMap::new()),
         upload_store: Arc::new(litebin_common::upload::UploadStore::new(
             "data/uploads",
             litebin_common::upload::DEFAULT_CHUNK_SIZE,
@@ -370,6 +374,23 @@ async fn main() -> anyhow::Result<()> {
         state.docker.clone(),
         state.destination_health.clone(),
     );
+
+    // Export/import folders + copy-engine spool dir (host-bind mounted in prod).
+    for dir in [copy_engine::exports_dir(), copy_engine::imports_dir(), copy_engine::spool_dir(&state)] {
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(dir = %dir.display(), error = %e, "failed to create transfer dir");
+        }
+    }
+
+    // Export jobs are in-memory; a restart mid-export would leave the project
+    // 'exporting' forever — settle it to stopped so it can be started again.
+    match sqlx::query("UPDATE projects SET status = 'stopped' WHERE status = 'exporting'").execute(&state.db).await {
+        Ok(r) if r.rows_affected() > 0 => {
+            tracing::warn!(count = r.rows_affected(), "settled stale 'exporting' projects to stopped")
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "failed to settle stale 'exporting' projects"),
+    }
 
     // Periodic GC of expired upload sessions + orphaned staging dirs.
     {

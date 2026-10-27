@@ -260,7 +260,7 @@ If the user never configured S3/R2 for Rustic (only local backup), and the agent
 - **Docker volumes are lost** — local backup on a dead server is gone
 - **Dashboard shows:** "No backup found for this project. Volumes will be empty. You may need to re-import data from your application's own export tools."
 
-The user deploys with empty volumes and re-imports data from their app (e.g., `pg_restore`, database dump, upload files).
+The user deploys with empty volumes and re-imports data from their app (e.g., `pg_restore`, database dump, upload files). One escape hatch already shipped: **export bundles** — a bundle taken before the failure (`exports/` folder or downloaded) restores the whole project, volumes included, on the rebuilt master via `POST /imports` ([multi-server.md](../topics/multi-server.md)). Bundles are manual snapshots, not scheduled backups — that's the rustic plan's job.
 
 ### Bulk Agent Recovery
 

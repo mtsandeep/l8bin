@@ -1,14 +1,16 @@
-import { AlertCircle, AlertTriangle, CheckCircle, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Info, X } from 'lucide-react';
 import { createContext, type ReactNode, useCallback, useContext, useState } from 'react';
+
+type ToastType = 'success' | 'error' | 'warning' | 'info';
 
 interface Toast {
   id: number;
   message: string;
-  type: 'success' | 'error' | 'warning';
+  type: ToastType;
 }
 
 interface ToastContextValue {
-  showToast: (message: string, type?: 'success' | 'error' | 'warning') => void;
+  showToast: (message: string, type?: ToastType) => void;
 }
 
 const ToastContext = createContext<ToastContextValue>({ showToast: () => {} });
@@ -22,7 +24,7 @@ let nextId = 0;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const showToast = useCallback((message: string, type: 'success' | 'error' | 'warning' = 'error') => {
+  const showToast = useCallback((message: string, type: ToastType = 'error') => {
     const id = ++nextId;
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
@@ -47,13 +49,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 ? 'bg-emerald-500/90'
                 : toast.type === 'warning'
                   ? 'bg-amber-500/90'
-                  : 'bg-red-500/90'
+                  : toast.type === 'info'
+                    ? 'bg-sky-500/90'
+                    : 'bg-red-500/90'
             }`}
           >
             {toast.type === 'success' ? (
               <CheckCircle size={14} className="shrink-0" />
             ) : toast.type === 'warning' ? (
               <AlertTriangle size={14} className="shrink-0" />
+            ) : toast.type === 'info' ? (
+              <Info size={14} className="shrink-0" />
             ) : (
               <AlertCircle size={14} className="shrink-0" />
             )}
