@@ -1,15 +1,13 @@
 use axum::{Json, extract::Path, extract::State, http::StatusCode};
 
-use super::super::manage::{get_node_from_db, sync_caddy};
+use super::super::manage::sync_caddy;
 use super::helpers::{
-    aggregate_root_fs_bytes, batch_load_services, enrich_services, load_project_container_ids, make_stats_response,
-    project_container_ids,
+    batch_load_services, enrich_services, load_project_container_ids, make_stats_response, project_container_ids,
 };
 use super::types::{DiskUsageResponse, LiveStats, StatsResponse};
 use crate::AppState;
-use crate::nodes;
 use crate::status;
-use litebin_common::types::{DeployType, ProjectStatus};
+use litebin_common::types::ProjectStatus;
 
 #[utoipa::path(
     get,
@@ -38,7 +36,7 @@ pub async fn project_stats(
         .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
     // Sync status from Docker for local projects
-    let node_id = project.node_id.as_deref().unwrap_or("local");
+    let node_id = project.node_id.clone().unwrap_or_else(|| "local".to_string());
     if node_id == "local" {
         let sync_result = status::sync_project_from_docker(&state.db, &state.docker, &project_id).await;
         if sync_result.caddy_dirty {
@@ -53,8 +51,15 @@ pub async fn project_stats(
     }
 
     // Load services for this project (after sync so services are fresh)
-    let services_raw =
+    let mut services_raw =
         batch_load_services(&state.db, std::slice::from_ref(&project_id)).await.remove(&project_id).unwrap_or_default();
+    super::helpers::apply_data_usage(
+        &state,
+        &project_id,
+        if node_id == "local" { None } else { Some(&node_id) },
+        &mut services_raw,
+    )
+    .await;
 
     if project.status != ProjectStatus::Running {
         return Ok(Json(make_stats_response(
@@ -115,7 +120,7 @@ pub async fn project_stats(
         )));
     }
 
-    let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
+    let services = enrich_services(&services_raw, &per_container, &stopped_cids);
     Ok(Json(make_stats_response(project_id, project.status, project.last_active_at, services)))
 }
 
@@ -151,58 +156,22 @@ pub async fn project_disk_usage(
         return Ok(Json(DiskUsageResponse { project_id, size_gb: 0.0 }));
     }
 
-    let container_ids = load_project_container_ids(&state.db, &project)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
-    if container_ids.is_empty() {
-        let message = if project.deploy_type == Some(DeployType::Compose) {
-            "no active service container ids"
-        } else {
-            "no container id"
-        };
-        return Err((StatusCode::BAD_REQUEST, message.to_string()));
-    }
+    let node = project.node_id.as_deref().unwrap_or("local");
 
-    let is_remote = project.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
-
-    let mut root_fs_sizes = Vec::with_capacity(container_ids.len());
-    if is_remote {
-        let node_id = project.node_id.as_deref().unwrap();
-        let client = nodes::client::get_node_client(&state.node_clients, node_id)
-            .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
-        let node = get_node_from_db(&state.db, node_id).await?;
-        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
-
-        for container_id in &container_ids {
-            let usage = match agent.disk_usage(container_id).await {
-                Ok(usage) => usage,
-                Err(nodes::client::AgentClientError::Status { body, .. }) => {
-                    return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("agent disk-usage failed for container '{container_id}': {body}"),
-                    ));
-                }
-                Err(e) => {
-                    return Err((
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        format!("agent unreachable for container '{container_id}': {e}"),
-                    ));
-                }
-            };
-            root_fs_sizes.push(usage.size_root_fs);
+    let volumes = super::helpers::scoped_volume_list(&state.db, &project_id, Some("total")).await;
+    let mut total: i64 = 0;
+    for (scoped, _) in volumes {
+        if litebin_common::types::classify_volume(&scoped) == litebin_common::types::VolumeKind::DockerVolume
+            && let Some(bytes) = super::helpers::volume_bytes(&state, node, &scoped).await
+        {
+            total += bytes;
         }
-    } else {
-        for container_id in &container_ids {
-            let usage = state.docker.disk_usage(container_id).await.map_err(|e| {
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("disk-usage error for container '{container_id}': {e}"))
-            })?;
-            root_fs_sizes.push(usage.size_root_fs);
+    }
+    for cid in load_project_container_ids(&state.db, &project).await.unwrap_or_default() {
+        if let Some((_, root_fs)) = super::helpers::container_disk(&state, node, &cid).await {
+            total += root_fs;
         }
     }
 
-    let total_bytes =
-        aggregate_root_fs_bytes(root_fs_sizes).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let size_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-
-    Ok(Json(DiskUsageResponse { project_id, size_gb }))
+    Ok(Json(DiskUsageResponse { project_id, size_gb: total as f64 / (1024.0 * 1024.0 * 1024.0) }))
 }

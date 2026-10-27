@@ -78,6 +78,9 @@ pub struct ServiceInfo {
     pub cpu_limit: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disk_gb: Option<f64>,
+    /// Volume + writable-layer portion of `disk_gb`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub data_gb: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub volumes: Vec<ServiceVolumeInfo>,
     /// All container ports this service exposes (compose projects), for route

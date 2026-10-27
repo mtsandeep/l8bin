@@ -66,6 +66,17 @@ fn error_response(status: StatusCode, message: String) -> axum::response::Respon
     (status, Json(ErrorResponse { error: message })).into_response()
 }
 
+/// GET /volumes/usage?name={volume}
+pub async fn volume_usage(
+    State(state): State<AgentState>,
+    Query(req): Query<litebin_common::agent_api::TransferRequest>,
+) -> impl IntoResponse {
+    match state.docker.volume_usage_bytes(&req.name).await {
+        Ok(bytes) => (StatusCode::OK, Json(serde_json::json!({ "bytes": bytes }))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, format!("usage failed: {e}")),
+    }
+}
+
 /// Body chunks are infallible for the import consumer — a client disconnect
 /// mid-upload surfaces as a truncated tar that Docker's extraction rejects.
 fn strip_body_error(chunk: Result<axum::body::Bytes, axum::Error>) -> axum::body::Bytes {

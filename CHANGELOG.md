@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Project disk usage now shows real data** — the per-service disk figure on project cards counted only the container's filesystem (image layers), which is wrong for any volume-backed app; it now reports the project total (named volumes via `du` + container filesystem incl. image layers), with a `data_gb` breakdown (volumes + writable layer) so the disk tile's tooltip shows `image: X | data: Y`. Samples cached 10 minutes on master and agents; `/projects/{id}/disk-usage` reports the same total.
+- CPU % no longer dips negative when a container restarts mid-sampling (counter reset vs the cached previous sample).
 ### Added
 - **Project export bundles** — `POST /projects/{id}/export` writes a self-contained `{id}-{date}.l8b.tar.gz` (manifest + project files + volumes + uploaded images) into the server's `exports/` folder, host-bind mounted next to `projects/`. `GET /exports` lists, `GET /exports/{file}` downloads, `DELETE` removes, `GET /exports/jobs/{id}` polls the job. Doubles as a cold full-project backup; `.env` rides along unless excluded at export — the bundle is a secret.
 - **Import bundles — move projects between masters** — `POST /imports` recreates a bundled project on any master: from the `imports/` folder (scp a bundle in and import via plain API, no dashboard needed) or a streamed upload (`POST /imports/upload`, `GET /imports` lists waiting bundles). Optional new id — taken ids get a `-2` suffix — and everything derived from the id (volumes, network, containers, subdomain) re-scales automatically; the archive keeps the original id, so one bundle imports repeatedly under different ids. Cross-arch bundles with uploaded images are rejected; registry refs pull fresh. Custom domain and path/alias routes carry over (claimed on import unless another project already holds them); deploy tokens and GitHub links stay behind.

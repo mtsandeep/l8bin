@@ -120,23 +120,9 @@ pub async fn all_project_stats(
 
     // Handle per-service disk lookups for stopped local containers
     let stopped_count = disk_lookups.len();
-    for (project_id, services_raw) in disk_lookups {
-        let mut services: Vec<ServiceInfo> = Vec::with_capacity(services_raw.len());
-        for (mut svc, cid) in services_raw {
-            if let Some(ref container_id) = cid {
-                // Use cached disk value for stopped containers — disk doesn't change
-                // when container isn't running. Only call Docker if we have no cached value.
-                if let Some(bytes) = state.disk_cache.get(container_id) {
-                    svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
-                } else if let Ok(d) = state.docker.disk_usage(container_id).await {
-                    // Container gone, no cache to fall back to — leave disk unset on error
-                    let disk_gb = d.size_root_fs as f64 / (1024.0 * 1024.0 * 1024.0);
-                    svc.disk_gb = Some(disk_gb);
-                    state.disk_cache.insert(container_id.clone(), d.size_root_fs as i64);
-                }
-            }
-            services.push(svc);
-        }
+    for (project_id, mut services_raw) in disk_lookups {
+        super::helpers::apply_data_usage(&state, &project_id, None, &mut services_raw).await;
+        let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(svc, _)| svc).collect();
         // Use the actual project status — preserve transient/setup states
         // and only derive stopped/degraded when the project is in a stable terminal state
         let project_status =
@@ -190,7 +176,8 @@ pub async fn all_project_stats(
         container_results.iter().filter(|(_, r)| r.is_some()).map(|(cid, _)| cid.clone()).collect();
 
     for (project_id, container_ids) in &local_projects {
-        let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+        let mut services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+        super::helpers::apply_data_usage(&state, project_id, None, &mut services_raw).await;
         let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
         let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut any_running = false;
@@ -247,7 +234,7 @@ pub async fn all_project_stats(
             continue;
         }
 
-        let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
+        let services = enrich_services(&services_raw, &per_container, &stopped_cids);
         results.push(make_stats_response(
             project_id.clone(),
             ProjectStatus::Running,
@@ -399,9 +386,10 @@ pub async fn all_project_stats(
 
         // Build results for each project on this node
         for (project_id, _) in projects_containers {
-            let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+            let mut services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+            super::helpers::apply_data_usage(&state, project_id, Some(node_id), &mut services_raw).await;
             if project_stats.contains_key(project_id) {
-                let services = enrich_services(&services_raw, &per_container, &stopped_cids, &state.disk_cache);
+                let services = enrich_services(&services_raw, &per_container, &stopped_cids);
                 results.push(make_stats_response(
                     project_id.clone(),
                     ProjectStatus::Running,
@@ -409,17 +397,7 @@ pub async fn all_project_stats(
                     services,
                 ));
             } else {
-                let services: Vec<ServiceInfo> = services_raw
-                    .into_iter()
-                    .map(|(mut svc, cid)| {
-                        if let Some(container_id) = cid
-                            && let Some(bytes) = state.disk_cache.get(&container_id)
-                        {
-                            svc.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
-                        }
-                        svc
-                    })
-                    .collect();
+                let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(svc, _)| svc).collect();
                 results.push(make_stats_response(
                     project_id.clone(),
                     ProjectStatus::Stopped,

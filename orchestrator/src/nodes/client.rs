@@ -447,6 +447,18 @@ impl AgentClient {
     }
 
     /// GET /containers/{id}/disk-usage.
+    /// GET /volumes/usage?name= — on-disk bytes of a named volume on the agent.
+    pub async fn volume_usage(&self, volume: &str) -> Result<u64, AgentClientError> {
+        #[derive(serde::Deserialize)]
+        struct UsageResponse {
+            bytes: u64,
+        }
+        let resp: UsageResponse = self
+            .get_json(format!("{}?name={volume}", litebin_common::agent_api::VOLUME_USAGE_PATH), DEFAULT_AGENT_TIMEOUT)
+            .await?;
+        Ok(resp.bytes)
+    }
+
     pub async fn disk_usage(&self, container_id: &str) -> Result<litebin_common::docker::DiskUsage, AgentClientError> {
         self.get_json(self.url(&format!("/containers/{container_id}/disk-usage")), LIFECYCLE_TIMEOUT).await
     }

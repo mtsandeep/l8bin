@@ -14,7 +14,8 @@ function aggregateFromServices(services: ServiceInfo[]) {
   const totalMem = running.reduce((sum, s) => sum + (s.memory_usage ?? 0), 0);
   const totalLimit = running.reduce((sum, s) => sum + (s.memory_limit_mb ?? 0) * 1024 * 1024, 0);
   const totalDisk = services.reduce((sum, s) => sum + (s.disk_gb ?? 0), 0);
-  return { totalCpu, totalMem, totalLimit, totalDisk };
+  const totalData = services.reduce((sum, s) => sum + (s.data_gb ?? 0), 0);
+  return { totalCpu, totalMem, totalLimit, totalDisk, totalData };
 }
 
 export default function StatsGrid({ stats, isRunning, setupStatus }: ProjectStatsProps) {
@@ -33,7 +34,7 @@ export default function StatsGrid({ stats, isRunning, setupStatus }: ProjectStat
   }
 
   const services = stats?.services ?? [];
-  const { totalCpu, totalMem, totalLimit, totalDisk } = aggregateFromServices(services);
+  const { totalCpu, totalMem, totalLimit, totalDisk, totalData } = aggregateFromServices(services);
   const memoryPercent = totalLimit > 0 ? ((totalMem / totalLimit) * 100).toFixed(1) : '0';
 
   return (
@@ -65,7 +66,10 @@ export default function StatsGrid({ stats, isRunning, setupStatus }: ProjectStat
           </div>
         )}
       </div>
-      <div className="bg-slate-900/50 rounded-md px-3 py-2">
+      <div
+        className="bg-slate-900/50 rounded-md px-3 py-2"
+        title={`image: ${Math.max(totalDisk - totalData, 0).toFixed(2)} GB | data: ${totalData.toFixed(2)} GB`}
+      >
         <div className="flex items-center gap-1.5 text-slate-500 mb-1">
           <HardDrive size={12} />
           <span className="text-[10px] uppercase tracking-wider">Disk</span>

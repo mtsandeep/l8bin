@@ -1,17 +1,19 @@
-use litebin_common::types::{DeployType, ProjectStatus};
+use litebin_common::types::{DeployType, ProjectStatus, VolumeKind, VolumeMount, classify_volume, scope_volume_source};
 
+use super::UsageEntry;
 use super::types::{LiveStats, ServiceInfo, ServiceVolumeInfo, StatsResponse};
+
+const USAGE_TTL_SECS: u64 = 600;
 
 /// Given a map of container_id -> live stats,
 /// attach per-service stats to each ServiceInfo and return the final Vec.
 /// When running, memory_limit from Docker stats overrides the DB value.
 /// cpu_limit from inspect is used if DB value is None.
-/// Container IDs in `stopped_cids` are marked as "stopped" with disk from cache.
+/// Container IDs in `stopped_cids` are marked as "stopped".
 pub(super) fn enrich_services(
     services: &[(ServiceInfo, Option<String>)],
     stats_map: &std::collections::HashMap<String, LiveStats>,
     stopped_cids: &std::collections::HashSet<String>,
-    disk_cache: &dashmap::DashMap<String, i64>,
 ) -> Vec<ServiceInfo> {
     services
         .iter()
@@ -24,16 +26,12 @@ pub(super) fn enrich_services(
                     }
                     enriched.cpu_percent = None;
                     enriched.memory_usage = None;
-                    if let Some(bytes) = disk_cache.get(container_id) {
-                        enriched.disk_gb = Some(*bytes as f64 / (1024.0 * 1024.0 * 1024.0));
-                    }
                     return enriched;
                 }
-                if let Some(&(cpu, mem_usage, mem_limit, disk, cpu_limit)) = stats_map.get(container_id) {
+                if let Some(&(cpu, mem_usage, mem_limit, _disk, cpu_limit)) = stats_map.get(container_id) {
                     enriched.cpu_percent = Some(cpu);
                     enriched.memory_usage = Some(mem_usage);
                     enriched.memory_limit_mb = Some((mem_limit / (1024 * 1024)) as i64);
-                    enriched.disk_gb = Some(disk);
                     if enriched.cpu_limit.is_none() {
                         enriched.cpu_limit = cpu_limit;
                     }
@@ -42,6 +40,122 @@ pub(super) fn enrich_services(
             enriched
         })
         .collect()
+}
+
+/// Scoped (volume, service) pairs for a project: project_volumes rows for
+/// compose, the projects.volumes JSON column for single-service projects.
+pub(super) async fn scoped_volume_list(
+    db: &sqlx::SqlitePool,
+    project_id: &str,
+    fallback_service: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut volumes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT volume_name, service_name FROM project_volumes WHERE project_id = ? AND volume_name IS NOT NULL",
+    )
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    if volumes.is_empty()
+        && let Some(fallback_service) = fallback_service
+    {
+        let project: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT deploy_type, volumes FROM projects WHERE id = ?")
+                .bind(project_id)
+                .fetch_optional(db)
+                .await
+                .unwrap_or(None);
+        if let Some((deploy_type, volumes_json)) = project
+            && deploy_type.as_deref() != Some("compose")
+            && let Some(json) = volumes_json
+            && let Ok(mounts) = serde_json::from_str::<Vec<VolumeMount>>(&json)
+        {
+            volumes = mounts
+                .into_iter()
+                .map(|m| {
+                    let name = m.name.unwrap_or_else(|| project_id.to_string());
+                    (scope_volume_source(&name, project_id), fallback_service.to_string())
+                })
+                .collect();
+        }
+    }
+    volumes
+}
+
+/// Per-service disk: `data_gb` = volumes + writable layer, `disk_gb` = that
+/// plus image layers (size_root_fs). Cached for 10 minutes.
+pub(super) async fn apply_data_usage(
+    state: &crate::AppState,
+    project_id: &str,
+    node_id: Option<&str>,
+    services: &mut [(ServiceInfo, Option<String>)],
+) {
+    let node = node_id.unwrap_or("local");
+    let fallback_service = services.first().map(|(svc, _)| svc.service_name.clone());
+    let volumes = scoped_volume_list(&state.db, project_id, fallback_service.as_deref()).await;
+
+    let mut per_service: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for (scoped, service_name) in volumes {
+        if classify_volume(&scoped) != VolumeKind::DockerVolume {
+            continue;
+        }
+        if let Some(bytes) = volume_bytes(state, node, &scoped).await {
+            *per_service.entry(service_name).or_default() += bytes;
+        }
+    }
+
+    for (svc, cid) in services.iter_mut() {
+        let vol = per_service.get(&svc.service_name).copied().unwrap_or(0);
+        if let Some(cid) = cid
+            && let Some((rw, root_fs)) = container_disk(state, node, cid).await
+        {
+            svc.data_gb = Some((vol + rw) as f64 / (1024.0 * 1024.0 * 1024.0));
+            svc.disk_gb = Some((vol + root_fs) as f64 / (1024.0 * 1024.0 * 1024.0));
+        } else {
+            svc.data_gb = Some(vol as f64 / (1024.0 * 1024.0 * 1024.0));
+            svc.disk_gb = svc.data_gb;
+        }
+    }
+}
+
+pub(super) async fn volume_bytes(state: &crate::AppState, node: &str, volume: &str) -> Option<i64> {
+    let key = format!("{node}|{volume}");
+    if let Some(entry) = state.usage_cache.get(&key)
+        && entry.at.elapsed().as_secs() < USAGE_TTL_SECS
+    {
+        return Some(entry.bytes);
+    }
+    let bytes = if node == "local" {
+        state.docker.volume_usage_bytes(volume).await.ok()? as i64
+    } else {
+        crate::nodes::client::AgentClient::resolve(state, node).await.ok()?.volume_usage(volume).await.ok()? as i64
+    };
+    state.usage_cache.insert(key, UsageEntry { bytes, at: std::time::Instant::now() });
+    Some(bytes)
+}
+
+/// (writable layer, rootfs incl. image layers) for a container's host node.
+pub(super) async fn container_disk(state: &crate::AppState, node: &str, container_id: &str) -> Option<(i64, i64)> {
+    let rw_key = format!("{node}|rw|{container_id}");
+    let fs_key = format!("{node}|fs|{container_id}");
+    if let (Some(rw), Some(fs)) = (state.usage_cache.get(&rw_key), state.usage_cache.get(&fs_key))
+        && rw.at.elapsed().as_secs() < USAGE_TTL_SECS
+        && fs.at.elapsed().as_secs() < USAGE_TTL_SECS
+    {
+        return Some((rw.bytes, fs.bytes));
+    }
+    let usage = if node == "local" {
+        state.docker.disk_usage(container_id).await.ok()?
+    } else {
+        crate::nodes::client::AgentClient::resolve(state, node).await.ok()?.disk_usage(container_id).await.ok()?
+    };
+    let now = std::time::Instant::now();
+    let rw = usage.size_rw as i64;
+    let fs = usage.size_root_fs as i64;
+    state.usage_cache.insert(rw_key, UsageEntry { bytes: rw, at: now });
+    state.usage_cache.insert(fs_key, UsageEntry { bytes: fs, at: now });
+    Some((rw, fs))
 }
 
 pub(super) fn select_disk_usage_container_ids(
@@ -62,10 +176,6 @@ pub(super) fn select_disk_usage_container_ids(
         .filter(|container_id| seen.insert((*container_id).to_string()))
         .map(str::to_string)
         .collect()
-}
-
-pub(super) fn aggregate_root_fs_bytes(sizes: impl IntoIterator<Item = u64>) -> Result<u64, &'static str> {
-    sizes.into_iter().try_fold(0_u64, |total, size| total.checked_add(size).ok_or("disk usage total overflowed"))
 }
 
 pub(super) fn logs_use_service_selection(deploy_type: Option<&DeployType>) -> bool {
@@ -183,6 +293,7 @@ pub(super) async fn batch_load_services(
                 memory_limit_mb,
                 cpu_limit,
                 disk_gb: None,
+                data_gb: None,
                 volumes: vec![],
                 ports: vec![],
             },
@@ -313,6 +424,7 @@ mod tests {
             memory_limit_mb: None,
             cpu_limit: None,
             disk_gb: None,
+            data_gb: None,
             volumes: vec![],
             ports: vec![],
         }
@@ -394,7 +506,6 @@ mod tests {
             select_disk_usage_container_ids(Some(&DeployType::Compose), Some("legacy-project-container"), &service_ids);
 
         assert_eq!(ids, vec!["web".to_string(), "worker".to_string()]);
-        assert_eq!(aggregate_root_fs_bytes([2 * 1024_u64, 3 * 1024_u64]), Ok(5 * 1024_u64));
     }
 
     #[test]

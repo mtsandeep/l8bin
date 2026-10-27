@@ -481,7 +481,7 @@ impl DockerManager {
             if let Some(prev) = prev {
                 let cpu_delta = current_total as f64 - prev.total_usage as f64;
                 let system_delta = current_system as f64 - prev.system_cpu_usage as f64;
-                if system_delta > 0.0 { (cpu_delta / system_delta) * num_cpus * 100.0 } else { 0.0 }
+                if cpu_delta >= 0.0 && system_delta > 0.0 { (cpu_delta / system_delta) * num_cpus * 100.0 } else { 0.0 }
             } else {
                 0.0 // First reading — no previous sample to diff against
             }
@@ -505,6 +505,60 @@ impl DockerManager {
         let cpu_limit =
             info.host_config.and_then(|h| h.nano_cpus).filter(|&n| n > 0).map(|n| n as f64 / 1_000_000_000.0);
         Ok(DiskUsage { size_rw, size_root_fs, cpu_limit })
+    }
+
+    /// On-disk size of a Docker named volume in bytes (`du -sb` via busybox —
+    /// Docker has no native volume-size API).
+    pub async fn volume_usage_bytes(&self, volume: &str) -> anyhow::Result<u64> {
+        use bollard::models::{ContainerCreateBody, HostConfig};
+        use bollard::query_parameters::{
+            CreateContainerOptions, LogsOptions, StartContainerOptions, WaitContainerOptions,
+        };
+        use futures_util::StreamExt;
+
+        self.pull_image_with_opts(super::transfer::TRANSFER_TOOL_IMAGE, false).await?;
+        let name = format!("l8b-du-{:x}", rand::random::<u64>());
+        let config = ContainerCreateBody {
+            image: Some(super::transfer::TRANSFER_TOOL_IMAGE.to_string()),
+            cmd: Some(vec!["du".to_string(), "-sb".to_string(), "/volume".to_string()]),
+            host_config: Some(HostConfig {
+                binds: Some(vec![format!("{volume}:/volume")]),
+                cap_drop: Some(vec!["ALL".to_string()]),
+                security_opt: Some(vec!["no-new-privileges".to_string()]),
+                memory: Some(128 * 1024 * 1024),
+                nano_cpus: Some(500_000_000),
+                ..Default::default()
+            }),
+            open_stdin: Some(false),
+            tty: Some(false),
+            ..Default::default()
+        };
+        let options = CreateContainerOptions { name: Some(name.clone()), platform: String::new() };
+        let _ = self.docker.create_container(Some(options), config).await?;
+
+        let outcome = async {
+            self.docker.start_container(&name, None::<StartContainerOptions>).await?;
+            let mut wait = Box::pin(self.docker.wait_container(&name, None::<WaitContainerOptions>));
+            if let Some(res) = wait.next().await {
+                res?;
+            }
+            let logs_options = LogsOptions { stdout: true, stderr: false, tail: "1".to_string(), ..Default::default() };
+            let mut log_stream = self.docker.logs(&name, Some(logs_options));
+            let mut out = String::new();
+            while let Some(chunk) = log_stream.next().await {
+                if let bollard::container::LogOutput::StdOut { message } = chunk? {
+                    out.push_str(&String::from_utf8_lossy(&message));
+                }
+            }
+            out.split_whitespace()
+                .next()
+                .and_then(|n| n.parse::<u64>().ok())
+                .ok_or_else(|| anyhow::anyhow!("unparseable du output: {:?}", out.trim()))
+        }
+        .await;
+
+        let _ = self.remove_by_name(&name).await;
+        outcome
     }
 
     /// Load a Docker image from a tar stream (output of `docker save`).

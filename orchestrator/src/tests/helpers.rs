@@ -90,6 +90,7 @@ pub(crate) async fn build_test_state(config: Config) -> (AppState, SqlitePool) {
         domain_jobs: Arc::new(DashMap::new()),
         export_jobs: Arc::new(DashMap::new()),
         destination_health: Arc::new(std::sync::RwLock::new(None)),
+        usage_cache: Arc::new(DashMap::new()),
         upload_store: Arc::new(
             litebin_common::upload::UploadStore::new(
                 std::env::temp_dir().join("l8b-test-upload-store"),

@@ -227,7 +227,14 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                     </div>
 
                     {/* Disk */}
-                    <div className="bg-slate-800/60 rounded px-2 py-1.5">
+                    <div
+                      className="bg-slate-800/60 rounded px-2 py-1.5"
+                      title={
+                        svc.disk_gb !== undefined && svc.data_gb !== undefined
+                          ? `image: ${Math.max(svc.disk_gb - svc.data_gb, 0).toFixed(2)} GB | data: ${svc.data_gb.toFixed(2)} GB`
+                          : undefined
+                      }
+                    >
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <HardDrive size={10} />
                         <span className="text-[9px] uppercase tracking-wider">Disk</span>

@@ -82,6 +82,7 @@ fn public_stats_from_project(project: &Project) -> Option<ServiceInfo> {
         memory_limit_mb: project.memory_limit_mb,
         cpu_limit: project.cpu_limit,
         disk_gb: None,
+        data_gb: None,
         volumes,
         ports: vec![],
     })
@@ -162,6 +163,7 @@ pub(super) async fn to_project_response(project: &Project, state: &crate::AppSta
                     memory_limit_mb,
                     cpu_limit,
                     disk_gb: None,
+                    data_gb: None,
                     volumes,
                     ports: vec![],
                 })

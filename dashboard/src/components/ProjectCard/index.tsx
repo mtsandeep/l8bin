@@ -792,7 +792,7 @@ export default function ProjectCard({
           projectName={project.name || project.id}
           currentNodeId={project.node_id || 'local'}
           nodes={nodes}
-          sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB data` : ''}
+          sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB on disk` : ''}
           serviceCount={services.length || 1}
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
           onClose={() => setShowMigrate(false)}
@@ -808,7 +808,7 @@ export default function ProjectCard({
           projectName={project.name || project.id}
           currentNodeId={project.node_id || 'local'}
           nodes={nodes}
-          sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB data` : ''}
+          sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB on disk` : ''}
           serviceCount={services.length || 1}
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
           onClose={() => setShowDuplicate(false)}

@@ -72,6 +72,8 @@ pub struct AppState {
     pub export_jobs: Arc<DashMap<String, routes::exports::ExportJob>>,
     /// Chunked upload store + staging for local-node and relay uploads.
     pub upload_store: Arc<litebin_common::upload::UploadStore>,
+    /// Disk-usage samples with timestamps (du is too heavy for every stats poll).
+    pub usage_cache: Arc<DashMap<String, routes::stats::UsageEntry>>,
     /// Live s3/r2 destination health (probe- and sidecar-error-driven).
     pub destination_health: Arc<std::sync::RwLock<Option<backup::DestinationHealth>>>,
 }
@@ -364,6 +366,7 @@ async fn main() -> anyhow::Result<()> {
             "data/uploads",
             litebin_common::upload::DEFAULT_CHUNK_SIZE,
         )?),
+        usage_cache: Arc::new(DashMap::new()),
         destination_health: Arc::new(std::sync::RwLock::new(None)),
     };
 
