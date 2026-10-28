@@ -106,7 +106,8 @@ impl NodeRef {
         match self {
             NodeRef::Local => {
                 let projects_dir = state.docker.projects_host_dir();
-                let s = state.docker.transfer_export(kind, projects_dir).await?;
+                let kind = local_volume_kind(state, kind);
+                let s = state.docker.transfer_export(&kind, projects_dir).await?;
                 Ok(Box::pin(s.map(|chunk| chunk.unwrap_or_default())))
             }
             NodeRef::Agent(node_id) => {
@@ -126,7 +127,8 @@ impl NodeRef {
         match self {
             NodeRef::Local => {
                 let projects_dir = state.docker.projects_host_dir();
-                state.docker.transfer_import(kind, projects_dir, tar).await
+                let kind = local_volume_kind(state, kind);
+                state.docker.transfer_import(&kind, projects_dir, tar).await
             }
             NodeRef::Agent(node_id) => {
                 let agent = crate::nodes::client::AgentClient::resolve(state, node_id).await?;
@@ -193,8 +195,26 @@ pub async fn transfer_image(state: &AppState, src: &NodeRef, dst: &NodeRef, imag
     dst.transfer_in(state, &TransferKind::Image(image.to_string()), stream).await
 }
 
-/// Re-scope a scoped volume/bind name from one project id to another:
-/// `litebin_{old}_{name}` → `litebin_{new}_{name}`, `projects/{old}/…` →
+/// Relative binds (`projects/…` scoped names) must be mounted by HOST path —
+/// Docker rejects them as volume names. Named volumes and absolute binds pass
+/// through unchanged. Local-node transfers only; agents resolve on their side.
+pub(crate) fn local_volume_kind(state: &AppState, kind: &TransferKind) -> TransferKind {
+    match kind {
+        TransferKind::Volume(v) if v.starts_with("projects/") => {
+            TransferKind::Volume(resolve_scoped_volume(v, state.docker.projects_host_dir()))
+        }
+        _ => kind.clone(),
+    }
+}
+
+fn resolve_scoped_volume(scoped: &str, host_projects_dir: Option<&str>) -> String {
+    match (scoped.strip_prefix("projects/"), host_projects_dir) {
+        (Some(rest), Some(host)) => format!("{host}/{rest}"),
+        _ => scoped.to_string(),
+    }
+}
+
+/// Re-scope a scoped volume/bind name from one project id to another:/// `litebin_{old}_{name}` → `litebin_{new}_{name}`, `projects/{old}/…` →
 /// `projects/{new}/…`. Absolute binds and unknown shapes pass through.
 pub fn rescope_volume(scoped: &str, old_id: &str, new_id: &str) -> String {
     if let Some(rest) = scoped.strip_prefix(&format!("litebin_{old_id}_")) {
@@ -217,7 +237,7 @@ pub fn spool_dir(state: &AppState) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::rescope_volume;
+    use super::{rescope_volume, resolve_scoped_volume};
 
     #[test]
     fn rescopes_named_volumes_and_relative_binds() {
@@ -231,5 +251,15 @@ mod tests {
     fn passes_through_absolute_binds_and_unknown_shapes() {
         assert_eq!(rescope_volume("/srv/shared", "old", "new"), "/srv/shared");
         assert_eq!(rescope_volume("some_other_volume", "old", "new"), "some_other_volume");
+    }
+
+    #[test]
+    fn resolves_relative_binds_to_host_paths() {
+        assert_eq!(
+            resolve_scoped_volume("projects/food/data", Some("/srv/litebin/projects")),
+            "/srv/litebin/projects/food/data"
+        );
+        assert_eq!(resolve_scoped_volume("projects/food/data", None), "projects/food/data");
+        assert_eq!(resolve_scoped_volume("litebin_food_pgdata", Some("/srv/litebin/projects")), "litebin_food_pgdata");
     }
 }

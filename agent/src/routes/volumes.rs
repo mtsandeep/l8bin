@@ -14,6 +14,18 @@ use litebin_common::docker::TransferKind;
 
 use crate::AgentState;
 
+/// Relative binds (`projects/…`) must be mounted by HOST path — resolve against
+/// this node's host projects dir. Other names pass through.
+fn resolve_mount(state: &AgentState, name: &str) -> String {
+    match name.strip_prefix("projects/") {
+        Some(rest) => match state.docker.projects_host_dir() {
+            Some(host) => format!("{host}/{rest}"),
+            None => name.to_string(),
+        },
+        None => name.to_string(),
+    }
+}
+
 /// POST /volumes/export?kind=&name=
 pub async fn export_volume(State(state): State<AgentState>, Query(req): Query<TransferRequest>) -> impl IntoResponse {
     let Some(kind) = TransferKind::parse(&req.kind, &req.name) else {
@@ -22,6 +34,10 @@ pub async fn export_volume(State(state): State<AgentState>, Query(req): Query<Tr
     if matches!(kind, TransferKind::Image(_)) {
         return error_response(StatusCode::BAD_REQUEST, "image transfers use /images/export".to_string());
     }
+    let kind = match kind {
+        TransferKind::Volume(v) => TransferKind::Volume(resolve_mount(&state, &v)),
+        other => other,
+    };
     match state.docker.transfer_export(&kind, state.docker.projects_host_dir()).await {
         Ok(stream) => {
             let body = Body::from_stream(stream);
@@ -43,6 +59,10 @@ pub async fn import_volume(
     if matches!(kind, TransferKind::Image(_)) {
         return error_response(StatusCode::BAD_REQUEST, "image transfers use /images/load".to_string());
     }
+    let kind = match kind {
+        TransferKind::Volume(v) => TransferKind::Volume(resolve_mount(&state, &v)),
+        other => other,
+    };
     let tar = body.into_data_stream().map(strip_body_error);
     match state.docker.transfer_import(&kind, state.docker.projects_host_dir(), tar).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"imported": req.name}))).into_response(),
@@ -74,18 +94,7 @@ pub async fn volume_usage(
     if req.name.starts_with('/') || req.name.split('/').any(|c| c == "..") {
         return error_response(StatusCode::BAD_REQUEST, "invalid path".to_string());
     }
-    let mount = match req.name.strip_prefix("projects/") {
-        Some(rest) => match state.docker.projects_host_dir() {
-            Some(host) => format!("{host}/{rest}"),
-            None => {
-                return error_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "projects host directory unknown on this node".to_string(),
-                );
-            }
-        },
-        None => req.name.clone(),
-    };
+    let mount = resolve_mount(&state, &req.name);
     match state.docker.volume_usage_bytes(&mount).await {
         Ok(bytes) => (StatusCode::OK, Json(serde_json::json!({ "bytes": bytes }))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, format!("usage failed: {e}")),

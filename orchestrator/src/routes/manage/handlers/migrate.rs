@@ -300,9 +300,10 @@ async fn transfer(state: &AppState, source_id: &str, target_id: &str, kind: &Tra
 
     tracing::info!(%source_id, %target_id, payload = %kind.describe(), "transferring");
     let projects_dir = state.docker.projects_host_dir();
+    let local_kind = crate::copy_engine::local_volume_kind(state, kind);
 
     let stream: std::pin::Pin<Box<dyn futures_util::Stream<Item = bytes::Bytes> + Send>> = if source_id == "local" {
-        let s = state.docker.transfer_export(kind, projects_dir).await?;
+        let s = state.docker.transfer_export(&local_kind, projects_dir).await?;
         Box::pin(s.map(|chunk| chunk.unwrap_or_default()))
     } else {
         let agent = nodes::client::AgentClient::resolve(state, source_id).await?;
@@ -311,7 +312,7 @@ async fn transfer(state: &AppState, source_id: &str, target_id: &str, kind: &Tra
     };
 
     if target_id == "local" {
-        state.docker.transfer_import(kind, projects_dir, stream).await
+        state.docker.transfer_import(&local_kind, projects_dir, stream).await
     } else {
         let agent = nodes::client::AgentClient::resolve(state, target_id).await?;
         agent.transfer_import(kind, stream).await.map_err(|e| anyhow::anyhow!("{e}"))
