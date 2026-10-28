@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.16] - 2026-10-28
+
 ### Fixed
 - **Anonymous volumes are now visible and warned about** — compose mounts without a name (and image-declared `VOLUME`s) are ephemeral: their data isn't carried by duplicate/migrate/export and is lost when a container is recreated. LiteBin keeps that standard behavior but no longer hides it: the disk tooltip shows an `ephemeral: X GB (not carried by transfers)` breakdown, and duplicate/migrate/export warn when a project has anonymous mounts ("name them in compose to persist"). Sizes are measured on master and agents (10-min cache) and counted in the project's disk total.
 - **Transfers no longer break on relative binds** — the separate volume pass passed scoped bind names (`projects/{id}/…`) to Docker as volume names, which 404s: export/import of bind-backed projects (the default for compose mounts) failed outright, and duplicate/migrate logged skip-warnings (harmless — the data rides along in the project-dir tar). Binds are now excluded from the separate volume pass; bind data continues to travel inside the project-dir tar, and the du-based disk usage resolves binds to host paths separately.
