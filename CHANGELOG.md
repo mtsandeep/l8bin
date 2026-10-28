@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.17] - 2026-10-28
+
 ### Fixed
 - **Project files (incl. `.env`) now arrive on duplicate/migrate/import targets** — the project-dir tar extracted into the discarded helper container instead of the projects mount, so copies silently started with no project files.
 
