@@ -97,7 +97,7 @@ pub(super) async fn apply_data_usage(
 
     let mut per_service: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for (scoped, service_name) in volumes {
-        if classify_volume(&scoped) != VolumeKind::DockerVolume {
+        if classify_volume(&scoped) == VolumeKind::AbsoluteBindMount {
             continue;
         }
         if let Some(bytes) = volume_bytes(state, node, &scoped).await {
@@ -119,17 +119,30 @@ pub(super) async fn apply_data_usage(
     }
 }
 
-pub(super) async fn volume_bytes(state: &crate::AppState, node: &str, volume: &str) -> Option<i64> {
-    let key = format!("{node}|{volume}");
+pub(super) async fn volume_bytes(state: &crate::AppState, node: &str, scoped: &str) -> Option<i64> {
+    let key = format!("{node}|{scoped}");
     if let Some(entry) = state.usage_cache.get(&key)
         && entry.at.elapsed().as_secs() < USAGE_TTL_SECS
     {
         return Some(entry.bytes);
     }
-    let bytes = if node == "local" {
-        state.docker.volume_usage_bytes(volume).await.ok()? as i64
+    // Local: relative binds (`projects/…`) must be mounted by HOST path for du.
+    let mount = if node == "local" {
+        match scoped.strip_prefix("projects/") {
+            Some(rest) => {
+                let host = state.docker.projects_host_dir()?;
+                format!("{host}/{rest}")
+            }
+            None => scoped.to_string(),
+        }
     } else {
-        crate::nodes::client::AgentClient::resolve(state, node).await.ok()?.volume_usage(volume).await.ok()? as i64
+        // Agents resolve `projects/…` scoped names against their own host dir.
+        scoped.to_string()
+    };
+    let bytes = if node == "local" {
+        state.docker.volume_usage_bytes(&mount).await.ok()? as i64
+    } else {
+        crate::nodes::client::AgentClient::resolve(state, node).await.ok()?.volume_usage(&mount).await.ok()? as i64
     };
     state.usage_cache.insert(key, UsageEntry { bytes, at: std::time::Instant::now() });
     Some(bytes)

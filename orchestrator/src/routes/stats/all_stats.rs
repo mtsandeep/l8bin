@@ -68,7 +68,7 @@ pub async fn all_project_stats(
 
     for project in &projects {
         if project.status != ProjectStatus::Running && project.status != ProjectStatus::Degraded {
-            let services_raw = services_map.get(&project.id).cloned().unwrap_or_default();
+            let mut services_raw = services_map.get(&project.id).cloned().unwrap_or_default();
 
             // Check if any service has a container_id for disk lookup
             let has_any_cid = services_raw.iter().any(|(_, cid)| cid.is_some());
@@ -86,6 +86,7 @@ pub async fn all_project_stats(
             if node_id == "local" {
                 disk_lookups.push((project.id.clone(), services_raw));
             } else {
+                super::helpers::apply_data_usage(&state, &project.id, Some(node_id), &mut services_raw).await;
                 results.push(make_stats_response(
                     project.id.clone(),
                     project.status.clone(),

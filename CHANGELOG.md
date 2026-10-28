@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Bind-backed project data now counts toward disk usage** — the new disk figures measured named Docker volumes only, so projects storing data in relative binds (`projects/{id}/…` — the default for compose volume mounts) showed `data: ~0`. Binds are now `du`'d the same way: the master mounts the host path directly, and agents resolve `projects/…` names against their own host projects dir. The agent usage endpoint rejects absolute paths, so it cannot be used to measure arbitrary host directories.
+- Stopped projects on agent nodes now report disk usage instead of "—" (they were skipped in the non-running stats path).
+
 ## [0.4.15] - 2026-10-27
 
 ### Fixed

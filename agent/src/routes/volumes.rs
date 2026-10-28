@@ -66,12 +66,27 @@ fn error_response(status: StatusCode, message: String) -> axum::response::Respon
     (status, Json(ErrorResponse { error: message })).into_response()
 }
 
-/// GET /volumes/usage?name={volume}
+/// GET /volumes/usage?name={volume|projects/…}
 pub async fn volume_usage(
     State(state): State<AgentState>,
     Query(req): Query<litebin_common::agent_api::TransferRequest>,
 ) -> impl IntoResponse {
-    match state.docker.volume_usage_bytes(&req.name).await {
+    if req.name.starts_with('/') || req.name.split('/').any(|c| c == "..") {
+        return error_response(StatusCode::BAD_REQUEST, "invalid path".to_string());
+    }
+    let mount = match req.name.strip_prefix("projects/") {
+        Some(rest) => match state.docker.projects_host_dir() {
+            Some(host) => format!("{host}/{rest}"),
+            None => {
+                return error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "projects host directory unknown on this node".to_string(),
+                );
+            }
+        },
+        None => req.name.clone(),
+    };
+    match state.docker.volume_usage_bytes(&mount).await {
         Ok(bytes) => (StatusCode::OK, Json(serde_json::json!({ "bytes": bytes }))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, format!("usage failed: {e}")),
     }

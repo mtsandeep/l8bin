@@ -161,7 +161,7 @@ pub async fn project_disk_usage(
     let volumes = super::helpers::scoped_volume_list(&state.db, &project_id, Some("total")).await;
     let mut total: i64 = 0;
     for (scoped, _) in volumes {
-        if litebin_common::types::classify_volume(&scoped) == litebin_common::types::VolumeKind::DockerVolume
+        if litebin_common::types::classify_volume(&scoped) != litebin_common::types::VolumeKind::AbsoluteBindMount
             && let Some(bytes) = super::helpers::volume_bytes(&state, node, &scoped).await
         {
             total += bytes;
