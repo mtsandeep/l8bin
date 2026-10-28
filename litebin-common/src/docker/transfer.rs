@@ -149,7 +149,7 @@ impl DockerManager {
                     projects_host_dir.ok_or_else(|| anyhow::anyhow!("projects host directory unknown on this node"))?;
                 let id = self.create_transfer_container(vec![format!("{host}:/projects")]).await?;
                 let _ = project_id; // archive's top-level dir carries the project id.
-                let options = UploadToContainerOptions { path: "/".to_string(), ..Default::default() };
+                let options = UploadToContainerOptions { path: "/projects".to_string(), ..Default::default() };
                 let result = self.docker.upload_to_container(&id, Some(options), bollard::body_stream(tar)).await;
                 self.remove_transfer_container(&id).await;
                 result.map_err(|e| anyhow::anyhow!("project directory import failed: {e}"))
