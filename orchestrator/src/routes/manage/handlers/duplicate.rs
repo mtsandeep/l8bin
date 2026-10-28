@@ -98,7 +98,16 @@ pub async fn duplicate_project(
     let source_ref = node_ref(&source_node_id);
     let target_ref = node_ref(&target_node_id);
     let archs_differ = arch_mismatch(&state, &source_ref, &target_ref).await;
+    let image_refs = copy_engine::project_image_refs(&state.db, &project).await;
     if archs_differ {
+        if image_refs.iter().any(|r| r.starts_with("sha256:")) {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "source and target architectures differ and the project has uploaded (sha256:) images — \
+                 redeploy from source on the target node instead of duplicating"
+                    .to_string(),
+            );
+        }
         warnings.push("source and target architectures differ — registry images must be multi-arch to start".into());
     }
     if target_node_id == source_node_id && project.allow_raw_ports {
@@ -190,8 +199,6 @@ fn node_ref(node_id: &str) -> NodeRef {
     if node_id == "local" { NodeRef::Local } else { NodeRef::Agent(node_id.to_string()) }
 }
 
-/// Warn-only variant of migration's architecture check: duplication copies
-/// uploaded (`sha256:`) images verbatim, so a mismatch only surfaces at start.
 async fn arch_mismatch(state: &AppState, source: &NodeRef, target: &NodeRef) -> bool {
     match (source.architecture(state).await, target.architecture(state).await) {
         (Some(a), Some(b)) => a != b,

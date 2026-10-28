@@ -140,6 +140,43 @@ async fn duplicate_creates_rows_with_suffixed_id() {
 }
 
 #[tokio::test]
+async fn duplicate_rejects_cross_arch_uploaded_images() {
+    let (server, db) = test_server_with_db().await;
+    login(&server).await;
+    insert_project(&db, "static", Some("Static"), "running", Some("image")).await;
+    sqlx::query("UPDATE projects SET image = 'sha256:abcdef' WHERE id = 'static'").execute(&db).await.unwrap();
+
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query(
+        "INSERT INTO nodes (id, name, host, agent_port, status, architecture, fail_count, created_at, updated_at) \
+         VALUES ('arm-node', 'ARM', '10.0.0.2', 5083, 'online', 'aarch64', 0, ?, ?)",
+    )
+    .bind(now)
+    .bind(now)
+    .execute(&db)
+    .await
+    .unwrap();
+    // The local node row reports x86_64 so the architectures differ.
+    sqlx::query("UPDATE nodes SET architecture = 'x86_64' WHERE id = 'local'").execute(&db).await.unwrap();
+
+    let res =
+        server.post("/projects/static/duplicate").json(&serde_json::json!({ "target_node_id": "arm-node" })).await;
+    assert_eq!(res.status_code(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = res.json();
+    assert!(body["error"].as_str().unwrap().contains("uploaded (sha256:) images"));
+
+    // Registry-ref projects still duplicate cross-arch, with a warning.
+    sqlx::query("UPDATE projects SET image = 'nginx:1.27' WHERE id = 'static'").execute(&db).await.unwrap();
+    let res = server
+        .post("/projects/static/duplicate")
+        .json(&serde_json::json!({ "target_node_id": "arm-node", "start_after": false }))
+        .await;
+    assert_eq!(res.status_code(), StatusCode::ACCEPTED);
+    let body: serde_json::Value = res.json();
+    assert!(body["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("architectures differ")));
+}
+
+#[tokio::test]
 async fn export_unknown_project_returns_404() {
     let (server, _db) = test_server_with_db().await;
     login(&server).await;

@@ -11,6 +11,7 @@ interface Props {
   sizeHint: string;
   serviceCount: number;
   volumeCount: number;
+  hasUploadedImage: boolean;
   onClose: () => void;
   onStarted: () => void;
   /** Fired on success only — closes the settings popover behind this modal. */
@@ -27,6 +28,7 @@ export default function DuplicateModal({
   sizeHint,
   serviceCount,
   volumeCount,
+  hasUploadedImage,
   onClose,
   onStarted,
   onSucceeded,
@@ -73,18 +75,27 @@ export default function DuplicateModal({
   };
 
   const nodeButton = (node: Node, isCurrent: boolean) => {
-    const archNote = sourceArch && node.architecture && node.architecture !== sourceArch;
+    const archBlocked = hasUploadedImage && !isCurrent && !!sourceArch && !!node.architecture && node.architecture !== sourceArch;
     const selected = targetId === node.id;
     return (
       <button
         key={node.id}
         type="button"
-        onClick={() => setTargetId(node.id)}
-        title={archNote ? `Different architecture (${node.architecture} vs ${sourceArch}) — registry images must be multi-arch` : undefined}
+        onClick={() => !archBlocked && setTargetId(node.id)}
+        disabled={archBlocked}
+        title={
+          archBlocked
+            ? `Different architecture (${node.architecture} vs ${sourceArch}) — uploaded images can't run there; redeploy from source instead`
+            : sourceArch && node.architecture && node.architecture !== sourceArch
+              ? `Different architecture (${node.architecture} vs ${sourceArch}) — registry images must be multi-arch`
+              : undefined
+        }
         className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs border transition-colors ${
-          selected
-            ? 'bg-sky-500/10 border-sky-500/40 text-sky-200 cursor-pointer'
-            : 'bg-slate-800/40 border-slate-700/40 text-slate-300 hover:border-slate-600/50 cursor-pointer'
+          archBlocked
+            ? 'bg-slate-900/30 border-slate-800/40 text-slate-600 cursor-not-allowed opacity-60'
+            : selected
+              ? 'bg-sky-500/10 border-sky-500/40 text-sky-200 cursor-pointer'
+              : 'bg-slate-800/40 border-slate-700/40 text-slate-300 hover:border-slate-600/50 cursor-pointer'
         }`}
       >
         <span className="font-medium">

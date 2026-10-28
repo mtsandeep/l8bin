@@ -811,6 +811,7 @@ export default function ProjectCard({
           sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB on disk` : ''}
           serviceCount={services.length || 1}
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
+          hasUploadedImage={primaryService?.image?.startsWith('sha256:') ?? false}
           onClose={() => setShowDuplicate(false)}
           onStarted={() => onRefresh()}
           onSucceeded={() => setOpenPopover(null)}

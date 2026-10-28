@@ -238,7 +238,7 @@ After promote succeeds, user manually:
 
 ## Project Duplication — SHIPPED (2026-10-27)
 
-`POST /projects/{id}/duplicate` — implemented on the shared copy engine (`orchestrator/src/copy_engine/`) with export/import. Differences from the original sketch below: `.env` is **included by default** (toggle `include_env`) — the staging-copy use case wants a runnable copy, and the "never transfer `.env`" principle belongs to the cross-master trust boundary, where the export toggle already guards it. Same node is allowed; port-pinned (`allow_raw_ports`) / host-network copies warn instead of blocking.
+`POST /projects/{id}/duplicate` — implemented on the shared copy engine (`orchestrator/src/copy_engine/`) with export/import. Differences from the original sketch below: `.env` is **included by default** (toggle `include_env`) — the staging-copy use case wants a runnable copy, and the "never transfer `.env`" principle belongs to the cross-master trust boundary, where the export toggle already guards it. Same node is allowed; port-pinned (`allow_raw_ports`) / host-network copies warn instead of blocking; cross-architecture duplication is rejected for uploaded (`sha256:`) images (same rule as migration) and warned for registry refs.
 
 The original sketch (kept for context):
 
