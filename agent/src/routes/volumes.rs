@@ -86,6 +86,22 @@ fn error_response(status: StatusCode, message: String) -> axum::response::Respon
     (status, Json(ErrorResponse { error: message })).into_response()
 }
 
+/// GET /containers/anonymous-volumes?container_id={id}
+#[derive(serde::Deserialize)]
+pub struct AnonymousVolumesQuery {
+    pub container_id: String,
+}
+
+pub async fn anonymous_volumes(
+    State(state): State<AgentState>,
+    Query(q): Query<AnonymousVolumesQuery>,
+) -> impl IntoResponse {
+    match state.docker.anonymous_volume_names(&q.container_id).await {
+        Ok(volumes) => (StatusCode::OK, Json(serde_json::json!({ "volumes": volumes }))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, format!("inspect failed: {e}")),
+    }
+}
+
 /// GET /volumes/usage?name={volume|projects/…}
 pub async fn volume_usage(
     State(state): State<AgentState>,

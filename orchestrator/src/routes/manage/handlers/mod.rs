@@ -49,3 +49,16 @@ pub(crate) async fn volume_list(db: &sqlx::SqlitePool, project: &crate::db::mode
         .filter(|v| litebin_common::types::classify_volume(v) != litebin_common::types::VolumeKind::RelativeBindMount)
         .collect()
 }
+
+/// Compose-declared anonymous volume mounts (`volume_name` NULL rows).
+pub(crate) async fn anonymous_mount_count(db: &sqlx::SqlitePool, project_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM project_volumes WHERE project_id = ? AND volume_name IS NULL")
+        .bind(project_id)
+        .fetch_one(db)
+        .await
+        .unwrap_or(0)
+}
+
+pub(crate) fn anonymous_volume_warning(count: i64) -> String {
+    format!("{count} anonymous volume mounts — their data is not carried; name them in compose to persist")
+}

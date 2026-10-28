@@ -459,6 +459,22 @@ impl AgentClient {
         Ok(resp.bytes)
     }
 
+    /// GET /containers/anonymous-volumes?container_id= — anonymous volume hash
+    /// names attached to a container on the agent.
+    pub async fn anonymous_volume_names(&self, container_id: &str) -> Result<Vec<String>, AgentClientError> {
+        #[derive(serde::Deserialize)]
+        struct Response {
+            volumes: Vec<String>,
+        }
+        let resp: Response = self
+            .get_json(
+                format!("{}?container_id={container_id}", litebin_common::agent_api::ANONYMOUS_VOLUMES_PATH),
+                DEFAULT_AGENT_TIMEOUT,
+            )
+            .await?;
+        Ok(resp.volumes)
+    }
+
     pub async fn disk_usage(&self, container_id: &str) -> Result<litebin_common::docker::DiskUsage, AgentClientError> {
         self.get_json(self.url(&format!("/containers/{container_id}/disk-usage")), LIFECYCLE_TIMEOUT).await
     }

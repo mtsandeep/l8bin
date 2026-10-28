@@ -122,7 +122,12 @@ pub async fn migrate_project(
     let target_id = target_node.id.clone();
     let source_id = source_node.id.clone();
     let arch_warning = archs_differ;
-    let message = format!("migration to '{target_id}' started");
+    let anon_mounts = super::anonymous_mount_count(&state.db, &project_id).await;
+    let message = if anon_mounts > 0 {
+        format!("migration to '{target_id}' started; {}", super::anonymous_volume_warning(anon_mounts))
+    } else {
+        format!("migration to '{target_id}' started")
+    };
     tokio::spawn(async move {
         if let Err(e) = run_migration(&state, &project_id_bg, &source_id, &target_id, volumes_flag, arch_warning).await
         {

@@ -12,6 +12,7 @@ interface Props {
   serviceCount: number;
   volumeCount: number;
   hasUploadedImage: boolean;
+  ephemeralGb?: number;
   onClose: () => void;
   onStarted: () => void;
   /** Fired on success only — closes the settings popover behind this modal. */
@@ -29,6 +30,7 @@ export default function DuplicateModal({
   serviceCount,
   volumeCount,
   hasUploadedImage,
+  ephemeralGb,
   onClose,
   onStarted,
   onSucceeded,
@@ -150,6 +152,12 @@ export default function DuplicateModal({
             </li>
           ))}
         </ol>
+
+        {ephemeralGb ? (
+          <div className="rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] text-amber-300">
+            {ephemeralGb.toFixed(2)} GB in anonymous volumes is not carried - name them in compose to persist.
+          </div>
+        ) : null}
 
         <div className="space-y-4">
           <div>

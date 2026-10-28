@@ -126,6 +126,7 @@ export default function ProjectCard({
   const [showServicesPopover, setShowServicesPopover] = useState(false);
   const [showServicesModal, setShowServicesModal] = useState(false);
   const services = stats?.services ?? [];
+  const ephemeralGb = services.reduce((acc, s) => acc + (s.ephemeral_gb ?? 0), 0);
   const primaryService = project.public_stats ?? services[0] ?? null;
   const servicesRef = useRef<HTMLDivElement>(null);
 
@@ -795,6 +796,7 @@ export default function ProjectCard({
           sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB on disk` : ''}
           serviceCount={services.length || 1}
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
+          ephemeralGb={ephemeralGb}
           onClose={() => setShowMigrate(false)}
           onStarted={() => onRefresh()}
           onSucceeded={() => setOpenPopover(null)}
@@ -811,6 +813,7 @@ export default function ProjectCard({
           sizeHint={primaryService?.disk_gb ? `${primaryService.disk_gb.toFixed(2)} GB on disk` : ''}
           serviceCount={services.length || 1}
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
+          ephemeralGb={ephemeralGb}
           hasUploadedImage={primaryService?.image?.startsWith('sha256:') ?? false}
           onClose={() => setShowDuplicate(false)}
           onStarted={() => onRefresh()}
@@ -824,6 +827,7 @@ export default function ProjectCard({
           projectId={project.id}
           projectName={project.name || project.id}
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
+          ephemeralGb={ephemeralGb}
           onClose={() => setShowExport(false)}
           onSucceeded={() => setOpenPopover(null)}
         />

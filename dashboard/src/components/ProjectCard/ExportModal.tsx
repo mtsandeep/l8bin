@@ -7,6 +7,7 @@ interface Props {
   projectId: string;
   projectName: string;
   volumeCount: number;
+  ephemeralGb?: number;
   onClose: () => void;
   /** Fired when the export job completes — closes the settings popover behind this modal. */
   onSucceeded: () => void;
@@ -18,7 +19,7 @@ function formatSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export default function ExportModal({ projectId, projectName, volumeCount, onClose, onSucceeded }: Props) {
+export default function ExportModal({ projectId, projectName, volumeCount, ephemeralGb, onClose, onSucceeded }: Props) {
   const [includeEnv, setIncludeEnv] = useState(true);
   const [includeVolumes, setIncludeVolumes] = useState(true);
   const [job, setJob] = useState<ExportJobInfo | null>(null);
@@ -109,6 +110,13 @@ export default function ExportModal({ projectId, projectName, volumeCount, onClo
             </li>
           ))}
         </ol>
+
+        {ephemeralGb ? (
+          <div className="rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] text-amber-300">
+            {ephemeralGb.toFixed(2)} GB in anonymous volumes is not carried - name them in compose to persist.
+          </div>
+        ) : null}
+
 
         <div className="space-y-4">
           <label className="flex items-center gap-2 cursor-pointer">

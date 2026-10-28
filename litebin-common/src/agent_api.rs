@@ -46,6 +46,7 @@ pub const IMAGES_PRUNE_PATH: &str = "/images/prune";
 pub const VOLUME_EXPORT_PATH: &str = "/volumes/export";
 pub const VOLUME_IMPORT_PATH: &str = "/volumes/import";
 pub const VOLUME_USAGE_PATH: &str = "/volumes/usage";
+pub const ANONYMOUS_VOLUMES_PATH: &str = "/containers/anonymous-volumes";
 pub const CADDY_SYNC_PATH: &str = "/caddy/sync";
 pub const PROJECT_META_PATH: &str = "/internal/project-meta";
 pub const ENV_GET_PATH: &str = "/internal/env";

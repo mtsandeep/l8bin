@@ -507,6 +507,19 @@ impl DockerManager {
         Ok(DiskUsage { size_rw, size_root_fs, cpu_limit })
     }
 
+    /// Anonymous volume names (random Docker hashes) attached to a container.
+    pub async fn anonymous_volume_names(&self, container_id: &str) -> anyhow::Result<Vec<String>> {
+        let info = self.docker.inspect_container(container_id, None).await?;
+        Ok(info
+            .mounts
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|m| m.typ == Some(bollard::models::MountPointTypeEnum::VOLUME))
+            .filter_map(|m| m.name)
+            .filter(|n| !n.starts_with("litebin_"))
+            .collect())
+    }
+
     /// On-disk size of a Docker named volume in bytes (`du -sb` via busybox —
     /// Docker has no native volume-size API).
     pub async fn volume_usage_bytes(&self, volume: &str) -> anyhow::Result<u64> {

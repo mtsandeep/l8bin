@@ -115,6 +115,10 @@ pub async fn duplicate_project(
             "project pins host ports (allow_raw_ports) — the copy may fail to start alongside the original".into(),
         );
     }
+    let anon_mounts = super::anonymous_mount_count(&state.db, &project.id).await;
+    if anon_mounts > 0 {
+        warnings.push(super::anonymous_volume_warning(anon_mounts));
+    }
 
     let base = format!("{}-copy", project.id);
     let reserved = [state.platform.dashboard_subdomain(), state.platform.poke_subdomain()];

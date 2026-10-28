@@ -80,6 +80,12 @@ pub async fn export_project(
 
     let was_running = matches!(project.status, ProjectStatus::Running | ProjectStatus::Degraded);
 
+    let anon_mounts = super::anonymous_mount_count(&state.db, &project.id).await;
+    let mut warnings = Vec::new();
+    if anon_mounts > 0 {
+        warnings.push(super::anonymous_volume_warning(anon_mounts));
+    }
+
     let job_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     state.export_jobs.insert(
@@ -141,6 +147,7 @@ pub async fn export_project(
             "job_id": job_id,
             "project_id": project.id,
             "status": "exporting",
+            "warnings": warnings,
         })),
     )
         .into_response()

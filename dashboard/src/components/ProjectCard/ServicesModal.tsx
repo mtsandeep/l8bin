@@ -231,7 +231,9 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                       className="bg-slate-800/60 rounded px-2 py-1.5"
                       title={
                         svc.disk_gb !== undefined && svc.data_gb !== undefined
-                          ? `image: ${Math.max(svc.disk_gb - svc.data_gb, 0).toFixed(2)} GB | data: ${svc.data_gb.toFixed(2)} GB`
+                          ? `image: ${Math.max(svc.disk_gb - svc.data_gb - (svc.ephemeral_gb ?? 0), 0).toFixed(2)} GB | data: ${svc.data_gb.toFixed(2)} GB${
+                              svc.ephemeral_gb ? ` | ephemeral: ${svc.ephemeral_gb.toFixed(2)} GB (not carried)` : ''
+                            }`
                           : undefined
                       }
                     >

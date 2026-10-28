@@ -11,6 +11,7 @@ interface Props {
   sizeHint: string;
   serviceCount: number;
   volumeCount: number;
+  ephemeralGb?: number;
   onClose: () => void;
   onStarted: () => void;
   /** Fired on success only — closes the settings popover behind this modal. */
@@ -25,6 +26,7 @@ export default function MigrateModal({
   sizeHint,
   serviceCount,
   volumeCount,
+  ephemeralGb,
   onClose,
   onStarted,
   onSucceeded,
@@ -131,6 +133,13 @@ export default function MigrateModal({
             </li>
           ))}
         </ol>
+
+        {ephemeralGb ? (
+          <div className="rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] text-amber-300">
+            {ephemeralGb.toFixed(2)} GB in anonymous volumes is not carried - name them in compose to persist.
+          </div>
+        ) : null}
+
 
         {sizeHint && (
           <div className="flex items-center gap-2 rounded-md bg-slate-800/60 border border-slate-700/40 px-3 py-2 mb-4">

@@ -107,15 +107,56 @@ pub(super) async fn apply_data_usage(
 
     for (svc, cid) in services.iter_mut() {
         let vol = per_service.get(&svc.service_name).copied().unwrap_or(0);
+        let ephemeral = match cid {
+            Some(c) => ephemeral_bytes(state, node, c).await.unwrap_or(0),
+            None => 0,
+        };
+        svc.ephemeral_gb = Some(ephemeral as f64 / (1024.0 * 1024.0 * 1024.0));
         if let Some(cid) = cid
             && let Some((rw, root_fs)) = container_disk(state, node, cid).await
         {
             svc.data_gb = Some((vol + rw) as f64 / (1024.0 * 1024.0 * 1024.0));
-            svc.disk_gb = Some((vol + root_fs) as f64 / (1024.0 * 1024.0 * 1024.0));
+            svc.disk_gb = Some((vol + root_fs + ephemeral) as f64 / (1024.0 * 1024.0 * 1024.0));
         } else {
             svc.data_gb = Some(vol as f64 / (1024.0 * 1024.0 * 1024.0));
-            svc.disk_gb = svc.data_gb;
+            svc.disk_gb = Some((vol + ephemeral) as f64 / (1024.0 * 1024.0 * 1024.0));
         }
+    }
+}
+
+/// Total bytes of a container's anonymous volumes (names cached with the same
+/// TTL as the sizes; each volume is du'd through volume_bytes).
+async fn ephemeral_bytes(state: &crate::AppState, node: &str, container_id: &str) -> Option<i64> {
+    let key = format!("{node}|anonnames|{container_id}");
+    let names: Vec<String> = if let Some(entry) = state.usage_cache.get(&key)
+        && entry.at.elapsed().as_secs() < USAGE_TTL_SECS
+    {
+        entry.names.clone()?
+    } else {
+        let names = fetch_anon_names(state, node, container_id).await?;
+        state
+            .usage_cache
+            .insert(key, UsageEntry { bytes: 0, at: std::time::Instant::now(), names: Some(names.clone()) });
+        names
+    };
+
+    let mut total = 0;
+    for name in &names {
+        total += volume_bytes(state, node, name).await.unwrap_or(0);
+    }
+    Some(total)
+}
+
+async fn fetch_anon_names(state: &crate::AppState, node: &str, container_id: &str) -> Option<Vec<String>> {
+    if node == "local" {
+        state.docker.anonymous_volume_names(container_id).await.ok()
+    } else {
+        crate::nodes::client::AgentClient::resolve(state, node)
+            .await
+            .ok()?
+            .anonymous_volume_names(container_id)
+            .await
+            .ok()
     }
 }
 
@@ -144,7 +185,7 @@ pub(super) async fn volume_bytes(state: &crate::AppState, node: &str, scoped: &s
     } else {
         crate::nodes::client::AgentClient::resolve(state, node).await.ok()?.volume_usage(&mount).await.ok()? as i64
     };
-    state.usage_cache.insert(key, UsageEntry { bytes, at: std::time::Instant::now() });
+    state.usage_cache.insert(key, UsageEntry { bytes, at: std::time::Instant::now(), names: None });
     Some(bytes)
 }
 
@@ -166,8 +207,8 @@ pub(super) async fn container_disk(state: &crate::AppState, node: &str, containe
     let now = std::time::Instant::now();
     let rw = usage.size_rw as i64;
     let fs = usage.size_root_fs as i64;
-    state.usage_cache.insert(rw_key, UsageEntry { bytes: rw, at: now });
-    state.usage_cache.insert(fs_key, UsageEntry { bytes: fs, at: now });
+    state.usage_cache.insert(rw_key, UsageEntry { bytes: rw, at: now, names: None });
+    state.usage_cache.insert(fs_key, UsageEntry { bytes: fs, at: now, names: None });
     Some((rw, fs))
 }
 
@@ -307,6 +348,7 @@ pub(super) async fn batch_load_services(
                 cpu_limit,
                 disk_gb: None,
                 data_gb: None,
+                ephemeral_gb: None,
                 volumes: vec![],
                 ports: vec![],
             },
@@ -438,6 +480,7 @@ mod tests {
             cpu_limit: None,
             disk_gb: None,
             data_gb: None,
+            ephemeral_gb: None,
             volumes: vec![],
             ports: vec![],
         }

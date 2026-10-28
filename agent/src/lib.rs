@@ -147,6 +147,7 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/containers/stop-project", post(routes::containers::stop_project))
         .route("/containers/remove", post(routes::containers::remove_container))
         .route("/containers/{id}/status", get(routes::containers::container_status))
+        .route("/containers/anonymous-volumes", get(routes::volumes::anonymous_volumes))
         .route("/containers/{id}/logs", get(routes::containers::container_logs))
         .route("/containers/{id}/disk-usage", get(routes::containers::container_disk_usage))
         .route("/containers/stats", post(routes::containers::batch_container_stats))

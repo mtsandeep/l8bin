@@ -502,6 +502,37 @@ curl -X DELETE https://l8bin.example.com/projects/myapp/volumes \
 
 ---
 
+## Volumes & Persistent Data
+
+### What are anonymous volumes, and why does LiteBin call them ephemeral?
+
+A compose mount with no name (`- /var/lib/postgresql/data` — target path only)
+creates an **anonymous volume**: Docker gives it a random hash name and nothing
+links it back to your compose file. Images can declare them too (the official
+postgres image does).
+
+They are ephemeral in practice: anything that recreates the container — a
+redeploy, `docker compose down && up` — gives the new container a fresh empty
+volume.
+
+- The dashboard shows their size separately (`ephemeral` in the disk tooltip)
+  and warns on duplicate/migrate/export when a project has them.
+- **If the data matters, name it** — that's the standard fix:
+
+```yaml
+services:
+  postgres:
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+```
+
+Named volumes are carried by duplicate/migrate/export bundles and counted as
+project data.
+
+---
+
 ## Custom Routes Not Working
 
 ### My custom route returns 404

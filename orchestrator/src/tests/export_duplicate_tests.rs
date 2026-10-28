@@ -140,6 +140,30 @@ async fn duplicate_creates_rows_with_suffixed_id() {
 }
 
 #[tokio::test]
+async fn duplicate_warns_about_anonymous_volume_mounts() {
+    let (server, db) = test_server_with_db().await;
+    login(&server).await;
+    insert_project(&db, "anon-app", Some("Anon"), "running", Some("compose")).await;
+    sqlx::query(
+        "INSERT INTO project_volumes (project_id, service_name, volume_name, container_path) \
+         VALUES ('anon-app', 'db', NULL, '/var/lib/postgresql/data')",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let res = server
+        .post("/projects/anon-app/duplicate")
+        .json(&serde_json::json!({ "target_node_id": "local", "start_after": false }))
+        .await;
+    assert_eq!(res.status_code(), StatusCode::ACCEPTED);
+    let body: serde_json::Value = res.json();
+    assert!(
+        body["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("anonymous volume mounts"))
+    );
+}
+
+#[tokio::test]
 async fn duplicate_rejects_cross_arch_uploaded_images() {
     let (server, db) = test_server_with_db().await;
     login(&server).await;
