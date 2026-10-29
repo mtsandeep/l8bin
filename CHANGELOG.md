@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Declining the updater's docker-compose.yml diff now continues the update with the current file (warned) instead of exiting; declining previously aborted the whole update.
+- **Bundle imports restore uploaded images** — images/ entries are matched against the manifest's file list and loaded on the target node.
+- **Image references resolve on the loading daemon** — image stores address the same image differently (manifest vs config digest), so duplicate/migrate/import record the reference the target daemon reports after an uploaded-image load, keeping container creation resolvable across daemons.
 
 ## [0.4.18] - 2026-10-29
 

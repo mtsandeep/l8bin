@@ -351,8 +351,13 @@ async fn write_test_bundle(dir: &std::path::Path, file: &str, id: &str) {
     let volume_spool = tmp.join("volume.tar");
     std::fs::write(&volume_spool, b"volume-contents").unwrap();
 
-    let mut pending =
-        vec![("project.tar".to_string(), project_spool), (format!("volumes/litebin_{id}_data.tar"), volume_spool)];
+    let image_spool = tmp.join("image.tar");
+    std::fs::write(&image_spool, b"docker-save-tar").unwrap();
+    let mut pending = vec![
+        ("project.tar".to_string(), project_spool),
+        (format!("volumes/litebin_{id}_data.tar"), volume_spool),
+        ("images/sha256-d7b91807d0bbc094e6393d2063eaf9eac28875565573fe1ec73b14a76f60c26f.tar".to_string(), image_spool),
+    ];
     pending.reverse();
     crate::copy_engine::bundle::write_bundle(&dir.join(file), full_manifest_json(id), move || {
         let next = pending.pop();

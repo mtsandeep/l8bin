@@ -572,11 +572,11 @@ async fn run_import(state: &AppState, job: &ImportJob) -> anyhow::Result<()> {
                         target.transfer_in(&state, &litebin_common::docker::TransferKind::Volume(to), tar).await?;
                         logs(&state, &new_id, &format!("volume '{scoped}' restored"));
                     }
-                } else if let Some(image) = name.strip_prefix("images/").and_then(|n| images.get(n)) {
+                } else if name.starts_with("images/")
+                    && let Some(image) = images.get(&name)
+                {
                     let tar = file_stream(&spool);
-                    target
-                        .transfer_in(&state, &litebin_common::docker::TransferKind::Image(image.clone()), tar)
-                        .await?;
+                    copy_engine::load_image_and_repoint(&state, &target, image, tar, &new_id).await?;
                     logs(&state, &new_id, "uploaded image restored");
                 } else {
                     tracing::warn!(entry = %name, "import: skipping unknown bundle entry");

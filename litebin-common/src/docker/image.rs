@@ -575,21 +575,38 @@ impl DockerManager {
     }
 
     /// Load a Docker image from a tar stream (output of `docker save`).
-    pub async fn load_image<S, E>(&self, tar_stream: S) -> anyhow::Result<()>
+    /// Load a docker-save tar; returns the refs/IDs the daemon reports loading
+    /// ("Loaded image ID: sha256:…" / "Loaded image: tag").
+    pub async fn load_image<S, E>(&self, tar_stream: S) -> anyhow::Result<Vec<String>>
     where
         S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, E>> + Send + Unpin + 'static,
         E: Into<Box<dyn std::error::Error + Send + Sync>> + std::fmt::Display + 'static,
     {
         let mut import_stream = self.docker.import_image_stream(ImportImageOptions::default(), tar_stream, None);
 
+        let mut loaded = Vec::new();
         while let Some(result) = import_stream.next().await {
-            if let Err(e) = result {
-                return Err(anyhow::anyhow!("docker image load failed: {e}"));
+            let msg = result.map_err(|e| anyhow::anyhow!("docker image load failed: {e}"))?;
+            if let Some(text) = msg.stream.as_deref() {
+                let text = text.trim();
+                if let Some(rest) =
+                    text.strip_prefix("Loaded image ID: ").or_else(|| text.strip_prefix("Loaded image: "))
+                {
+                    let r = rest.trim();
+                    if !r.is_empty() {
+                        loaded.push(r.to_string());
+                    }
+                }
+            }
+            if let Some(detail) = msg.error_detail.as_ref()
+                && let Some(err) = detail.message.as_deref()
+            {
+                return Err(anyhow::anyhow!("docker image load failed: {err}"));
             }
         }
 
-        tracing::info!("image loaded successfully");
-        Ok(())
+        tracing::info!(refs = ?loaded, "image loaded");
+        Ok(loaded)
     }
 
     /// Inspect an image and return its actual image ID as known by Docker.

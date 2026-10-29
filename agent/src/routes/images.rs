@@ -23,18 +23,14 @@ pub async fn load_image(
     let byte_stream = body.into_data_stream();
 
     match state.docker.load_image(byte_stream).await {
-        Ok(_) => {
-            // Resolve the tag to the actual image ID Docker assigned.
-            // OCI format tars may have a different manifest digest than the local config digest.
+        Ok(loaded) => {
+            // Record the reference the daemon actually loaded — OCI tars may
+            // load under the config digest while the project records the manifest digest.
             let resolved_id = match state.docker.inspect_image_id(&params.image_id).await {
                 Ok(id) => id,
                 Err(e) => {
-                    tracing::error!(error = %e, image_id = %params.image_id, "image loaded but inspect failed");
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse { error: format!("image loaded but inspect failed: {e}") }),
-                    )
-                        .into_response();
+                    tracing::warn!(error = %e, image_id = %params.image_id, loaded = ?loaded, "image ref unresolvable; using loaded ref");
+                    loaded.first().cloned().unwrap_or_else(|| params.image_id.clone())
                 }
             };
             (StatusCode::OK, Json(LoadImageResponse { image_id: resolved_id })).into_response()

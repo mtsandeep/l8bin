@@ -210,9 +210,19 @@ async fn run_migration(
     }
 
     // 4. Transfer uploaded images (registry refs pull fresh on the target).
+    let target_ref = if target_id == "local" {
+        crate::copy_engine::NodeRef::Local
+    } else {
+        crate::copy_engine::NodeRef::Agent(target_id.to_string())
+    };
+    let source_ref = if source_id == "local" {
+        crate::copy_engine::NodeRef::Local
+    } else {
+        crate::copy_engine::NodeRef::Agent(source_id.to_string())
+    };
     for image in project_image_refs(&project, &state.db).await {
         if image.starts_with("sha256:") {
-            transfer(state, source_id, target_id, &TransferKind::Image(image)).await?;
+            crate::copy_engine::transfer_image(state, &source_ref, &target_ref, &image, project_id).await?;
         }
     }
 

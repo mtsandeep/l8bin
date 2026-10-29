@@ -367,7 +367,7 @@ async fn run_duplicate(state: &AppState, job: &DuplicateJob) -> anyhow::Result<(
 
     for image in copy_engine::project_image_refs(&state.db, &project).await {
         if image.starts_with("sha256:") {
-            copy_engine::transfer_image(state, source, target, &image).await?;
+            copy_engine::transfer_image(state, source, target, &image, new_id).await?;
             logs(state, new_id, "uploaded image copied");
         }
     }

@@ -134,7 +134,7 @@ impl DockerManager {
         match kind {
             TransferKind::Image(_) => {
                 let tar = tar.map(Ok::<_, std::io::Error>).boxed();
-                self.load_image(tar).await
+                self.load_image(tar).await.map(|_| ())
             }
             TransferKind::Volume(volume) => {
                 // The bind creates the volume if it does not exist yet.

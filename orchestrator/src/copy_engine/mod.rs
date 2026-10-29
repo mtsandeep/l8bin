@@ -189,10 +189,63 @@ pub async fn transfer_project_dir(
 
 /// Copy an uploaded (`sha256:`) image via docker save/load. Registry refs are
 /// never moved — the target pulls them fresh.
-pub async fn transfer_image(state: &AppState, src: &NodeRef, dst: &NodeRef, image: &str) -> anyhow::Result<()> {
+pub async fn transfer_image(
+    state: &AppState,
+    src: &NodeRef,
+    dst: &NodeRef,
+    image: &str,
+    project_id: &str,
+) -> anyhow::Result<()> {
     tracing::info!(image, src = src.node_id(), dst = dst.node_id(), "transferring image");
     let stream = src.transfer_out(state, &TransferKind::Image(image.to_string())).await?;
-    dst.transfer_in(state, &TransferKind::Image(image.to_string()), stream).await
+    load_image_and_repoint(state, dst, image, stream, project_id).await
+}
+
+/// Load an uploaded-image tar on the target node and repoint the project's
+/// image references to the reference that daemon resolves (manifest and
+/// config digests differ across image stores).
+pub async fn load_image_and_repoint(
+    state: &AppState,
+    dst: &NodeRef,
+    image: &str,
+    tar: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+    project_id: &str,
+) -> anyhow::Result<()> {
+    let effective = match dst {
+        NodeRef::Local => {
+            use futures_util::StreamExt;
+            let tar = tar.map(Ok::<_, std::io::Error>);
+            let loaded = state.docker.load_image(tar).await?;
+            if state.docker.inspect_image_id(image).await.is_ok() {
+                image.to_string()
+            } else {
+                loaded.first().cloned().ok_or_else(|| anyhow::anyhow!("image load reported no reference"))?
+            }
+        }
+        NodeRef::Agent(node_id) => {
+            use futures_util::StreamExt;
+            let agent = crate::nodes::client::AgentClient::resolve(state, node_id).await?;
+            let body = reqwest::Body::wrap_stream(tar.map(Ok::<_, std::io::Error>));
+            agent.load_image_stream(image, body).await.map_err(|e| anyhow::anyhow!("{e}"))?.image_id
+        }
+    };
+
+    if effective != image {
+        tracing::info!(project = project_id, from = image, to = %effective, "repointing image ref after load");
+        sqlx::query("UPDATE projects SET image = ? WHERE id = ? AND image = ?")
+            .bind(&effective)
+            .bind(project_id)
+            .bind(image)
+            .execute(&state.db)
+            .await?;
+        sqlx::query("UPDATE project_services SET image = ? WHERE project_id = ? AND image = ?")
+            .bind(&effective)
+            .bind(project_id)
+            .bind(image)
+            .execute(&state.db)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Relative binds (`projects/…` scoped names) must be mounted by HOST path —
