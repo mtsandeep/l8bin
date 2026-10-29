@@ -1,4 +1,4 @@
-> **Status: M1a implemented (uncommitted, tests green) — M1b/M2/M3 not started** · code audit verified 2026-10-28
+> **Status: M1a shipped (0.4.18) and verified on t1 — M1b/M2/M3 not started** · code audit verified 2026-10-28
 
 # IPv6 / IPv6-only Support
 

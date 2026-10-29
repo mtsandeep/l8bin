@@ -281,8 +281,10 @@ systemctl restart docker
 
 ```bash
 sed -i 's/^    name: litebin-network$/    name: litebin-network\n    enable_ipv6: true/' /opt/litebin/docker-compose.yml
-cd /opt/litebin && docker compose up -d
+cd /opt/litebin && docker compose up -d --force-recreate
 ```
+
+(`--force-recreate` matters: after a network change, a plain `up -d` can leave stale endpoints that no longer carry the service aliases — names like `dashboard` stop resolving with 502s.)
 
 **Note:** the installer regenerates `docker-compose.yml` on updates — re-run this step after each LiteBin update.
 
