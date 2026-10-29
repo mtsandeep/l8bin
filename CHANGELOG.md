@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-10-29
+
 ### Fixed
 - Declining the updater's docker-compose.yml diff now continues the update with the current file (warned) instead of exiting; declining previously aborted the whole update.
 - **Bundle imports restore uploaded images** — images/ entries are matched against the manifest's file list and loaded on the target node.
