@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.18] - 2026-10-29
+
 ### Added
 - **`l8b ship` defaults to the `l8b.toml` project** — offered as the preselected "Deploy to" choice (noted when missing on the server); successful ships now also write `l8b.toml`, so the first ship binds the repo.
 
