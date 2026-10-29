@@ -97,9 +97,7 @@ mod tests {
                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
                     let mut buf = [0u8; 1024];
                     let _ = s.read(&mut buf).await;
-                    let _ = s
-                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
-                        .await;
+                    let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await;
                 });
             }
         });
@@ -126,14 +124,8 @@ mod tests {
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         ]);
-        let body = client
-            .get(format!("http://fallback.test:{}", live.port()))
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
+        let body =
+            client.get(format!("http://fallback.test:{}", live.port())).send().await.unwrap().text().await.unwrap();
         assert_eq!(body, "ok");
     }
 
@@ -144,14 +136,8 @@ mod tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
         ]);
-        let body = client
-            .get(format!("http://fallback.test:{}", live.port()))
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
+        let body =
+            client.get(format!("http://fallback.test:{}", live.port())).send().await.unwrap().text().await.unwrap();
         assert_eq!(body, "ok");
     }
 

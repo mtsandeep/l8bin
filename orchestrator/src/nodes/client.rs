@@ -6,8 +6,7 @@ use axum::http::StatusCode;
 use litebin_common::net::client_builder;
 use litebin_common::timeouts::{
     AGENT_CONTROL_PLANE as CONTROL_PLANE_TIMEOUT, AGENT_IMAGE_WORK as IMAGE_STREAM_TIMEOUT,
-    AGENT_LIFECYCLE as LIFECYCLE_TIMEOUT, AGENT_READ as DEFAULT_AGENT_TIMEOUT, CONNECT_LOCAL,
-    CONNECT_NODE,
+    AGENT_LIFECYCLE as LIFECYCLE_TIMEOUT, AGENT_READ as DEFAULT_AGENT_TIMEOUT, CONNECT_LOCAL, CONNECT_NODE,
 };
 use litebin_common::types::Node;
 
@@ -85,11 +84,8 @@ pub async fn build_remote_proxy_client(
     let config = load_node_tls_config(ca_cert_path, client_cert_path, client_key_path)?;
 
     // No total timeout: streams visitor response bodies. Attempts are capped at call sites.
-    let client = client_builder()
-        .use_preconfigured_tls(config)
-        .connect_timeout(CONNECT_NODE)
-        .resolve("agent", addr)
-        .build()?;
+    let client =
+        client_builder().use_preconfigured_tls(config).connect_timeout(CONNECT_NODE).resolve("agent", addr).build()?;
 
     Ok(client)
 }

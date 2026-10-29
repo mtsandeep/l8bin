@@ -59,7 +59,12 @@ pub async fn run(
         stored_idx = Some(choices.len());
         choices.push(format!("{} (from {})", id.cyan(), crate::project_config::FILE_NAME));
     } else if let Some(id) = &stored {
-        println!("  {} {} names project '{}' but it is not on this server.", "!".yellow(), crate::project_config::FILE_NAME, id);
+        println!(
+            "  {} {} names project '{}' but it is not on this server.",
+            "!".yellow(),
+            crate::project_config::FILE_NAME,
+            id
+        );
     }
     let new_idx = choices.len();
     choices.push("New project".to_string());
@@ -67,7 +72,8 @@ pub async fn run(
     let selection = Select::new().with_prompt("Deploy to").items(&choices).default(0).interact()?;
 
     if selection == stored_idx.unwrap_or(usize::MAX) {
-        let project = &projects[projects.iter().position(|p| stored.as_deref() == Some(p.id.as_str())).expect("offered only when found")];
+        let project = &projects
+            [projects.iter().position(|p| stored.as_deref() == Some(p.id.as_str())).expect("offered only when found")];
         choose_action(client, server, project_dir, port_override, &env_source, project, Access::Full).await
     } else if selection == new_idx {
         new_project_flow(client, server, project_dir, port_override, &env_source, token_auth).await
