@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **`l8b ship` defaults to the `l8b.toml` project** — offered as the preselected "Deploy to" choice (noted when missing on the server); successful ships now also write `l8b.toml`, so the first ship binds the repo.
 
+- **IPv6-ready networking** — deploys, wakes, the dashboard proxy and Caddy sync now work on Docker networks with IPv6 enabled (names resolve AAAA-first there; litebin's dials fall back between address families, listeners bind dual-stack, readiness accepts either family). IPv4-only hosts are unaffected — binds fall back to `0.0.0.0` when the kernel has no IPv6. New FAQ guide covers IPv6-only VPSes (DNS64, Docker IPv6, domains).
+### Fixed
+- Wake-on-visit 404'd instead of waking when the request's host header carried a port (`app.localhost:8080`).
+
 ## [0.4.17] - 2026-10-28
 
 ### Fixed

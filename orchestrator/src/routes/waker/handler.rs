@@ -263,6 +263,8 @@ pub async fn wake_for_host(
     headers: &HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
+    // Host may carry a port (`app.localhost:8081`); matching below is host-only.
+    let host = host.split(':').next().unwrap_or(host);
     let domain_suffix = format!(".{}", state.platform.domain());
 
     let project = if host.ends_with(&domain_suffix) {

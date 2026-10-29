@@ -1,4 +1,4 @@
-> **Status: NOT STARTED — independent track** · code audit verified 2026-10-28
+> **Status: M1a implemented (uncommitted, tests green) — M1b/M2/M3 not started** · code audit verified 2026-10-28
 
 # IPv6 / IPv6-only Support
 
@@ -49,7 +49,7 @@ Victims on an IPv6-enabled network (dial by container name → AAAA-first → ta
 |---|---|
 | Orchestrator HTTP — `HOST` default `"0.0.0.0"` ([config.rs:36](../../orchestrator/src/config.rs), seeded by installer `.env`) | v4-only |
 | Agent ×3 — wake `8444`, upload `8445`, mTLS `agent_port` — all `SocketAddr::from(([0,0,0,0], p))` ([agent/main.rs:164,196,234](../../agent/src/main.rs)) | v4-only |
-| Caddy admin `"0.0.0.0:2019"` — [routing.rs:378](../../litebin-common/src/routing.rs), [caddy_config.rs:196,396](../../orchestrator/src/cloudflare_router/caddy_config.rs), [agent waker/caddy.rs:409,443](../../agent/src/routes/waker/caddy.rs), bootstrap `Caddyfile:2`, agent Caddyfile [install.sh:1371](../../install.sh) | v4-only |
+| Caddy admin `"0.0.0.0:2019"` — [routing.rs:378](../../litebin-common/src/routing.rs), [caddy_config.rs:196,396](../../orchestrator/src/cloudflare_router/caddy_config.rs), [agent waker/caddy.rs:409,443](../../agent/src/routes/waker/caddy.rs), bootstrap `Caddyfile:2`, agent Caddyfile [install.sh:1371](../../install.sh) | **dual-stack already** — Caddy normalizes the `0.0.0.0` wildcard (verified 2026-10-29: binds `:::2019`); no change needed |
 | Dashboard nginx `listen 80;` ([dashboard/nginx.conf:2](../../dashboard/nginx.conf)) | v4-only (t1's observed 502) |
 | Raw-port publishes `host_ip: Some("0.0.0.0")` ([run.rs:108-114](../../litebin-common/src/docker/container/run.rs)) | v4-only host side |
 | Public-port / managed-proxy loopback publish `127.0.0.1` ([run.rs:14-21,74-77](../../litebin-common/src/docker/container/run.rs)) | v4 loopback |
@@ -127,8 +127,10 @@ The smallest code set that makes the five host-prep steps below sufficient — w
 Code:
 
 1. D1 shared client builder + resolver, wired into the four critical clients: orchestrator `proxy_client`, agent `proxy_client`, `CaddyClient` (admin dials), node clients — including the `resolve_node_addr` first-answer-only bug.
-2. D2 essential binds, one-liners each: nginx `listen [::]:80;`, orchestrator `HOST` default, agent ×3 listeners, Caddy admin `[::]:2019` (all six generated-config sites + bootstrap Caddyfiles).
+2. D2 essential binds, one-liners each: nginx `listen [::]:80;`, orchestrator `HOST` default, agent ×3 listeners. Caddy admin needed nothing — already dual-stack (see §2).
 3. D8 readiness gating — `wait_for_network_ready` accepts `GlobalIPv6Address`.
+
+Implemented 2026-10-29 (uncommitted): resolver + `client_builder()` in [net.rs](../../litebin-common/src/net.rs) with fallback tests both directions; the four clients wired; `resolve_node_addr` probes candidates IPv4-first instead of taking the first answer; binds as above (installer/.env.example `HOST=[::]` too); readiness accepts either family. Workspace tests green (431). Verified on a local dual-stack rig (`docker-compose.ipv6test.yml`, isolated project/network with `enable_ipv6`): AAAA-first resolution confirmed, caddy sync, dashboard 200, v4-only `nginx:alpine` deploy → serves, sleep→wake 0.5s. Drive-by fix from the rig: `wake_for_host` now strips the port from Host (`app.localhost:8081` previously missed the domain-suffix match and 404'd). Remaining for M1a: release + t1 acceptance run (IPv6-only egress half — NAT64, sslip dashed-v6, LE over IPv6).
 
 Host prep the FAQ entry documents (user-side, permanent characteristics of an IPv4-less box):
 

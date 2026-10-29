@@ -3,9 +3,11 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 
+use litebin_common::net::client_builder;
 use litebin_common::timeouts::{
     AGENT_CONTROL_PLANE as CONTROL_PLANE_TIMEOUT, AGENT_IMAGE_WORK as IMAGE_STREAM_TIMEOUT,
-    AGENT_LIFECYCLE as LIFECYCLE_TIMEOUT, AGENT_READ as DEFAULT_AGENT_TIMEOUT, CONNECT_NODE,
+    AGENT_LIFECYCLE as LIFECYCLE_TIMEOUT, AGENT_READ as DEFAULT_AGENT_TIMEOUT, CONNECT_LOCAL,
+    CONNECT_NODE,
 };
 use litebin_common::types::Node;
 
@@ -53,12 +55,12 @@ pub fn build_node_client(
 ) -> anyhow::Result<reqwest::Client> {
     // Dev mode: no certs configured
     if ca_cert_path.is_empty() || !std::path::Path::new(ca_cert_path).exists() {
-        return Ok(reqwest::Client::builder().connect_timeout(CONNECT_NODE).timeout(DEFAULT_AGENT_TIMEOUT).build()?);
+        return Ok(client_builder().connect_timeout(CONNECT_NODE).timeout(DEFAULT_AGENT_TIMEOUT).build()?);
     }
 
     let config = load_node_tls_config(ca_cert_path, client_cert_path, client_key_path)?;
 
-    let client = reqwest::Client::builder()
+    let client = client_builder()
         .use_preconfigured_tls(config)
         .connect_timeout(CONNECT_NODE)
         .timeout(DEFAULT_AGENT_TIMEOUT)
@@ -83,7 +85,7 @@ pub async fn build_remote_proxy_client(
     let config = load_node_tls_config(ca_cert_path, client_cert_path, client_key_path)?;
 
     // No total timeout: streams visitor response bodies. Attempts are capped at call sites.
-    let client = reqwest::Client::builder()
+    let client = client_builder()
         .use_preconfigured_tls(config)
         .connect_timeout(CONNECT_NODE)
         .resolve("agent", addr)
@@ -93,12 +95,20 @@ pub async fn build_remote_proxy_client(
 }
 
 /// Resolve a node host (IP or hostname) to its app-traffic address (:443).
+/// Probes candidates IPv4-first — the pinned client dials one address only.
 async fn resolve_node_addr(node_host: &str) -> anyhow::Result<std::net::SocketAddr> {
     if let Ok(ip) = node_host.parse::<std::net::IpAddr>() {
         return Ok(std::net::SocketAddr::new(ip, 443));
     }
-    let mut addrs = tokio::net::lookup_host(format!("{node_host}:443")).await?;
-    addrs.next().ok_or_else(|| anyhow::anyhow!("node host did not resolve: {node_host}"))
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(format!("{node_host}:443")).await?.collect();
+    let (v4, v6): (Vec<_>, Vec<_>) = addrs.into_iter().partition(|a| a.is_ipv4());
+    for addr in v4.into_iter().chain(v6) {
+        match tokio::time::timeout(CONNECT_LOCAL, tokio::net::TcpStream::connect(addr)).await {
+            Ok(Ok(_)) => return Ok(addr),
+            _ => continue,
+        }
+    }
+    anyhow::bail!("node host did not resolve to a reachable address: {node_host}")
 }
 
 /// Custom certificate verifier that verifies the cert chain against the trusted CA

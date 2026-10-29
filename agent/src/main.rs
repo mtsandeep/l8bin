@@ -18,7 +18,6 @@ use litebin_common::caddy::CaddyClient;
 use litebin_common::docker::DockerManager;
 use litebin_common::types::DEFAULT_DOCKER_NETWORK;
 use litebin_common::upload::{DEFAULT_CHUNK_SIZE, UploadStore};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 
@@ -99,7 +98,7 @@ async fn main() -> Result<()> {
         registration: registration.clone(),
         last_caddy_config: last_caddy_config.clone(),
         project_meta: project_meta.clone(),
-        proxy_client: reqwest::Client::new(),
+        proxy_client: litebin_common::net::client_builder().build().unwrap_or_default(),
         multi_svc_health_check: Arc::new(DashMap::new()),
         upload_store: upload_store.clone(),
     };
@@ -161,7 +160,7 @@ async fn main() -> Result<()> {
         let wake_state = state.clone();
         let mut wake_shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            let wake_addr = SocketAddr::from(([0, 0, 0, 0], 8444));
+            let wake_addr = litebin_common::net::wildcard_addr(8444);
             let wake_app = Router::new()
                 .route("/internal/caddy-ask", get(routes::waker::caddy_ask))
                 .fallback(routes::waker::wake)
@@ -193,7 +192,7 @@ async fn main() -> Result<()> {
         let mut upload_shutdown_rx = shutdown_rx.clone();
         let upload_port = cfg.upload_port;
         tokio::spawn(async move {
-            let upload_addr = SocketAddr::from(([0, 0, 0, 0], upload_port));
+            let upload_addr = litebin_common::net::wildcard_addr(upload_port);
             let upload_app = build_upload_router(upload_state);
             info!("Starting internal upload server on {}", upload_addr);
             match tokio::net::TcpListener::bind(upload_addr).await {
@@ -231,7 +230,7 @@ async fn main() -> Result<()> {
 
     let app = build_router(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], cfg.agent_port));
+    let addr = litebin_common::net::wildcard_addr(cfg.agent_port);
 
     // mTLS is required. Agent will not start without valid certificates.
     let cert_path = std::path::Path::new(&cfg.cert_path);

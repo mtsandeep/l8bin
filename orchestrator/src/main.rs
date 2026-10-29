@@ -356,7 +356,7 @@ async fn main() -> anyhow::Result<()> {
         wake_failures,
         wake_guards: Arc::new(DashMap::new()),
         route_sync_tx,
-        proxy_client: reqwest::Client::new(),
+        proxy_client: litebin_common::net::client_builder().build().unwrap_or_default(),
         multi_svc_health_check: Arc::new(DashMap::new()),
         port_mismatches: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),
@@ -502,7 +502,18 @@ async fn main() -> anyhow::Result<()> {
 
     let app = app::build_app(state);
 
-    let addr = format!("{}:{}", config.host, config.port);
+    // Bracket a bare IPv6 literal so `{host}:{port}` parses as a SocketAddr.
+    let bind_host = if config.host.contains(':') && !config.host.starts_with('[') {
+        format!("[{}]", config.host)
+    } else {
+        config.host.clone()
+    };
+    // The default [::] falls back to 0.0.0.0 on kernels without IPv6.
+    let addr = if bind_host == "[::]" {
+        litebin_common::net::wildcard_addr(config.port).to_string()
+    } else {
+        format!("{}:{}", bind_host, config.port)
+    };
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(

@@ -69,6 +69,7 @@ impl DockerManager {
     }
 
     /// Wait for a container to have a valid IP address on its network (not "invalid" or empty).
+    /// Either family counts — IPv6-enabled networks may only assign GlobalIPv6Address.
     /// Docker sometimes assigns "invalid" IP briefly after container creation.
     /// Polls every 200ms, timeout 10s.
     pub async fn wait_for_network_ready(&self, container_id: &str) -> anyhow::Result<()> {
@@ -81,8 +82,9 @@ impl DockerManager {
                 .and_then(|ns| ns.networks.as_ref())
                 .map(|nets| {
                     nets.values().any(|net| {
-                        let ip = net.ip_address.as_deref().unwrap_or("");
-                        !ip.is_empty() && ip != "invalid"
+                        let valid = |ip: &str| !ip.is_empty() && ip != "invalid";
+                        valid(net.ip_address.as_deref().unwrap_or(""))
+                            || valid(net.global_ipv6_address.as_deref().unwrap_or(""))
                     })
                 })
                 .unwrap_or(false);

@@ -26,7 +26,7 @@ pub struct CaddyClient {
 impl CaddyClient {
     pub fn new(admin_url: &str) -> Self {
         // Local admin API — bounded so a wedged Caddy can't hang callers forever.
-        let client = reqwest::Client::builder()
+        let client = crate::net::client_builder()
             .connect_timeout(crate::timeouts::CONNECT_LOCAL)
             .timeout(crate::timeouts::CADDY_ADMIN_TOTAL)
             .build()

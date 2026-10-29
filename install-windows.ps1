@@ -465,7 +465,7 @@ DATABASE_URL=sqlite:./data/litebin.db
 DOCKER_NETWORK=litebin-network
 
 # Server
-HOST=0.0.0.0
+HOST=[::]
 PORT=5080
 
 # Sleep / Janitor

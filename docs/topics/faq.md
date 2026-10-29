@@ -7,6 +7,7 @@
 - [Dashboard is Slow / Endpoints Timing Out](#dashboard-is-slow--endpoints-timing-out)
 - [Docker Logs](#docker-logs)
 - [Networking & Firewalls](#networking--firewalls)
+- [IPv6-Only VPS](#ipv6-only-vps)
 - [Environment Variables (.env)](#environment-variables-env)
 - [Docker Compose / Multi-Service](#docker-compose--multi-service)
 - [Build Context & .dockerignore](#build-context--dockerignore)
@@ -250,6 +251,63 @@ nc -zv AGENT_IP 5083 -w 5
 # Success: "Connection to AGENT_IP 5083 port [tcp/*] succeeded!"
 # Failure: "timed out" or "Connection refused"
 ```
+
+---
+
+## IPv6-Only VPS
+
+LiteBin runs on IPv6-only VPSes (Vultr's $2.50 tier, Hetzner v6-only, free tiers). The host needs five one-time preparation steps; everything inside LiteBin (proxying, wakes, TLS) is IPv6-ready.
+
+### 1. Outbound to IPv4-only services (GitHub, Docker Hub) — DNS64
+
+GitHub and Docker Hub have no IPv6 addresses, so an IPv6-only box can't reach them until DNS is pointed at DNS64 resolvers (they synthesize reachable IPv6 addresses for IPv4-only names):
+
+```bash
+cp /etc/resolv.conf /etc/resolv.conf.bak
+printf 'nameserver 2a00:1098:2c::1\nnameserver 2a01:4f9:c010:3f02::1\nnameserver 2a00:1098:2b::1\n' > /etc/resolv.conf
+chattr +i /etc/resolv.conf   # cloud-init would otherwise overwrite it on reboot
+```
+
+Public resolvers above are from [nat64.net](https://nat64.net); prefer your provider's NAT64 if it offers one. Verify: `curl -sS https://api.github.com/zen` should print a quote.
+
+### 2. Docker daemon — IPv6 for image builds
+
+```bash
+echo '{"ipv6": true, "fixed-cidr-v6": "fd00:beef:cafe::/64"}' > /etc/docker/daemon.json
+systemctl restart docker
+```
+
+### 3. Compose network — IPv6 for runtime containers
+
+```bash
+sed -i 's/^    name: litebin-network$/    name: litebin-network\n    enable_ipv6: true/' /opt/litebin/docker-compose.yml
+cd /opt/litebin && docker compose up -d
+```
+
+**Note:** the installer regenerates `docker-compose.yml` on updates — re-run this step after each LiteBin update.
+
+### 4. Domain — enter it manually at install
+
+The installer's tryout domain auto-detection reads an IPv4 address (on IPv6-only hosts behind NAT64 it picks the gateway's IP). Skip the tryout prompt and enter either a real domain or the dashed-IPv6 sslip form of your address:
+
+```bash
+IP6=$(curl -6 -s https://api64.ipify.org)
+echo "${IP6//:/-}.sslip.io"   # e.g. 2001-19f0-...-4369.sslip.io
+```
+
+The dashboard then lives at `https://dash.<that-host>`.
+
+### 5. Real domains — Cloudflare AAAA + proxy
+
+Create `AAAA` records pointing at your IPv6 address with the **orange cloud (proxied) on**, and use `master_proxy` routing. Proxied is what makes the site reachable from IPv4-only visitors — an IPv6-only server has no other way to serve them. Set Cloudflare SSL/TLS mode to Full (strict).
+
+### Known limits on IPv6-only boxes
+
+| Limit | Workaround |
+|---|---|
+| No IPv4 visitors without a fronting proxy | Keep Cloudflare proxied on (or any CDN / your own dual-stack relay) |
+| Outbound IPv4 depends on a NAT64 gateway | Provider NAT64, or self-host (Jool/Tayga) on a dual-stack box |
+| Apps dialing hard-coded IPv4 literals fail | DNS64 only fixes name-based dials; run `clatd` (464XLAT) on the host |
 
 ---
 
