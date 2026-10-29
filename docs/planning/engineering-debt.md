@@ -12,6 +12,42 @@ Internal code-quality work — no user-facing behavior. Consolidated from the fo
 | SQL status-literal safety | Not started |
 | Small code-quality items | Partial |
 | Agent + CLI test coverage | Partial |
+| Transfer spool GC + agent-side same-node duplicate | Open — known limitation |
+
+---
+
+## Transfer spool GC + agent-side same-node duplicate
+
+**Status: Open — known limitation, likely needed soon**
+
+### Known limitation: crash-orphaned spool files (contain `.env`)
+
+In-process cleanup is complete at every step (reroot spools deleted after
+rewrite/consumption, export payload spools after bundling, `.part` renamed on
+success, import entry spools after transfer, helper containers always
+removed). Two gaps remain, and both can hold `.env`:
+
+1. Orchestrator crash mid-transfer leaves spool tars in `data/tmp/`
+   (reroot in/out, export payload, import entry spools). No GC for that dir.
+2. Failed export leaves `{name}.l8b.tar.gz.part` in `exports/` — only the
+   success path renames it away.
+
+**Fix (~40 lines, take soon):** boot-time sweep — delete everything in
+`data/tmp/` (nothing is mid-transfer at boot, safe by construction) and
+`*.part` in `exports/`; also remove the `.part` in the export failure path.
+
+### Same-node duplicate on an agent: double network hop
+
+Duplicating a project to the node it already runs on relays agent → master →
+agent (volumes/images stream through master memory; the project dir spools on
+the master for the reroot). Correct but wasteful; each payload is bounded by
+the 30-min stream timeout, so large same-node duplicates are where it bites.
+
+**Fix (~200–300 lines, medium):** move `copy_engine::reroot` into
+`litebin-common`; add agent `POST /volumes/self-transfer` (export → agent-local
+spool → reroot for project dir → import, all on the agent); master's
+`run_duplicate` calls it when src == dst == Agent(n). Local-node same-node
+duplicates are already direct.
 
 ---
 
