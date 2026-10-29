@@ -597,12 +597,12 @@ function Update-Master {
         Show-FileDiff $composePath $newCompose
         Write-Host ""
         $reply = Read-Host "  Apply these changes? [y/N]"
-        if ($reply -notmatch '^[Yy]') {
-            Write-Info "Skipped. Update docker-compose.yml manually if needed, then re-run the update."
-            return
+        if ($reply -match '^[Yy]') {
+            Set-Content -Path $composePath -Value $newCompose
+            Write-Info "docker-compose.yml updated"
+        } else {
+            Write-Info "Skipped - continuing with the current docker-compose.yml. Features needing the change above may not work until it is applied (re-run the update to retry)."
         }
-        Set-Content -Path $composePath -Value $newCompose
-        Write-Info "docker-compose.yml updated"
     }
 
     $newOverride = New-ComposeOverrideContent

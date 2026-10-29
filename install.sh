@@ -1572,8 +1572,7 @@ update_master() {
   fi
 
   # Early check: docker-compose.yml changes (before downloading anything)
-  # If compose changed, user can review and decide to proceed or exit
-  local compose_changed=false
+  # If compose changed, user can review and decide whether to apply it
   local tmp_compose
   tmp_compose=$(mktemp)
 
@@ -1584,7 +1583,6 @@ update_master() {
   generate_compose "$tmp_compose" "$certs_dir"
 
   if ! diff -q "$tmp_compose" "${install_dir}/docker-compose.yml" >/dev/null 2>&1; then
-    compose_changed=true
     echo ""
     warn "docker-compose.yml needs to be updated in this version:"
     echo ""
@@ -1593,13 +1591,12 @@ update_master() {
     echo ""
     echo -e "  Review the changelog for details: ${DIM}${CHANGELOG_URL}${NC}"
     echo ""
-    if ! prompt_yes "Apply these changes?"; then
-      info "Skipped. Update docker-compose.yml manually if needed, then re-run the update."
-      rm -f "$tmp_compose"
-      exit 0
+    if prompt_yes "Apply these changes?"; then
+      cp "$tmp_compose" "${install_dir}/docker-compose.yml"
+      info "docker-compose.yml updated"
+    else
+      warn "Skipped — continuing with the current docker-compose.yml. Features needing the change above may not work until it is applied (re-run the update to retry)."
     fi
-    cp "$tmp_compose" "${install_dir}/docker-compose.yml"
-    info "docker-compose.yml updated"
   fi
   rm -f "$tmp_compose"
 
