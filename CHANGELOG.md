@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Export bundle downloads start immediately — the browser's native download handles them instead of buffering the whole file first.
+
 ## [0.4.19] - 2026-10-29
 
 ### Fixed

@@ -654,20 +654,15 @@ export async function deleteExport(file: string): Promise<void> {
 
 // Download an export bundle in the browser — fetched as a blob (auth cookies
 // apply) and saved via a temporary anchor click.
+// Native browser download — the server sets Content-Disposition and streams,
+// so the save dialog appears immediately instead of buffering the file first.
 export async function downloadExport(file: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/exports/${encodeURIComponent(file)}`, {
-    credentials: 'include',
-  });
-  if (!res.ok) throw new Error('Failed to download export');
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
+  a.href = `${API_BASE}/exports/${encodeURIComponent(file)}`;
   a.download = file;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
 }
 
 // ── Import bundles ────────────────────────────────────────────────────────────
