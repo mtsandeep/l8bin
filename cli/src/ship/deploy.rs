@@ -21,6 +21,20 @@ use super::validate::validate_compose_for_deploy;
 
 // ── Build & deploy ───────────────────────────────────────────────────────────
 
+/// A successful interactive deploy binds the repo: write `l8b.toml` so the
+/// next `l8b ship` defaults to this project. Best-effort.
+fn record_ship_deploy(project_dir: &Path, project_id: &str, node: Option<&str>, server: &str) {
+    match crate::project_config::record_deploy(project_dir, project_id, node, Some(server)) {
+        Ok(true) => println!(
+            "  {} Wrote {} — future ships default to this project",
+            "::".dimmed(),
+            crate::project_config::FILE_NAME
+        ),
+        Ok(false) => {}
+        Err(e) => println!("  {} Could not write {}: {}", "!".yellow(), crate::project_config::FILE_NAME, e),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn build_and_deploy(
     client: &reqwest::Client,
@@ -157,6 +171,7 @@ pub(super) async fn build_and_deploy(
     )
     .await?;
 
+    record_ship_deploy(project_dir, project_id, selected_node.as_deref(), server);
     Ok(url)
 }
 
@@ -328,7 +343,7 @@ async fn deploy_compose(
         .unwrap_or(ProjectStatus::Stopped);
     let resp_node = resp["node_id"].as_str().or(node_id);
 
-    finish_deploy_response(
+    let url = finish_deploy_response(
         client,
         server,
         project_id,
@@ -344,7 +359,10 @@ async fn deploy_compose(
         &format!("Compose deploy failed for project '{}'", project_id),
         None,
     )
-    .await
+    .await?;
+
+    record_ship_deploy(project_dir, project_id, resp_node, server);
+    Ok(url)
 }
 
 /// Non-interactive compose deploy for CI/`deploy` command usage.

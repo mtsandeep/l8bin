@@ -148,6 +148,8 @@ Interactive deploy — guided flow for deploying a new or existing project. Requ
 
 New projects explicitly choose **Web app / HTTP API** (the default) or **Background project**. Background projects skip public service and port prompts and have no managed URL.
 
+When the directory's `l8b.toml` names a project, it is offered (and preselected) as the first choice; every successful ship writes the deployed project back into `l8b.toml`, so a repo ships to the same project from the second run on.
+
 ```bash
 l8b ship [options]
 ```
@@ -157,6 +159,13 @@ Flags (`--path`, `--port` to skip the prompt, `--secret`, `--no-env`): see the [
 #### Flow
 
 ```
+$ l8b ship
+? Deploy to
+> my-app (from l8b.toml)
+  New project
+  Existing project
+
+(first run in a directory — no l8b.toml yet:)
 $ l8b ship
 ? Deploy to
 > New project
@@ -190,6 +199,7 @@ $ l8b ship
 
   ✔ Deploy successful!
 
+  :: Wrote l8b.toml — future ships default to this project
   🌐 Live at: https://my-app.l8b.in
 
   💡 Use this token to redeploy from CI/CD:
