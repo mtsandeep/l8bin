@@ -24,6 +24,7 @@ import {
   exportProject,
   fetchProjects,
   getExportJob,
+  deleteImportArchive,
   importBundle,
   listExports,
   listImportArchives,
@@ -403,7 +404,26 @@ export default function TransferPanel() {
                     {formatSize(a.size_bytes)} · {new Date(a.created_at * 1000).toLocaleString()}
                   </p>
                 </div>
-                {selected?.file === a.file && <span className="text-[10px] text-violet-300 shrink-0">selected</span>}
+                <div className="flex items-center gap-1 shrink-0">
+                  {selected?.file === a.file && <span className="text-[10px] text-violet-300">selected</span>}
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await deleteImportArchive(a.file);
+                        setArchives((prev) => prev.filter((x) => x.file !== a.file));
+                        if (selected?.file === a.file) setSelected(null);
+                      } catch (err) {
+                        showToast(err instanceof Error ? err.message : 'Delete failed');
+                      }
+                    }}
+                    className="p-1.5 rounded text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                    title="Delete bundle"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </button>
             ))}
             {archives.length === 0 && (

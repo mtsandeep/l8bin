@@ -79,6 +79,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         )
         .route("/exports/jobs/{id}", get(crate::routes::exports::export_job_status))
         .route("/imports", get(crate::routes::imports::list_import_archives))
+        .route("/imports/{file}", delete(crate::routes::imports::delete_import_archive))
         .route("/imports", post(crate::routes::imports::import_bundle))
         // Streamed raw-body upload of a bundle (large bundles: scp to the folder).
         .route(

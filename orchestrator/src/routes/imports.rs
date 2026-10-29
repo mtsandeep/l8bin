@@ -12,7 +12,7 @@ use std::pin::Pin;
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -133,6 +133,26 @@ pub async fn list_import_archives(State(state): State<AppState>) -> impl IntoRes
     archives.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     let folder_path = state.docker.host_bind_source("/app/data/imports").await;
     (StatusCode::OK, Json(json!({ "archives": archives, "folder_path": folder_path })))
+}
+
+/// DELETE /imports/{file} — remove a bundle from the imports folder.
+#[utoipa::path(
+    delete,
+    path = "/imports/{file}",
+    description = "Delete a bundle from the imports folder.",
+    params(("file" = String, Path, description = "Bundle file name")),
+    responses((status = 204), (status = 404)),
+    tag = "manage",
+    security(("session_auth" = []))
+)]
+pub async fn delete_import_archive(State(_state): State<AppState>, Path(file): Path<String>) -> impl IntoResponse {
+    match import_path(&file) {
+        Some(path) => match tokio::fs::remove_file(&path).await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(_) => StatusCode::NOT_FOUND.into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// POST /imports/upload?name=foo.l8b.tar.gz — raw streamed body into the

@@ -697,6 +697,14 @@ export async function uploadImportArchive(file: File): Promise<{ file: string }>
   return res.json();
 }
 
+export async function deleteImportArchive(file: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/imports/${encodeURIComponent(file)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to delete bundle');
+}
+
 export async function importBundle(
   payload: {
     file: string;

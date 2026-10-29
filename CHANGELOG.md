@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Export bundle downloads start immediately — the browser's native download handles them instead of buffering the whole file first.
+- Bundles in the imports folder can be deleted from Settings → Export / Import (`DELETE /imports/{file}`), matching the exports table.
 
 ## [0.4.19] - 2026-10-29
 
