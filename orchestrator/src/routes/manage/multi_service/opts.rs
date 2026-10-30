@@ -6,11 +6,12 @@ pub struct StartServicesOpts {
     /// Always remove and recreate containers (skip fast-path docker start).
     pub force_recreate: bool,
 
-    /// Pull images before starting (for fresh deploys).
+    /// Ensure images exist for services that will be created (no existing
+    /// container). Callers that pre-pull (deploy flows) pass false.
     pub pull_images: bool,
 
-    /// When pull_images is true, force_pull controls whether to always pull from
-    /// the registry (true) or skip the pull if the image exists locally (false).
+    /// Force a registry pull even when the image exists locally (redeploy).
+    /// With force_pull false, present images are a cheap local inspect.
     pub force_pull: bool,
 
     /// Only start these services. None = all services.

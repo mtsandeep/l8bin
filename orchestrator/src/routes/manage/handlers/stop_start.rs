@@ -208,14 +208,13 @@ pub async fn start_project(
     let first_start = project.status == ProjectStatus::Unconfigured;
 
     if is_local {
-        // It has fast-path (docker start existing) and fallback (recreate) built in.
-        // First start after staging always recreates and pulls registry images.
+        // Fast-path (docker start existing) with fallback (recreate) built in.
         start_services(
             &state,
             &project,
             StartServicesOpts {
                 force_recreate: first_start,
-                pull_images: first_start,
+                pull_images: true,
                 force_pull: false,
                 services: None,
                 connect_orchestrator: true,

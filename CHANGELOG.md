@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ## [0.4.20] - 2026-10-29
 
 ### Fixed
+- **Registry images pull when starting on the master node** — starts only pulled when a project was first deployed after staging, so a registry-image project started on a fresh node failed with "No such image". Starts now pull missing images for services without containers; images already present are a cheap local check. Agent nodes already did this.
 - Export bundle downloads start immediately — the browser's native download handles them instead of buffering the whole file first.
 - Bundles in the imports folder can be deleted from Settings → Export / Import (`DELETE /imports/{file}`), matching the exports table.
 - **Cloudflare DNS records follow node changes** — sync skipped any record whose name already existed without comparing the IP, so migrating a project to a node with a different IP left its subdomain pointing at the old node. Existing records with a drifted IP are now re-pointed.
