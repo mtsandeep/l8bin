@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.21] - 2026-11-02
+
 ### Fixed
 - **Raw host ports on the public service** — explicit `HOST:CONTAINER` mappings on the routed service were silently dropped; they now publish alongside the Caddy route, and an in-use host port fails at start with the actionable message.
 
