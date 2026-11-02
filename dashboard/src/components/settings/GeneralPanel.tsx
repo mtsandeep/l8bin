@@ -359,6 +359,7 @@ export default function GeneralPanel() {
                         if (result.errors === 0) {
                           const parts = [];
                           if (result.created > 0) parts.push(`${result.created} added`);
+                          if (result.repointed > 0) parts.push(`${result.repointed} re-pointed`);
                           if (result.unchanged > 0) parts.push(`${result.unchanged} already exist`);
                           if (result.deleted > 0) parts.push(`${result.deleted} removed`);
                           showToast(

@@ -19,6 +19,13 @@ pub struct DnsRecord {
     pub ttl: i64,
 }
 
+/// A Cloudflare zone (id + registrable name) from the account listing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Zone {
+    pub id: String,
+    pub name: String,
+}
+
 /// Upsert outcome: the record's Cloudflare ID and whether it was newly created.
 #[derive(Debug, Clone)]
 pub struct UpsertedRecord {
@@ -34,10 +41,33 @@ struct CfResponse<T> {
     result: Option<T>,
 }
 
+/// Cloudflare API response wrapper with pagination info.
+#[derive(Debug, Deserialize)]
+struct CfPagedResponse<T> {
+    success: bool,
+    errors: Option<Vec<CfError>>,
+    result: Option<T>,
+    #[serde(rename = "result_info")]
+    result_info: Option<ResultInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResultInfo {
+    page: i64,
+    total_pages: i64,
+}
+
 #[derive(Debug, Deserialize)]
 struct CfError {
     code: Option<i64>,
     message: String,
+}
+
+/// Duplicate-record rejection — matched by code (81057) or message; both occur.
+fn is_duplicate_error(errors: &[CfError]) -> bool {
+    errors
+        .iter()
+        .any(|e| e.code == Some(81057) || e.message.to_ascii_lowercase().contains("identical record already exists"))
 }
 
 impl CloudflareClient {
@@ -51,8 +81,12 @@ impl CloudflareClient {
         Self { api_token: api_token.to_string(), zone_id: zone_id.to_string(), client }
     }
 
-    fn base_url(&self) -> String {
-        format!("https://api.cloudflare.com/client/v4/zones/{}/dns_records", self.zone_id)
+    pub fn zone_id(&self) -> &str {
+        &self.zone_id
+    }
+
+    fn records_url(&self, zone_id: &str) -> String {
+        format!("https://api.cloudflare.com/client/v4/zones/{}/dns_records", zone_id)
     }
 
     fn zone_url(&self) -> String {
@@ -96,9 +130,54 @@ impl CloudflareClient {
         host == zone || host.ends_with(&format!(".{zone}"))
     }
 
+    /// List the account's zones (paged, bounded).
+    pub async fn list_zones(&self) -> anyhow::Result<Vec<Zone>> {
+        let mut zones = Vec::new();
+        let mut page = 1i64;
+        while page <= 10 {
+            let url = format!("https://api.cloudflare.com/client/v4/zones?per_page=50&page={page}");
+            let resp = self
+                .client
+                .get(&url)
+                .header("Authorization", format!("Bearer {}", self.api_token))
+                .send()
+                .await
+                .context("cloudflare list_zones request failed")?;
+
+            let status = resp.status();
+            let raw = resp.text().await.context("cloudflare list_zones: failed to read response body")?;
+
+            let body: CfPagedResponse<Vec<Zone>> = serde_json::from_str(&raw)
+                .with_context(|| format!("cloudflare list_zones response parse failed (status {}): {}", status, raw))?;
+
+            if !body.success {
+                let errors =
+                    body.errors.unwrap_or_default().iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
+                anyhow::bail!("cloudflare list_zones failed: {}", errors);
+            }
+
+            zones.extend(body.result.unwrap_or_default());
+            let info = body.result_info.unwrap_or(ResultInfo { page: 1, total_pages: 1 });
+            if info.page >= info.total_pages {
+                break;
+            }
+            page += 1;
+        }
+        Ok(zones)
+    }
+
     /// List DNS records, optionally filtered by name and type.
     pub async fn list_records(&self, name: &str, record_type: &str) -> anyhow::Result<Vec<DnsRecord>> {
-        let url = format!("{}?name={}&type={}", self.base_url(), urlencoding::encode(name), record_type);
+        self.list_records_in_zone(&self.zone_id, name, record_type).await
+    }
+
+    pub async fn list_records_in_zone(
+        &self,
+        zone_id: &str,
+        name: &str,
+        record_type: &str,
+    ) -> anyhow::Result<Vec<DnsRecord>> {
+        let url = format!("{}?name={}&type={}", self.records_url(zone_id), urlencoding::encode(name), record_type);
 
         let resp = self
             .client
@@ -123,12 +202,21 @@ impl CloudflareClient {
         Ok(body.result.unwrap_or_default())
     }
 
-    /// List all DNS records in the zone matching a name suffix (e.g. ".l8b.in").
-    /// Used for cleanup — find stale records to delete.
+    /// List all A records in the configured zone matching a name suffix
+    /// (e.g. ".l8b.in"). Used for cleanup — find stale records to delete.
     pub async fn list_records_by_suffix(&self, suffix: &str, record_type: &str) -> anyhow::Result<Vec<DnsRecord>> {
+        self.list_records_by_suffix_in_zone(&self.zone_id, suffix, record_type).await
+    }
+
+    pub async fn list_records_by_suffix_in_zone(
+        &self,
+        zone_id: &str,
+        suffix: &str,
+        record_type: &str,
+    ) -> anyhow::Result<Vec<DnsRecord>> {
         // Cloudflare API doesn't support suffix filtering natively.
         // We list all records of the given type and filter client-side.
-        let url = format!("{}?type={}&per_page=5000", self.base_url(), record_type);
+        let url = format!("{}?type={}&per_page=5000", self.records_url(zone_id), record_type);
 
         let resp = self
             .client
@@ -141,7 +229,7 @@ impl CloudflareClient {
         let status = resp.status();
         let raw = resp.text().await.context("cloudflare list_records_by_suffix: failed to read response body")?;
 
-        let body: CfResponse<Vec<DnsRecord>> = serde_json::from_str(&raw).with_context(|| {
+        let body: CfPagedResponse<Vec<DnsRecord>> = serde_json::from_str(&raw).with_context(|| {
             format!("cloudflare list_records_by_suffix response parse failed (status {}): {}", status, raw)
         })?;
 
@@ -156,9 +244,10 @@ impl CloudflareClient {
         Ok(records)
     }
 
-    /// Create or update a DNS record. If a record with the same name and type exists,
-    /// it is updated (PUT). Otherwise, a new record is created (POST).
-    /// Returns the record's ID (ledger it) and whether it was newly created.
+    /// Create or update a DNS record in the configured zone. If a record with
+    /// the same name and type exists, it is updated (PUT). Otherwise, a new
+    /// record is created (POST). Returns the record's ID (ledger it) and
+    /// whether it was newly created.
     pub async fn upsert_record(
         &self,
         name: &str,
@@ -167,11 +256,23 @@ impl CloudflareClient {
         ttl: i64,
         proxied: bool,
     ) -> anyhow::Result<UpsertedRecord> {
-        let existing = self.list_records(name, record_type).await?;
+        self.upsert_record_in_zone(&self.zone_id, name, record_type, content, ttl, proxied).await
+    }
+
+    pub async fn upsert_record_in_zone(
+        &self,
+        zone_id: &str,
+        name: &str,
+        record_type: &str,
+        content: &str,
+        ttl: i64,
+        proxied: bool,
+    ) -> anyhow::Result<UpsertedRecord> {
+        let existing = self.list_records_in_zone(zone_id, name, record_type).await?;
 
         if let Some(record) = existing.first() {
             // Update existing record
-            let url = format!("{}/{}", self.base_url(), record.id);
+            let url = format!("{}/{}", self.records_url(zone_id), record.id);
             let body = serde_json::json!({
                 "type": record_type,
                 "name": name,
@@ -216,7 +317,7 @@ impl CloudflareClient {
 
             let resp = self
                 .client
-                .post(self.base_url())
+                .post(self.records_url(zone_id))
                 .header("Authorization", format!("Bearer {}", self.api_token))
                 .header("Content-Type", "application/json")
                 .json(&body)
@@ -232,18 +333,20 @@ impl CloudflareClient {
             })?;
 
             if !cf_resp.success {
-                let is_duplicate =
-                    cf_resp.errors.as_ref().is_some_and(|errs| errs.iter().any(|e| e.code == Some(81057)));
-                if is_duplicate {
+                let errors = cf_resp.errors.unwrap_or_default();
+                if is_duplicate_error(&errors) {
                     tracing::info!(name, record_type, content, "DNS record already exists");
                     // Pre-list raced empty — re-list for the existing record's ID.
-                    let id =
-                        self.list_records(name, record_type).await?.first().map(|r| r.id.clone()).unwrap_or_default();
+                    let id = self
+                        .list_records_in_zone(zone_id, name, record_type)
+                        .await?
+                        .first()
+                        .map(|r| r.id.clone())
+                        .unwrap_or_default();
                     return Ok(UpsertedRecord { id, created: false });
                 }
-                let errors =
-                    cf_resp.errors.unwrap_or_default().iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
-                anyhow::bail!("cloudflare upsert POST failed: {}", errors);
+                let messages = errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(", ");
+                anyhow::bail!("cloudflare upsert POST failed: {}", messages);
             }
 
             tracing::info!(name, record_type, content, "created DNS record");
@@ -252,9 +355,14 @@ impl CloudflareClient {
         }
     }
 
-    /// Delete a DNS record by ID; 81047 ("record does not exist") is success.
+    /// Delete a DNS record by ID from the configured zone; 81047 ("record
+    /// does not exist") is success.
     pub async fn delete_record(&self, record_id: &str) -> anyhow::Result<()> {
-        let url = format!("{}/{}", self.base_url(), record_id);
+        self.delete_record_in_zone(&self.zone_id, record_id).await
+    }
+
+    pub async fn delete_record_in_zone(&self, zone_id: &str, record_id: &str) -> anyhow::Result<()> {
+        let url = format!("{}/{}", self.records_url(zone_id), record_id);
 
         let resp = self
             .client
@@ -302,5 +410,12 @@ mod tests {
         let parsed: CfResponse<serde_json::Value> = serde_json::from_str(body).unwrap();
         let missing = parsed.errors.is_some_and(|errs| errs.iter().any(|e| e.code == Some(81047)));
         assert!(!missing);
+    }
+
+    #[test]
+    fn duplicate_detected_by_code_or_message() {
+        let body = r#"{"success":false,"errors":[{"message":"An identical record already exists."}]}"#;
+        let parsed: CfResponse<serde_json::Value> = serde_json::from_str(body).unwrap();
+        assert!(is_duplicate_error(&parsed.errors.unwrap()));
     }
 }

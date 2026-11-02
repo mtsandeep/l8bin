@@ -358,7 +358,8 @@ async fn run_domain_job(state: &AppState, job_id: &str, start_from: usize) {
                 match crate::dns_ledger::rows(&state.db).await {
                     Ok(ledger) => {
                         for row in crate::dns_ledger::under_domain(&ledger, &old_domain) {
-                            if let Err(e) = cf.delete_record(&row.record_id).await {
+                            let zone = if row.zone_id.is_empty() { cf_zone.as_str() } else { row.zone_id.as_str() };
+                            if let Err(e) = cf.delete_record_in_zone(zone, &row.record_id).await {
                                 tracing::warn!(record = %row.name, error = %e, "domain job: failed to delete old DNS record");
                                 continue;
                             }

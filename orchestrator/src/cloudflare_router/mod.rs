@@ -116,7 +116,13 @@ impl RoutingProvider for CloudflareDnsRouter {
         // 3. Cloudflare DNS sync (skip for periodic checks where nothing changed)
         if sync_dns {
             match self.sync_dns(projects, domain, dashboard_subdomain, poke_subdomain).await {
-                Ok(r) => tracing::info!(created = r.created, deleted = r.deleted, errors = r.errors, "DNS sync done"),
+                Ok(r) => tracing::info!(
+                    created = r.created,
+                    repointed = r.repointed,
+                    deleted = r.deleted,
+                    errors = r.errors,
+                    "DNS sync done"
+                ),
                 Err(e) => tracing::warn!(error = %e, "DNS sync failed"),
             }
         }

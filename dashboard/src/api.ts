@@ -435,6 +435,7 @@ export function revertBackupRestore(): Promise<BackupActionResponse> {
 export async function syncDnsRecords(): Promise<{
   created: number;
   deleted: number;
+  repointed: number;
   unchanged: number;
   errors: number;
 }> {

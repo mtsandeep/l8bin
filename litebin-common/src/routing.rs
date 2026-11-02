@@ -92,6 +92,7 @@ pub struct ProjectCustomRoute {
 pub struct DnsSyncResult {
     pub created: usize,
     pub deleted: usize,
+    pub repointed: usize,
     pub unchanged: usize,
     pub errors: usize,
 }

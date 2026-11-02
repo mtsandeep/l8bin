@@ -13,25 +13,30 @@ use sqlx::SqlitePool;
 pub struct LedgerRow {
     pub name: String,
     pub record_id: String,
+    /// Zone the record lives in; '' = the currently configured zone
+    /// (records created before zone-aware sync).
+    pub zone_id: String,
 }
 
 pub async fn rows(db: &SqlitePool) -> anyhow::Result<Vec<LedgerRow>> {
-    let rows: Vec<(String, String)> = sqlx::query_as("SELECT name, record_id FROM dns_records").fetch_all(db).await?;
-    Ok(rows.into_iter().map(|(name, record_id)| LedgerRow { name, record_id }).collect())
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT name, record_id, zone_id FROM dns_records").fetch_all(db).await?;
+    Ok(rows.into_iter().map(|(name, record_id, zone_id)| LedgerRow { name, record_id, zone_id }).collect())
 }
 
 /// Remember a record we created or updated. An empty `record_id` is skipped
 /// (the caller could not determine one — nothing to delete by later).
-pub async fn upsert(db: &SqlitePool, name: &str, record_id: &str) -> anyhow::Result<()> {
+pub async fn upsert(db: &SqlitePool, name: &str, record_id: &str, zone_id: &str) -> anyhow::Result<()> {
     if record_id.is_empty() {
         return Ok(());
     }
     sqlx::query(
-        "INSERT INTO dns_records (name, record_id, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(name) DO UPDATE SET record_id = excluded.record_id, updated_at = datetime('now')",
+        "INSERT INTO dns_records (name, record_id, zone_id, updated_at) VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(name) DO UPDATE SET record_id = excluded.record_id, zone_id = excluded.zone_id, updated_at = datetime('now')",
     )
     .bind(name)
     .bind(record_id)
+    .bind(zone_id)
     .execute(db)
     .await?;
     Ok(())
@@ -60,7 +65,7 @@ mod tests {
     use super::*;
 
     fn row(name: &str, id: &str) -> LedgerRow {
-        LedgerRow { name: name.to_string(), record_id: id.to_string() }
+        LedgerRow { name: name.to_string(), record_id: id.to_string(), zone_id: String::new() }
     }
 
     #[test]

@@ -3,6 +3,7 @@ use serde::Serialize;
 
 use crate::AppState;
 use litebin_common::cloudflare::CloudflareClient;
+use litebin_common::routing::RoutingProvider as _;
 
 use super::get_setting;
 
@@ -42,7 +43,8 @@ pub async fn cleanup_dns(State(state): State<AppState>) -> Result<Json<CleanupDn
 
     let mut deleted_count = 0usize;
     for row in &records {
-        match cloudflare.delete_record(&row.record_id).await {
+        let zone = if row.zone_id.is_empty() { cf_zone.as_str() } else { row.zone_id.as_str() };
+        match cloudflare.delete_record_in_zone(zone, &row.record_id).await {
             Ok(_) => {
                 deleted_count += 1;
                 let _ = crate::dns_ledger::remove(&state.db, &row.name).await;
@@ -65,6 +67,7 @@ pub async fn cleanup_dns(State(state): State<AppState>) -> Result<Json<CleanupDn
 pub struct SyncDnsResponse {
     pub created: usize,
     pub deleted: usize,
+    pub repointed: usize,
     pub unchanged: usize,
     pub errors: usize,
 }
@@ -96,10 +99,16 @@ pub async fn sync_dns(State(state): State<AppState>) -> Result<Json<SyncDnsRespo
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let result = state
-        .router
-        .read()
-        .await
+    // Reconcile directly from configured creds — independent of routing mode.
+    let cloudflare = CloudflareClient::new(&cf_token, &cf_zone);
+    let router = crate::cloudflare_router::CloudflareDnsRouter::new(
+        cloudflare,
+        litebin_common::caddy::CaddyClient::new(&state.config.caddy_admin_url),
+        state.node_clients.clone(),
+        state.db.clone(),
+        state.config.clone(),
+    );
+    let result = router
         .sync_dns_only(&routes, &snap.domain, &snap.dashboard_subdomain, &snap.poke_subdomain)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -107,6 +116,7 @@ pub async fn sync_dns(State(state): State<AppState>) -> Result<Json<SyncDnsRespo
     Ok(Json(SyncDnsResponse {
         created: result.created,
         deleted: result.deleted,
+        repointed: result.repointed,
         unchanged: result.unchanged,
         errors: result.errors,
     }))
