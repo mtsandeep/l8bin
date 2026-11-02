@@ -507,6 +507,10 @@ async fn run_domain_preflight(state: &AppState, domain: &str) -> PreflightOutcom
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct DomainApplyRequest {
     pub domain: String,
+    /// Compute the domain from this server's public IP (`<ip>.sslip.io`),
+    /// master-proxy mode — the domain-expiry fallback.
+    #[serde(default)]
+    pub sslip: bool,
     #[serde(default)]
     pub acknowledge_dns: bool,
     /// Routing settings persisted before preflight so validation uses them.
@@ -518,6 +522,29 @@ pub struct DomainApplyRequest {
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct DomainApplyResponse {
     pub job_id: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/settings/domain/sslip",
+    description = "The sslip.io domain this server's public IP maps to (null when the IP is unknown).",
+    responses((status = 200, body = SslipDomainResponse)),
+    tag = "global-settings",
+    security(("session_auth" = []))
+)]
+pub async fn sslip_domain_preview(
+    State(state): State<AppState>,
+) -> Result<Json<SslipDomainResponse>, (StatusCode, String)> {
+    let mut ip = crate::cloudflare_router::dns::resolved_dns_ip(&state.db, &state.config.public_ip).await;
+    if ip.is_empty() {
+        ip = litebin_common::net::detect_public_ip().await.unwrap_or_default();
+    }
+    Ok(Json(SslipDomainResponse { domain: (!ip.is_empty()).then(|| crate::platform::sslip_domain(&ip)) }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SslipDomainResponse {
+    pub domain: Option<String>,
 }
 
 #[utoipa::path(
@@ -538,10 +565,23 @@ pub async fn domain_apply(
     State(state): State<AppState>,
     Json(payload): Json<DomainApplyRequest>,
 ) -> Result<Json<DomainApplyResponse>, (StatusCode, String)> {
-    let domain = normalize_domain(&payload.domain).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let routing_mode = if payload.sslip { Some("master_proxy".to_string()) } else { payload.routing_mode.clone() };
+    let domain = if payload.sslip {
+        let mut ip = crate::cloudflare_router::dns::resolved_dns_ip(&state.db, &state.config.public_ip).await;
+        if ip.is_empty() {
+            ip = litebin_common::net::detect_public_ip().await.unwrap_or_default();
+        }
+        if ip.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "could not determine this server's public IP".into()));
+        }
+        crate::platform::sslip_domain(&ip)
+    } else {
+        payload.domain.clone()
+    };
+    let domain = normalize_domain(&domain).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     super::apply_routing_settings(
         &state,
-        payload.routing_mode.as_deref(),
+        routing_mode.as_deref(),
         payload.cloudflare_api_token.as_deref(),
         payload.cloudflare_zone_id.as_deref(),
     )

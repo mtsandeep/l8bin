@@ -174,6 +174,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/settings", get(routes::global_settings::get_settings))
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
         .route("/settings/domain/retire-previous", post(routes::global_settings::retire_previous))
+        .route("/settings/domain/sslip", get(routes::global_settings::sslip_domain_preview))
         .route("/backup/status", get(routes::backup::backup_status))
         .route("/backup/enable", post(routes::backup::backup_enable))
         .route("/backup/disable", post(routes::backup::backup_disable))

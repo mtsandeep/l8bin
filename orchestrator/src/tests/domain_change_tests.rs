@@ -117,3 +117,16 @@ async fn retire_previous_drops_domain_and_records() {
         .unwrap();
     assert!(ledger.is_none(), "previous-domain ledger row must be removed");
 }
+
+#[tokio::test]
+async fn sslip_preview_uses_dns_target() {
+    let (server, db) = test_server_with_db().await;
+    login(&server).await;
+    seed(&db).await;
+    sqlx::query("INSERT INTO settings (key, value) VALUES ('dns_target', '203.0.113.5')").execute(&db).await.unwrap();
+
+    let resp = server.get("/settings/domain/sslip").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
+    assert_eq!(body["domain"].as_str().unwrap(), "203-0-113-5.sslip.io");
+}

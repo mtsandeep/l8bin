@@ -405,11 +405,29 @@ enum BackupAction {
 
 #[derive(Subcommand)]
 enum PlatformDomainAction {
-    /// Change the platform domain (old URLs stop working; you sign in again on the new host)
+    /// Change the platform domain (the old one keeps working for 24h)
     Set {
         /// New platform domain (e.g. example.com or apps.example.com)
         domain: String,
         /// Accept preflight DNS warnings without prompting (required in CI/JSON mode)
+        #[arg(long)]
+        ack_dns: bool,
+        /// Routing mode: master-proxy (your DNS) or cloudflare-dns (managed records)
+        #[arg(long)]
+        mode: Option<String>,
+        /// Cloudflare API token (cloudflare-dns mode)
+        #[arg(long)]
+        cf_token: Option<String>,
+        /// Cloudflare zone ID (cloudflare-dns mode)
+        #[arg(long)]
+        cf_zone: Option<String>,
+        /// How long to wait for the change job, in seconds (default 300)
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Switch to this server's temporary sslip.io domain (master proxy) — the domain-expiry fallback
+    Sslip {
+        /// Accept preflight warnings without prompting (required in CI/JSON mode)
         #[arg(long)]
         ack_dns: bool,
         /// How long to wait for the change job, in seconds (default 300)
@@ -651,9 +669,35 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
         },
         Commands::Platform { action } => match action {
             PlatformAction::Domain { action } => match action {
-                PlatformDomainAction::Set { domain, ack_dns, timeout } => {
+                PlatformDomainAction::Set { domain, ack_dns, mode, cf_token, cf_zone, timeout } => {
                     commands::platform::domain_set(
-                        commands::platform::DomainSetArgs { domain, ack_dns, timeout },
+                        commands::platform::DomainSetArgs {
+                            domain,
+                            ack_dns,
+                            mode,
+                            cf_token,
+                            cf_zone,
+                            timeout,
+                            sslip: false,
+                        },
+                        cli.server.as_deref(),
+                        cli.token.as_deref(),
+                        ci_mode,
+                        out,
+                    )
+                    .await?;
+                }
+                PlatformDomainAction::Sslip { ack_dns, timeout } => {
+                    commands::platform::domain_set(
+                        commands::platform::DomainSetArgs {
+                            domain: String::new(),
+                            ack_dns,
+                            mode: None,
+                            cf_token: None,
+                            cf_zone: None,
+                            timeout,
+                            sslip: true,
+                        },
                         cli.server.as_deref(),
                         cli.token.as_deref(),
                         ci_mode,

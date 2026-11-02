@@ -29,6 +29,8 @@ struct PlatformDomainResult {
     dashboard_url: String,
     routing_mode: Option<String>,
     tryout: Option<bool>,
+    previous_domain: Option<String>,
+    previous_domain_retire_at: Option<i64>,
 }
 
 /// `l8b platform domain show` — /settings when the credential is admin,
@@ -48,6 +50,8 @@ pub(crate) async fn show(server_flag: Option<&str>, token_flag: Option<&str>, ou
             domain: v["domain"].as_str().unwrap_or_default().to_string(),
             routing_mode: v["routing_mode"].as_str().map(str::to_string),
             tryout: v["tryout"].as_bool(),
+            previous_domain: v["previous_domain"].as_str().map(str::to_string),
+            previous_domain_retire_at: v["previous_domain_retire_at"].as_i64(),
         },
         Err(e) => {
             if !format!("{e:#}").contains("(403") {
@@ -63,6 +67,8 @@ pub(crate) async fn show(server_flag: Option<&str>, token_flag: Option<&str>, ou
                 domain: meta["domain"].as_str().unwrap_or_default().to_string(),
                 routing_mode: meta["routing_mode"].as_str().map(str::to_string),
                 tryout: None,
+                previous_domain: None,
+                previous_domain_retire_at: None,
             }
         }
     };
@@ -77,6 +83,9 @@ pub(crate) async fn show(server_flag: Option<&str>, token_flag: Option<&str>, ou
         if result.tryout == Some(true) {
             println!("tryout DNS (sslip.io / nip.io) — Let's Encrypt may fail; not for production");
         }
+        if let Some(prev) = result.previous_domain.as_deref().filter(|p| !p.is_empty()) {
+            println!("previous domain:  {prev} (kept for the 24h grace window)");
+        }
     }
     Ok(())
 }
@@ -84,7 +93,11 @@ pub(crate) async fn show(server_flag: Option<&str>, token_flag: Option<&str>, ou
 pub(crate) struct DomainSetArgs {
     pub domain: String,
     pub ack_dns: bool,
+    pub mode: Option<String>,
+    pub cf_token: Option<String>,
+    pub cf_zone: Option<String>,
     pub timeout: Option<u64>,
+    pub sslip: bool,
 }
 
 #[derive(Serialize)]
@@ -115,6 +128,32 @@ pub(crate) async fn domain_set(
     let cfg = config::CliConfig::load(server_flag, token_flag);
     let target = auth::resolve_target(&cfg, std::path::Path::new("."))?;
     let (client, server) = (target.client, target.server);
+
+    // sslip fallback: the server computes the domain from its public IP.
+    let domain = if args.sslip {
+        let preview = auth::api_get(&client, &server, "/settings/domain/sslip").await.map_err(map_admin_err)?;
+        let Some(sslip) = preview["domain"].as_str() else {
+            bail!(out::fail(
+                "server could not determine its public IP",
+                "set PUBLIC_IP or the DNS target in settings, then retry"
+            ));
+        };
+        if !out.json && !ci_mode.enabled {
+            println!("temporary domain: {sslip} (master proxy)");
+            let go = dialoguer::Confirm::new()
+                .with_prompt("Switch the platform to sslip.io?")
+                .default(false)
+                .interact()
+                .unwrap_or(false);
+            if !go {
+                out.note("Aborted.");
+                return Ok(());
+            }
+        }
+        sslip.to_string()
+    } else {
+        domain
+    };
 
     // Preflight
     let pre =
@@ -155,14 +194,17 @@ pub(crate) async fn domain_set(
     }
 
     // Apply
-    let apply = auth::api_post_json(
-        &client,
-        &server,
-        "/settings/domain/apply",
-        &serde_json::json!({ "domain": domain, "acknowledge_dns": true }),
-    )
-    .await
-    .map_err(map_admin_err)?;
+    let mut body = serde_json::json!({ "domain": domain, "acknowledge_dns": true, "sslip": args.sslip });
+    if let Some(mode) = &args.mode {
+        body["routing_mode"] = serde_json::json!(mode);
+    }
+    if let Some(token) = &args.cf_token {
+        body["cloudflare_api_token"] = serde_json::json!(token);
+    }
+    if let Some(zone) = &args.cf_zone {
+        body["cloudflare_zone_id"] = serde_json::json!(zone);
+    }
+    let apply = auth::api_post_json(&client, &server, "/settings/domain/apply", &body).await.map_err(map_admin_err)?;
     let Some(job_id) = apply["job_id"].as_str().map(str::to_string) else {
         bail!("server did not return a job_id");
     };

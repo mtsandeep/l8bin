@@ -25,6 +25,9 @@ pub struct GlobalSettings {
     pub poke_subdomain: String,
     /// True when platform domain is sslip.io / nip.io tryout DNS.
     pub tryout: bool,
+    /// Retained previous domain during the post-change grace window.
+    pub previous_domain: Option<String>,
+    pub previous_domain_retire_at: Option<i64>,
 }
 
 pub fn resolve_projects_dir() -> String {
@@ -185,6 +188,14 @@ pub async fn load_settings(state: &AppState) -> Result<GlobalSettings, (StatusCo
         dashboard_subdomain: snap.dashboard_subdomain,
         poke_subdomain: snap.poke_subdomain,
         tryout: crate::platform::PlatformSettings::is_tryout_domain(&snap.domain),
+        previous_domain: crate::platform::previous_domain(&state.db).await,
+        previous_domain_retire_at: sqlx::query_scalar(
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'previous_domain_retire_at'",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten(),
     })
 }
 

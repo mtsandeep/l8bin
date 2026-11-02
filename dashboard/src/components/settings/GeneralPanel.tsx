@@ -1,4 +1,4 @@
-import { AlertTriangle, Globe, Network, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, Copy, Globe, Network, SlidersHorizontal, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   cleanupDnsRecords,
@@ -10,7 +10,9 @@ import {
   fetchGlobalSettings,
   type GlobalSettings,
   RoutingMode,
+  retirePreviousDomain,
   retryDomainJob,
+  sslipDomainPreview,
   syncDnsRecords,
   updateGlobalSettings,
 } from '../../api';
@@ -55,6 +57,10 @@ export default function GeneralPanel() {
   const [domainPreflightResult, setDomainPreflightResult] = useState<DomainPreflightResult | null>(null);
   const [domainJob, setDomainJob] = useState<DomainJob | null>(null);
   const [domainBusy, setDomainBusy] = useState(false);
+  const [domainRouting, setDomainRouting] = useState<'master' | 'cloudflare'>('master');
+  const [domainCfToken, setDomainCfToken] = useState('');
+  const [domainCfZone, setDomainCfZone] = useState('');
+  const [retireBusy, setRetireBusy] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -82,7 +88,6 @@ export default function GeneralPanel() {
           if (job.status === 'completed') {
             setDomain(job.domain);
             setSettings((prev) => (prev ? { ...prev, domain: job.domain, tryout: undefined } : prev));
-            setShowDomainConfirm(false);
             showToast('Platform domain updated', 'success');
           }
         })
@@ -125,6 +130,9 @@ export default function GeneralPanel() {
     setDomainAck(false);
     setDomainPreflightResult(null);
     setDomainJob(null);
+    setDomainRouting(routingMode === RoutingMode.CloudflareDns ? 'cloudflare' : 'master');
+    setDomainCfToken('');
+    setDomainCfZone('');
     setShowDomainConfirm(true);
   };
 
@@ -151,7 +159,11 @@ export default function GeneralPanel() {
     setError(null);
     try {
       const needsAck = (domainPreflightResult?.warnings.length ?? 0) > 0;
-      const { job_id } = await domainApply(domainDraft.trim(), needsAck ? domainAck : true);
+      const { job_id } = await domainApply(domainDraft.trim(), needsAck ? domainAck : true, {
+        routing_mode: domainRouting === 'cloudflare' ? 'cloudflare_dns' : 'master_proxy',
+        ...(domainRouting === 'cloudflare' && domainCfToken.trim() ? { cloudflare_api_token: domainCfToken.trim() } : {}),
+        ...(domainRouting === 'cloudflare' && domainCfZone.trim() ? { cloudflare_zone_id: domainCfZone.trim() } : {}),
+      });
       const job = await fetchDomainJob(job_id);
       setDomainJob(job);
     } catch (e) {
@@ -584,6 +596,37 @@ export default function GeneralPanel() {
                 >
                   {domainJob.dashboard_url}
                 </a>
+                {settings.previous_domain && (
+                  <div className="rounded-md bg-amber-500/5 border border-amber-500/20 px-3 py-2 space-y-2">
+                    <p className="text-[11px] text-amber-300">
+                      <span className="font-mono">*.{settings.previous_domain}</span> keeps working for 24h as a
+                      safety window.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setRetireBusy(true);
+                        try {
+                          const { retired } = await retirePreviousDomain();
+                          showToast(
+                            retired ? `Retired ${settings.previous_domain}` : 'No previous domain to retire',
+                            'success',
+                          );
+                          const fresh = await fetchGlobalSettings();
+                          setSettings(fresh);
+                        } catch (e) {
+                          showToast(e instanceof Error ? e.message : 'Retire failed');
+                        } finally {
+                          setRetireBusy(false);
+                        }
+                      }}
+                      disabled={retireBusy}
+                      className="text-[11px] text-amber-300 hover:text-amber-200 underline cursor-pointer disabled:opacity-50"
+                    >
+                      Everything works — retire it now
+                    </button>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowDomainConfirm(false)}
@@ -636,12 +679,11 @@ export default function GeneralPanel() {
               <div className="space-y-3">
                 <ul className="text-xs text-slate-400 list-disc list-inside space-y-1">
                   <li>
-                    Old URLs under <span className="font-mono text-slate-300">*.{settings.domain}</span> will stop
-                    working
+                    The current domain <span className="font-mono text-slate-300">{settings.domain}</span> keeps
+                    working for 24h after the change
                   </li>
                   <li>Custom domains on projects are unchanged</li>
-                  <li>Update DNS (wildcard or Cloudflare) for the new domain</li>
-                  <li>You must reopen the dashboard on the new host and sign in again</li>
+                  <li>You reopen the dashboard on the new host and sign in again</li>
                 </ul>
                 <div>
                   <label htmlFor="domain-draft" className="block text-xs text-slate-300 mb-1.5">
@@ -659,7 +701,105 @@ export default function GeneralPanel() {
                     placeholder="example.com"
                     className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
                   />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const { domain: sslip } = await sslipDomainPreview();
+                        if (!sslip) {
+                          showToast('Could not determine this server public IP');
+                          return;
+                        }
+                        setDomainDraft(sslip);
+                        setDomainRouting('master');
+                        setDomainPreflightResult(null);
+                        setDomainAck(false);
+                        setDomainConfirmTyped('');
+                      } catch (e) {
+                        showToast(e instanceof Error ? e.message : 'Lookup failed');
+                      }
+                    }}
+                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-amber-300 hover:text-amber-200 cursor-pointer"
+                  >
+                    <Zap size={11} /> No domain? Use this server temporary sslip.io address
+                  </button>
                 </div>
+
+                <div>
+                  <label className="block text-xs text-slate-300 mb-1.5">Routing</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDomainRouting('master')}
+                      className={`px-3 py-2 rounded-md text-xs border text-left cursor-pointer ${
+                        domainRouting === 'master'
+                          ? 'bg-violet-500/10 border-violet-500/40 text-violet-200'
+                          : 'bg-slate-900 border-slate-700/50 text-slate-400'
+                      }`}
+                    >
+                      Master proxy
+                      <span className="block text-[10px] text-slate-500">your DNS, records point here</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDomainRouting('cloudflare')}
+                      className={`px-3 py-2 rounded-md text-xs border text-left cursor-pointer ${
+                        domainRouting === 'cloudflare'
+                          ? 'bg-violet-500/10 border-violet-500/40 text-violet-200'
+                          : 'bg-slate-900 border-slate-700/50 text-slate-400'
+                      }`}
+                    >
+                      Cloudflare DNS
+                      <span className="block text-[10px] text-slate-500">records managed for you</span>
+                    </button>
+                  </div>
+                </div>
+
+                {domainRouting === 'cloudflare' && (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={domainCfToken}
+                      onChange={(e) => setDomainCfToken(e.target.value)}
+                      placeholder={`API token${settings.cloudflare_api_token ? ' (leave blank to keep current)' : ''}`}
+                      className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+                    />
+                    <input
+                      type="text"
+                      value={domainCfZone}
+                      onChange={(e) => setDomainCfZone(e.target.value)}
+                      placeholder={`Zone ID${settings.cloudflare_zone_id ? ' (leave blank to keep current)' : ''}`}
+                      className="w-full bg-slate-900 border border-slate-700/50 rounded-md px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+                    />
+                  </div>
+                )}
+
+                {domainRouting === 'master' && domainPreflightResult?.detected_public_ip && (
+                  <div className="rounded-md bg-slate-900/60 border border-slate-700/40 px-3 py-2 space-y-1">
+                    <p className="text-[10px] text-slate-500">
+                      DNS records to point at {domainPreflightResult.detected_public_ip}
+                    </p>
+                    {[
+                      `${settings.dashboard_subdomain}.${domainDraft.trim().toLowerCase()}`,
+                      `${settings.poke_subdomain}.${domainDraft.trim().toLowerCase()}`,
+                      `*.${domainDraft.trim().toLowerCase()}`,
+                    ].map((host) => (
+                      <div key={host} className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-mono text-slate-300">
+                          A {host} → {domainPreflightResult.detected_public_ip}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard?.writeText(host)}
+                          className="p-1 rounded text-slate-500 hover:text-slate-300 cursor-pointer"
+                        >
+                          <Copy size={11} />
+                        </button>
+                      </div>
+                    ))}
+                    <p className="text-[10px] text-slate-600">the wildcard covers every project subdomain</p>
+                  </div>
+                )}
                 <div>
                   <label htmlFor="domain-confirm-typed" className="block text-xs text-slate-300 mb-1.5">
                     Type the new domain to confirm
@@ -674,6 +814,37 @@ export default function GeneralPanel() {
                 </div>
                 {domainPreflightResult && (
                   <div className="space-y-2">
+                    {domainPreflightResult.checks?.length ? (
+                      <ul className="space-y-1">
+                        {domainPreflightResult.checks.map((c) => (
+                          <li key={c.id} className="flex items-center gap-2 text-[11px]">
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                c.status === 'ok'
+                                  ? 'bg-green-400'
+                                  : c.status === 'warn'
+                                    ? 'bg-amber-400'
+                                    : c.status === 'error'
+                                      ? 'bg-red-400'
+                                      : 'bg-slate-600'
+                              }`}
+                            />
+                            <span className="text-slate-400">
+                              {c.id}
+                              {c.detail ? <span className="text-slate-500"> — {c.detail}</span> : null}
+                              {c.status === 'skipped' ? <span className="text-slate-600"> (skipped)</span> : null}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {domainPreflightResult.plan && (
+                      <p className="text-[11px] text-slate-500">
+                        sync plan: {domainPreflightResult.plan.created.length} to create,{' '}
+                        {domainPreflightResult.plan.repointed.length} to re-point,{' '}
+                        {domainPreflightResult.plan.unchanged.length} unchanged
+                      </p>
+                    )}
                     {domainPreflightResult.errors.map((msg) => (
                       <p key={msg} className="text-xs text-red-400">
                         {msg}

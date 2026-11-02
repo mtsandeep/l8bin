@@ -14,6 +14,11 @@ pub struct PlatformSettings {
     pub dns_target: String,
 }
 
+/// The sslip.io domain for an IPv4 address (e.g. `203-0-113-5.sslip.io`).
+pub fn sslip_domain(ip: &str) -> String {
+    format!("{}.sslip.io", ip.replace('.', "-"))
+}
+
 impl PlatformSettings {
     pub fn is_tryout_domain(domain: &str) -> bool {
         let d = domain.trim().to_ascii_lowercase();
@@ -276,5 +281,13 @@ impl DomainJob {
             resume_from: 0,
             dashboard_url: format!("https://{}.{}", dashboard_subdomain, domain),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sslip_domain_dashes_the_ip() {
+        assert_eq!(super::sslip_domain("203.0.113.5"), "203-0-113-5.sslip.io");
     }
 }

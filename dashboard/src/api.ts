@@ -191,6 +191,21 @@ export interface GlobalSettings {
   dashboard_subdomain: string;
   poke_subdomain: string;
   tryout?: boolean;
+  previous_domain?: string | null;
+  previous_domain_retire_at?: number | null;
+}
+
+export interface PreflightCheck {
+  id: string;
+  status: 'ok' | 'warn' | 'error' | 'skipped';
+  detail?: string;
+}
+
+export interface DnsPlanPreview {
+  created: string[];
+  repointed: string[];
+  unchanged: string[];
+  skipped: string[];
 }
 
 export interface DomainPreflightResult {
@@ -198,6 +213,10 @@ export interface DomainPreflightResult {
   domain: string;
   errors: string[];
   warnings: string[];
+  checks: PreflightCheck[];
+  detected_public_ip?: string | null;
+  sslip: boolean;
+  plan?: DnsPlanPreview | null;
 }
 
 export interface BackupS3Status {
@@ -311,12 +330,22 @@ export async function domainPreflight(domain: string): Promise<DomainPreflightRe
   return res.json();
 }
 
-export async function domainApply(domain: string, acknowledgeDns: boolean): Promise<{ job_id: string }> {
+export interface DomainApplyOptions {
+  routing_mode?: string;
+  cloudflare_api_token?: string;
+  cloudflare_zone_id?: string;
+}
+
+export async function domainApply(
+  domain: string,
+  acknowledgeDns: boolean,
+  options: DomainApplyOptions = {},
+): Promise<{ job_id: string }> {
   const res = await fetch(`${API_BASE}/settings/domain/apply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ domain, acknowledge_dns: acknowledgeDns }),
+    body: JSON.stringify({ domain, acknowledge_dns: acknowledgeDns, ...options }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -346,6 +375,23 @@ export async function retryDomainJob(jobId: string): Promise<{ job_id: string }>
   return res.json();
 }
 
+export async function sslipDomainPreview(): Promise<{ domain: string | null }> {
+  const res = await fetch(`${API_BASE}/settings/domain/sslip`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to compute sslip domain');
+  return res.json();
+}
+
+export async function retirePreviousDomain(): Promise<{ retired: boolean }> {
+  const res = await fetch(`${API_BASE}/settings/domain/retire-previous`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Failed to retire previous domain'));
+  }
+  return res.json();
+}
 export async function cleanupDnsRecords(): Promise<{ deleted_count: number }> {
   const res = await fetch(`${API_BASE}/settings/cleanup-dns`, {
     method: 'POST',
