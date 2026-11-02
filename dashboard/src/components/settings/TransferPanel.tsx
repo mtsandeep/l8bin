@@ -19,20 +19,23 @@ import {
   type ExportSummary,
   type ImportArchiveSummary,
   type Project,
+  ProjectStatus,
   deleteExport,
+  deleteImportArchive,
   downloadExport,
   exportProject,
   fetchProjects,
   getExportJob,
-  deleteImportArchive,
   importBundle,
   listExports,
   listImportArchives,
   uploadImportArchive,
 } from '../../api';
-import { useNodes } from '../../hooks/useNodes';
 import { useAuth } from '../AuthContext';
+import OperationProgressModal from '../ProjectCard/OperationProgressModal';
 import { useToast } from '../ToastContext';
+import { useNodes } from '../../hooks/useNodes';
+import { useSettings } from '../../hooks/useSettings';
 import SettingsCard from './SettingsCard';
 
 const ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -80,8 +83,10 @@ export default function TransferPanel() {
   const [startAfter, setStartAfter] = useState(true);
   const [deleteAfter, setDeleteAfter] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [outcome, setOutcome] = useState<{ id: string; warnings: string[] } | null>(null);
 
   const { user } = useAuth();
+  const { domain } = useSettings(user);
   const { nodes } = useNodes(user);
   const { showToast } = useToast();
 
@@ -186,8 +191,7 @@ export default function TransferPanel() {
         start_after_import: startAfter,
         delete_after_import: deleteAfter,
       });
-      const message = [`Importing as ${resp.project_id}`, ...resp.warnings].join('; ');
-      showToast(message, 'success');
+      setOutcome({ id: resp.project_id, warnings: resp.warnings });
       refreshArchives();
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Import failed');
@@ -352,6 +356,22 @@ export default function TransferPanel() {
           </div>
         </div>
       </SettingsCard>
+
+      {outcome && (
+        <OperationProgressModal
+          title={`Importing ${outcome.id}`}
+          projectId={outcome.id}
+          domain={domain}
+          successStatuses={startAfter ? [ProjectStatus.Running, ProjectStatus.Degraded] : [ProjectStatus.Stopped]}
+          warnings={outcome.warnings}
+          onClose={(done) => {
+            if (!done) {
+              showToast('Import continues in the background — watch its card on the home page');
+            }
+            setOutcome(null);
+          }}
+        />
+      )}
 
       <SettingsCard
         icon={ArrowRight}

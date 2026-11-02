@@ -28,6 +28,9 @@ pub struct ExportManifest {
     /// Path routes and alias subdomains (claimed on import unless taken).
     #[serde(default)]
     pub routes: Vec<ExportRoute>,
+    /// Granted capability ids (docker-observe, host-network, raw-ports).
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     pub flags: ExportFlags,
 }
 
@@ -134,6 +137,14 @@ pub async fn build_from_db(
     .fetch_all(db)
     .await?;
 
+    let capabilities: Vec<(String,)> =
+        sqlx::query_as("SELECT capability FROM project_capabilities WHERE project_id = ?")
+            .bind(&project.id)
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
+    let capabilities = capabilities.into_iter().map(|(c,)| c).collect();
+
     let images = super::project_image_refs(db, project)
         .await
         .into_iter()
@@ -208,6 +219,7 @@ pub async fn build_from_db(
             .collect(),
         images,
         routes,
+        capabilities,
         flags: ExportFlags { include_env, include_volumes },
     })
 }
@@ -271,6 +283,7 @@ mod tests {
                 container_path: Some("/var/lib/postgresql/data".into()),
             }],
             images: vec![ExportImage { r#ref: "sha256:abcdef".into(), file: image_entry_name("sha256:abcdef") }],
+            capabilities: vec!["docker-observe".into()],
             routes: vec![ExportRoute {
                 route_type: "alias".into(),
                 path: None,

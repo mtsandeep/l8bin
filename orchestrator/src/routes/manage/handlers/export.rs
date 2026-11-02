@@ -80,10 +80,17 @@ pub async fn export_project(
 
     let was_running = matches!(project.status, ProjectStatus::Running | ProjectStatus::Degraded);
 
-    let anon_mounts = super::anonymous_mount_count(&state.db, &project.id).await;
     let mut warnings = Vec::new();
+    let anon_mounts = super::anonymous_mount_count(&state.db, &project.id).await;
     if anon_mounts > 0 {
         warnings.push(super::anonymous_volume_warning(anon_mounts));
+    }
+    let abs_binds = super::absolute_bind_count(&state.db, &project.id).await;
+    if abs_binds > 0 {
+        warnings.push(super::absolute_bind_warning(abs_binds));
+    }
+    if project.allow_raw_ports {
+        warnings.push("raw ports permission is included in the bundle".into());
     }
 
     let job_id = uuid::Uuid::new_v4().to_string();

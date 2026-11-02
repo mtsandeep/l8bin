@@ -123,11 +123,23 @@ pub async fn migrate_project(
     let source_id = source_node.id.clone();
     let arch_warning = archs_differ;
     let anon_mounts = super::anonymous_mount_count(&state.db, &project_id).await;
-    let message = if anon_mounts > 0 {
-        format!("migration to '{target_id}' started; {}", super::anonymous_volume_warning(anon_mounts))
-    } else {
+    let abs_binds = super::absolute_bind_count(&state.db, &project_id).await;
+    let mut notes = Vec::new();
+    if anon_mounts > 0 {
+        notes.push(super::anonymous_volume_warning(anon_mounts));
+    }
+    if abs_binds > 0 {
+        notes.push(super::absolute_bind_warning(abs_binds));
+    }
+    if project.allow_raw_ports {
+        notes.push(super::raw_ports_warning(&project_id));
+    }
+    let message = if notes.is_empty() {
         format!("migration to '{target_id}' started")
+    } else {
+        format!("migration to '{target_id}' started; {}", notes.join("; "))
     };
+    let warnings = notes;
     tokio::spawn(async move {
         if let Err(e) = run_migration(&state, &project_id_bg, &source_id, &target_id, volumes_flag, arch_warning).await
         {
@@ -148,6 +160,7 @@ pub async fn migrate_project(
         Json(json!({
             "project_id": project_id,
             "message": message,
+            "warnings": warnings,
             "status": "migrating",
         })),
     )

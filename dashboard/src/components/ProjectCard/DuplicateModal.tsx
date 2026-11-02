@@ -1,7 +1,8 @@
 import { Copy, Database, Loader2, X } from 'lucide-react';
 import { useState } from 'react';
-import { type Node, duplicateProject } from '../../api';
+import { type Node, ProjectStatus, duplicateProject } from '../../api';
 import { useToast } from '../ToastContext';
+import OperationProgressModal from './OperationProgressModal';
 
 interface Props {
   projectId: string;
@@ -13,6 +14,9 @@ interface Props {
   volumeCount: number;
   hasUploadedImage: boolean;
   ephemeralGb?: number;
+  allowRawPorts?: boolean;
+  absoluteBinds?: number;
+  domain: string;
   onClose: () => void;
   onStarted: () => void;
   /** Fired on success only — closes the settings popover behind this modal. */
@@ -31,6 +35,9 @@ export default function DuplicateModal({
   volumeCount,
   hasUploadedImage,
   ephemeralGb,
+  allowRawPorts,
+  absoluteBinds,
+  domain,
   onClose,
   onStarted,
   onSucceeded,
@@ -42,6 +49,7 @@ export default function DuplicateModal({
   const [includeEnv, setIncludeEnv] = useState(true);
   const [startAfter, setStartAfter] = useState(true);
   const [duplicating, setDuplicating] = useState(false);
+  const [outcome, setOutcome] = useState<{ id: string } | null>(null);
   const { showToast } = useToast();
 
   // Current node first (side-by-side copy), then other online nodes.
@@ -64,11 +72,9 @@ export default function DuplicateModal({
         include_env: includeEnv,
         start_after: startAfter,
       });
-      const message = [`Duplicating as ${resp.project_id}`, ...resp.warnings].join('; ');
-      showToast(message, 'success');
       onSucceeded();
       onStarted();
-      onClose();
+      setOutcome({ id: resp.project_id });
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Duplication failed');
     } finally {
@@ -112,6 +118,26 @@ export default function DuplicateModal({
     );
   };
 
+  if (outcome) {
+    const successStatuses = startAfter
+      ? [ProjectStatus.Running, ProjectStatus.Degraded]
+      : [ProjectStatus.Stopped];
+    return (
+      <OperationProgressModal
+        title={`Duplicating ${projectName}`}
+        projectId={outcome.id}
+        domain={domain}
+        successStatuses={successStatuses}
+        onClose={(done) => {
+          if (!done) {
+            showToast('Duplication continues in the background — watch its card on the home page');
+          }
+          onClose();
+        }}
+      />
+    );
+  }
+
   return (
     <div
       data-l8b-modal
@@ -152,6 +178,19 @@ export default function DuplicateModal({
             </li>
           ))}
         </ol>
+
+        {(allowRawPorts || (absoluteBinds ?? 0) > 0) && (
+          <div className="mb-4 rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 space-y-1">
+            {allowRawPorts && (
+              <p className="text-[11px] text-amber-300">raw ports enabled — binds host ports on its node</p>
+            )}
+            {(absoluteBinds ?? 0) > 0 && (
+              <p className="text-[11px] text-amber-300">
+                {absoluteBinds} absolute bind mount{(absoluteBinds ?? 0) > 1 ? 's' : ''} — data stays on this server
+              </p>
+            )}
+          </div>
+        )}
 
         {ephemeralGb ? (
           <div className="rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] text-amber-300">

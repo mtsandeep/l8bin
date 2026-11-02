@@ -110,14 +110,16 @@ pub async fn duplicate_project(
         }
         warnings.push("source and target architectures differ — registry images must be multi-arch to start".into());
     }
-    if target_node_id == source_node_id && project.allow_raw_ports {
-        warnings.push(
-            "project pins host ports (allow_raw_ports) — the copy may fail to start alongside the original".into(),
-        );
+    if project.allow_raw_ports {
+        warnings.push(super::raw_ports_warning(&project.id));
     }
     let anon_mounts = super::anonymous_mount_count(&state.db, &project.id).await;
     if anon_mounts > 0 {
         warnings.push(super::anonymous_volume_warning(anon_mounts));
+    }
+    let abs_binds = super::absolute_bind_count(&state.db, &project.id).await;
+    if abs_binds > 0 {
+        warnings.push(super::absolute_bind_warning(abs_binds));
     }
 
     let base = format!("{}-copy", project.id);
@@ -251,6 +253,15 @@ async fn insert_copy_rows(
     .bind(source.deploy_type.clone())
     .bind(now)
     .bind(now)
+    .execute(&state.db)
+    .await?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO project_capabilities (project_id, capability, granted_at) \
+         SELECT ?, capability, granted_at FROM project_capabilities WHERE project_id = ?",
+    )
+    .bind(new_id)
+    .bind(&source.id)
     .execute(&state.db)
     .await?;
 

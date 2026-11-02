@@ -543,6 +543,7 @@ export interface MigrateResponse {
   project_id: string;
   message: string;
   status: string;
+  warnings?: string[];
 }
 
 export async function migrateProject(

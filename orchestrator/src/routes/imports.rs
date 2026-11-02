@@ -336,6 +336,9 @@ pub async fn import_bundle(
     let Some(alloc) = alloc else {
         return err(StatusCode::CONFLICT, "id kept colliding — retry the import".into());
     };
+    if m.project.allow_raw_ports {
+        warnings.push("raw ports enabled — this project binds host ports on its node".into());
+    }
 
     let job = ImportJob {
         bundle_path: path.clone(),
@@ -473,6 +476,15 @@ async fn insert_from_manifest(
         .await?;
     }
 
+    for cap in &m.capabilities {
+        sqlx::query("INSERT OR IGNORE INTO project_capabilities (project_id, capability, granted_at) VALUES (?, ?, ?)")
+            .bind(new_id)
+            .bind(cap)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&state.db)
+            .await?;
+    }
+
     for vol in &m.volumes {
         sqlx::query(
             "INSERT INTO project_volumes (project_id, service_name, volume_name, container_path) VALUES (?, ?, ?, ?)",
@@ -582,11 +594,8 @@ async fn run_import(state: &AppState, job: &ImportJob) -> anyhow::Result<()> {
                         .await?;
                     logs(&state, &new_id, "project files restored");
                 } else if let Some(scoped) = name.strip_prefix("volumes/").and_then(|n| n.strip_suffix(".tar")) {
-                    // Relative binds ride in project.tar — a volumes/ entry for
-                    // one only appears in hand-made bundles.
-                    let is_bind = litebin_common::types::classify_volume(scoped)
-                        == litebin_common::types::VolumeKind::RelativeBindMount;
-                    if include_volumes && !is_bind {
+                    let kind = litebin_common::types::classify_volume(scoped);
+                    if include_volumes && kind == litebin_common::types::VolumeKind::DockerVolume {
                         let to = copy_engine::rescope_volume(scoped, &old_id, &new_id);
                         let tar = file_stream(&spool);
                         target.transfer_in(&state, &litebin_common::docker::TransferKind::Volume(to), tar).await?;

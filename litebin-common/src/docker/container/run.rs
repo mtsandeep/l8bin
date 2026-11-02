@@ -34,6 +34,27 @@ pub(crate) fn pinned_host_ports(port_bindings: &HashMap<String, Option<Vec<PortB
     ports
 }
 
+/// Publish an explicit compose HOST:CONTAINER remap. A container port already
+/// carrying the public proxy's loopback binding keeps it — the raw host port
+/// is bound alongside so the proxy and the host publication both work.
+fn apply_raw_port_override(
+    port_bindings: &mut HashMap<String, Option<Vec<PortBinding>>>,
+    exposed_ports: &mut Vec<String>,
+    port_spec: &str,
+    binding: PortBinding,
+) {
+    match port_bindings.get_mut(port_spec) {
+        Some(existing) => match existing {
+            Some(bindings) => bindings.push(binding),
+            None => *existing = Some(vec![binding]),
+        },
+        None => {
+            port_bindings.insert(port_spec.to_string(), Some(vec![binding]));
+            exposed_ports.push(port_spec.to_string());
+        }
+    }
+}
+
 impl DockerManager {
     /// Run a service container using the unified `RunServiceConfig`.
     /// Returns (container_id, mapped_port). mapped_port is only meaningful for public services.
@@ -92,10 +113,6 @@ impl DockerManager {
         let reserved_ports = litebin_reserved_host_ports();
         if config.allow_raw_ports {
             for (port_spec, host_port) in &config.raw_port_host_overrides {
-                // Skip ports already bound (e.g. public HTTP port)
-                if port_bindings.contains_key(port_spec) {
-                    continue;
-                }
                 if reserved_ports.contains(&host_port.to_string()) {
                     tracing::warn!(
                         service = %config.service_name,
@@ -105,12 +122,11 @@ impl DockerManager {
                     );
                     continue;
                 }
-                port_bindings.insert(
-                    port_spec.clone(),
-                    Some(vec![PortBinding {
-                        host_ip: Some("0.0.0.0".to_string()),
-                        host_port: Some(host_port.to_string()),
-                    }]),
+                apply_raw_port_override(
+                    &mut port_bindings,
+                    &mut exposed_ports,
+                    port_spec,
+                    PortBinding { host_ip: Some("0.0.0.0".to_string()), host_port: Some(host_port.to_string()) },
                 );
             }
         }
@@ -550,5 +566,28 @@ mod tests {
         bindings
             .insert("80/tcp".to_string(), Some(vec![PortBinding { host_ip: None, host_port: Some("0".to_string()) }]));
         assert_eq!(pinned_host_ports(&bindings), vec![3000]);
+    }
+
+    #[test]
+    fn raw_override_publishes_alongside_public_binding() {
+        let raw = |host: &str| PortBinding { host_ip: Some("0.0.0.0".to_string()), host_port: Some(host.to_string()) };
+        let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+        port_bindings.insert(
+            "80/tcp".to_string(),
+            Some(vec![PortBinding { host_ip: Some("127.0.0.1".to_string()), host_port: Some("0".to_string()) }]),
+        );
+        let mut exposed = Vec::new();
+
+        apply_raw_port_override(&mut port_bindings, &mut exposed, "80/tcp", raw("8080"));
+        let web = port_bindings["80/tcp"].as_ref().unwrap();
+        assert_eq!(web.len(), 2);
+        assert_eq!(web[0].host_ip.as_deref(), Some("127.0.0.1"));
+        assert_eq!(web[1].host_port.as_deref(), Some("8080"));
+        assert!(exposed.is_empty());
+
+        apply_raw_port_override(&mut port_bindings, &mut exposed, "6379/tcp", raw("6379"));
+        assert_eq!(port_bindings["6379/tcp"].as_ref().unwrap()[0].host_port.as_deref(), Some("6379"));
+        assert_eq!(exposed, vec!["6379/tcp"]);
+        assert_eq!(pinned_host_ports(&port_bindings), vec![6379, 8080]);
     }
 }

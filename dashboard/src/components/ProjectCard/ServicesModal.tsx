@@ -257,12 +257,33 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                     <div className="mt-2 flex items-start gap-1.5">
                       <Database size={10} className="text-slate-600 mt-0.5 shrink-0" />
                       <div className="text-[10px] font-mono">
-                        {svc.volumes.map((v) => (
-                          <span key={v.container_path} className="inline-block mr-3 last:mr-0">
-                            <span className="text-slate-500">{v.container_path}</span>
-                            {v.volume_name && <span className="text-slate-600"> &larr; {v.volume_name}</span>}
-                          </span>
-                        ))}
+                        {svc.volumes
+                          .filter((v) => !v.volume_name?.startsWith('/') && !v.volume_name?.endsWith('docker.sock'))
+                          .map((v) => (
+                            <span key={v.container_path} className="inline-block mr-3 last:mr-0">
+                              <span className="text-slate-500">{v.container_path}</span>
+                              {v.volume_name && <span className="text-slate-600"> &larr; {v.volume_name}</span>}
+                            </span>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Absolute binds — not carried by transfers */}
+                  {svc.volumes?.some((v) => v.volume_name?.startsWith('/') && !v.volume_name?.endsWith('docker.sock')) && (
+                    <div className="mt-2 rounded bg-amber-500/5 border border-amber-500/20 px-2 py-1.5">
+                      <div className="text-[10px] text-amber-400/90 mb-0.5">
+                        Absolute paths — stay on this server; move manually when exporting
+                      </div>
+                      <div className="text-[10px] font-mono">
+                        {(svc.volumes ?? [])
+                          .filter((v) => v.volume_name?.startsWith('/') && !v.volume_name?.endsWith('docker.sock'))
+                          .map((v) => (
+                            <div key={v.container_path} className="truncate" title={v.volume_name}>
+                              <span className="text-slate-500">{v.container_path}</span>
+                              <span className="text-amber-300/80"> &larr; {v.volume_name}</span>
+                            </div>
+                          ))}
                       </div>
                     </div>
                   )}

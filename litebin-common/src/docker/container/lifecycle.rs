@@ -34,17 +34,27 @@ pub(crate) fn project_cleanup_observe_network(project_id: &str) -> String {
     crate::types::docker_observe_network_name(project_id, None)
 }
 
+/// The port the proxy should dial: the loopback binding when several host
+/// bindings exist for a container port (public service + raw host publication).
+pub(crate) fn loopback_or_first(bindings: &[bollard::models::PortBinding]) -> Option<u16> {
+    bindings
+        .iter()
+        .find(|b| b.host_ip.as_deref() == Some("127.0.0.1"))
+        .or_else(|| bindings.first())
+        .and_then(|b| b.host_port.as_deref())
+        .and_then(|p| p.parse().ok())
+}
+
 impl DockerManager {
     /// Inspect a container and return the mapped host port.
     /// Returns `None` if no port mapping is found (container may have exited
     /// or port bindings haven't been applied yet).
     pub async fn inspect_mapped_port(&self, container_id: &str) -> anyhow::Result<Option<u16>> {
         let info = self.docker.inspect_container(container_id, None).await?;
-        let port = info.network_settings.as_ref().and_then(|ns| ns.ports.as_ref()).and_then(|ports| {
-            ports.values().find_map(|bindings| {
-                bindings.as_ref()?.first().and_then(|b| b.host_port.as_ref().and_then(|p| p.parse::<u16>().ok()))
-            })
-        });
+        let port =
+            info.network_settings.as_ref().and_then(|ns| ns.ports.as_ref()).and_then(|ports| {
+                ports.values().find_map(|bindings| bindings.as_ref().and_then(|b| loopback_or_first(b)))
+            });
         Ok(port)
     }
 
@@ -232,5 +242,23 @@ impl DockerManager {
     pub fn read_compose(project_id: &str) -> Option<String> {
         let path = crate::types::projects_dir().join(project_id).join("compose.yaml");
         std::fs::read_to_string(&path).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loopback_or_first_prefers_proxy_binding() {
+        let raw =
+            bollard::models::PortBinding { host_ip: Some("0.0.0.0".to_string()), host_port: Some("8080".to_string()) };
+        let lo =
+            bollard::models::PortBinding { host_ip: Some("127.0.0.1".to_string()), host_port: Some("0".to_string()) };
+        assert_eq!(loopback_or_first(std::slice::from_ref(&raw)), Some(8080));
+        assert_eq!(loopback_or_first(std::slice::from_ref(&lo)), Some(0));
+        // Raw listed first — loopback wins for the proxy
+        assert_eq!(loopback_or_first(&[raw, lo]), Some(0));
+        assert_eq!(loopback_or_first(&[]), None);
     }
 }

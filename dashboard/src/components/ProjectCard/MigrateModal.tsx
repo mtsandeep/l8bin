@@ -1,7 +1,8 @@
 import { ArrowRightLeft, Database, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { type Node, migrateProject } from '../../api';
+import { type Node, ProjectStatus, migrateProject } from '../../api';
 import { useToast } from '../ToastContext';
+import OperationProgressModal from './OperationProgressModal';
 
 interface Props {
   projectId: string;
@@ -12,6 +13,9 @@ interface Props {
   serviceCount: number;
   volumeCount: number;
   ephemeralGb?: number;
+  allowRawPorts?: boolean;
+  absoluteBinds?: number;
+  domain: string;
   onClose: () => void;
   onStarted: () => void;
   /** Fired on success only — closes the settings popover behind this modal. */
@@ -27,6 +31,9 @@ export default function MigrateModal({
   serviceCount,
   volumeCount,
   ephemeralGb,
+  allowRawPorts,
+  absoluteBinds,
+  domain,
   onClose,
   onStarted,
   onSucceeded,
@@ -42,6 +49,7 @@ export default function MigrateModal({
   const [targetId, setTargetId] = useState('');
   const [migrateVolumes, setMigrateVolumes] = useState(true);
   const [migrating, setMigrating] = useState(false);
+  const [started, setStarted] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -52,11 +60,10 @@ export default function MigrateModal({
     if (!targetId) return;
     setMigrating(true);
     try {
-      const resp = await migrateProject(projectId, targetId, migrateVolumes);
-      showToast(resp.message || 'Migration started', 'success');
+      await migrateProject(projectId, targetId, migrateVolumes);
       onSucceeded();
       onStarted();
-      onClose();
+      setStarted(true);
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Migration failed');
     } finally {
@@ -90,6 +97,23 @@ export default function MigrateModal({
       </span>
     </button>
   );
+
+  if (started) {
+    return (
+      <OperationProgressModal
+        title={`Migrating ${projectName}`}
+        projectId={projectId}
+        domain={domain}
+        successStatuses={[ProjectStatus.Running, ProjectStatus.Degraded]}
+        onClose={(done) => {
+          if (!done) {
+            showToast('Migration continues in the background — watch its card on the home page');
+          }
+          onClose();
+        }}
+      />
+    );
+  }
 
   return (
     <div
@@ -134,12 +158,24 @@ export default function MigrateModal({
           ))}
         </ol>
 
+        {(allowRawPorts || (absoluteBinds ?? 0) > 0) && (
+          <div className="mb-4 rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 space-y-1">
+            {allowRawPorts && (
+              <p className="text-[11px] text-amber-300">raw ports enabled — binds host ports on its node</p>
+            )}
+            {(absoluteBinds ?? 0) > 0 && (
+              <p className="text-[11px] text-amber-300">
+                {absoluteBinds} absolute bind mount{(absoluteBinds ?? 0) > 1 ? 's' : ''} — data stays on this server
+              </p>
+            )}
+          </div>
+        )}
+
         {ephemeralGb ? (
           <div className="rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] text-amber-300">
             {ephemeralGb.toFixed(2)} GB in anonymous volumes is not carried - name them in compose to persist.
           </div>
         ) : null}
-
 
         {sizeHint && (
           <div className="flex items-center gap-2 rounded-md bg-slate-800/60 border border-slate-700/40 px-3 py-2 mb-4">

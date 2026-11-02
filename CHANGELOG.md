@@ -4,9 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Raw host ports on the public service** — explicit `HOST:CONTAINER` mappings on the routed service were silently dropped; they now publish alongside the Caddy route, and an in-use host port fails at start with the actionable message.
+
 ## [0.4.20] - 2026-10-29
 
 ### Fixed
+- **Capabilities travel with the project** — export bundles carry granted capability ids (docker-observe, host-network, raw-ports) and import/duplicate restore them. Duplicate/migrate/import warn about raw ports informationally; an actual port collision surfaces at start with the actionable error.
+- Duplicate/migrate/import show a live progress modal ending in a summary (final project id, URL, carried warnings, error tail on failure) instead of a start toast; closing mid-run keeps the operation going with a toast pointing at the project card.
+- **Transfers skip absolute bind mounts** — a compose-declared absolute path (e.g. `/app/projects/…`) stored as a volume name crashed export/duplicate/migrate with "Docker responded with status code 301" (the daemon redirects the malformed volume-inspect path). Only Docker volumes ride the volume pass; relative binds travel inside the project-dir tar. Absolute binds stay on their server — export/duplicate/migrate now warn ("their data stays on this server; copy the paths manually if needed"), like anonymous-volume warnings.
 - **Registry images pull when starting on the master node** — starts only pulled when a project was first deployed after staging, so a registry-image project started on a fresh node failed with "No such image". Starts now pull missing images for services without containers; images already present are a cheap local check. Agent nodes already did this.
 - Export bundle downloads start immediately — the browser's native download handles them instead of buffering the whole file first.
 - Bundles in the imports folder can be deleted from Settings → Export / Import (`DELETE /imports/{file}`), matching the exports table.

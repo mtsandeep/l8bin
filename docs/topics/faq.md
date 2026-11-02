@@ -403,7 +403,7 @@ The following ports are reserved for LiteBin's own services and are **never boun
 | 5083 | Agent host port | Conventional install-script mapping |
 | 8443 | Agent internal HTTPS | `AGENT_PORT` env var, default 8443 |
 
-If your compose declares one of these (e.g., `ports: - "8282:80/tcp"` for a web app), the binding is silently skipped with a warning log. Web apps on container port 80 or 443 are accessible via their Caddy route (the project subdomain), not via direct host port. Apps that genuinely need raw external access (game servers, non-HTTP databases) should pick a container port outside the reserved list.
+The reservation applies to the **host** side of a mapping. If your compose declares a reserved host port (e.g., `ports: - "443:8080/tcp"`), that binding is silently skipped with a warning log — everything else about the deploy is unaffected. This includes the public service: its Caddy route (the project subdomain) always works, and an explicit `HOST:CONTAINER` mapping publishes the chosen host port directly, alongside the route. Apps that need raw external access (game servers, non-HTTP databases) should simply pick a host port outside the reserved list.
 
 ### Networks defined in my compose file are ignored
 

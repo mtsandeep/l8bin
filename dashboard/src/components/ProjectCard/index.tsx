@@ -127,6 +127,14 @@ export default function ProjectCard({
   const [showServicesModal, setShowServicesModal] = useState(false);
   const services = stats?.services ?? [];
   const ephemeralGb = services.reduce((acc, s) => acc + (s.ephemeral_gb ?? 0), 0);
+  // Absolute bind mounts — transfers never carry them (docker.sock excluded).
+  const absoluteBinds = services.reduce(
+    (acc, s) =>
+      acc +
+      (s.volumes?.filter((v) => v.volume_name?.startsWith('/') && !v.volume_name.endsWith('docker.sock'))
+        .length ?? 0),
+    0,
+  );
   const primaryService = project.public_stats ?? services[0] ?? null;
   const servicesRef = useRef<HTMLDivElement>(null);
 
@@ -797,6 +805,9 @@ export default function ProjectCard({
           serviceCount={services.length || 1}
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
           ephemeralGb={ephemeralGb}
+          allowRawPorts={project.allow_raw_ports}
+          absoluteBinds={absoluteBinds}
+          domain={domain}
           onClose={() => setShowMigrate(false)}
           onStarted={() => onRefresh()}
           onSucceeded={() => setOpenPopover(null)}
@@ -815,6 +826,9 @@ export default function ProjectCard({
           volumeCount={services.reduce((acc, s) => acc + (s.volumes?.length ?? 0), 0)}
           ephemeralGb={ephemeralGb}
           hasUploadedImage={primaryService?.image?.startsWith('sha256:') ?? false}
+          allowRawPorts={project.allow_raw_ports}
+          absoluteBinds={absoluteBinds}
+          domain={domain}
           onClose={() => setShowDuplicate(false)}
           onStarted={() => onRefresh()}
           onSucceeded={() => setOpenPopover(null)}
