@@ -243,6 +243,8 @@ use utoipa::OpenApi;
             crate::routes::global_settings::SyncDnsResponse,
             crate::routes::global_settings::DomainPreflightRequest,
             crate::routes::global_settings::DomainPreflightResponse,
+            crate::routes::global_settings::PreflightCheck,
+            crate::routes::global_settings::DnsPlanPreview,
             crate::routes::global_settings::DomainApplyRequest,
             crate::routes::global_settings::DomainApplyResponse,
             crate::platform::DomainJob,

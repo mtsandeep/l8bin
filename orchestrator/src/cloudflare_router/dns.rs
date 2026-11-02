@@ -4,6 +4,121 @@ use litebin_common::routing::ProjectRoute;
 
 use super::CloudflareDnsRouter;
 
+/// Desired DNS records: name → ip. The `public_ip` is the resolved
+/// dns_target setting (fallback: PUBLIC_IP env); records needing it are
+/// skipped when empty.
+pub(crate) async fn desired_dns_records(
+    db: &sqlx::SqlitePool,
+    public_ip: &str,
+    domain: &str,
+    dashboard_subdomain: &str,
+    poke_subdomain: &str,
+) -> HashMap<String, String> {
+    let mut desired: HashMap<String, String> = HashMap::new(); // name → ip
+
+    if !public_ip.is_empty() {
+        desired.insert(format!("{}.{}", dashboard_subdomain, domain), public_ip.to_string());
+        desired.insert(format!("{}.{}", poke_subdomain, domain), public_ip.to_string());
+    }
+
+    let all_projects: Vec<(String, Option<String>, Option<String>, bool)> =
+        match sqlx::query_as("SELECT id, node_id, custom_domain, is_background FROM projects").fetch_all(db).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "desired DNS records: failed to fetch projects");
+                return HashMap::new();
+            }
+        };
+
+    for (project_id, node_id, custom_domain, is_background) in &all_projects {
+        let ip = match (*is_background, node_id.as_deref()) {
+            (true, _) => {
+                if public_ip.is_empty() {
+                    continue;
+                }
+                public_ip.to_string()
+            }
+            (false, Some(nid)) if nid != "local" => {
+                let row: Option<(Option<String>,)> = match sqlx::query_as("SELECT public_ip FROM nodes WHERE id = ?")
+                    .bind(nid)
+                    .fetch_optional(db)
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(project_id = %project_id, node_id = %nid, error = %e, "sync_dns: failed to fetch node public_ip");
+                        None
+                    }
+                };
+                match row.and_then(|(ip,)| ip) {
+                    Some(ip) if !ip.is_empty() => ip,
+                    _ => {
+                        tracing::warn!(
+                            project_id = %project_id,
+                            node_id = %nid,
+                            "skipping DNS record — remote node has no public_ip"
+                        );
+                        continue;
+                    }
+                }
+            }
+            _ => {
+                if public_ip.is_empty() {
+                    continue;
+                }
+                public_ip.to_string()
+            }
+        };
+
+        // Subdomain A record
+        desired.insert(format!("{}.{}", project_id, domain), ip.clone());
+
+        // Custom domain A record (if any)
+        if !*is_background {
+            if let Some(cd) = custom_domain {
+                desired.insert(cd.clone(), ip.clone());
+
+                // Also add the www variant as a redirect handled by Caddy,
+                // but we still need a DNS record pointing to the same IP
+                let www = match cd.strip_prefix("www.") {
+                    Some(rest) => rest.to_string(),
+                    None => format!("www.{}", cd),
+                };
+                desired.insert(www, ip.clone());
+            }
+
+            // Custom alias/subdomain routes (project_routes): each generated
+            // hostname gets a Caddy route but also needs an A record to resolve.
+            // Mirrors the hosts built in build_master_caddy_config/build_agent_caddy_config.
+            let alias_rows: Vec<(String, Option<String>)> = match sqlx::query_as(
+                "SELECT route_type, subdomain FROM project_routes WHERE project_id = ? AND subdomain IS NOT NULL AND subdomain != ''",
+            )
+            .bind(project_id)
+            .fetch_all(db)
+            .await
+            {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(project_id = %project_id, error = %e, "sync_dns: failed to fetch project_routes");
+                        vec![]
+                    }
+                };
+            for (route_type, sub) in alias_rows {
+                if let Some(alias) = sub {
+                    if route_type == "alias" {
+                        // {alias}.{domain} — short alias
+                        desired.insert(format!("{}.{}", alias, domain), ip.clone());
+                    } else {
+                        // {alias}.{project}.{domain} — namespaced subdomain
+                        desired.insert(format!("{}.{}.{}", alias, project_id, domain), ip.clone());
+                    }
+                }
+            }
+        }
+    }
+    desired
+}
+
 impl CloudflareDnsRouter {
     /// Sync Cloudflare DNS records: upsert for all projects, delete stale ones.
     /// DNS records are kept for all projects regardless of status (running, stopped, etc.)
@@ -15,125 +130,9 @@ impl CloudflareDnsRouter {
         dashboard_subdomain: &str,
         poke_subdomain: &str,
     ) -> anyhow::Result<litebin_common::routing::DnsSyncResult> {
-        // Compute desired DNS records
-        let mut desired: HashMap<String, String> = HashMap::new(); // name → ip
-
-        // Dashboard subdomain A record → master node public IP
-        if !self.config.public_ip.is_empty() {
-            let dashboard_host = format!("{}.{}", dashboard_subdomain, domain);
-            desired.insert(dashboard_host, self.config.public_ip.clone());
-        }
-
-        // Poke subdomain A record → master node public IP
-        if !self.config.public_ip.is_empty() {
-            let poke_host = format!("{}.{}", poke_subdomain, domain);
-            desired.insert(poke_host, self.config.public_ip.clone());
-        }
-
-        // Query ALL projects and add DNS records for each one.
-        // DNS records are only removed when a project is deleted (or Cloudflare is cleared),
-        // never when a project is stopped — so that stopped projects still resolve and
-        // reach the waker via the catch-all route.
-        let all_projects: Vec<(String, Option<String>, Option<String>, bool)> =
-            match sqlx::query_as("SELECT id, node_id, custom_domain, is_background FROM projects")
-                .fetch_all(&self.db)
-                .await
-            {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(error = %e, "sync_dns: failed to fetch projects, aborting DNS sync");
-                    return Err(e.into());
-                }
-            };
-
-        for (project_id, node_id, custom_domain, is_background) in &all_projects {
-            let ip = match (*is_background, node_id.as_deref()) {
-                (true, _) => {
-                    if self.config.public_ip.is_empty() {
-                        continue;
-                    }
-                    self.config.public_ip.clone()
-                }
-                (false, Some(nid)) if nid != "local" => {
-                    let row: Option<(Option<String>,)> = match sqlx::query_as(
-                        "SELECT public_ip FROM nodes WHERE id = ?",
-                    )
-                    .bind(nid)
-                    .fetch_optional(&self.db)
-                    .await
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            tracing::warn!(project_id = %project_id, node_id = %nid, error = %e, "sync_dns: failed to fetch node public_ip");
-                            None
-                        }
-                    };
-                    match row.and_then(|(ip,)| ip) {
-                        Some(ip) if !ip.is_empty() => ip,
-                        _ => {
-                            tracing::warn!(
-                                project_id = %project_id,
-                                node_id = %nid,
-                                "skipping DNS record — remote node has no public_ip"
-                            );
-                            continue;
-                        }
-                    }
-                }
-                _ => {
-                    if self.config.public_ip.is_empty() {
-                        continue;
-                    }
-                    self.config.public_ip.clone()
-                }
-            };
-
-            // Subdomain A record (e.g. mc.e4dx.com)
-            desired.insert(format!("{}.{}", project_id, domain), ip.clone());
-
-            // Custom domain A record (if any)
-            if !*is_background {
-                if let Some(cd) = custom_domain {
-                    desired.insert(cd.clone(), ip.clone());
-
-                    // Also add the www variant as a redirect handled by Caddy,
-                    // but we still need a DNS record pointing to the same IP
-                    let www = match cd.strip_prefix("www.") {
-                        Some(rest) => rest.to_string(),
-                        None => format!("www.{}", cd),
-                    };
-                    desired.insert(www, ip.clone());
-                }
-
-                // Custom alias/subdomain routes (project_routes): each generated
-                // hostname gets a Caddy route but also needs an A record to resolve.
-                // Mirrors the hosts built in build_master_caddy_config/build_agent_caddy_config.
-                let alias_rows: Vec<(String, Option<String>)> = match sqlx::query_as(
-                    "SELECT route_type, subdomain FROM project_routes WHERE project_id = ? AND subdomain IS NOT NULL AND subdomain != ''",
-                )
-                .bind(project_id)
-                .fetch_all(&self.db)
-                .await
-                {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::warn!(project_id = %project_id, error = %e, "sync_dns: failed to fetch project_routes");
-                        vec![]
-                    }
-                };
-                for (route_type, sub) in alias_rows {
-                    if let Some(alias) = sub {
-                        if route_type == "alias" {
-                            // {alias}.{domain} — short alias
-                            desired.insert(format!("{}.{}", alias, domain), ip.clone());
-                        } else {
-                            // {alias}.{project}.{domain} — namespaced subdomain
-                            desired.insert(format!("{}.{}.{}", alias, project_id, domain), ip.clone());
-                        }
-                    }
-                }
-            }
-        }
+        // dns_target setting overrides the PUBLIC_IP env for DNS records.
+        let public_ip = resolved_dns_ip(&self.db, &self.config.public_ip).await;
+        let desired = desired_dns_records(&self.db, &public_ip, domain, dashboard_subdomain, poke_subdomain).await;
 
         // Resolve the zone per name: platform names → configured zone,
         // custom domains → their own zone in the account.
@@ -247,9 +246,20 @@ fn is_platform_name(name: &str, domain: &str) -> bool {
     name == domain || name.ends_with(&format!(".{domain}"))
 }
 
+/// dns_target setting when set, else the env/detected PUBLIC_IP.
+pub(crate) async fn resolved_dns_ip(db: &sqlx::SqlitePool, env_ip: &str) -> String {
+    let target: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+        .bind("dns_target")
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+    target.filter(|v| !v.is_empty()).unwrap_or_else(|| env_ip.to_string())
+}
+
 /// The zone managing `name`: the configured zone when it covers the name,
 /// else the longest-covering account zone, else None.
-fn zone_for_name<'a>(
+pub(crate) fn zone_for_name<'a>(
     name: &str,
     configured_zone_id: &'a str,
     configured_zone_name: &str,
@@ -291,32 +301,86 @@ mod tests {
 
     #[test]
     fn platform_names_map_to_configured_zone() {
-        let zones = vec![zone("z2", "codinglog.com")];
-        assert_eq!(zone_for_name("dash.11b.in", "z1", "11b.in", &zones), Some("z1"));
+        let zones = vec![zone("z2", "example.org")];
+        assert_eq!(zone_for_name("dash.example.com", "z1", "example.com", &zones), Some("z1"));
     }
 
     #[test]
     fn custom_domains_map_to_their_own_zone() {
-        let zones = vec![zone("z1", "11b.in"), zone("z2", "codinglog.com")];
-        assert_eq!(zone_for_name("cms.codinglog.com", "z1", "11b.in", &zones), Some("z2"));
+        let zones = vec![zone("z1", "example.com"), zone("z2", "example.org")];
+        assert_eq!(zone_for_name("app.example.org", "z1", "example.com", &zones), Some("z2"));
     }
 
     #[test]
     fn longest_covering_zone_wins() {
-        let zones = vec![zone("z2", "codinglog.com"), zone("z3", "sub.codinglog.com")];
-        assert_eq!(zone_for_name("app.sub.codinglog.com", "z1", "11b.in", &zones), Some("z3"));
+        let zones = vec![zone("z2", "example.org"), zone("z3", "sub.example.org")];
+        assert_eq!(zone_for_name("a.sub.example.org", "z1", "example.com", &zones), Some("z3"));
     }
 
     #[test]
     fn unknown_zone_is_none() {
-        assert_eq!(zone_for_name("app.unknown.io", "z1", "11b.in", &[]), None);
+        assert_eq!(zone_for_name("app.unknown.example", "z1", "example.com", &[]), None);
+    }
+
+    #[tokio::test]
+    async fn desired_records_cover_platform_custom_and_alias_names() {
+        let db = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("src/db/migrations").run(&db).await.unwrap();
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES ('u1', 'u1', 'x', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO nodes (id, name, host, created_at, updated_at) VALUES ('local', 'local', '127.0.0.1', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO projects (id, user_id, name, status, node_id, deploy_type, is_background,              auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, allow_raw_ports,              allow_docker_access, custom_domain, created_at, updated_at)              VALUES ('app', 'u1', 'App', 'running', 'local', 'compose', 0, 1, 15, 0, 0, 0, 'app.example.org', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO project_routes (id, project_id, route_type, subdomain, upstream, created_at)              VALUES ('r1', 'app', 'alias', 'short', 'http://app', ?)",
+        )
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let desired = desired_dns_records(&db, "1.2.3.4", "example.com", "dash", "poke").await;
+        for name in [
+            "dash.example.com",
+            "poke.example.com",
+            "app.example.com",
+            "app.example.org",
+            "www.app.example.org",
+            "short.example.com",
+        ] {
+            assert_eq!(desired.get(name).map(String::as_str), Some("1.2.3.4"), "{name} missing");
+        }
+
+        let no_ip = desired_dns_records(&db, "", "example.com", "dash", "poke").await;
+        assert!(!no_ip.contains_key("dash.example.com"));
+        assert!(!no_ip.contains_key("app.example.com"));
     }
 
     #[test]
     fn platform_names_are_identified() {
-        assert!(is_platform_name("dash.11b.in", "11b.in"));
-        assert!(is_platform_name("11b.in", "11b.in"));
-        assert!(!is_platform_name("cms.codinglog.com", "11b.in"));
-        assert!(!is_platform_name("not11b.in", "11b.in"));
+        assert!(is_platform_name("dash.example.com", "example.com"));
+        assert!(is_platform_name("example.com", "example.com"));
+        assert!(!is_platform_name("app.example.org", "example.com"));
+        assert!(!is_platform_name("notexample.com", "example.com"));
     }
 }

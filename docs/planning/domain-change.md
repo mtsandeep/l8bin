@@ -1,4 +1,4 @@
-> **Status: design finalized 2026-11-02; Phase 1 (zone-aware sync + counter split + sync-dns fix) SHIPPED 2026-11-02; Phases 2–4 pending**
+> **Status: design finalized 2026-11-02; Phases 1–2 (zone-aware sync, counter split, sync-dns fix, dns_target override, structured preflight + plan preview) SHIPPED 2026-11-02; Phases 3–4 pending**
 
 # Staged Platform Domain Change
 
@@ -6,7 +6,7 @@
 
 Replace the flip-first domain change (`/settings/domain/apply` persists the new domain at step 0) with a staged flow: everything is asked and verified up front, the new domain is staged alongside the old one, and activation happens in one shot only after the new dashboard URL is proven reachable. The old domain stays live for a 24h grace window, so a domain change (or a domain expiry) never leaves the operator without a working dashboard.
 
-Motivating incidents (2026-11-02, s1 box): sslip.io → 11b.in flip killed the old URL before `dash.11b.in` had DNS; the Sync DNS button silently no-ops in `master_proxy` mode; custom-domain records live in other Cloudflare zones so the sync's existing-record list never sees them and every sync re-creates them ("An identical record already exists").
+Motivating incidents (2026-11-02): a sslip.io → real-domain flip killed the old URL before the new `dash.` host had DNS; the Sync DNS button silently no-ops in `master_proxy` mode; custom-domain records live in other Cloudflare zones so the sync's existing-record list never sees them and every sync re-creates them ("An identical record already exists").
 
 ## UX
 
@@ -48,7 +48,7 @@ Motivating incidents (2026-11-02, s1 box): sslip.io → 11b.in flip killed the o
 
 ### Zone-aware DNS sync (fix, prerequisite)
 
-`sync_dns` currently lists records for the configured zone only, so custom-domain records (`cms.codinglog.com` in the codinglog.com zone) are invisible: never compared, re-created every sync, `errors=2` forever.
+`sync_dns` currently lists records for the configured zone only, so custom-domain records (a custom domain in its own zone) are invisible: never compared, re-created every sync, `errors=2` forever.
 
 - Group desired names by zone: platform-domain names → configured zone; custom-domain names → zone resolved via the CF zones API (suffix match, cached)
 - List + compare + upsert per zone; the IP-compare fix then reaches custom domains

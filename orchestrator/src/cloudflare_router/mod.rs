@@ -1,6 +1,6 @@
 pub(crate) mod agent_push;
 mod caddy_config;
-mod dns;
+pub(crate) mod dns;
 
 use std::collections::HashMap;
 use std::sync::Arc;

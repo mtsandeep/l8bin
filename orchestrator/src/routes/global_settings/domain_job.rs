@@ -25,6 +25,31 @@ pub struct DomainPreflightResponse {
     pub domain: String,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
+    pub checks: Vec<PreflightCheck>,
+    /// dns_target / PUBLIC_IP / freshly detected — the IP records must point at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detected_public_ip: Option<String>,
+    pub sslip: bool,
+    /// Cloudflare mode only: per-record outcome if this domain were synced now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<DnsPlanPreview>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PreflightCheck {
+    pub id: String,
+    /// ok | warn | error | skipped
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Serialize, Default, utoipa::ToSchema)]
+pub struct DnsPlanPreview {
+    pub created: Vec<String>,
+    pub repointed: Vec<String>,
+    pub unchanged: Vec<String>,
+    pub skipped: Vec<String>,
 }
 
 #[utoipa::path(
@@ -45,25 +70,64 @@ pub async fn domain_preflight(
     Json(payload): Json<DomainPreflightRequest>,
 ) -> Result<Json<DomainPreflightResponse>, (StatusCode, String)> {
     let domain = normalize_domain(&payload.domain).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    let (errors, warnings) = run_domain_preflight(&state, &domain).await;
-    Ok(Json(DomainPreflightResponse { ok: errors.is_empty(), domain, errors, warnings }))
+    let sslip = crate::platform::PlatformSettings::is_tryout_domain(&domain);
+    let outcome = run_domain_preflight(&state, &domain).await;
+    let ok = outcome.errors.is_empty();
+    Ok(Json(DomainPreflightResponse {
+        ok,
+        domain,
+        errors: outcome.errors,
+        warnings: outcome.warnings,
+        checks: outcome.checks,
+        detected_public_ip: outcome.detected_public_ip,
+        sslip,
+        plan: outcome.plan,
+    }))
 }
 
-async fn run_domain_preflight(state: &AppState, domain: &str) -> (Vec<String>, Vec<String>) {
+struct PreflightOutcome {
+    errors: Vec<String>,
+    warnings: Vec<String>,
+    checks: Vec<PreflightCheck>,
+    detected_public_ip: Option<String>,
+    plan: Option<DnsPlanPreview>,
+}
+
+fn check(id: &str, status: &str, detail: Option<String>) -> PreflightCheck {
+    PreflightCheck { id: id.into(), status: status.into(), detail }
+}
+
+async fn run_domain_preflight(state: &AppState, domain: &str) -> PreflightOutcome {
+    use crate::cloudflare_router::dns::{desired_dns_records, resolved_dns_ip, zone_for_name};
+
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    let mut checks = Vec::new();
 
     let current = state.platform.domain();
     if domain == current {
         errors.push("new domain is the same as the current domain".into());
-        return (errors, warnings);
+        return PreflightOutcome { errors, warnings, checks, detected_public_ip: None, plan: None };
     }
 
-    if crate::platform::PlatformSettings::is_tryout_domain(domain) {
+    let sslip = crate::platform::PlatformSettings::is_tryout_domain(domain);
+    if sslip {
         warnings.push(
             "This looks like tryout DNS (sslip.io / nip.io). Let's Encrypt may fail; not recommended for production."
                 .into(),
         );
+    }
+
+    // The IP records must point at: dns_target setting, else PUBLIC_IP, else detect.
+    let mut public_ip = resolved_dns_ip(&state.db, &state.config.public_ip).await;
+    if public_ip.is_empty() {
+        public_ip = litebin_common::net::detect_public_ip().await.unwrap_or_default();
+    }
+    if public_ip.is_empty() {
+        errors.push("Could not determine this server's public IP. Set the DNS target in Settings or PUBLIC_IP.".into());
+        checks.push(check("public_ip", "error", Some("unknown — set dns target or PUBLIC_IP".into())));
+    } else {
+        checks.push(check("public_ip", "ok", Some(public_ip.clone())));
     }
 
     let routing_mode = get_setting(&state.db, "routing_mode")
@@ -72,11 +136,13 @@ async fn run_domain_preflight(state: &AppState, domain: &str) -> (Vec<String>, V
         .flatten()
         .unwrap_or_else(|| state.config.routing_mode.to_string());
 
+    let mut plan = None;
     if routing_mode == "cloudflare_dns" {
         let cf_token = get_setting(&state.db, "cloudflare_api_token").await.ok().flatten().unwrap_or_default();
         let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await.ok().flatten().unwrap_or_default();
         if cf_token.is_empty() || cf_zone.is_empty() {
             errors.push("Cloudflare API token and Zone ID must be configured for cloudflare_dns mode".into());
+            checks.push(check("cf_credentials", "error", Some("token or zone id missing".into())));
         } else {
             let cf = CloudflareClient::new(&cf_token, &cf_zone);
             match cf.get_zone_name().await {
@@ -85,50 +151,108 @@ async fn run_domain_preflight(state: &AppState, domain: &str) -> (Vec<String>, V
                         errors.push(format!(
                             "Cloudflare zone '{zone_name}' does not cover '{domain}'. Use a subdomain of the zone or change the zone."
                         ));
-                    }
-                    // Prove token can list records
-                    if let Err(e) = cf.list_records_by_suffix(&format!(".{domain}"), "A").await {
+                        checks.push(check(
+                            "cf_zone",
+                            "error",
+                            Some(format!("zone '{zone_name}' does not cover the domain")),
+                        ));
+                    } else if let Err(e) = cf.list_records_by_suffix(&format!(".{domain}"), "A").await {
                         errors.push(format!("Cloudflare token cannot list DNS records: {e}"));
+                        checks.push(check("cf_zone", "error", Some(format!("cannot list records: {e}"))));
+                    } else {
+                        checks.push(check("cf_zone", "ok", Some(zone_name.clone())));
                     }
+
+                    // Plan preview: per-record outcome of a sync, read-only.
+                    let desired = desired_dns_records(
+                        &state.db,
+                        &public_ip,
+                        domain,
+                        &state.platform.dashboard_subdomain(),
+                        &state.platform.poke_subdomain(),
+                    )
+                    .await;
+                    let account_zones = cf.list_zones().await.unwrap_or_default();
+                    let mut preview = DnsPlanPreview::default();
+                    for (name, ip) in &desired {
+                        let Some(zone) = zone_for_name(name, &cf_zone, &zone_name, &account_zones).map(str::to_string)
+                        else {
+                            preview.skipped.push(name.clone());
+                            continue;
+                        };
+                        match cf.list_records_in_zone(&zone, name, "A").await {
+                            Ok(records) => match records.first() {
+                                Some(r) if &r.content == ip => preview.unchanged.push(name.clone()),
+                                Some(_) => preview.repointed.push(name.clone()),
+                                None => preview.created.push(name.clone()),
+                            },
+                            Err(_) => preview.skipped.push(name.clone()),
+                        }
+                    }
+                    checks.push(check(
+                        "dns_plan",
+                        "ok",
+                        Some(format!(
+                            "{} to create, {} to re-point, {} unchanged, {} skipped",
+                            preview.created.len(),
+                            preview.repointed.len(),
+                            preview.unchanged.len(),
+                            preview.skipped.len()
+                        )),
+                    ));
+                    plan = Some(preview);
                 }
                 Err(e) => {
                     errors.push(format!("Cannot read Cloudflare zone (check token and zone ID): {e}"));
+                    checks.push(check("cf_zone", "error", Some(e.to_string())));
                 }
             }
         }
     } else {
-        // Master proxy: DNS resolve mismatch is a warning
+        // Master proxy: the user owns DNS.
         let dashboard = state.platform.dashboard_subdomain();
-        let check_host = format!("{dashboard}.{domain}");
-        let expected = {
-            let dns_target = state.platform.dns_target();
-            if !dns_target.is_empty() { dns_target } else { state.config.public_ip.clone() }
-        };
-        if expected.is_empty() {
-            warnings.push(
-                "Could not determine this server's public IP. Confirm DNS for the new domain points here before continuing."
-                    .into(),
-            );
+        if sslip {
+            checks.push(check("dns_dash", "ok", Some("sslip.io hostnames resolve automatically".into())));
+            checks.push(check("wildcard", "skipped", None));
+        } else if public_ip.is_empty() {
+            checks.push(check("dns_dash", "warn", Some("cannot verify without the public IP".into())));
+            checks.push(check("wildcard", "skipped", None));
         } else {
-            match tokio::net::lookup_host((check_host.as_str(), 80)).await {
+            let check_host = format!("{dashboard}.{domain}");
+            match tokio::net::lookup_host((check_host.clone(), 80)).await {
                 Ok(addrs) => {
                     let resolved: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
-                    if resolved.is_empty() {
+                    if resolved.iter().any(|ip| ip == &public_ip) {
+                        checks.push(check("dns_dash", "ok", Some(check_host)));
+                    } else {
                         warnings.push(format!(
-                            "{check_host} does not resolve yet. Point DNS (wildcard *.{domain} or {check_host}) to {expected} before traffic will work."
-                        ));
-                    } else if !resolved.iter().any(|ip| ip == &expected) {
-                        warnings.push(format!(
-                            "{check_host} resolves to [{}], expected {expected}. Update DNS before or after applying.",
+                            "{check_host} resolves to [{}], expected {public_ip}. Update DNS before or after applying.",
                             resolved.join(", ")
                         ));
+                        checks.push(check("dns_dash", "warn", Some(format!("resolves to {}", resolved.join(", ")))));
                     }
                 }
                 Err(_) => {
                     warnings.push(format!(
-                        "{check_host} does not resolve yet. Point DNS (wildcard *.{domain}) to {expected}."
+                        "{check_host} does not resolve yet. Point DNS (wildcard *.{domain} or {check_host}) to {public_ip} before traffic will work."
                     ));
+                    checks.push(check("dns_dash", "warn", Some("does not resolve yet".into())));
                 }
+            }
+
+            // Wildcard probe: a random label resolving means *.domain exists.
+            let probe = format!("probe-{}.{}", uuid::Uuid::new_v4().simple(), domain);
+            let wildcard_ok = match tokio::net::lookup_host((probe.as_str(), 80)).await {
+                Ok(addrs) => addrs.map(|a| a.ip().to_string()).any(|ip| ip == public_ip),
+                Err(_) => false,
+            };
+            if wildcard_ok {
+                checks.push(check("wildcard", "ok", Some(format!("*.{domain} covers project subdomains"))));
+            } else {
+                warnings.push(format!(
+                    "No wildcard *.{domain} — every project subdomain needs its own record pointing to {public_ip}."
+                ));
+                checks.push(check("wildcard", "warn", Some("no wildcard — add records per subdomain".into())));
             }
         }
         warnings.push(
@@ -137,7 +261,13 @@ async fn run_domain_preflight(state: &AppState, domain: &str) -> (Vec<String>, V
         );
     }
 
-    (errors, warnings)
+    PreflightOutcome {
+        errors,
+        warnings,
+        checks,
+        detected_public_ip: (!public_ip.is_empty()).then_some(public_ip),
+        plan,
+    }
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -171,7 +301,8 @@ pub async fn domain_apply(
     Json(payload): Json<DomainApplyRequest>,
 ) -> Result<Json<DomainApplyResponse>, (StatusCode, String)> {
     let domain = normalize_domain(&payload.domain).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    let (errors, warnings) = run_domain_preflight(&state, &domain).await;
+    let preflight = run_domain_preflight(&state, &domain).await;
+    let (errors, warnings) = (preflight.errors, preflight.warnings);
     if !errors.is_empty() {
         return Err((StatusCode::BAD_REQUEST, errors.join("; ")));
     }
