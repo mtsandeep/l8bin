@@ -1,4 +1,4 @@
-> **Status: design finalized 2026-11-02; Phases 1–2 (zone-aware sync, counter split, sync-dns fix, dns_target override, structured preflight + plan preview) SHIPPED 2026-11-02; Phases 3–4 pending**
+> **Status: design finalized 2026-11-02; Phases 1–3 SHIPPED 2026-11-02 (zone-aware sync, structured preflight, two-phase job + 24h previous-domain grace + retirement); Phase 4 (modal wizard + CLI) pending**
 
 # Staged Platform Domain Change
 

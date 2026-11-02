@@ -303,6 +303,7 @@ pub async fn sync_caddy(state: &AppState) {
         .sync_routes(
             &routes,
             &state.platform.domain(),
+            crate::platform::previous_domain(&state.db).await.as_deref(),
             &upstream,
             &state.platform.dashboard_subdomain(),
             &state.platform.poke_subdomain(),

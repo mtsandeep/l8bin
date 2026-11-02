@@ -33,6 +33,22 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
         tracing::warn!(error = %e, "janitor: orphan reaper failed");
     }
 
+    // Retire an expired previous domain (24h grace after a domain change).
+    let retire_at: Option<i64> =
+        match sqlx::query_scalar("SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'previous_domain_retire_at'")
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(v) => v.flatten(),
+            Err(e) => {
+                tracing::warn!(error = %e, "janitor: failed to read previous_domain_retire_at");
+                None
+            }
+        };
+    if retire_at.is_some_and(|at| at <= chrono::Utc::now().timestamp()) {
+        let _ = crate::routes::global_settings::retire_previous_domain(state).await;
+    }
+
     let now = chrono::Utc::now().timestamp();
 
     let candidates = sqlx::query_as::<_, crate::db::models::Project>(
@@ -106,6 +122,7 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
         .sync_routes(
             &routes,
             &state.platform.domain(),
+            crate::platform::previous_domain(&state.db).await.as_deref(),
             &orchestrator_upstream,
             &state.platform.dashboard_subdomain(),
             &state.platform.poke_subdomain(),

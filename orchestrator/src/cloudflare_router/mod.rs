@@ -55,6 +55,7 @@ impl RoutingProvider for CloudflareDnsRouter {
         &self,
         projects: &[ProjectRoute],
         domain: &str,
+        previous_domain: Option<&str>,
         orchestrator_upstream: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
@@ -62,7 +63,7 @@ impl RoutingProvider for CloudflareDnsRouter {
     ) -> anyhow::Result<()> {
         tracing::info!(route_count = projects.len(), "syncing routes (cloudflare_dns mode)");
 
-        // Group projects by node
+        // Group projects by node; previous-domain duplicates ride the same list.
         let mut by_node: HashMap<String, Vec<&ProjectRoute>> = HashMap::new();
         for p in projects {
             let node_key = p.node_id.clone().unwrap_or_else(|| "local".to_string());
@@ -74,6 +75,7 @@ impl RoutingProvider for CloudflareDnsRouter {
         let master_config = Self::build_master_caddy_config(
             &local_projects,
             domain,
+            previous_domain,
             orchestrator_upstream,
             dashboard_subdomain,
             poke_subdomain,
@@ -101,6 +103,7 @@ impl RoutingProvider for CloudflareDnsRouter {
             let agent_config = Self::build_agent_caddy_config(
                 &agent_projects,
                 domain,
+                previous_domain,
                 &self.config.public_ip, // orchestrator reachable for /caddy/ask
             );
 

@@ -9,6 +9,7 @@ impl CloudflareDnsRouter {
     pub(super) fn build_master_caddy_config(
         local_projects: &[&ProjectRoute],
         domain: &str,
+        previous_domain: Option<&str>,
         orchestrator_upstream: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
@@ -182,9 +183,39 @@ impl CloudflareDnsRouter {
             }]
         }));
 
+        // Previous domain during the grace window: same platform routes.
+        let mut error_hosts = vec![format!("*.{}", domain)];
+        if let Some(prev) = previous_domain {
+            if let Some(redirect) = http_to_https_redirect(prev) {
+                routes.push(redirect);
+            }
+            routes.push(json!({
+                "match": [{ "host": [format!("{}.{}", dashboard_subdomain, prev)] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": orchestrator_upstream }]
+                }]
+            }));
+            routes.push(json!({
+                "match": [{ "host": [format!("{}.{}", poke_subdomain, prev)], "path": ["/internal/*"] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": orchestrator_upstream }]
+                }]
+            }));
+            routes.push(json!({
+                "match": [{ "host": [format!("*.{}", prev)] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": orchestrator_upstream }]
+                }]
+            }));
+            error_hosts.push(format!("*.{}", prev));
+        }
+
         let error_routes = json!({
             "routes": [{
-                "match": [{ "host": [format!("*.{}", domain)] }],
+                "match": [{ "host": error_hosts }],
                 "handle": [{
                     "handler": "reverse_proxy",
                     "upstreams": [{ "dial": orchestrator_upstream }]
@@ -228,6 +259,7 @@ impl CloudflareDnsRouter {
     pub(super) fn build_agent_caddy_config(
         agent_projects: &[&ProjectRoute],
         domain: &str,
+        previous_domain: Option<&str>,
         orchestrator_url: &str,
     ) -> Value {
         let mut routes: Vec<Value> = Vec::new();
@@ -373,9 +405,24 @@ impl CloudflareDnsRouter {
             }]
         }));
 
+        let mut error_hosts = vec![format!("*.{}", domain)];
+        if let Some(prev) = previous_domain {
+            if let Some(redirect) = http_to_https_redirect(prev) {
+                routes.push(redirect);
+            }
+            routes.push(json!({
+                "match": [{ "host": [format!("*.{}", prev)] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": "litebin-agent:8444" }]
+                }]
+            }));
+            error_hosts.push(format!("*.{}", prev));
+        }
+
         let error_routes = json!({
             "routes": [{
-                "match": [{ "host": [format!("*.{}", domain)] }],
+                "match": [{ "host": error_hosts }],
                 "handle": [{
                     "handler": "reverse_proxy",
                     "upstreams": [{ "dial": "litebin-agent:8444" }]
@@ -432,6 +479,7 @@ mod tests {
         let config = CloudflareDnsRouter::build_master_caddy_config(
             &[],
             "example.com",
+            None,
             "litebin-orchestrator:5080",
             "l8bin",
             "poke",

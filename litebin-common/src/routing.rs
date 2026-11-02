@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::caddy::CaddyClient;
+use crate::caddy::{CaddyClient, http_to_https_redirect};
 
 /// Longest-match path-route resolver: route paths may be exact ("/api") or
 /// glob ("/api/*"); both match the path itself and everything under it.
@@ -99,10 +99,12 @@ pub struct DnsSyncResult {
 
 #[async_trait]
 pub trait RoutingProvider: Send + Sync {
+    #[allow(clippy::too_many_arguments)] // route-push shape; a struct would obscure it
     async fn sync_routes(
         &self,
         projects: &[ProjectRoute],
         domain: &str,
+        previous_domain: Option<&str>,
         orchestrator_upstream: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
@@ -142,6 +144,7 @@ impl MasterProxyRouter {
         &self,
         projects: &[ProjectRoute],
         domain: &str,
+        previous_domain: Option<&str>,
         orchestrator_upstream: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
@@ -363,10 +366,40 @@ impl MasterProxyRouter {
             }]
         }));
 
+        // Previous domain during the grace window: same platform routes.
+        let mut error_hosts = vec![format!("*.{}", domain)];
+        if let Some(prev) = previous_domain {
+            if let Some(redirect) = http_to_https_redirect(prev) {
+                routes.push(redirect);
+            }
+            routes.push(json!({
+                "match": [{ "host": [format!("{}.{}", dashboard_subdomain, prev)] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": orchestrator_upstream }]
+                }]
+            }));
+            routes.push(json!({
+                "match": [{ "host": [format!("{}.{}", poke_subdomain, prev)], "path": ["/internal/*"] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": orchestrator_upstream }]
+                }]
+            }));
+            routes.push(json!({
+                "match": [{ "host": [format!("*.{}", prev)] }],
+                "handle": [{
+                    "handler": "reverse_proxy",
+                    "upstreams": [{ "dial": orchestrator_upstream }]
+                }]
+            }));
+            error_hosts.push(format!("*.{}", prev));
+        }
+
         // Error handler for app subdomains
         let error_routes = json!({
             "routes": [{
-                "match": [{ "host": [format!("*.{}", domain)] }],
+                "match": [{ "host": error_hosts }],
                 "handle": [{
                     "handler": "reverse_proxy",
                     "upstreams": [{ "dial": orchestrator_upstream }]
@@ -422,12 +455,20 @@ impl RoutingProvider for MasterProxyRouter {
         &self,
         projects: &[ProjectRoute],
         domain: &str,
+        previous_domain: Option<&str>,
         orchestrator_upstream: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
         _sync_dns: bool,
     ) -> anyhow::Result<()> {
-        let config = self.build_config(projects, domain, orchestrator_upstream, dashboard_subdomain, poke_subdomain);
+        let config = self.build_config(
+            projects,
+            domain,
+            previous_domain,
+            orchestrator_upstream,
+            dashboard_subdomain,
+            poke_subdomain,
+        );
 
         tracing::info!(route_count = projects.len(), "syncing caddy config (master proxy)");
         tracing::debug!(config = %serde_json::to_string_pretty(&config).unwrap_or_default(), "caddy config payload");
@@ -455,7 +496,7 @@ mod tests {
     #[test]
     fn dashboard_host_is_a_single_proxy_to_the_orchestrator() {
         let router = MasterProxyRouter::new(CaddyClient::new("http://127.0.0.1:1"), String::new());
-        let config = router.build_config(&[], "example.com", "litebin-orchestrator:5080", "l8bin", "poke");
+        let config = router.build_config(&[], "example.com", None, "litebin-orchestrator:5080", "l8bin", "poke");
         let routes = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array().unwrap();
 
         let dashboard = routes
@@ -486,7 +527,7 @@ mod tests {
             container_upstream: None,
             custom_routes: vec![],
         };
-        let config = router.build_config(&[project], "example.com", "litebin-orchestrator:5080", "l8bin", "poke");
+        let config = router.build_config(&[project], "example.com", None, "litebin-orchestrator:5080", "l8bin", "poke");
         let routes = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array().unwrap();
 
         let redirect = routes

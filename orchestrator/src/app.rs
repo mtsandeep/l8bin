@@ -131,6 +131,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/settings/domain/apply", post(crate::routes::global_settings::domain_apply))
         .route("/settings/domain/jobs/{id}", get(crate::routes::global_settings::domain_job_status))
         .route("/settings/domain/jobs/{id}/retry", post(crate::routes::global_settings::domain_job_retry))
+        .route("/settings/domain/retire-previous", post(crate::routes::global_settings::retire_previous))
         .route("/backup/status", get(crate::routes::backup::backup_status))
         .route("/backup/enable", post(crate::routes::backup::backup_enable))
         .route("/backup/disable", post(crate::routes::backup::backup_disable))

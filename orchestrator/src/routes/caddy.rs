@@ -23,133 +23,104 @@ pub struct AskQuery {
 )]
 /// Caddy On-Demand TLS validation endpoint.
 /// Returns 200 if the domain belongs to a known project, 404 otherwise.
-/// Checks: 1) subdomain match (project_id), 2) custom_domain match, 3) www variant of custom_domain.
+/// Checks: 1) custom_domain match, 2) subdomain/alias/dashboard/poke match
+/// under the current, staged, or previous platform domain.
 pub async fn ask(State(state): State<AppState>, Query(query): Query<AskQuery>) -> StatusCode {
-    let domain = &query.domain;
+    let asked = &query.domain;
 
-    // 1. Subdomain match: strip ".{domain}" suffix to get project_id
-    let subdomain = domain.strip_suffix(&format!(".{}", state.platform.domain())).unwrap_or(domain);
-
-    let subdomain_exists = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?")
-        .bind(subdomain)
-        .fetch_one(&state.db)
-        .await
-    {
-        Ok(count) => count,
-        Err(e) => {
-            tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking subdomain");
-            return StatusCode::INTERNAL_SERVER_ERROR;
-        }
-    };
-
-    if subdomain_exists > 0 {
-        tracing::debug!(domain = %domain, subdomain = %subdomain, "caddy ask: approved (subdomain)");
+    if custom_domain_matches(&state, asked).await {
         return StatusCode::OK;
     }
 
-    // 2. Exact custom_domain match
-    let custom_exists = match sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?",
-    )
-    .bind(domain)
-    .fetch_one(&state.db)
-    .await
-    {
-        Ok(count) => count,
-        Err(e) => {
-            tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking custom domain");
-            return StatusCode::INTERNAL_SERVER_ERROR;
-        }
-    };
-
-    if custom_exists > 0 {
-        tracing::debug!(domain = %domain, "caddy ask: approved (custom domain)");
-        return StatusCode::OK;
+    let mut candidates = vec![state.platform.domain()];
+    if let Some(prev) = crate::platform::previous_domain(&state.db).await {
+        candidates.push(prev);
     }
-
-    // 3. www variant: if queried domain starts with "www.", check bare domain too
-    if let Some(bare) = domain.strip_prefix("www.") {
-        let www_exists = match sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?",
-        )
-        .bind(bare)
-        .fetch_one(&state.db)
-        .await
-        {
-            Ok(count) => count,
+    if let Some(staged) = crate::platform::staged_domain(&state.db).await {
+        candidates.push(staged);
+    }
+    for platform_domain in &candidates {
+        match approved_under_domain(&state, asked, platform_domain).await {
+            Ok(true) => return StatusCode::OK,
+            Ok(false) => {}
             Err(e) => {
-                tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking www variant");
+                tracing::error!(domain = %asked, error = %e, "caddy ask: DB error");
                 return StatusCode::INTERNAL_SERVER_ERROR;
             }
-        };
-
-        if www_exists > 0 {
-            tracing::debug!(domain = %domain, bare = %bare, "caddy ask: approved (www variant)");
-            return StatusCode::OK;
         }
     }
 
-    // 5. Alias routes: check if domain matches "{alias}.{project_id}.{domain}" or "{alias}.{domain}"
-    let suffix = format!(".{}", state.platform.domain());
-    if let Some(rest) = domain.strip_suffix(&suffix) {
-        // Case A: "{alias}.{project_id}" — project-scoped alias (e.g., api2.test.localhost)
-        if let Some((alias, project_id)) = rest.rsplit_once('.') {
-            let route_exists = match sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM project_routes r JOIN projects p ON p.id = r.project_id WHERE p.is_background = 0 AND r.project_id = ? AND r.route_type = 'alias' AND r.subdomain = ?"
+    tracing::debug!(domain = %asked, "caddy ask: denied");
+    StatusCode::NOT_FOUND
+}
+
+/// Custom domains and their www variants — platform-domain independent.
+async fn custom_domain_matches(state: &AppState, asked: &str) -> bool {
+    let direct: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?")
+        .bind(asked)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+    if direct > 0 {
+        return true;
+    }
+    if let Some(bare) = asked.strip_prefix("www.") {
+        let www: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?")
+                .bind(bare)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(0);
+        if www > 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Subdomain, alias, dashboard, and poke checks under one platform domain.
+async fn approved_under_domain(state: &AppState, asked: &str, platform_domain: &str) -> anyhow::Result<bool> {
+    let db = &state.db;
+
+    // Project subdomain: {project_id}.{domain}
+    if let Some(project_id) = asked.strip_suffix(&format!(".{platform_domain}")) {
+        let exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?").bind(project_id).fetch_one(db).await?;
+        if exists > 0 {
+            return Ok(true);
+        }
+
+        // Aliases: {alias}.{project_id}.{domain} and {alias}.{domain}
+        if let Some((alias, project_id)) = project_id.rsplit_once('.') {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM project_routes r JOIN projects p ON p.id = r.project_id \
+                 WHERE p.is_background = 0 AND r.project_id = ? AND r.route_type = 'alias' AND r.subdomain = ?",
             )
             .bind(project_id)
             .bind(alias)
-            .fetch_one(&state.db)
-            .await
-            {
-                Ok(count) => count,
-                Err(e) => {
-                    tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking project-scoped alias");
-                    return StatusCode::INTERNAL_SERVER_ERROR;
-                }
-            };
-
-            if route_exists > 0 {
-                tracing::debug!(domain = %domain, project = %project_id, alias = %alias, "caddy ask: approved (project-scoped alias)");
-                return StatusCode::OK;
+            .fetch_one(db)
+            .await?;
+            if exists > 0 {
+                return Ok(true);
             }
         }
-
-        // Case B: "{alias}" — domain-level alias (e.g., api2.localhost)
-        let route_exists = match sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM project_routes r JOIN projects p ON p.id = r.project_id WHERE p.is_background = 0 AND r.route_type = 'alias' AND r.subdomain = ?"
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM project_routes r JOIN projects p ON p.id = r.project_id \
+             WHERE p.is_background = 0 AND r.route_type = 'alias' AND r.subdomain = ?",
         )
-        .bind(rest)
-        .fetch_one(&state.db)
-        .await
-        {
-            Ok(count) => count,
-            Err(e) => {
-                tracing::error!(domain = %domain, error = %e, "caddy ask: DB error checking domain-level alias");
-                return StatusCode::INTERNAL_SERVER_ERROR;
-            }
-        };
-
-        if route_exists > 0 {
-            tracing::debug!(domain = %domain, alias = %rest, "caddy ask: approved (domain-level alias)");
-            return StatusCode::OK;
+        .bind(project_id)
+        .fetch_one(db)
+        .await?;
+        if exists > 0 {
+            return Ok(true);
         }
     }
 
-    // 6. Dashboard subdomain approval
-    let dashboard_host = format!("{}.{}", state.platform.dashboard_subdomain(), state.platform.domain());
-    if domain == &dashboard_host {
-        tracing::debug!(domain = %domain, "caddy ask: approved (dashboard subdomain)");
-        return StatusCode::OK;
+    if asked == format!("{}.{}", state.platform.dashboard_subdomain(), platform_domain) {
+        return Ok(true);
     }
-
-    // 7. Poke subdomain approval
-    let poke_host = format!("{}.{}", state.platform.poke_subdomain(), state.platform.domain());
-    if domain == &poke_host {
-        tracing::debug!(domain = %domain, "caddy ask: approved (poke subdomain)");
-        return StatusCode::OK;
+    if asked == format!("{}.{}", state.platform.poke_subdomain(), platform_domain) {
+        return Ok(true);
     }
-
-    tracing::debug!(domain = %domain, "caddy ask: denied");
-    StatusCode::NOT_FOUND
+    Ok(false)
 }

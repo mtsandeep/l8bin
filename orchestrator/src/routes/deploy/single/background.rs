@@ -234,6 +234,7 @@ pub(super) async fn run_deploy_task(
         .sync_routes(
             &route_entries,
             &state_clone.platform.domain(),
+            crate::platform::previous_domain(&state_clone.db).await.as_deref(),
             &orchestrator_upstream,
             &state_clone.platform.dashboard_subdomain(),
             &state_clone.platform.poke_subdomain(),

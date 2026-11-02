@@ -1,3 +1,237 @@
+const PREVIOUS_DOMAIN_GRACE_SECS: i64 = 24 * 60 * 60;
+
+async fn run_domain_job(state: &AppState, job_id: &str, start_from: usize) {
+    let (new_domain, old_domain) = match state.domain_jobs.get(job_id) {
+        Some(j) => (j.domain.clone(), j.old_domain.clone()),
+        None => return,
+    };
+
+    if let Some(mut job) = state.domain_jobs.get_mut(job_id) {
+        job.status = DomainJobStatus::Running;
+    }
+
+    // Phase 1 — prepare: the new domain is staged alongside the old one.
+    // Nothing persists; a failure here leaves the current domain untouched.
+
+    // Step 0: Stage new-domain routes in Caddy
+    if start_from == 0 {
+        update_job_step(state, job_id, 0, DomainStepStatus::Running, None);
+        let staged = async {
+            super::upsert_setting(&state.db, "staged_domain", &new_domain).await.map_err(|e| e.1)?;
+            stage_domain_routes(state, &new_domain).await
+        };
+        if let Err(e) = staged.await {
+            let _ = super::delete_setting(&state.db, "staged_domain").await;
+            update_job_step(state, job_id, 0, DomainStepStatus::Failed, Some(e));
+            return;
+        }
+        update_job_step(state, job_id, 0, DomainStepStatus::Done, None);
+    }
+
+    // Step 1: Verify the new dashboard answers (on-demand TLS issues the cert)
+    if start_from <= 1 {
+        update_job_step(state, job_id, 1, DomainStepStatus::Running, None);
+        let url = format!("https://{}.{}", state.platform.dashboard_subdomain(), new_domain);
+        if let Err(e) = wait_for_dashboard(&url).await {
+            let _ = super::delete_setting(&state.db, "staged_domain").await;
+            update_job_step(state, job_id, 1, DomainStepStatus::Failed, Some(e));
+            return;
+        }
+        update_job_step(state, job_id, 1, DomainStepStatus::Done, None);
+    }
+
+    // Phase 2 — activate: one shot, only after the new URL was verified.
+
+    // Step 2: Persist domain + grace bookkeeping
+    if start_from <= 2 {
+        update_job_step(state, job_id, 2, DomainStepStatus::Running, None);
+        let activate = async {
+            // An older previous domain is retired immediately; only the latest is retained.
+            if let Some(older) = crate::platform::previous_domain(&state.db).await {
+                delete_previous_domain_records(state, &older).await;
+            }
+            let retire_at = (chrono::Utc::now().timestamp() + PREVIOUS_DOMAIN_GRACE_SECS).to_string();
+            super::upsert_setting(&state.db, "previous_domain", &old_domain).await.map_err(|e| anyhow::anyhow!(e.1))?;
+            super::upsert_setting(&state.db, "previous_domain_retire_at", &retire_at)
+                .await
+                .map_err(|e| anyhow::anyhow!(e.1))?;
+            super::delete_setting(&state.db, "staged_domain").await.map_err(|e| anyhow::anyhow!(e.1))?;
+            super::upsert_setting(&state.db, "domain", &new_domain).await.map_err(|e| anyhow::anyhow!(e.1))?;
+            anyhow::Ok(())
+        };
+        if let Err(e) = activate.await {
+            update_job_step(state, job_id, 2, DomainStepStatus::Failed, Some(e.to_string()));
+            return;
+        }
+        state.platform.set_domain(new_domain.clone());
+        update_job_step(state, job_id, 2, DomainStepStatus::Done, None);
+    }
+
+    // Step 3: Rebuild master routes
+    if start_from <= 3 {
+        update_job_step(state, job_id, 3, DomainStepStatus::Running, None);
+        if let Err(e) = sync_platform_routes(state, false).await {
+            update_job_step(state, job_id, 3, DomainStepStatus::Failed, Some(e));
+            return;
+        }
+        update_job_step(state, job_id, 3, DomainStepStatus::Done, None);
+    }
+
+    // Step 4: Re-register agents
+    if start_from <= 4 {
+        update_job_step(state, job_id, 4, DomainStepStatus::Running, None);
+        let (ok, errs) = crate::routes::nodes::reregister_online_agents(state).await;
+        if ok == 0 && !errs.is_empty() {
+            // Only fail if we had agents and all failed — soft if no agents
+            let online =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nodes WHERE status = 'online' AND id != 'local'")
+                    .fetch_one(&state.db)
+                    .await
+                    .unwrap_or(0);
+            if online > 0 {
+                update_job_step(state, job_id, 4, DomainStepStatus::Failed, Some(errs.join("; ")));
+                return;
+            }
+        }
+        for e in &errs {
+            tracing::warn!(error = %e, "domain job: agent re-register warning");
+        }
+        update_job_step(state, job_id, 4, DomainStepStatus::Done, None);
+    }
+
+    // Step 5: Push agent Caddy (CF mode pushes agent configs)
+    if start_from <= 5 {
+        update_job_step(state, job_id, 5, DomainStepStatus::Running, None);
+        if let Err(e) = sync_platform_routes(state, false).await {
+            update_job_step(state, job_id, 5, DomainStepStatus::Failed, Some(e));
+            return;
+        }
+        update_job_step(state, job_id, 5, DomainStepStatus::Done, None);
+    }
+
+    // Step 6: Cloudflare DNS sync for the new domain (old-domain records
+    // are removed at retirement, not here)
+    if start_from <= 6 {
+        update_job_step(state, job_id, 6, DomainStepStatus::Running, None);
+        let routing_mode = get_setting(&state.db, "routing_mode")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| state.config.routing_mode.to_string());
+        if routing_mode == "cloudflare_dns" {
+            if let Err(e) = sync_platform_routes(state, true).await {
+                update_job_step(state, job_id, 6, DomainStepStatus::Failed, Some(e));
+                return;
+            }
+            update_job_step(state, job_id, 6, DomainStepStatus::Done, None);
+        } else {
+            update_job_step(state, job_id, 6, DomainStepStatus::Skipped, None);
+        }
+    }
+
+    if let Some(mut job) = state.domain_jobs.get_mut(job_id) {
+        job.status = DomainJobStatus::Completed;
+        job.error = None;
+        // Refresh dashboard URL from current subdomain
+        job.dashboard_url = format!("https://{}.{}", state.platform.dashboard_subdomain(), state.platform.domain());
+    }
+    tracing::info!(job_id, domain = %new_domain, "domain change job completed");
+}
+
+/// Serve the staged domain alongside the current one (prepare phase).
+async fn stage_domain_routes(state: &AppState, staged: &str) -> Result<(), String> {
+    let snap = state.platform.snapshot();
+    let upstream = format!("litebin-orchestrator:{}", state.config.port);
+    let mut routes = crate::routing_helpers::resolve_all_routes(&state.db, &snap.domain, &upstream)
+        .await
+        .map_err(|e| e.to_string())?;
+    if staged != snap.domain {
+        match crate::routing_helpers::resolve_routes_for_domain(&state.db, staged, &upstream).await {
+            Ok(mut staged_routes) => routes.append(&mut staged_routes),
+            Err(e) => tracing::warn!(error = %e, staged = %staged, "failed to resolve staged-domain routes"),
+        }
+    }
+    state
+        .router
+        .read()
+        .await
+        .sync_routes(
+            &routes,
+            &snap.domain,
+            Some(staged),
+            &upstream,
+            &snap.dashboard_subdomain,
+            &snap.poke_subdomain,
+            false,
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Poll the new dashboard URL until it answers; the first probe triggers
+/// on-demand TLS issuance.
+async fn wait_for_dashboard(url: &str) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    for _ in 0..36 {
+        if client.get(url).send().await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+    Err(format!("{url} did not answer within 3 minutes — check that DNS for the new domain points at this server"))
+}
+
+#[utoipa::path(
+    post,
+    path = "/settings/domain/retire-previous",
+    description = "Retire the retained previous domain now: drop its routes and its managed DNS records.",
+    responses(
+        (status = 200),
+        (status = 500),
+    ),
+    tag = "global-settings",
+    security(("session_auth" = []))
+)]
+pub async fn retire_previous(State(state): State<AppState>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let retired = retire_previous_domain(&state).await;
+    Ok(Json(serde_json::json!({ "retired": retired })))
+}
+
+pub(crate) async fn retire_previous_domain(state: &AppState) -> bool {
+    let Some(prev) = crate::platform::previous_domain(&state.db).await else { return false };
+    delete_previous_domain_records(state, &prev).await;
+    let _ = super::delete_setting(&state.db, "previous_domain").await;
+    let _ = super::delete_setting(&state.db, "previous_domain_retire_at").await;
+    let _ = state.route_sync_tx.send(());
+    tracing::info!(previous_domain = %prev, "previous domain retired");
+    true
+}
+
+/// Delete a domain's managed CF records (creds permitting).
+async fn delete_previous_domain_records(state: &AppState, domain: &str) {
+    let token = get_setting(&state.db, "cloudflare_api_token").await.ok().flatten().unwrap_or_default();
+    let zone = get_setting(&state.db, "cloudflare_zone_id").await.ok().flatten().unwrap_or_default();
+    let Ok(ledger) = crate::dns_ledger::rows(&state.db).await else { return };
+    if token.is_empty() || zone.is_empty() {
+        tracing::warn!(domain, "previous-domain records left in Cloudflare — no credentials configured");
+    } else {
+        let cf = CloudflareClient::new(&token, &zone);
+        for row in crate::dns_ledger::under_domain(&ledger, domain) {
+            let z = if row.zone_id.is_empty() { zone.as_str() } else { row.zone_id.as_str() };
+            if let Err(e) = cf.delete_record_in_zone(z, &row.record_id).await {
+                tracing::warn!(record = %row.name, error = %e, "failed to delete previous-domain DNS record");
+            }
+        }
+    }
+    for row in crate::dns_ledger::under_domain(&ledger, domain) {
+        let _ = crate::dns_ledger::remove(&state.db, &row.name).await;
+    }
+}
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -10,7 +244,7 @@ use crate::AppState;
 use crate::platform::{DomainJob, DomainJobStatus, DomainStepStatus, normalize_domain};
 use litebin_common::cloudflare::CloudflareClient;
 
-use super::{get_setting, sync_platform_routes, upsert_setting};
+use super::{get_setting, sync_platform_routes};
 
 // --- Domain change preflight / apply / job status ---
 
@@ -256,7 +490,7 @@ async fn run_domain_preflight(state: &AppState, domain: &str) -> PreflightOutcom
             }
         }
         warnings.push(
-            "After changing domain, old URLs stop working. You must reopen the dashboard on the new host and sign in again."
+            "The old domain keeps working for 24h after the change; reopen the dashboard on the new host and sign in again."
                 .into(),
         );
     }
@@ -275,6 +509,10 @@ pub struct DomainApplyRequest {
     pub domain: String,
     #[serde(default)]
     pub acknowledge_dns: bool,
+    /// Routing settings persisted before preflight so validation uses them.
+    pub routing_mode: Option<String>,
+    pub cloudflare_api_token: Option<String>,
+    pub cloudflare_zone_id: Option<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -301,6 +539,13 @@ pub async fn domain_apply(
     Json(payload): Json<DomainApplyRequest>,
 ) -> Result<Json<DomainApplyResponse>, (StatusCode, String)> {
     let domain = normalize_domain(&payload.domain).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    super::apply_routing_settings(
+        &state,
+        payload.routing_mode.as_deref(),
+        payload.cloudflare_api_token.as_deref(),
+        payload.cloudflare_zone_id.as_deref(),
+    )
+    .await?;
     let preflight = run_domain_preflight(&state, &domain).await;
     let (errors, warnings) = (preflight.errors, preflight.warnings);
     if !errors.is_empty() {
@@ -406,124 +651,4 @@ fn update_job_step(state: &AppState, job_id: &str, step_idx: usize, status: Doma
             job.status = DomainJobStatus::Running;
         }
     }
-}
-
-async fn run_domain_job(state: &AppState, job_id: &str, start_from: usize) {
-    let (new_domain, old_domain) = match state.domain_jobs.get(job_id) {
-        Some(j) => (j.domain.clone(), j.old_domain.clone()),
-        None => return,
-    };
-
-    if let Some(mut job) = state.domain_jobs.get_mut(job_id) {
-        job.status = DomainJobStatus::Running;
-    }
-
-    // Step 0: Persist
-    if start_from == 0 {
-        update_job_step(state, job_id, 0, DomainStepStatus::Running, None);
-        if let Err(e) = upsert_setting(&state.db, "domain", &new_domain).await {
-            update_job_step(state, job_id, 0, DomainStepStatus::Failed, Some(e.1));
-            return;
-        }
-        state.platform.set_domain(new_domain.clone());
-        update_job_step(state, job_id, 0, DomainStepStatus::Done, None);
-    }
-
-    // Step 1: Rebuild master routes (no DNS yet)
-    if start_from <= 1 {
-        update_job_step(state, job_id, 1, DomainStepStatus::Running, None);
-        if let Err(e) = sync_platform_routes(state, false).await {
-            update_job_step(state, job_id, 1, DomainStepStatus::Failed, Some(e));
-            return;
-        }
-        update_job_step(state, job_id, 1, DomainStepStatus::Done, None);
-    }
-
-    // Step 2: Re-register agents
-    if start_from <= 2 {
-        update_job_step(state, job_id, 2, DomainStepStatus::Running, None);
-        let (ok, errs) = crate::routes::nodes::reregister_online_agents(state).await;
-        if ok == 0 && !errs.is_empty() {
-            // Only fail if we had agents and all failed — soft if no agents
-            let online =
-                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nodes WHERE status = 'online' AND id != 'local'")
-                    .fetch_one(&state.db)
-                    .await
-                    .unwrap_or(0);
-            if online > 0 {
-                update_job_step(state, job_id, 2, DomainStepStatus::Failed, Some(errs.join("; ")));
-                return;
-            }
-        }
-        for e in &errs {
-            tracing::warn!(error = %e, "domain job: agent re-register warning");
-        }
-        update_job_step(state, job_id, 2, DomainStepStatus::Done, None);
-    }
-
-    // Step 3: Push agent Caddy (second sync_routes; CF mode pushes agent configs)
-    if start_from <= 3 {
-        update_job_step(state, job_id, 3, DomainStepStatus::Running, None);
-        if let Err(e) = sync_platform_routes(state, false).await {
-            update_job_step(state, job_id, 3, DomainStepStatus::Failed, Some(e));
-            return;
-        }
-        update_job_step(state, job_id, 3, DomainStepStatus::Done, None);
-    }
-
-    // Step 4: Cloudflare DNS cleanup (old) + sync (new)
-    if start_from <= 4 {
-        update_job_step(state, job_id, 4, DomainStepStatus::Running, None);
-        let routing_mode = get_setting(&state.db, "routing_mode")
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| state.config.routing_mode.to_string());
-        if routing_mode == "cloudflare_dns" {
-            let cf_token = get_setting(&state.db, "cloudflare_api_token").await.ok().flatten().unwrap_or_default();
-            let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await.ok().flatten().unwrap_or_default();
-            if !cf_token.is_empty() && !cf_zone.is_empty() {
-                let cf = CloudflareClient::new(&cf_token, &cf_zone);
-                // Delete only records LiteBin created (dns_records ledger) —
-                // a user's own records under the old domain are left alone.
-                match crate::dns_ledger::rows(&state.db).await {
-                    Ok(ledger) => {
-                        for row in crate::dns_ledger::under_domain(&ledger, &old_domain) {
-                            let zone = if row.zone_id.is_empty() { cf_zone.as_str() } else { row.zone_id.as_str() };
-                            if let Err(e) = cf.delete_record_in_zone(zone, &row.record_id).await {
-                                tracing::warn!(record = %row.name, error = %e, "domain job: failed to delete old DNS record");
-                                continue;
-                            }
-                            let _ = crate::dns_ledger::remove(&state.db, &row.name).await;
-                        }
-                    }
-                    Err(e) => {
-                        update_job_step(
-                            state,
-                            job_id,
-                            4,
-                            DomainStepStatus::Failed,
-                            Some(format!("failed to load DNS record ledger: {e}")),
-                        );
-                        return;
-                    }
-                }
-            }
-            if let Err(e) = sync_platform_routes(state, true).await {
-                update_job_step(state, job_id, 4, DomainStepStatus::Failed, Some(e));
-                return;
-            }
-            update_job_step(state, job_id, 4, DomainStepStatus::Done, None);
-        } else {
-            update_job_step(state, job_id, 4, DomainStepStatus::Skipped, None);
-        }
-    }
-
-    if let Some(mut job) = state.domain_jobs.get_mut(job_id) {
-        job.status = DomainJobStatus::Completed;
-        job.error = None;
-        // Refresh dashboard URL from current subdomain
-        job.dashboard_url = format!("https://{}.{}", state.platform.dashboard_subdomain(), state.platform.domain());
-    }
-    tracing::info!(job_id, domain = %new_domain, "domain change job completed");
 }

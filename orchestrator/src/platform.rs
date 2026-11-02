@@ -119,6 +119,28 @@ async fn setting_or(db: &SqlitePool, key: &str, fallback: &str) -> anyhow::Resul
     Ok(value.filter(|v| !v.is_empty()).unwrap_or_else(|| fallback.to_string()))
 }
 
+/// The retained previous platform domain during the post-change grace window.
+pub async fn previous_domain(db: &SqlitePool) -> Option<String> {
+    let value: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'previous_domain'")
+        .bind("previous_domain")
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+    value.filter(|v| !v.is_empty())
+}
+
+/// The domain staged by a running change job (approved for TLS before it persists).
+pub async fn staged_domain(db: &SqlitePool) -> Option<String> {
+    let value: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'staged_domain'")
+        .bind("staged_domain")
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+    value.filter(|v| !v.is_empty())
+}
+
 /// Normalize a platform domain hostname (lowercase, trim, strip trailing dot).
 pub fn normalize_domain(raw: &str) -> Result<String, String> {
     let mut d = raw.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -201,6 +223,18 @@ pub struct DomainJob {
 impl DomainJob {
     pub fn new(id: String, old_domain: String, domain: String, dashboard_subdomain: &str) -> Self {
         let steps = vec![
+            DomainJobStep {
+                id: "prepare_routes".into(),
+                label: "Stage new domain in Caddy".into(),
+                status: DomainStepStatus::Pending,
+                error: None,
+            },
+            DomainJobStep {
+                id: "prepare_verify".into(),
+                label: "Verify new dashboard reachable".into(),
+                status: DomainStepStatus::Pending,
+                error: None,
+            },
             DomainJobStep {
                 id: "persist".into(),
                 label: "Save new domain".into(),

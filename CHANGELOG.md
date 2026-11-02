@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - DNS records point at the `dns_target` setting when set (previously always the PUBLIC_IP env/detected IP).
 
 ### Added
+- **Staged domain change** — the new domain is staged in Caddy and verified reachable (cert issued) before anything persists; the old domain keeps serving for a 24h grace window afterwards and is retired automatically (or via *Retire now*). Apply accepts routing mode and Cloudflare credentials alongside the domain.
 - Domain preflight returns structured checks, the resolved public IP (detecting it when unknown), and — in Cloudflare mode — a per-record preview of what a sync would create/re-point.
 
 ## [0.4.21] - 2026-11-02

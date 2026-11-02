@@ -221,6 +221,26 @@ pub async fn resolve_all_routes(
     domain: &str,
     orchestrator_upstream: &str,
 ) -> anyhow::Result<Vec<ProjectRoute>> {
+    let mut routes = resolve_routes_for_domain(db, domain, orchestrator_upstream).await?;
+    // The retained previous domain serves the same projects during its grace window.
+    if let Some(prev) = crate::platform::previous_domain(db).await
+        && prev != domain
+    {
+        match resolve_routes_for_domain(db, &prev, orchestrator_upstream).await {
+            Ok(prev_routes) => routes.extend(prev_routes),
+            Err(e) => {
+                tracing::warn!(error = %e, previous_domain = %prev, "failed to resolve previous-domain routes")
+            }
+        }
+    }
+    Ok(routes)
+}
+
+pub(crate) async fn resolve_routes_for_domain(
+    db: &SqlitePool,
+    domain: &str,
+    orchestrator_upstream: &str,
+) -> anyhow::Result<Vec<ProjectRoute>> {
     // All running projects (single and multi-service) get direct container routes.
     // Caddy's handle_response catches 502/503/504 and falls back to the orchestrator
     // for auto-wake when the container is down.
@@ -340,10 +360,12 @@ pub async fn run_route_sync(
         };
 
         let r = router.read().await.clone();
+        let previous = crate::platform::previous_domain(&db).await.filter(|p| p != &snap.domain);
         if let Err(e) = r
             .sync_routes(
                 &routes,
                 &snap.domain,
+                previous.as_deref(),
                 &orchestrator_upstream,
                 &snap.dashboard_subdomain,
                 &snap.poke_subdomain,

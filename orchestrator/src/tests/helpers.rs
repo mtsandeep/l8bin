@@ -118,6 +118,7 @@ pub fn build_router(state: AppState) -> Router {
 
     // Auth-public routes (no login required)
     let auth_public = Router::new()
+        .route("/caddy/ask", get(routes::caddy::ask))
         .route("/auth/login", post(routes::auth::login))
         .route("/auth/register", post(routes::auth::register))
         .route("/auth/device/start", post(routes::device_auth::start_device_flow))
@@ -172,6 +173,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/nodes/{id}/connect", post(routes::nodes::connect_node))
         .route("/settings", get(routes::global_settings::get_settings))
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
+        .route("/settings/domain/retire-previous", post(routes::global_settings::retire_previous))
         .route("/backup/status", get(routes::backup::backup_status))
         .route("/backup/enable", post(routes::backup::backup_enable))
         .route("/backup/disable", post(routes::backup::backup_disable))

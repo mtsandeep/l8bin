@@ -6,6 +6,7 @@ mod dashboard_proxy_tests;
 mod deploy_stage_tests;
 mod deploy_tokens_tests;
 mod device_auth_tests;
+mod domain_change_tests;
 mod env_tests;
 // The folder tests hold a std Mutex across awaits — deliberate: it serializes
 // env-var repointing between tests and nothing contends in async context.

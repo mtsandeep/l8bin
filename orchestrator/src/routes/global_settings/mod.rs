@@ -113,52 +113,15 @@ pub async fn update_settings(
 
     let mut need_route_sync = false;
 
-    if let Some(routing_mode) = payload.routing_mode {
-        let routing_mode = routing_mode.trim().to_string();
-        if !["master_proxy", "cloudflare_dns"].contains(&routing_mode.as_str()) {
-            return Err((StatusCode::BAD_REQUEST, "routing_mode must be 'master_proxy' or 'cloudflare_dns'".into()));
-        }
-        let routing_mode_enum: RoutingMode = match routing_mode.as_str() {
-            "cloudflare_dns" => RoutingMode::CloudflareDns,
-            _ => RoutingMode::MasterProxy,
-        };
-        upsert_setting(&state.db, "routing_mode", &routing_mode).await?;
-
-        // Save Cloudflare credentials before hot-swap so the router reads the latest values
-        if let Some(cloudflare_api_token) = payload.cloudflare_api_token {
-            upsert_setting(&state.db, "cloudflare_api_token", &cloudflare_api_token).await?;
-        }
-        if let Some(cloudflare_zone_id) = payload.cloudflare_zone_id {
-            upsert_setting(&state.db, "cloudflare_zone_id", &cloudflare_zone_id).await?;
-        }
-
-        // Hot-swap the router
-        let cf_token = get_setting(&state.db, "cloudflare_api_token").await?.unwrap_or_default();
-        let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await?.unwrap_or_default();
-
-        let new_router = crate::routing_helpers::build_routing_provider(
-            &routing_mode_enum,
-            &cf_token,
-            &cf_zone,
-            &state.config.caddy_admin_url,
-            state.node_clients.clone(),
-            state.db.clone(),
-            state.config.clone(),
-        );
-
-        {
-            let mut guard = state.router.write().await;
-            *guard = new_router;
-        }
-        tracing::info!(routing_mode = %routing_mode, "router hot-swapped");
+    if apply_routing_settings(
+        &state,
+        payload.routing_mode.as_deref(),
+        payload.cloudflare_api_token.as_deref(),
+        payload.cloudflare_zone_id.as_deref(),
+    )
+    .await?
+    {
         need_route_sync = true;
-    } else {
-        if let Some(cloudflare_api_token) = payload.cloudflare_api_token {
-            upsert_setting(&state.db, "cloudflare_api_token", &cloudflare_api_token).await?;
-        }
-        if let Some(cloudflare_zone_id) = payload.cloudflare_zone_id {
-            upsert_setting(&state.db, "cloudflare_zone_id", &cloudflare_zone_id).await?;
-        }
     }
 
     if let Some(dashboard_subdomain) = payload.dashboard_subdomain {
@@ -233,6 +196,60 @@ pub(crate) async fn get_setting(db: &sqlx::SqlitePool, key: &str) -> Result<Opti
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
+pub(crate) async fn delete_setting(db: &sqlx::SqlitePool, key: &str) -> Result<(), (StatusCode, String)> {
+    sqlx::query("DELETE FROM settings WHERE key = ?")
+        .bind(key)
+        .execute(db)
+        .await
+        .map(|_| ())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to delete setting {key}: {e}")))
+}
+
+/// Persist routing mode / Cloudflare creds and hot-swap the router.
+pub(crate) async fn apply_routing_settings(
+    state: &AppState,
+    routing_mode: Option<&str>,
+    cloudflare_api_token: Option<&str>,
+    cloudflare_zone_id: Option<&str>,
+) -> Result<bool, (StatusCode, String)> {
+    if let Some(token) = cloudflare_api_token {
+        upsert_setting(&state.db, "cloudflare_api_token", token).await?;
+    }
+    if let Some(zone) = cloudflare_zone_id {
+        upsert_setting(&state.db, "cloudflare_zone_id", zone).await?;
+    }
+
+    let Some(routing_mode) = routing_mode else { return Ok(false) };
+    let routing_mode = routing_mode.trim();
+    if !["master_proxy", "cloudflare_dns"].contains(&routing_mode) {
+        return Err((StatusCode::BAD_REQUEST, "routing_mode must be 'master_proxy' or 'cloudflare_dns'".into()));
+    }
+    let routing_mode_enum: RoutingMode = match routing_mode {
+        "cloudflare_dns" => RoutingMode::CloudflareDns,
+        _ => RoutingMode::MasterProxy,
+    };
+    upsert_setting(&state.db, "routing_mode", routing_mode).await?;
+
+    let cf_token = get_setting(&state.db, "cloudflare_api_token").await?.unwrap_or_default();
+    let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await?.unwrap_or_default();
+
+    let new_router = crate::routing_helpers::build_routing_provider(
+        &routing_mode_enum,
+        &cf_token,
+        &cf_zone,
+        &state.config.caddy_admin_url,
+        state.node_clients.clone(),
+        state.db.clone(),
+        state.config.clone(),
+    );
+    {
+        let mut guard = state.router.write().await;
+        *guard = new_router;
+    }
+    tracing::info!(routing_mode = %routing_mode, "router hot-swapped");
+    Ok(true)
+}
+
 pub(crate) async fn upsert_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), (StatusCode, String)> {
     sqlx::query(
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -251,6 +268,7 @@ pub(super) async fn sync_platform_routes(state: &AppState, sync_dns: bool) -> Re
     let routes = crate::routing_helpers::resolve_all_routes(&state.db, &snap.domain, &orchestrator_upstream)
         .await
         .map_err(|e| e.to_string())?;
+    let previous = crate::platform::previous_domain(&state.db).await.filter(|p| p != &snap.domain);
 
     state
         .router
@@ -259,6 +277,7 @@ pub(super) async fn sync_platform_routes(state: &AppState, sync_dns: bool) -> Re
         .sync_routes(
             &routes,
             &snap.domain,
+            previous.as_deref(),
             &orchestrator_upstream,
             &snap.dashboard_subdomain,
             &snap.poke_subdomain,

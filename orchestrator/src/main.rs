@@ -433,6 +433,7 @@ async fn main() -> anyhow::Result<()> {
                     .sync_routes(
                         &routes,
                         &platform_snap.domain,
+                        crate::platform::previous_domain(&db).await.as_deref(),
                         &orchestrator_upstream,
                         &platform_snap.dashboard_subdomain,
                         &platform_snap.poke_subdomain,
