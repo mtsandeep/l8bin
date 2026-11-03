@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   CheckCircle2,
   Circle,
   Copy,
@@ -101,6 +102,7 @@ export default function GeneralPanel() {
     errors: number;
   } | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [removeAction, setRemoveAction] = useState<'disconnect' | 'delete' | null>(null);
   const [showDomainConfirm, setShowDomainConfirm] = useState(false);
   const [domainDraft, setDomainDraft] = useState('');
   const [domainConfirmTyped, setDomainConfirmTyped] = useState('');
@@ -174,6 +176,10 @@ export default function GeneralPanel() {
   }, [revealCount, domainJob, showToast]);
 
   const handleSave = async () => {
+    if (routingMode === RoutingMode.CloudflareDns && (!cfToken.trim() || !cfZoneId.trim())) {
+      showToast('Cloudflare API token and Zone ID are required');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -230,11 +236,12 @@ export default function GeneralPanel() {
       setCfToken('');
       setCfZoneId('');
       setRoutingMode(RoutingMode.MasterProxy);
-      await updateGlobalSettings({
+      const updated = await updateGlobalSettings({
         cloudflare_api_token: '',
         cloudflare_zone_id: '',
         routing_mode: RoutingMode.MasterProxy,
       });
+      setSettings(updated);
       showToast(
         deleteRecords ? `Removed Cloudflare: ${deleted} DNS record(s) deleted` : 'Cloudflare removed — DNS records kept',
         'success',
@@ -541,11 +548,11 @@ export default function GeneralPanel() {
                   {cfSaved && (
                     <button
                       type="button"
-                      onClick={() => removeCloudflare(false)}
+                      onClick={() => setRemoveAction('disconnect')}
                       disabled={removing}
                       className="w-full py-2 rounded-md text-xs font-medium bg-red-600/60 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
                     >
-                      {removing ? 'Removing…' : 'Remove Cloudflare'}
+                      Remove Cloudflare
                     </button>
                   )}
                 </div>
@@ -601,19 +608,19 @@ export default function GeneralPanel() {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => removeCloudflare(false)}
+                      onClick={() => setRemoveAction('disconnect')}
                       disabled={removing}
                       className="flex-1 py-2 rounded-md text-xs font-medium bg-red-600/60 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
                     >
-                      {removing ? 'Removing…' : 'Remove'}
+                      Remove
                     </button>
                     <button
                       type="button"
-                      onClick={() => removeCloudflare(true)}
+                      onClick={() => setRemoveAction('delete')}
                       disabled={removing}
                       className="flex-1 py-2 rounded-md text-xs font-medium bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
                     >
-                      {removing ? 'Removing…' : 'Remove + delete records'}
+                      Remove + delete records
                     </button>
                   </div>
                   <p className="text-xs text-slate-600">
@@ -684,6 +691,47 @@ export default function GeneralPanel() {
       >
         {saving ? 'Saving...' : saved ? 'Saved' : 'Save changes'}
       </button>
+
+      {/* Remove Cloudflare confirmation */}
+      {removeAction && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertTriangle size={16} className={removeAction === 'delete' ? 'text-red-400' : 'text-slate-400'} />
+              <h3 className="text-sm font-semibold text-slate-100">
+                {removeAction === 'delete' ? 'Remove Cloudflare and delete records' : 'Remove Cloudflare'}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              {removeAction === 'delete'
+                ? 'Clears the credentials, switches routing to master proxy, and deletes the A records LiteBin created. You cannot undo the deletion.'
+                : 'Clears the credentials and switches routing to master proxy. Your DNS records stay in Cloudflare.'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setRemoveAction(null)}
+                disabled={removing}
+                className="flex-1 py-2 rounded-md text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const action = removeAction;
+                  setRemoveAction(null);
+                  await removeCloudflare(action === 'delete');
+                }}
+                disabled={removing}
+                className="flex-1 py-2 rounded-md text-xs font-medium bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {removing ? 'Removing…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Domain change modal */}
       {showDomainConfirm && (
@@ -905,7 +953,7 @@ export default function GeneralPanel() {
                       </label>
                       <input
                         id="domain-cf-token"
-                        type="text"
+                        type="password"
                         value={domainCfToken}
                         onChange={(e) => {
                           setDomainCfToken(e.target.value);

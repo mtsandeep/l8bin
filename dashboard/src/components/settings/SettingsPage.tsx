@@ -44,12 +44,12 @@ export default function SettingsPage({ section }: Props) {
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col md:flex-row gap-6 md:gap-10">
         {/* Section nav */}
-        <nav className="flex md:flex-col gap-1 md:w-52 shrink-0 md:border-r border-slate-800/80 md:pr-4">
+        <nav className="flex flex-wrap md:flex-col gap-1 md:w-52 shrink-0 md:border-r border-slate-800/80 md:pr-4 pb-1 md:pb-0">
           {SECTIONS.map(({ id, label, icon: Icon }) => (
             <NavLink
               key={id}
               to={`/settings/${id}`}
-              className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-colors ${
+              className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
                 section === id
                   ? 'bg-violet-500/10 text-violet-300'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'

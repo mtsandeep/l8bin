@@ -127,7 +127,7 @@ pub async fn validate_cloudflare(
                 zone_name = Some(name);
             }
         }
-        Err(e) => errors.push(format!("cannot read zone (check token and zone ID): {e}")),
+        Err(_) => errors.push("Cloudflare rejected the request — check the API token and Zone ID".into()),
     }
     Ok(Json(CloudflareValidateResponse { ok: errors.is_empty(), zone_name, errors }))
 }
@@ -180,7 +180,14 @@ pub async fn sync_dns(State(state): State<AppState>) -> Result<Json<SyncDnsRespo
     let result = router
         .sync_dns_only(&routes, &snap.domain, &snap.dashboard_subdomain, &snap.poke_subdomain)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.starts_with("cloudflare") {
+                (StatusCode::BAD_REQUEST, "Cloudflare rejected the request — check the API token and Zone ID".into())
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
+            }
+        })?;
 
     Ok(Json(SyncDnsResponse {
         created: result.created,

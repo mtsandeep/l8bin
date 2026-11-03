@@ -249,6 +249,12 @@ pub(crate) async fn apply_routing_settings(
 
     let cf_token = get_setting(&state.db, "cloudflare_api_token").await?.unwrap_or_default();
     let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await?.unwrap_or_default();
+    if routing_mode_enum == RoutingMode::CloudflareDns && (cf_token.is_empty() || cf_zone.is_empty()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cloudflare API token and Zone ID are required for cloudflare_dns mode".into(),
+        ));
+    }
 
     let new_router = crate::routing_helpers::build_routing_provider(
         &routing_mode_enum,

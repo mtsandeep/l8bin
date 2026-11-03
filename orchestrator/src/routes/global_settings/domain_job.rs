@@ -478,9 +478,9 @@ async fn run_domain_preflight(state: &AppState, domain: &str, creds: &PreflightC
                     ));
                     plan = Some(preview);
                 }
-                Err(e) => {
-                    errors.push(format!("Cannot read Cloudflare zone (check token and zone ID): {e}"));
-                    checks.push(check("cf_zone", "error", Some(e.to_string())));
+                Err(_) => {
+                    errors.push("Cloudflare rejected the request — check the API token and Zone ID".into());
+                    checks.push(check("cf_zone", "error", None));
                 }
             }
         }

@@ -16,3 +16,7 @@ body {
     transform: translateY(0);
   }
 }
+
+button:disabled {
+  cursor: not-allowed;
+}
