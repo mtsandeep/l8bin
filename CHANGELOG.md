@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.23] - 2026-11-03
+
 ### Fixed
 - Removing Cloudflare left a stale *Remove Cloudflare* button until reload.
 - Cloudflare sync/validate failures return one clear message instead of a raw 500 error.
