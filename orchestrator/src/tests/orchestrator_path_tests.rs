@@ -73,6 +73,8 @@ async fn live_orchestrator_state() -> anyhow::Result<AppState> {
                 dashboard_subdomain: c.dashboard_subdomain,
                 poke_subdomain: c.poke_subdomain,
                 dns_target: String::new(),
+                previous_domain: String::new(),
+                staged_domain: String::new(),
             })
         },
         db,

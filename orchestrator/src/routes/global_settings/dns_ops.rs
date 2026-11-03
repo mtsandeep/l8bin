@@ -1,5 +1,5 @@
 use axum::{Json, extract::State, http::StatusCode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 use litebin_common::cloudflare::CloudflareClient;
@@ -61,6 +61,75 @@ pub async fn cleanup_dns(State(state): State<AppState>) -> Result<Json<CleanupDn
         "DNS cleanup complete (LiteBin-managed records only)"
     );
     Ok(Json(CleanupDnsResponse { deleted_count }))
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct CloudflareValidateRequest {
+    /// Typed credentials; falls back to the saved ones when omitted.
+    pub cloudflare_api_token: Option<String>,
+    pub cloudflare_zone_id: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct CloudflareValidateResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_name: Option<String>,
+    pub errors: Vec<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/settings/cloudflare/validate",
+    request_body = CloudflareValidateRequest,
+    description = "Validate Cloudflare credentials (typed or saved): readable zone covering the platform domain.",
+    responses(
+        (status = 200, body = CloudflareValidateResponse),
+        (status = 500),
+    ),
+    tag = "global-settings",
+    security(("session_auth" = []))
+)]
+pub async fn validate_cloudflare(
+    State(state): State<AppState>,
+    body: Option<Json<CloudflareValidateRequest>>,
+) -> Result<Json<CloudflareValidateResponse>, (StatusCode, String)> {
+    let typed = body.map(|Json(b)| b);
+    let (typed_token, typed_zone) = match &typed {
+        Some(b) => (b.cloudflare_api_token.clone(), b.cloudflare_zone_id.clone()),
+        None => (None, None),
+    };
+    let token = match typed_token.filter(|t| !t.is_empty()) {
+        Some(t) => Some(t),
+        None => get_setting(&state.db, "cloudflare_api_token").await?.filter(|t| !t.is_empty()),
+    };
+    let zone = match typed_zone.filter(|z| !z.is_empty()) {
+        Some(z) => Some(z),
+        None => get_setting(&state.db, "cloudflare_zone_id").await?.filter(|z| !z.is_empty()),
+    };
+
+    let mut errors = Vec::new();
+    if token.is_none() || zone.is_none() {
+        errors.push("API token and Zone ID are required".into());
+        return Ok(Json(CloudflareValidateResponse { ok: false, zone_name: None, errors }));
+    }
+
+    let cf = CloudflareClient::new(token.as_deref().unwrap(), zone.as_deref().unwrap());
+    let mut zone_name = None;
+    match cf.get_zone_name().await {
+        Ok(name) => {
+            let domain = state.platform.domain();
+            if !CloudflareClient::zone_covers_hostname(&name, &domain) {
+                errors.push(format!("zone '{name}' does not cover '{domain}'"));
+            } else if let Err(e) = cf.list_records_by_suffix(&format!(".{domain}"), "A").await {
+                errors.push(format!("token cannot list DNS records: {e}"));
+            } else {
+                zone_name = Some(name);
+            }
+        }
+        Err(e) => errors.push(format!("cannot read zone (check token and zone ID): {e}")),
+    }
+    Ok(Json(CloudflareValidateResponse { ok: errors.is_empty(), zone_name, errors }))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]

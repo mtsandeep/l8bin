@@ -28,6 +28,8 @@ pub struct GlobalSettings {
     /// Retained previous domain during the post-change grace window.
     pub previous_domain: Option<String>,
     pub previous_domain_retire_at: Option<i64>,
+    /// Effective IP DNS records point at (dns_target, else PUBLIC_IP, else detected).
+    pub public_ip: String,
 }
 
 pub fn resolve_projects_dir() -> String {
@@ -189,6 +191,10 @@ pub async fn load_settings(state: &AppState) -> Result<GlobalSettings, (StatusCo
         poke_subdomain: snap.poke_subdomain,
         tryout: crate::platform::PlatformSettings::is_tryout_domain(&snap.domain),
         previous_domain: crate::platform::previous_domain(&state.db).await,
+        public_ip: {
+            let ip = crate::cloudflare_router::dns::resolved_dns_ip(&state.db, &state.config.public_ip).await;
+            if ip.is_empty() { litebin_common::net::detect_public_ip().await.unwrap_or_default() } else { ip }
+        },
         previous_domain_retire_at: sqlx::query_scalar(
             "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'previous_domain_retire_at'",
         )

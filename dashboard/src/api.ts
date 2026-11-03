@@ -193,6 +193,7 @@ export interface GlobalSettings {
   tryout?: boolean;
   previous_domain?: string | null;
   previous_domain_retire_at?: number | null;
+  public_ip?: string;
 }
 
 export interface PreflightCheck {
@@ -316,12 +317,15 @@ export async function updateGlobalSettings(patch: Partial<GlobalSettings>): Prom
   return res.json();
 }
 
-export async function domainPreflight(domain: string): Promise<DomainPreflightResult> {
+export async function domainPreflight(
+  domain: string,
+  options: { routing_mode?: string; cloudflare_api_token?: string; cloudflare_zone_id?: string } = {},
+): Promise<DomainPreflightResult> {
   const res = await fetch(`${API_BASE}/settings/domain/preflight`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ domain }),
+    body: JSON.stringify({ domain, ...options }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -354,6 +358,13 @@ export async function domainApply(
   return res.json();
 }
 
+export async function fetchActiveDomainJob(): Promise<DomainJob | null> {
+  const res = await fetch(`${API_BASE}/settings/domain/jobs/active`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch active domain job');
+  const data = await res.json();
+  return data.job ?? null;
+}
+
 export async function fetchDomainJob(jobId: string): Promise<DomainJob> {
   const res = await fetch(`${API_BASE}/settings/domain/jobs/${jobId}`, { credentials: 'include' });
   if (!res.ok) {
@@ -378,6 +389,23 @@ export async function retryDomainJob(jobId: string): Promise<{ job_id: string }>
 export async function sslipDomainPreview(): Promise<{ domain: string | null }> {
   const res = await fetch(`${API_BASE}/settings/domain/sslip`, { credentials: 'include' });
   if (!res.ok) throw new Error('Failed to compute sslip domain');
+  return res.json();
+}
+
+export async function validateCloudflare(body: {
+  cloudflare_api_token?: string;
+  cloudflare_zone_id?: string;
+}): Promise<{ ok: boolean; zone_name?: string | null; errors: string[] }> {
+  const res = await fetch(`${API_BASE}/settings/cloudflare/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Validation failed'));
+  }
   return res.json();
 }
 

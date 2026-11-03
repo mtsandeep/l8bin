@@ -115,7 +115,7 @@ async fn retire_previous_drops_domain_and_records() {
         .fetch_optional(&db)
         .await
         .unwrap();
-    assert!(ledger.is_none(), "previous-domain ledger row must be removed");
+    assert!(ledger.is_some(), "DNS records are never auto-deleted on retirement");
 }
 
 #[tokio::test]

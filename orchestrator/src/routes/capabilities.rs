@@ -343,6 +343,8 @@ mod tests {
                 dashboard_subdomain: String::new(),
                 poke_subdomain: String::new(),
                 dns_target: String::new(),
+                previous_domain: String::new(),
+                staged_domain: String::new(),
             }),
             db,
             docker: Arc::new(docker),

@@ -12,6 +12,10 @@ pub struct PlatformSettings {
     pub dashboard_subdomain: String,
     pub poke_subdomain: String,
     pub dns_target: String,
+    /// Retained previous domain (grace window) — its hosts keep serving.
+    pub previous_domain: String,
+    /// Domain staged by a running change job — its dashboard must answer.
+    pub staged_domain: String,
 }
 
 /// The sslip.io domain for an IPv4 address (e.g. `203-0-113-5.sslip.io`).
@@ -84,6 +88,29 @@ impl PlatformHandle {
     pub fn set_dns_target(&self, dns_target: String) {
         self.update(|s| s.dns_target = dns_target);
     }
+
+    pub fn set_previous_domain(&self, previous_domain: String) {
+        self.update(|s| s.previous_domain = previous_domain);
+    }
+
+    pub fn set_staged_domain(&self, staged_domain: String) {
+        self.update(|s| s.staged_domain = staged_domain);
+    }
+
+    /// Platform hosts (current + previous + staged) that bypass the waker.
+    pub fn platform_hosts(&self) -> Vec<String> {
+        let snap = self.snapshot();
+        let mut hosts = Vec::new();
+        for domain in [&snap.domain, &snap.previous_domain, &snap.staged_domain] {
+            if domain.is_empty() {
+                continue;
+            }
+            hosts.push(domain.clone());
+            hosts.push(format!("{}.{}", snap.dashboard_subdomain, domain));
+            hosts.push(format!("{}.{}", snap.poke_subdomain, domain));
+        }
+        hosts
+    }
 }
 
 /// Seed missing platform keys from env config, then load into memory.
@@ -106,6 +133,8 @@ pub async fn load_platform_settings(db: &SqlitePool, config: &Config) -> anyhow:
     let dashboard_subdomain = setting_or(db, "dashboard_subdomain", &config.dashboard_subdomain).await?;
     let poke_subdomain = setting_or(db, "poke_subdomain", &config.poke_subdomain).await?;
     let dns_target = setting_or(db, "dns_target", "").await?;
+    let previous_domain = setting_or(db, "previous_domain", "").await?;
+    let staged_domain = setting_or(db, "staged_domain", "").await?;
 
     tracing::info!(
         domain = %domain,
@@ -115,7 +144,14 @@ pub async fn load_platform_settings(db: &SqlitePool, config: &Config) -> anyhow:
         "platform settings loaded"
     );
 
-    Ok(PlatformHandle::new(PlatformSettings { domain, dashboard_subdomain, poke_subdomain, dns_target }))
+    Ok(PlatformHandle::new(PlatformSettings {
+        domain,
+        dashboard_subdomain,
+        poke_subdomain,
+        dns_target,
+        previous_domain,
+        staged_domain,
+    }))
 }
 
 async fn setting_or(db: &SqlitePool, key: &str, fallback: &str) -> anyhow::Result<String> {
@@ -215,6 +251,11 @@ pub struct DomainJobStep {
 pub struct DomainJob {
     pub id: String,
     pub status: DomainJobStatus,
+    /// Unix seconds — picks the latest job for the active-job endpoint.
+    pub created_at: i64,
+    /// Operator accepted proceeding without verified DNS.
+    #[serde(default)]
+    pub acknowledged: bool,
     pub domain: String,
     pub old_domain: String,
     pub steps: Vec<DomainJobStep>,
@@ -274,6 +315,8 @@ impl DomainJob {
         Self {
             id,
             status: DomainJobStatus::Pending,
+            created_at: chrono::Utc::now().timestamp(),
+            acknowledged: false,
             domain: domain.clone(),
             old_domain,
             steps,

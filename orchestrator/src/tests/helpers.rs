@@ -69,6 +69,8 @@ pub(crate) async fn build_test_state(config: Config) -> (AppState, SqlitePool) {
         dashboard_subdomain: config.dashboard_subdomain.clone(),
         poke_subdomain: config.poke_subdomain.clone(),
         dns_target: String::new(),
+        previous_domain: String::new(),
+        staged_domain: String::new(),
     });
 
     let state = AppState {
@@ -174,6 +176,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/settings", get(routes::global_settings::get_settings))
         .route("/settings/cleanup-dns", post(routes::global_settings::cleanup_dns))
         .route("/settings/domain/retire-previous", post(routes::global_settings::retire_previous))
+        .route("/settings/domain/jobs/active", get(routes::global_settings::active_domain_job))
         .route("/settings/domain/sslip", get(routes::global_settings::sslip_domain_preview))
         .route("/backup/status", get(routes::backup::backup_status))
         .route("/backup/enable", post(routes::backup::backup_enable))

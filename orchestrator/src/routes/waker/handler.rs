@@ -799,9 +799,8 @@ pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::
 
     let snap = state.platform.snapshot();
     let host_without_port = host.split(':').next().unwrap_or("");
-    let dashboard_host = format!("{}.{}", snap.dashboard_subdomain, snap.domain);
-    if host_without_port == dashboard_host
-        || host_without_port == snap.domain
+    let dashboard_hosts = state.platform.platform_hosts();
+    if dashboard_hosts.iter().any(|h| h == host_without_port)
         || (snap.domain == "localhost" && host_without_port == "127.0.0.1")
     {
         // The SPA serves GET/HEAD only — anything else here is a missed API call.
@@ -848,18 +847,12 @@ pub async fn waker_intercept(
 ) -> Response {
     let host = req.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
 
-    let snap = state.platform.snapshot();
-    let dashboard_host = format!("{}.{}", snap.dashboard_subdomain, snap.domain);
-    let poke_host = format!("{}.{}", snap.poke_subdomain, snap.domain);
     let host_without_port = host.split(':').next().unwrap_or(&host);
     let orchestrator_name =
         std::env::var("ORCHESTRATOR_CONTAINER_NAME").unwrap_or_else(|_| "litebin-orchestrator".into());
 
-    // Let dashboard, poke, bare domain, and internal container requests pass through
-    if host_without_port == snap.domain
-        || host_without_port == dashboard_host
-        || host_without_port == poke_host
-        || host_without_port == orchestrator_name
+    // Platform hosts (current/previous/staged) and internal requests pass through.
+    if host_without_port == orchestrator_name || state.platform.platform_hosts().iter().any(|h| h == host_without_port)
     {
         return next.run(req).await;
     }

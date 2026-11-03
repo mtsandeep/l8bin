@@ -53,13 +53,6 @@ pub fn stale<'a>(rows: &'a [LedgerRow], desired_names: &HashSet<&str>) -> Vec<&'
     rows.iter().filter(|r| !desired_names.contains(r.name.as_str())).collect()
 }
 
-/// Rows recorded under `.{domain}` (or equal to it) — used by the
-/// domain-change job to drop the old domain's managed records.
-pub fn under_domain<'a>(rows: &'a [LedgerRow], domain: &str) -> Vec<&'a LedgerRow> {
-    let suffix = format!(".{domain}");
-    rows.iter().filter(|r| r.name == domain || r.name.ends_with(&suffix)).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,18 +68,5 @@ mod tests {
         let stale = stale(&rows, &desired);
         assert_eq!(stale.len(), 1);
         assert_eq!(stale[0].name, "gone.example.com");
-    }
-
-    #[test]
-    fn under_domain_matches_suffix_not_substrings() {
-        let rows = vec![
-            row("app.example.com", "1"),
-            row("example.com", "2"),
-            row("notexample.com", "3"), // suffix must not match partial labels
-            row("app.other.com", "4"),  // different domain entirely
-        ];
-        let matched = under_domain(&rows, "example.com");
-        let names: Vec<&str> = matched.iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(names, vec!["app.example.com", "example.com"]);
     }
 }

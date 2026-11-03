@@ -18,44 +18,58 @@ async fn run_domain_job(state: &AppState, job_id: &str, start_from: usize) {
         update_job_step(state, job_id, 0, DomainStepStatus::Running, None);
         let staged = async {
             super::upsert_setting(&state.db, "staged_domain", &new_domain).await.map_err(|e| e.1)?;
+            state.platform.set_staged_domain(new_domain.clone());
             stage_domain_routes(state, &new_domain).await
         };
         if let Err(e) = staged.await {
             let _ = super::delete_setting(&state.db, "staged_domain").await;
+            state.platform.set_staged_domain(String::new());
             update_job_step(state, job_id, 0, DomainStepStatus::Failed, Some(e));
             return;
         }
         update_job_step(state, job_id, 0, DomainStepStatus::Done, None);
     }
 
-    // Step 1: Verify the new dashboard answers (on-demand TLS issues the cert)
+    // Step 1: Verify the new dashboard answers (on-demand TLS issues the cert).
+    // Acknowledged runs get a 15s sanity check; a miss continues anyway.
+    let acknowledged = state.domain_jobs.get(job_id).map(|j| j.acknowledged).unwrap_or(false);
     if start_from <= 1 {
         update_job_step(state, job_id, 1, DomainStepStatus::Running, None);
-        let url = format!("https://{}.{}", state.platform.dashboard_subdomain(), new_domain);
-        if let Err(e) = wait_for_dashboard(&url).await {
-            let _ = super::delete_setting(&state.db, "staged_domain").await;
-            update_job_step(state, job_id, 1, DomainStepStatus::Failed, Some(e));
-            return;
+        let host = format!("{}.{}", state.platform.dashboard_subdomain(), new_domain);
+        let mut expected_ip = crate::cloudflare_router::dns::resolved_dns_ip(&state.db, &state.config.public_ip).await;
+        if expected_ip.is_empty() {
+            expected_ip = litebin_common::net::detect_public_ip().await.unwrap_or_default();
         }
-        update_job_step(state, job_id, 1, DomainStepStatus::Done, None);
+        let attempts = if acknowledged { 3 } else { 36 };
+        match wait_for_dashboard(&host, &expected_ip, attempts).await {
+            Ok(()) => update_job_step(state, job_id, 1, DomainStepStatus::Done, None),
+            Err(e) if acknowledged => {
+                tracing::info!(host = %host, error = %e, "dashboard not reachable yet — continuing (acknowledged)");
+                update_job_step(state, job_id, 1, DomainStepStatus::Skipped, None);
+            }
+            Err(e) => {
+                let _ = super::delete_setting(&state.db, "staged_domain").await;
+                state.platform.set_staged_domain(String::new());
+                update_job_step(state, job_id, 1, DomainStepStatus::Failed, Some(e));
+                return;
+            }
+        }
     }
 
-    // Phase 2 — activate: one shot, only after the new URL was verified.
+    // Phase 2 — activate: one shot, only after the new URL was verified (or the ack).
 
     // Step 2: Persist domain + grace bookkeeping
     if start_from <= 2 {
         update_job_step(state, job_id, 2, DomainStepStatus::Running, None);
         let activate = async {
-            // An older previous domain is retired immediately; only the latest is retained.
-            if let Some(older) = crate::platform::previous_domain(&state.db).await {
-                delete_previous_domain_records(state, &older).await;
-            }
             let retire_at = (chrono::Utc::now().timestamp() + PREVIOUS_DOMAIN_GRACE_SECS).to_string();
             super::upsert_setting(&state.db, "previous_domain", &old_domain).await.map_err(|e| anyhow::anyhow!(e.1))?;
+            state.platform.set_previous_domain(old_domain.clone());
             super::upsert_setting(&state.db, "previous_domain_retire_at", &retire_at)
                 .await
                 .map_err(|e| anyhow::anyhow!(e.1))?;
             super::delete_setting(&state.db, "staged_domain").await.map_err(|e| anyhow::anyhow!(e.1))?;
+            state.platform.set_staged_domain(String::new());
             super::upsert_setting(&state.db, "domain", &new_domain).await.map_err(|e| anyhow::anyhow!(e.1))?;
             anyhow::Ok(())
         };
@@ -168,21 +182,40 @@ async fn stage_domain_routes(state: &AppState, staged: &str) -> Result<(), Strin
         .map_err(|e| e.to_string())
 }
 
-/// Poll the new dashboard URL until it answers; the first probe triggers
-/// on-demand TLS issuance.
-async fn wait_for_dashboard(url: &str) -> Result<(), String> {
+/// Poll the new dashboard host until this server answers (the probe triggers
+/// on-demand TLS). A foreign-IP resolution fails immediately.
+async fn wait_for_dashboard(host: &str, expected_ip: &str, attempts: u32) -> Result<(), String> {
+    let url = format!("https://{host}");
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| e.to_string())?;
-    for _ in 0..36 {
-        if client.get(url).send().await.is_ok() {
+    tracing::info!(host, expected_ip, "waiting for the new dashboard to answer (up to 3 minutes)");
+    for attempt in 0..attempts {
+        if attempt % 6 == 0 && attempt > 0 {
+            tracing::info!(host, attempt, "still waiting for the new dashboard");
+        }
+        if let Ok(addrs) = tokio::net::lookup_host((host, 443)).await {
+            let ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
+            if !expected_ip.is_empty() && !ips.is_empty() && !ips.iter().any(|ip| ip == expected_ip) {
+                return Err(format!(
+                    "{host} resolves to {} — not this server ({expected_ip}). Point DNS here first.",
+                    ips.join(", ")
+                ));
+            }
+        }
+        if let Ok(resp) = client.get(&url).send().await
+            && resp.status().is_success()
+        {
             return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
-    Err(format!("{url} did not answer within 3 minutes — check that DNS for the new domain points at this server"))
+    Err(format!(
+        "{host} did not answer within {}s — check that DNS for the new domain points at this server",
+        attempts * 5
+    ))
 }
 
 #[utoipa::path(
@@ -203,33 +236,12 @@ pub async fn retire_previous(State(state): State<AppState>) -> Result<Json<serde
 
 pub(crate) async fn retire_previous_domain(state: &AppState) -> bool {
     let Some(prev) = crate::platform::previous_domain(&state.db).await else { return false };
-    delete_previous_domain_records(state, &prev).await;
     let _ = super::delete_setting(&state.db, "previous_domain").await;
     let _ = super::delete_setting(&state.db, "previous_domain_retire_at").await;
+    state.platform.set_previous_domain(String::new());
     let _ = state.route_sync_tx.send(());
     tracing::info!(previous_domain = %prev, "previous domain retired");
     true
-}
-
-/// Delete a domain's managed CF records (creds permitting).
-async fn delete_previous_domain_records(state: &AppState, domain: &str) {
-    let token = get_setting(&state.db, "cloudflare_api_token").await.ok().flatten().unwrap_or_default();
-    let zone = get_setting(&state.db, "cloudflare_zone_id").await.ok().flatten().unwrap_or_default();
-    let Ok(ledger) = crate::dns_ledger::rows(&state.db).await else { return };
-    if token.is_empty() || zone.is_empty() {
-        tracing::warn!(domain, "previous-domain records left in Cloudflare — no credentials configured");
-    } else {
-        let cf = CloudflareClient::new(&token, &zone);
-        for row in crate::dns_ledger::under_domain(&ledger, domain) {
-            let z = if row.zone_id.is_empty() { zone.as_str() } else { row.zone_id.as_str() };
-            if let Err(e) = cf.delete_record_in_zone(z, &row.record_id).await {
-                tracing::warn!(record = %row.name, error = %e, "failed to delete previous-domain DNS record");
-            }
-        }
-    }
-    for row in crate::dns_ledger::under_domain(&ledger, domain) {
-        let _ = crate::dns_ledger::remove(&state.db, &row.name).await;
-    }
 }
 
 use axum::{
@@ -251,6 +263,11 @@ use super::{get_setting, sync_platform_routes};
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct DomainPreflightRequest {
     pub domain: String,
+    /// Routing mode the operator selected; falls back to the saved setting.
+    pub routing_mode: Option<String>,
+    /// Typed Cloudflare credentials; fall back to the saved ones.
+    pub cloudflare_api_token: Option<String>,
+    pub cloudflare_zone_id: Option<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -305,7 +322,12 @@ pub async fn domain_preflight(
 ) -> Result<Json<DomainPreflightResponse>, (StatusCode, String)> {
     let domain = normalize_domain(&payload.domain).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let sslip = crate::platform::PlatformSettings::is_tryout_domain(&domain);
-    let outcome = run_domain_preflight(&state, &domain).await;
+    let creds = PreflightCreds {
+        routing_mode: payload.routing_mode.clone(),
+        cloudflare_api_token: payload.cloudflare_api_token.clone(),
+        cloudflare_zone_id: payload.cloudflare_zone_id.clone(),
+    };
+    let outcome = run_domain_preflight(&state, &domain, &creds).await;
     let ok = outcome.errors.is_empty();
     Ok(Json(DomainPreflightResponse {
         ok,
@@ -331,7 +353,15 @@ fn check(id: &str, status: &str, detail: Option<String>) -> PreflightCheck {
     PreflightCheck { id: id.into(), status: status.into(), detail }
 }
 
-async fn run_domain_preflight(state: &AppState, domain: &str) -> PreflightOutcome {
+/// Operator selection for preflight; each field falls back to the saved setting.
+#[derive(Default)]
+pub(crate) struct PreflightCreds {
+    pub routing_mode: Option<String>,
+    pub cloudflare_api_token: Option<String>,
+    pub cloudflare_zone_id: Option<String>,
+}
+
+async fn run_domain_preflight(state: &AppState, domain: &str, creds: &PreflightCreds) -> PreflightOutcome {
     use crate::cloudflare_router::dns::{desired_dns_records, resolved_dns_ip, zone_for_name};
 
     let mut errors = Vec::new();
@@ -364,16 +394,28 @@ async fn run_domain_preflight(state: &AppState, domain: &str) -> PreflightOutcom
         checks.push(check("public_ip", "ok", Some(public_ip.clone())));
     }
 
-    let routing_mode = get_setting(&state.db, "routing_mode")
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| state.config.routing_mode.to_string());
+    let mut routing_mode = creds.routing_mode.clone().filter(|m| !m.is_empty());
+    if routing_mode.is_none() {
+        routing_mode = Some(
+            get_setting(&state.db, "routing_mode")
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| state.config.routing_mode.to_string()),
+        );
+    }
+    let routing_mode = routing_mode.unwrap_or_default();
 
     let mut plan = None;
     if routing_mode == "cloudflare_dns" {
-        let cf_token = get_setting(&state.db, "cloudflare_api_token").await.ok().flatten().unwrap_or_default();
-        let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await.ok().flatten().unwrap_or_default();
+        let cf_token = match creds.cloudflare_api_token.clone().filter(|t| !t.is_empty()) {
+            Some(t) => t,
+            None => get_setting(&state.db, "cloudflare_api_token").await.ok().flatten().unwrap_or_default(),
+        };
+        let cf_zone = match creds.cloudflare_zone_id.clone().filter(|z| !z.is_empty()) {
+            Some(z) => z,
+            None => get_setting(&state.db, "cloudflare_zone_id").await.ok().flatten().unwrap_or_default(),
+        };
         if cf_token.is_empty() || cf_zone.is_empty() {
             errors.push("Cloudflare API token and Zone ID must be configured for cloudflare_dns mode".into());
             checks.push(check("cf_credentials", "error", Some("token or zone id missing".into())));
@@ -443,50 +485,37 @@ async fn run_domain_preflight(state: &AppState, domain: &str) -> PreflightOutcom
             }
         }
     } else {
-        // Master proxy: the user owns DNS.
+        // Master proxy: the user owns DNS — one wildcard record covers everything.
         let dashboard = state.platform.dashboard_subdomain();
         if sslip {
-            checks.push(check("dns_dash", "ok", Some("sslip.io hostnames resolve automatically".into())));
-            checks.push(check("wildcard", "skipped", None));
+            checks.push(check("dns", "ok", Some("sslip.io hostnames resolve automatically".into())));
         } else if public_ip.is_empty() {
-            checks.push(check("dns_dash", "warn", Some("cannot verify without the public IP".into())));
-            checks.push(check("wildcard", "skipped", None));
+            checks.push(check("dns", "warn", Some("cannot verify without the public IP".into())));
         } else {
-            let check_host = format!("{dashboard}.{domain}");
-            match tokio::net::lookup_host((check_host.clone(), 80)).await {
-                Ok(addrs) => {
-                    let resolved: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
-                    if resolved.iter().any(|ip| ip == &public_ip) {
-                        checks.push(check("dns_dash", "ok", Some(check_host)));
-                    } else {
-                        warnings.push(format!(
-                            "{check_host} resolves to [{}], expected {public_ip}. Update DNS before or after applying.",
-                            resolved.join(", ")
-                        ));
-                        checks.push(check("dns_dash", "warn", Some(format!("resolves to {}", resolved.join(", ")))));
-                    }
-                }
-                Err(_) => {
-                    warnings.push(format!(
-                        "{check_host} does not resolve yet. Point DNS (wildcard *.{domain} or {check_host}) to {public_ip} before traffic will work."
-                    ));
-                    checks.push(check("dns_dash", "warn", Some("does not resolve yet".into())));
-                }
-            }
-
-            // Wildcard probe: a random label resolving means *.domain exists.
+            // Wildcard probe first: a random label resolving means *.domain exists.
             let probe = format!("probe-{}.{}", uuid::Uuid::new_v4().simple(), domain);
-            let wildcard_ok = match tokio::net::lookup_host((probe.as_str(), 80)).await {
-                Ok(addrs) => addrs.map(|a| a.ip().to_string()).any(|ip| ip == public_ip),
-                Err(_) => false,
-            };
-            if wildcard_ok {
-                checks.push(check("wildcard", "ok", Some(format!("*.{domain} covers project subdomains"))));
+            let wildcard_ip = tokio::net::lookup_host((probe.as_str(), 80))
+                .await
+                .map(|addrs| addrs.map(|a| a.ip().to_string()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if wildcard_ip.iter().any(|ip| ip == &public_ip) {
+                checks.push(check("dns", "ok", Some(format!("*.{domain} covers everything"))));
             } else {
-                warnings.push(format!(
-                    "No wildcard *.{domain} — every project subdomain needs its own record pointing to {public_ip}."
-                ));
-                checks.push(check("wildcard", "warn", Some("no wildcard — add records per subdomain".into())));
+                // No wildcard — fall back to the dashboard record.
+                let check_host = format!("{dashboard}.{domain}");
+                let dash_ip = tokio::net::lookup_host((check_host.clone(), 80))
+                    .await
+                    .map(|addrs| addrs.map(|a| a.ip().to_string()).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                if dash_ip.iter().any(|ip| ip == &public_ip) {
+                    warnings.push(format!(
+                        "{check_host} resolves but there is no wildcard *.{domain} — project subdomains will not resolve."
+                    ));
+                    checks.push(check("dns", "warn", Some(format!("dashboard record only — add *.{domain}"))));
+                } else {
+                    warnings.push(format!("Nothing resolves yet. Add an A record *.{domain} → {public_ip}."));
+                    checks.push(check("dns", "warn", Some("does not resolve yet".into())));
+                }
             }
         }
         warnings.push(
@@ -586,7 +615,7 @@ pub async fn domain_apply(
         payload.cloudflare_zone_id.as_deref(),
     )
     .await?;
-    let preflight = run_domain_preflight(&state, &domain).await;
+    let preflight = run_domain_preflight(&state, &domain, &PreflightCreds::default()).await;
     let (errors, warnings) = (preflight.errors, preflight.warnings);
     if !errors.is_empty() {
         return Err((StatusCode::BAD_REQUEST, errors.join("; ")));
@@ -604,7 +633,13 @@ pub async fn domain_apply(
 
     let old_domain = state.platform.domain();
     let job_id = Uuid::new_v4().to_string();
-    let job = DomainJob::new(job_id.clone(), old_domain, domain, &state.platform.dashboard_subdomain());
+    let mut job = DomainJob::new(job_id.clone(), old_domain, domain, &state.platform.dashboard_subdomain());
+    job.acknowledged = payload.acknowledge_dns;
+    if !payload.acknowledge_dns
+        && let Some(step) = job.steps.iter_mut().find(|s| s.id == "prepare_verify")
+    {
+        step.label = "Verify new dashboard reachable (waits up to 3 min for DNS)".into();
+    }
     state.domain_jobs.insert(job_id.clone(), job);
 
     let state_clone = state.clone();
@@ -614,6 +649,31 @@ pub async fn domain_apply(
     });
 
     Ok(Json(DomainApplyResponse { job_id }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct ActiveDomainJobResponse {
+    pub job: Option<DomainJob>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/settings/domain/jobs/active",
+    description = "The currently running or pending domain-change job, if any.",
+    responses((status = 200, body = ActiveDomainJobResponse)),
+    tag = "global-settings",
+    security(("session_auth" = []))
+)]
+pub async fn active_domain_job(
+    State(state): State<AppState>,
+) -> Result<Json<ActiveDomainJobResponse>, (StatusCode, String)> {
+    let job = state
+        .domain_jobs
+        .iter()
+        .filter(|e| matches!(e.status, DomainJobStatus::Pending | DomainJobStatus::Running))
+        .max_by_key(|e| e.created_at)
+        .map(|e| e.clone());
+    Ok(Json(ActiveDomainJobResponse { job }))
 }
 
 #[utoipa::path(

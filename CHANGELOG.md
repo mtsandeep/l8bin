@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Staged domain change** — the new domain is staged in Caddy and verified reachable (cert issued) before anything persists; the old domain keeps serving for a 24h grace window afterwards and is retired automatically (or via *Retire now*). Apply accepts routing mode and Cloudflare credentials alongside the domain.
+- DNS records are never auto-deleted: retiring a previous domain only drops its routes. Removing Cloudflare offers *Disconnect* (records kept) and *Disconnect + delete records*.
+- Domain-change flow fixes — the previous domain stays reachable during its grace window; the modal gains re-checkable preflight, a single DNS check, and the checklist on the success view.
 - Domain preflight returns structured checks, the resolved public IP (detecting it when unknown), and — in Cloudflare mode — a per-record preview of what a sync would create/re-point.
 - Change-domain wizard: routing mode + Cloudflare credentials (or a master-proxy DNS record checklist) chosen in the flow, a one-click temporary sslip.io fallback, and a *Retire now* button for the previous domain.
 - CLI: `l8b platform domain sslip` switches to the server's temporary sslip.io domain; `set` gains `--mode/--cf-token/--cf-zone`; `show` reports the retained previous domain.
