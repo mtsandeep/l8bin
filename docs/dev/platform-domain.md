@@ -54,7 +54,7 @@ Two paths, for when the dashboard is reachable or not:
 | Path | Command | Notes |
 |---|---|---|
 | CLI (admin token) | `l8b platform domain set <domain> [--ack-dns] [--mode …] [--cf-token …] [--cf-zone …] [--timeout N]`; `l8b platform domain sslip` | Preflight → apply → polls the job; `show` reports domain, routing mode, and the grace window (falls back to read-scoped `/meta` without admin). |
-| On-server recovery | `curl -fsSL https://l8b.in \| sudo bash -s set-domain <domain>` | Domain-expiry lockout: execs the orchestrator's offline `set-domain` subcommand (`docker exec litebin-orchestrator /app/litebin-orchestrator set-domain <domain>`) and restarts it. Re-registers online agents best-effort; boot route sync rebuilds Caddy/DNS/agent configs from the DB value. Editing `.env` `DOMAIN` does **not** work — it is an `INSERT OR IGNORE` seed and the DB row wins. |
+| On-server recovery | `curl -fsSL https://l8b.in \| sudo bash -s set-domain <domain\|sslip>` | Domain-expiry lockout: execs the orchestrator's offline `set-domain` subcommand (`docker exec litebin-orchestrator /app/litebin-orchestrator set-domain <domain>`) and restarts it. `sslip` auto-detects the public IP and builds `<ip-dashed>.sslip.io`. Re-registers online agents best-effort; boot route sync rebuilds Caddy/DNS/agent configs from the DB value. Editing `.env` `DOMAIN` does **not** work — it is an `INSERT OR IGNORE` seed and the DB row wins. |
 
 ## DNS record ledger
 

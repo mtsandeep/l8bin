@@ -1976,7 +1976,15 @@ certs_cmd() {
 # set-domain subcommand, then restart it (boot sync rebuilds routing).
 set_domain_cmd() {
   local domain="${1:-}"
-  [ -n "$domain" ] || die "Usage: curl -fsSL ${L8B_IN} | sudo bash -s set-domain <new-domain>"
+  [ -n "$domain" ] || die "Usage: curl -fsSL ${L8B_IN} | sudo bash -s set-domain <domain|sslip>"
+
+  if [ "$domain" = "sslip" ]; then
+    local ip
+    ip=$(curl -sf --connect-timeout 3 --max-time 5 https://api.ipify.org 2>/dev/null       || curl -sf --connect-timeout 3 --max-time 5 https://checkip.amazonaws.com 2>/dev/null       || curl -sf --connect-timeout 3 --max-time 5 https://ipv4.icanhazip.com 2>/dev/null       || echo "")
+    ip=$(echo "$ip" | tr -d '[:space:]')
+    [ -n "$ip" ] || die "Could not detect the public IP — pass the domain explicitly: set-domain <ip-dashed>.sslip.io"
+    domain="${ip//./-}.sslip.io"
+  fi
 
   local master_dir
   master_dir=$(detect_master_dir)
@@ -2018,7 +2026,7 @@ case "${1:-}" in
     echo "  cli       Install the l8b CLI tool"
     echo "  update    Update LiteBin (auto-detects master or agent)"
     echo "  certs     Manage mTLS certs (interactive, or use --show-bundle / --regenerate)"
-    echo "  set-domain <domain>  Change the platform domain on-server (dashboard-free recovery)"
+    echo "  set-domain <domain|sslip>  Change the platform domain on-server (sslip auto-detects the IP)"
     ;;
   "")       show_menu ;;
   *)        die "Unknown mode: $1. Run with --help for usage." ;;

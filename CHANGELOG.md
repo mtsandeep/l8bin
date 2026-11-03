@@ -30,6 +30,7 @@ All notable changes to this project will be documented in this file.
 - Domain preflight returns structured checks, the resolved public IP (detecting it when unknown), and — in Cloudflare mode — a per-record preview of what a sync would create/re-point.
 - Change-domain wizard: routing mode + Cloudflare credentials (or a master-proxy DNS record checklist) chosen in the flow, a one-click temporary sslip.io fallback, and a *Retire now* button for the previous domain.
 - CLI: `l8b platform domain sslip` switches to the server's temporary sslip.io domain; `set` gains `--mode/--cf-token/--cf-zone`; `show` reports the retained previous domain.
+- Installer: `curl -fsSL https://l8b.in | sudo bash -s set-domain sslip` switches a server to its sslip.io domain without the dashboard (auto-detects the IP).
 
 ## [0.4.21] - 2026-11-02
 

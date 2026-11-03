@@ -45,6 +45,14 @@ l8b platform domain sslip
 
 The server computes `{ip-with-dashes}.sslip.io` from its public IP and switches to master proxy — no domain or DNS needed (sslip.io hostnames resolve globally). Use it when a domain expires or to run LiteBin before deciding on a domain; switch to a real domain later through the same wizard. Let's Encrypt rate limits make sslip domains unsuitable for production traffic.
 
+On the server itself (SSH, no dashboard or CLI login needed):
+
+```bash
+curl -fsSL https://l8b.in | sudo bash -s set-domain sslip
+```
+
+This is the recovery path: it sets the domain directly and restarts the orchestrator — instant switch, no staged job or grace window.
+
 ## Removing Cloudflare
 
 Settings → Routing & DNS offers two removal actions:
