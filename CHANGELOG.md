@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.22] - 2026-11-03
+
 ### Fixed
 - **Zone-aware Cloudflare DNS sync** — custom-domain records in other zones of the account are now compared and re-pointed in their own zone (previously re-created or errored every pass); custom domains outside the accessible account are skipped, and sync counts split `re-pointed` from `unchanged`.
 - **Sync DNS runs regardless of routing mode** — previously a silent no-op in master-proxy mode.
