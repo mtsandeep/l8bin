@@ -123,6 +123,7 @@ Already have the `l8b` binary? Register it directly:
 
 ## Topics
 
+- [Platform domains](topics/domains.md) — Routing modes, domain changes, sslip fallback, Cloudflare DNS
 - [Multi-server setup](topics/multi-server.md) — Remote node configuration via mTLS
 - [Multi-service projects](topics/multi-service.md) — Compose-based deployments
 - [Volumes](topics/volumes.md) — Named volumes, bind mounts, and cleanup
