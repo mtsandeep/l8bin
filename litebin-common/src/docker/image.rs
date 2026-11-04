@@ -1,8 +1,12 @@
+use std::collections::HashMap;
+
 use bollard::auth::DockerCredentials;
-use bollard::models::{EndpointSettings, NetworkConnectRequest, NetworkCreateRequest, NetworkDisconnectRequest};
+use bollard::models::{
+    ContainerSummaryStateEnum, EndpointSettings, NetworkConnectRequest, NetworkCreateRequest, NetworkDisconnectRequest,
+};
 use bollard::query_parameters::{
-    CreateImageOptions, ImportImageOptions, ListImagesOptions, PruneImagesOptions, RemoveImageOptions,
-    RemoveVolumeOptions, StatsOptions,
+    CreateImageOptions, ImportImageOptions, ListContainersOptions, ListImagesOptions, PruneImagesOptions,
+    RemoveContainerOptions, RemoveImageOptions, RemoveVolumeOptions, StatsOptions,
 };
 use futures_util::StreamExt;
 
@@ -530,6 +534,7 @@ impl DockerManager {
         use futures_util::StreamExt;
 
         self.pull_image_with_opts(super::transfer::TRANSFER_TOOL_IMAGE, false).await?;
+        self.reap_du_strays().await;
         let name = format!("l8b-du-{:x}", rand::random::<u64>());
         let config = ContainerCreateBody {
             image: Some(super::transfer::TRANSFER_TOOL_IMAGE.to_string()),
@@ -570,8 +575,31 @@ impl DockerManager {
         }
         .await;
 
-        let _ = self.remove_by_name(&name).await;
+        // Remove by exact name — remove_by_name() wraps ids in a `litebin-` prefix and would no-op here.
+        let _ = self
+            .docker
+            .remove_container(&name, Some(RemoveContainerOptions { force: true, ..Default::default() }))
+            .await;
         outcome
+    }
+
+    /// Remove leftover `l8b-du-*` probe containers (any non-running state —
+    /// running ones are in-flight measurements from this process).
+    async fn reap_du_strays(&self) {
+        let filters = HashMap::from([("name".to_string(), vec!["l8b-du-".to_string()])]);
+        let options = ListContainersOptions { all: true, filters: Some(filters), ..Default::default() };
+        let Ok(containers) = self.docker.list_containers(Some(options)).await else { return };
+        for container in containers {
+            if container.state == Some(ContainerSummaryStateEnum::RUNNING) {
+                continue;
+            }
+            if let Some(id) = container.id {
+                let _ = self
+                    .docker
+                    .remove_container(&id, Some(RemoveContainerOptions { force: true, ..Default::default() }))
+                    .await;
+            }
+        }
     }
 
     /// Load a Docker image from a tar stream (output of `docker save`).

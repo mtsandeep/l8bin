@@ -4,7 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **No more stray `l8b-du-*` containers** — the busybox probes used to measure Docker volume sizes were never cleaned up; each probe now removes itself and reaps leftovers from earlier runs.
+
+### Changed
+- **DNS sync never silently overwrites unknown records** — a record pointing at an IP LiteBin does not know (master/node) is skipped by automatic syncs and surfaced on the *Sync DNS* button, where *Re-point anyway* confirms the overwrite. The preflight plan shows conflicts separately.
+
 ## [0.4.24] - 2026-11-04
+
+### Added
+- Installer: `curl -fsSL https://l8b.in | sudo bash -s set-domain sslip` switches a server to its sslip.io domain without the dashboard (auto-detects the IP).
+
+### Changed
+- The platform-domain apex serves a default landing page (bundled with the orchestrator, sslip hosts show the IP); a project claiming the apex as a custom domain overrides it.
 
 ## [0.4.23] - 2026-11-03
 
@@ -14,8 +26,6 @@ All notable changes to this project will be documented in this file.
 - Settings section nav wraps instead of overflowing on small screens.
 
 ### Changed
-- **DNS sync never silently overwrites unknown records** — a record pointing at an IP LiteBin does not know (master/node) is skipped by automatic syncs and surfaced on the *Sync DNS* button, where *Re-point anyway* confirms the overwrite. The preflight plan shows conflicts separately.
-- The platform-domain apex serves a default landing page (bundled with the orchestrator, sslip hosts show the IP); a project claiming the apex as a custom domain overrides it.
 - Removing Cloudflare asks for confirmation; the API token field is masked in the change-domain modal.
 - Saving Cloudflare routing mode requires an API token and Zone ID.
 - Disabled buttons show a blocked cursor.
@@ -34,7 +44,6 @@ All notable changes to this project will be documented in this file.
 - Domain preflight returns structured checks, the resolved public IP (detecting it when unknown), and — in Cloudflare mode — a per-record preview of what a sync would create/re-point.
 - Change-domain wizard: routing mode + Cloudflare credentials (or a master-proxy DNS record checklist) chosen in the flow, a one-click temporary sslip.io fallback, and a *Retire now* button for the previous domain.
 - CLI: `l8b platform domain sslip` switches to the server's temporary sslip.io domain; `set` gains `--mode/--cf-token/--cf-zone`; `show` reports the retained previous domain.
-- Installer: `curl -fsSL https://l8b.in | sudo bash -s set-domain sslip` switches a server to its sslip.io domain without the dashboard (auto-detects the IP).
 
 ## [0.4.21] - 2026-11-02
 
