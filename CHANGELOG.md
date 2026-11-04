@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.25] - 2026-11-04
+
 ### Fixed
 - **No more stray `l8b-du-*` containers** — the busybox probes used to measure Docker volume sizes were never cleaned up; each probe now removes itself and reaps leftovers from earlier runs.
 
