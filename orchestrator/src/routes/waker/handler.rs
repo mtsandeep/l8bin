@@ -800,9 +800,12 @@ pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::
     let snap = state.platform.snapshot();
     let host_without_port = host.split(':').next().unwrap_or("");
     let dashboard_hosts = state.platform.platform_hosts();
-    if dashboard_hosts.iter().any(|h| h == host_without_port)
-        || (snap.domain == "localhost" && host_without_port == "127.0.0.1")
-    {
+    // The platform-domain apex serves the landing page.
+    if host_without_port == snap.domain || host_without_port == snap.previous_domain {
+        return ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], include_str!("../apex_page.html"))
+            .into_response();
+    }
+    if dashboard_hosts.iter().any(|h| h == host_without_port) {
         // The SPA serves GET/HEAD only — anything else here is a missed API call.
         if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
             return unknown_api_route(&method, uri.path());

@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Settings section nav wraps instead of overflowing on small screens.
 
 ### Changed
+- The platform-domain apex serves a default landing page (bundled with the orchestrator, sslip hosts show the IP); a project claiming the apex as a custom domain overrides it.
 - Removing Cloudflare asks for confirmation; the API token field is masked in the change-domain modal.
 - Saving Cloudflare routing mode requires an API token and Zone ID.
 - Disabled buttons show a blocked cursor.

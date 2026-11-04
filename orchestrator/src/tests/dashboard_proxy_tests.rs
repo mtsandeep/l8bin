@@ -142,15 +142,17 @@ async fn dashboard_host_non_get_fallback_is_json() {
 }
 
 #[tokio::test]
-async fn bare_and_loopback_hosts_proxy_to_dashboard() {
+async fn bare_host_serves_landing_page_and_loopback_is_not_dashboard() {
     let stub = spawn_stub_dashboard().await;
     let (server, _db) = test_server_with_db_config(config_with_upstream(&stub.addr)).await;
 
-    for host in ["localhost", "127.0.0.1"] {
-        let resp = server.get("/").add_header(HOST, host).await;
-        resp.assert_status(StatusCode::OK);
-        assert!(resp.headers().contains_key("x-stub"), "host {host} must reach the stub");
-    }
+    // The apex (platform domain is "localhost" in tests) serves the landing page.
+    let resp = server.get("/").add_header(HOST, "localhost").await;
+    resp.assert_status(StatusCode::OK);
+    assert!(resp.text().contains("L8Bin"));
+
+    let resp = server.get("/").add_header(HOST, "127.0.0.1").await;
+    assert!(!resp.headers().contains_key("x-stub"));
 }
 
 /// A stopped project on an app subdomain must keep hitting the waker, not the dashboard proxy.

@@ -35,6 +35,10 @@ After a change, the previous domain keeps serving everything (dashboard, project
 
 A second domain change while one is running is refused until the job finishes; reopening the wizard re-attaches to a running job (e.g. after a page reload).
 
+### The apex
+
+The bare domain (`example.com` itself) serves a small default landing page bundled with the orchestrator — nothing about the install is exposed (no version, app count, or dashboard link). On sslip.io hosts the title shows the server IP. Claim the apex as a **project custom domain** to serve your own site there instead; removing the claim brings the landing page back. The page lives in the orchestrator source (`orchestrator/src/routes/apex_page.html`) and ships with each release.
+
 ## Temporary mode (sslip.io)
 
 Flip **Temporary mode** in the wizard, or run:

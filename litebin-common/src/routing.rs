@@ -336,6 +336,19 @@ impl MasterProxyRouter {
             }]
         }));
 
+        // Apex hosts (current + previous during grace) → the landing page handler.
+        let mut apex_hosts = vec![domain.to_string()];
+        if let Some(prev) = previous_domain {
+            apex_hosts.push(prev.to_string());
+        }
+        routes.push(json!({
+            "match": [{ "host": apex_hosts }],
+            "handle": [{
+                "handler": "reverse_proxy",
+                "upstreams": [{ "dial": orchestrator_upstream }]
+            }]
+        }));
+
         // Dashboard host: everything goes to the orchestrator, which routes API paths
         // itself and proxies the rest to the dashboard SPA.
         let dashboard_host = format!("{}.{}", dashboard_subdomain, domain);

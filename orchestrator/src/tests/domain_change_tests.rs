@@ -61,6 +61,9 @@ async fn ask_approves_staged_and_previous_domains() {
     ask(&server, "bg.new.example.io").await.assert_status(StatusCode::OK);
     ask(&server, "l8bin.new.example.io").await.assert_status(StatusCode::OK);
 
+    // The apex serves the landing page and is TLS-approved
+    ask(&server, "localhost").await.assert_status(StatusCode::OK);
+
     // Previous domain stays approved during the grace window
     sqlx::query("INSERT INTO settings (key, value) VALUES ('previous_domain', 'old.example.net')")
         .execute(&db)

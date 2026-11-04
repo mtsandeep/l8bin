@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 /// Returns a Caddy route that redirects HTTP to HTTPS (308 permanent).
 /// Returns `None` for localhost domains where the redirect should be skipped.
 pub fn http_to_https_redirect(domain: &str) -> Option<Value> {
-    if domain.ends_with("localhost") {
+    if domain.ends_with("localhost") || domain.ends_with(".sslip.io") || domain.ends_with(".nip.io") {
         return None;
     }
     Some(json!({

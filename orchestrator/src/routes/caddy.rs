@@ -116,7 +116,7 @@ async fn approved_under_domain(state: &AppState, asked: &str, platform_domain: &
         }
     }
 
-    if asked == format!("{}.{}", state.platform.dashboard_subdomain(), platform_domain) {
+    if asked == platform_domain || asked == format!("{}.{}", state.platform.dashboard_subdomain(), platform_domain) {
         return Ok(true);
     }
     if asked == format!("{}.{}", state.platform.poke_subdomain(), platform_domain) {
