@@ -299,6 +299,8 @@ pub struct PreflightCheck {
 pub struct DnsPlanPreview {
     pub created: Vec<String>,
     pub repointed: Vec<String>,
+    /// Existing records at unknown IPs — a forced sync re-points these.
+    pub conflicts: Vec<String>,
     pub unchanged: Vec<String>,
     pub skipped: Vec<String>,
 }
@@ -449,6 +451,15 @@ async fn run_domain_preflight(state: &AppState, domain: &str, creds: &PreflightC
                     )
                     .await;
                     let account_zones = cf.list_zones().await.unwrap_or_default();
+                    let mut known_ips = std::collections::HashSet::from([public_ip.clone()]);
+                    if let Ok(node_ips) = sqlx::query_scalar::<_, String>(
+                        "SELECT public_ip FROM nodes WHERE public_ip IS NOT NULL AND public_ip != ''",
+                    )
+                    .fetch_all(&state.db)
+                    .await
+                    {
+                        known_ips.extend(node_ips);
+                    }
                     let mut preview = DnsPlanPreview::default();
                     for (name, ip) in &desired {
                         let Some(zone) = zone_for_name(name, &cf_zone, &zone_name, &account_zones).map(str::to_string)
@@ -459,7 +470,8 @@ async fn run_domain_preflight(state: &AppState, domain: &str, creds: &PreflightC
                         match cf.list_records_in_zone(&zone, name, "A").await {
                             Ok(records) => match records.first() {
                                 Some(r) if &r.content == ip => preview.unchanged.push(name.clone()),
-                                Some(_) => preview.repointed.push(name.clone()),
+                                Some(r) if known_ips.contains(&r.content) => preview.repointed.push(name.clone()),
+                                Some(_) => preview.conflicts.push(name.clone()),
                                 None => preview.created.push(name.clone()),
                             },
                             Err(_) => preview.skipped.push(name.clone()),
@@ -467,13 +479,14 @@ async fn run_domain_preflight(state: &AppState, domain: &str, creds: &PreflightC
                     }
                     checks.push(check(
                         "dns_plan",
-                        "ok",
+                        if preview.conflicts.is_empty() { "ok" } else { "warn" },
                         Some(format!(
-                            "{} to create, {} to re-point, {} unchanged, {} skipped",
+                            "{} to create, {} to re-point, {} conflict{}, {} unchanged",
                             preview.created.len(),
                             preview.repointed.len(),
-                            preview.unchanged.len(),
-                            preview.skipped.len()
+                            preview.conflicts.len(),
+                            if preview.conflicts.len() == 1 { "" } else { "s" },
+                            preview.unchanged.len()
                         )),
                     ));
                     plan = Some(preview);

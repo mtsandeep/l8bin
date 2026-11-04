@@ -47,8 +47,9 @@ impl RoutingProvider for CloudflareDnsRouter {
         domain: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
+        force: bool,
     ) -> anyhow::Result<litebin_common::routing::DnsSyncResult> {
-        self.sync_dns(projects, domain, dashboard_subdomain, poke_subdomain).await
+        self.sync_dns(projects, domain, dashboard_subdomain, poke_subdomain, force).await
     }
 
     async fn sync_routes(
@@ -118,7 +119,7 @@ impl RoutingProvider for CloudflareDnsRouter {
 
         // 3. Cloudflare DNS sync (skip for periodic checks where nothing changed)
         if sync_dns {
-            match self.sync_dns(projects, domain, dashboard_subdomain, poke_subdomain).await {
+            match self.sync_dns(projects, domain, dashboard_subdomain, poke_subdomain, false).await {
                 Ok(r) => tracing::info!(
                     created = r.created,
                     repointed = r.repointed,

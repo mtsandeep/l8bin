@@ -12,7 +12,7 @@ Every project gets a subdomain (`{id}.{domain}`) and the dashboard is served at 
 
 **Master proxy (Local)** — all traffic routes through this server via Caddy reverse proxy. You own DNS: point a wildcard `A *.{domain}` record at the server IP (one record covers the dashboard, poke, and every project subdomain). The DNS target — the IP records should point at — is shown in Settings → Routing & DNS; it auto-detects when unset.
 
-**Cloudflare DNS** — LiteBin creates and maintains the DNS records for you via the Cloudflare API: platform subdomains on every deploy and re-pointing whenever a node's IP changes. Configure an API token (Zone → DNS → Edit) and the zone ID in Settings → Routing & DNS — *Check credentials* validates them before saving, and *Sync DNS records* reconciles everything on demand.
+**Cloudflare DNS** — LiteBin creates and maintains the DNS records for you via the Cloudflare API: platform subdomains, project custom domains (including the apex), and re-pointing whenever a node's IP changes. Configure an API token (Zone → DNS → Edit) and the zone ID in Settings → Routing & DNS — *Check credentials* validates them before saving, and *Sync DNS records* reconciles everything on demand. Records already pointing at an IP LiteBin does not know are never touched silently: they are skipped and listed on the button, and *Re-point anyway* confirms the overwrite.
 
 Sync is zone-aware: records for project custom domains that live in other zones of the same Cloudflare account are managed in their own zone. Custom domains hosted outside the Cloudflare account are skipped with a note — their A records are yours to manage manually.
 

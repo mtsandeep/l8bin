@@ -132,6 +132,13 @@ pub async fn validate_cloudflare(
     Ok(Json(CloudflareValidateResponse { ok: errors.is_empty(), zone_name, errors }))
 }
 
+#[derive(Deserialize, Default, utoipa::ToSchema)]
+pub struct SyncDnsRequest {
+    /// Re-point records whose current IP is unknown to LiteBin (conflicts).
+    #[serde(default)]
+    pub force: bool,
+}
+
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct SyncDnsResponse {
     pub created: usize,
@@ -139,6 +146,8 @@ pub struct SyncDnsResponse {
     pub repointed: usize,
     pub unchanged: usize,
     pub errors: usize,
+    pub skipped: usize,
+    pub conflicts: Vec<litebin_common::routing::DnsConflict>,
 }
 
 #[utoipa::path(
@@ -153,7 +162,11 @@ pub struct SyncDnsResponse {
     tag = "global-settings",
     security(("session_auth" = []))
 )]
-pub async fn sync_dns(State(state): State<AppState>) -> Result<Json<SyncDnsResponse>, (StatusCode, String)> {
+pub async fn sync_dns(
+    State(state): State<AppState>,
+    body: Option<Json<SyncDnsRequest>>,
+) -> Result<Json<SyncDnsResponse>, (StatusCode, String)> {
+    let force = body.map(|Json(b)| b.force).unwrap_or(false);
     let cf_token = get_setting(&state.db, "cloudflare_api_token").await?.unwrap_or_default();
     let cf_zone = get_setting(&state.db, "cloudflare_zone_id").await?.unwrap_or_default();
 
@@ -178,7 +191,7 @@ pub async fn sync_dns(State(state): State<AppState>) -> Result<Json<SyncDnsRespo
         state.config.clone(),
     );
     let result = router
-        .sync_dns_only(&routes, &snap.domain, &snap.dashboard_subdomain, &snap.poke_subdomain)
+        .sync_dns_only(&routes, &snap.domain, &snap.dashboard_subdomain, &snap.poke_subdomain, force)
         .await
         .map_err(|e| {
             let msg = e.to_string();
@@ -195,5 +208,7 @@ pub async fn sync_dns(State(state): State<AppState>) -> Result<Json<SyncDnsRespo
         repointed: result.repointed,
         unchanged: result.unchanged,
         errors: result.errors,
+        skipped: result.skipped,
+        conflicts: result.conflicts,
     }))
 }

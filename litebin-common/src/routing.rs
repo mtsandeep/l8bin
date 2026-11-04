@@ -95,6 +95,17 @@ pub struct DnsSyncResult {
     pub repointed: usize,
     pub unchanged: usize,
     pub errors: usize,
+    /// Skipped conflicts — re-pointed only by a forced sync.
+    pub skipped: usize,
+    pub conflicts: Vec<DnsConflict>,
+}
+
+/// An existing record whose IP is neither the master's nor any node's.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct DnsConflict {
+    pub name: String,
+    pub current_ip: String,
+    pub desired_ip: String,
 }
 
 #[async_trait]
@@ -119,6 +130,7 @@ pub trait RoutingProvider: Send + Sync {
         _domain: &str,
         _dashboard_subdomain: &str,
         _poke_subdomain: &str,
+        _force: bool,
     ) -> anyhow::Result<DnsSyncResult> {
         Ok(DnsSyncResult::default())
     }

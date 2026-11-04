@@ -205,6 +205,7 @@ export interface PreflightCheck {
 export interface DnsPlanPreview {
   created: string[];
   repointed: string[];
+  conflicts: string[];
   unchanged: string[];
   skipped: string[];
 }
@@ -506,16 +507,20 @@ export function revertBackupRestore(): Promise<BackupActionResponse> {
   return backupAction('/backup/revert-restore', 'POST');
 }
 
-export async function syncDnsRecords(): Promise<{
+export async function syncDnsRecords(force = false): Promise<{
   created: number;
   deleted: number;
   repointed: number;
   unchanged: number;
   errors: number;
+  skipped: number;
+  conflicts: { name: string; current_ip: string; desired_ip: string }[];
 }> {
   const res = await fetch(`${API_BASE}/settings/sync-dns`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
+    body: JSON.stringify({ force }),
   });
   if (!res.ok) {
     const text = await res.text();

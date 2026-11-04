@@ -100,7 +100,10 @@ export default function GeneralPanel() {
     repointed: number;
     unchanged: number;
     errors: number;
+    skipped: number;
+    conflicts: { name: string; current_ip: string; desired_ip: string }[];
   } | null>(null);
+  const [forcingSync, setForcingSync] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeAction, setRemoveAction] = useState<'disconnect' | 'delete' | null>(null);
   const [showDomainConfirm, setShowDomainConfirm] = useState(false);
@@ -204,6 +207,37 @@ export default function GeneralPanel() {
       showToast(msg);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const runDnsSync = async (force: boolean) => {
+    setSyncing(true);
+    setForcingSync(force);
+    setSyncResult(null);
+    try {
+      const result = await syncDnsRecords(force);
+      setSyncResult(result);
+      if (result.errors === 0) {
+        const parts = [];
+        if (result.created > 0) parts.push(`${result.created} added`);
+        if (result.repointed > 0) parts.push(`${result.repointed} re-pointed`);
+        if (result.unchanged > 0) parts.push(`${result.unchanged} already exist`);
+        if (result.deleted > 0) parts.push(`${result.deleted} removed`);
+        if (result.skipped > 0) parts.push(`${result.skipped} skipped (conflict)`);
+        showToast(
+          parts.length > 0 ? `DNS synced: ${parts.join(', ')}` : 'DNS already up to date',
+          result.conflicts.length > 0 ? undefined : 'success',
+        );
+      } else {
+        showToast(`DNS sync: ${result.created} added, ${result.errors} failed`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Sync failed';
+      setError(msg);
+      showToast(msg);
+    } finally {
+      setSyncing(false);
+      setForcingSync(false);
     }
   };
 
@@ -560,33 +594,7 @@ export default function GeneralPanel() {
                 <div className="space-y-2">
                   <button
                     type="button"
-                    onClick={async () => {
-                      setSyncing(true);
-                      setSyncResult(null);
-                      try {
-                        const result = await syncDnsRecords();
-                        setSyncResult(result);
-                        if (result.errors === 0) {
-                          const parts = [];
-                          if (result.created > 0) parts.push(`${result.created} added`);
-                          if (result.repointed > 0) parts.push(`${result.repointed} re-pointed`);
-                          if (result.unchanged > 0) parts.push(`${result.unchanged} already exist`);
-                          if (result.deleted > 0) parts.push(`${result.deleted} removed`);
-                          showToast(
-                            parts.length > 0 ? `DNS synced: ${parts.join(', ')}` : 'DNS already up to date',
-                            'success',
-                          );
-                        } else {
-                          showToast(`DNS sync: ${result.created} added, ${result.errors} failed`);
-                        }
-                      } catch (e) {
-                        const msg = e instanceof Error ? e.message : 'Sync failed';
-                        setError(msg);
-                        showToast(msg);
-                      } finally {
-                        setSyncing(false);
-                      }
-                    }}
+                    onClick={() => runDnsSync(false)}
                     disabled={syncing}
                     className="w-full py-2 rounded-md text-xs font-medium bg-cyan-600/80 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50 cursor-pointer"
                   >
@@ -600,10 +608,31 @@ export default function GeneralPanel() {
                         syncResult.unchanged > 0 && `${syncResult.unchanged} already exist`,
                         syncResult.deleted > 0 && `${syncResult.deleted} removed`,
                         syncResult.errors > 0 && `${syncResult.errors} failed`,
+                        syncResult.skipped > 0 && `${syncResult.skipped} skipped (conflict)`,
                       ]
                         .filter(Boolean)
                         .join(', ') || 'No records to sync'}
                     </p>
+                  )}
+                  {syncResult !== null && syncResult.conflicts.length > 0 && (
+                    <div className="rounded-md bg-amber-500/5 border border-amber-500/20 px-3 py-2 space-y-2">
+                      <p className="text-[11px] text-amber-300">
+                        These records point at IPs LiteBin does not know — re-point them to this server?
+                      </p>
+                      {syncResult.conflicts.map((c) => (
+                        <p key={c.name} className="text-[11px] font-mono text-slate-300">
+                          {c.name}: {c.current_ip} → {c.desired_ip}
+                        </p>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => runDnsSync(true)}
+                        disabled={forcingSync || syncing}
+                        className="text-[11px] text-amber-300 hover:text-amber-200 underline cursor-pointer disabled:opacity-50"
+                      >
+                        {forcingSync ? 'Re-pointing…' : 'Re-point anyway'}
+                      </button>
+                    </div>
                   )}
                   <div className="flex gap-2">
                     <button
@@ -1049,8 +1078,13 @@ export default function GeneralPanel() {
                     {domainPreflightResult.plan && (
                       <p className="text-[11px] text-slate-500">
                         sync plan: {domainPreflightResult.plan.created.length} to create,{' '}
-                        {domainPreflightResult.plan.repointed.length} to re-point,{' '}
-                        {domainPreflightResult.plan.unchanged.length} unchanged
+                        {domainPreflightResult.plan.repointed.length} to re-point
+                        {domainPreflightResult.plan.conflicts.length > 0
+                          ? `, ${domainPreflightResult.plan.conflicts.length} conflict${
+                              domainPreflightResult.plan.conflicts.length > 1 ? 's' : ''
+                            }`
+                          : ''}
+                        , {domainPreflightResult.plan.unchanged.length} unchanged
                       </p>
                     )}
                     {domainPreflightResult.checks?.length ? null : (

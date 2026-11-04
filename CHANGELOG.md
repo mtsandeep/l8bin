@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - Settings section nav wraps instead of overflowing on small screens.
 
 ### Changed
+- **DNS sync never silently overwrites unknown records** — a record pointing at an IP LiteBin does not know (master/node) is skipped by automatic syncs and surfaced on the *Sync DNS* button, where *Re-point anyway* confirms the overwrite. The preflight plan shows conflicts separately.
 - The platform-domain apex serves a default landing page (bundled with the orchestrator, sslip hosts show the IP); a project claiming the apex as a custom domain overrides it.
 - Removing Cloudflare asks for confirmation; the API token field is masked in the change-domain modal.
 - Saving Cloudflare routing mode requires an API token and Zone ID.

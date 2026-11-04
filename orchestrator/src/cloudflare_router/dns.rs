@@ -129,10 +129,22 @@ impl CloudflareDnsRouter {
         domain: &str,
         dashboard_subdomain: &str,
         poke_subdomain: &str,
+        force: bool,
     ) -> anyhow::Result<litebin_common::routing::DnsSyncResult> {
         // dns_target setting overrides the PUBLIC_IP env for DNS records.
         let public_ip = resolved_dns_ip(&self.db, &self.config.public_ip).await;
         let desired = desired_dns_records(&self.db, &public_ip, domain, dashboard_subdomain, poke_subdomain).await;
+
+        // LiteBin-owned IPs: master + nodes. Records elsewhere are conflicts.
+        let mut known_ips: HashSet<String> = HashSet::from([public_ip.clone()]);
+        if let Ok(node_ips) = sqlx::query_scalar::<_, String>(
+            "SELECT public_ip FROM nodes WHERE public_ip IS NOT NULL AND public_ip != ''",
+        )
+        .fetch_all(&self.db)
+        .await
+        {
+            known_ips.extend(node_ips);
+        }
 
         // Resolve the zone per name: platform names → configured zone,
         // custom domains → their own zone in the account.
@@ -210,6 +222,21 @@ impl CloudflareDnsRouter {
                     result.unchanged += 1;
                     continue;
                 }
+                if !force && !known_ips.contains(&record.content) {
+                    tracing::warn!(
+                        name,
+                        current_ip = %record.content,
+                        desired_ip = %ip,
+                        "DNS conflict — record points at an unknown IP; re-point via a forced sync"
+                    );
+                    result.skipped += 1;
+                    result.conflicts.push(litebin_common::routing::DnsConflict {
+                        name: name.clone(),
+                        current_ip: record.content.clone(),
+                        desired_ip: ip.clone(),
+                    });
+                    continue;
+                }
             }
             match self.cloudflare.upsert_record_in_zone(&zone, name, "A", ip, 1, false).await {
                 Ok(upserted) => {
@@ -233,6 +260,7 @@ impl CloudflareDnsRouter {
             unchanged = result.unchanged,
             deleted = result.deleted,
             errors = result.errors,
+            skipped = result.skipped,
             desired = desired.len(),
             existing = existing.len(),
             "DNS sync complete"
