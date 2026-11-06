@@ -22,6 +22,7 @@ function formatSize(bytes: number): string {
 export default function ExportModal({ projectId, projectName, volumeCount, ephemeralGb, onClose, onSucceeded }: Props) {
   const [includeEnv, setIncludeEnv] = useState(true);
   const [includeVolumes, setIncludeVolumes] = useState(true);
+  const [includeImages, setIncludeImages] = useState(true);
   const [job, setJob] = useState<ExportJobInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -39,7 +40,11 @@ export default function ExportModal({ projectId, projectName, volumeCount, ephem
   const handleExport = async () => {
     setBusy(true);
     try {
-      const resp = await exportProject(projectId, { include_env: includeEnv, include_volumes: includeVolumes });
+      const resp = await exportProject(projectId, {
+        include_env: includeEnv,
+        include_volumes: includeVolumes,
+        include_images: includeImages,
+      });
       const started = await getExportJob(resp.job_id);
       setJob(started);
       showToast('Export started — project restarts briefly for a consistent snapshot', 'info');
@@ -129,6 +134,18 @@ export default function ExportModal({ projectId, projectName, volumeCount, ephem
             <span className="text-xs text-slate-400 flex items-center gap-1">
               <Database size={11} className="text-slate-500" />
               Include volume data {includeVolumes ? '' : '(config-only backup)'}
+            </span>
+          </label>
+
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeImages}
+              onChange={(e) => setIncludeImages(e.target.checked)}
+              className="accent-teal-500"
+            />
+            <span className="text-xs text-slate-400">
+              Include uploaded images {includeImages ? '' : '(target node must already have them)'}
             </span>
           </label>
 

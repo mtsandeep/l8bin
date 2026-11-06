@@ -32,6 +32,9 @@ pub struct ExportRequest {
     /// Include volume data tars in the bundle (default true).
     #[serde(default = "default_true")]
     pub include_volumes: bool,
+    /// Bundle uploaded (sha256) images; off = the target node must already have them.
+    #[serde(default = "default_true")]
+    pub include_images: bool,
 }
 
 fn default_true() -> bool {
@@ -92,6 +95,12 @@ pub async fn export_project(
     if project.allow_raw_ports {
         warnings.push("raw ports permission is included in the bundle".into());
     }
+    let include_images = payload.include_images;
+    if !include_images
+        && copy_engine::project_image_refs(&state.db, &project).await.iter().any(|r| r.starts_with("sha256:"))
+    {
+        warnings.push("uploaded images are not carried — the target node must already have them".into());
+    }
 
     let job_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
@@ -123,7 +132,9 @@ pub async fn export_project(
     let pid = project.id.clone();
     let job_id_bg = job_id.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_export(&state_bg, &pid, was_running, include_env, include_volumes, &job_id_bg).await {
+        if let Err(e) =
+            run_export(&state_bg, &pid, was_running, include_env, include_volumes, include_images, &job_id_bg).await
+        {
             tracing::error!(project = %pid, error = %e, "export failed");
             crate::routes::deploy::logs::push_deploy_log(&state_bg, &pid, &format!("export failed: {e}"));
             if let Some(mut job) = state_bg.export_jobs.get_mut(&job_id_bg) {
@@ -170,6 +181,7 @@ async fn run_export(
     was_running: bool,
     include_env: bool,
     include_volumes: bool,
+    include_images: bool,
     job_id: &str,
 ) -> anyhow::Result<()> {
     let logs = crate::routes::deploy::logs::push_deploy_log;
@@ -195,7 +207,8 @@ async fn run_export(
         node_id: source.node_id().to_string(),
         architecture: source.architecture(state).await,
     };
-    let m = manifest::build_from_db(&state.db, &project, export_source, include_env, include_volumes).await?;
+    let m = manifest::build_from_db(&state.db, &project, export_source, include_env, include_volumes, include_images)
+        .await?;
     let manifest_json = serde_json::to_vec(&m)?;
 
     // 3. Bundle: manifest + project dir + volumes + uploaded images.
@@ -212,9 +225,11 @@ async fn run_export(
             kinds.push((format!("volumes/{volume}.tar"), TransferKind::Volume(volume)));
         }
     }
-    for image in copy_engine::project_image_refs(&state.db, &project).await {
-        if image.starts_with("sha256:") {
-            kinds.push((manifest::image_entry_name(&image), TransferKind::Image(image)));
+    if include_images {
+        for image in copy_engine::project_image_refs(&state.db, &project).await {
+            if image.starts_with("sha256:") {
+                kinds.push((manifest::image_entry_name(&image), TransferKind::Image(image)));
+            }
         }
     }
     let total = kinds.len();

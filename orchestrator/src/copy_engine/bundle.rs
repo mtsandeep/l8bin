@@ -242,7 +242,7 @@ mod tests {
             "services": [],
             "volumes": [],
             "images": [],
-            "flags": { "include_env": true, "include_volumes": true }
+            "flags": { "include_env": true, "include_volumes": true, "include_images": true }
         }))
         .unwrap()
     }

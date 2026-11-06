@@ -332,6 +332,13 @@ full (cold) project backup.
    `include_env`, `include_volumes`, `start_after_import`.
 4. Repeat per project, then decommission the old master.
 
+Export toggles: `include_volumes` (named-volume data), `include_env`
+(`.env` secrets), `include_images` (uploaded `sha256:` images — registry
+images are never bundled; they pull at import). Skipping images makes the
+bundle tiny metadata for re-homes where the target node already has the
+image; import refuses the bundle when an unbundled image is missing on a
+local target (warning on agent targets, surfacing at start).
+
 Notes: the project keeps its id (new subdomain under the target's domain) —
 set the old URL as a custom domain if you need it preserved. The bundle
 carries the project's custom domain and path/alias routes (claimed on import

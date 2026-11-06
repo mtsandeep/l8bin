@@ -90,8 +90,8 @@ pub struct ExportVolume {
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ExportImage {
     pub r#ref: String,
-    /// Bundle entry path (`images/{slug}.tar`).
-    pub file: String,
+    /// Bundle entry path (`images/{slug}.tar`); None when images were skipped.
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -104,10 +104,16 @@ pub struct ExportRoute {
     pub priority: i64,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ExportFlags {
     pub include_env: bool,
     pub include_volumes: bool,
+    #[serde(default = "default_true")]
+    pub include_images: bool,
 }
 
 /// sqlx row shapes for the manifest's tuple queries.
@@ -121,6 +127,7 @@ pub async fn build_from_db(
     source: ExportSource,
     include_env: bool,
     include_volumes: bool,
+    include_images: bool,
 ) -> anyhow::Result<ExportManifest> {
     let services: Vec<ServiceRow> = sqlx::query_as(
         "SELECT service_name, image, port, cmd, is_public, depends_on, memory_limit_mb, cpu_limit, is_oneshot \
@@ -149,7 +156,7 @@ pub async fn build_from_db(
         .await
         .into_iter()
         .filter(|r| r.starts_with("sha256:"))
-        .map(|r| ExportImage { file: image_entry_name(&r), r#ref: r })
+        .map(|r| ExportImage { file: include_images.then(|| image_entry_name(&r)), r#ref: r })
         .collect();
 
     let routes: Vec<RouteRow> = sqlx::query_as(
@@ -220,7 +227,7 @@ pub async fn build_from_db(
         images,
         routes,
         capabilities,
-        flags: ExportFlags { include_env, include_volumes },
+        flags: ExportFlags { include_env, include_volumes, include_images },
     })
 }
 
@@ -235,6 +242,45 @@ pub fn image_entry_name(image_ref: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skipped_images_round_trip_without_files() {
+        let manifest = ExportManifest {
+            format: MANIFEST_FORMAT.into(),
+            version: MANIFEST_VERSION,
+            created_at: 123,
+            source: ExportSource { master_version: "0.4.14".into(), node_id: "local".into(), architecture: None },
+            project: ExportProject {
+                id: "app".into(),
+                name: None,
+                description: None,
+                is_background: false,
+                image: Some("sha256:abcdef".into()),
+                internal_port: None,
+                cmd: None,
+                memory_limit_mb: None,
+                cpu_limit: None,
+                auto_stop_enabled: true,
+                auto_stop_timeout_mins: 15,
+                auto_start_enabled: false,
+                allow_raw_ports: false,
+                allow_docker_access: false,
+                volumes: None,
+                deploy_type: Some("single".into()),
+                custom_domain: None,
+            },
+            services: vec![],
+            volumes: vec![],
+            images: vec![ExportImage { r#ref: "sha256:abcdef".into(), file: None }],
+            routes: vec![],
+            capabilities: vec![],
+            flags: ExportFlags { include_env: true, include_volumes: false, include_images: false },
+        };
+        let back: ExportManifest = serde_json::from_str(&serde_json::to_string(&manifest).unwrap()).unwrap();
+        assert_eq!(back.images[0].r#ref, "sha256:abcdef");
+        assert!(back.images[0].file.is_none());
+        assert!(!back.flags.include_images);
+    }
 
     #[test]
     fn round_trips_through_json() {
@@ -282,7 +328,7 @@ mod tests {
                 service_name: "db".into(),
                 container_path: Some("/var/lib/postgresql/data".into()),
             }],
-            images: vec![ExportImage { r#ref: "sha256:abcdef".into(), file: image_entry_name("sha256:abcdef") }],
+            images: vec![ExportImage { r#ref: "sha256:abcdef".into(), file: Some(image_entry_name("sha256:abcdef")) }],
             capabilities: vec!["docker-observe".into()],
             routes: vec![ExportRoute {
                 route_type: "alias".into(),
@@ -291,13 +337,13 @@ mod tests {
                 upstream: "web:3000".into(),
                 priority: 100,
             }],
-            flags: ExportFlags { include_env: true, include_volumes: true },
+            flags: ExportFlags { include_env: true, include_volumes: true, include_images: true },
         };
         let json = serde_json::to_string(&manifest).unwrap();
         let back: ExportManifest = serde_json::from_str(&json).unwrap();
         assert_eq!(back.project.id, "my-app");
         assert_eq!(back.volumes[0].scoped_name, "litebin_my-app_pgdata");
-        assert_eq!(back.images[0].file, "images/sha256-abcdef.tar");
+        assert_eq!(back.images[0].file.as_deref(), Some("images/sha256-abcdef.tar"));
         assert_eq!(back.routes[0].subdomain.as_deref(), Some("short"));
         assert_eq!(back.project.custom_domain.as_deref(), Some("app.example.com"));
         assert!(back.flags.include_env);

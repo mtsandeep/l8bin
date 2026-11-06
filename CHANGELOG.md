@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Exports can skip uploaded images (`include_images`) for metadata-only re-homes — the target node must already have the image; import refuses (local target) or warns (agent target) when an unbundled image is missing there.
+
 ## [0.4.25] - 2026-11-04
 
 ### Fixed

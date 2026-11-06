@@ -284,6 +284,27 @@ pub async fn import_bundle(
         _ => {}
     }
 
+    for img in m.images.iter().filter(|i| i.file.is_none()) {
+        match &target_ref {
+            NodeRef::Local => {
+                let present = state.docker.inspect_image_id(&img.r#ref).await.is_ok();
+                if !present {
+                    return err(
+                        StatusCode::BAD_REQUEST,
+                        format!(
+                            "uploaded image {}… is not in the bundle and not present on the target node",
+                            &img.r#ref[..img.r#ref.len().min(19)]
+                        ),
+                    );
+                }
+            }
+            NodeRef::Agent(_) => warnings.push(format!(
+                "uploaded image {}… is not in the bundle — it must already exist on the target node",
+                &img.r#ref[..img.r#ref.len().min(19)]
+            )),
+        }
+    }
+
     let reserved = [state.platform.dashboard_subdomain(), state.platform.poke_subdomain()];
     let base = m.project.id.clone();
     let name = payload.name.clone().or_else(|| m.project.name.clone());
@@ -348,7 +369,7 @@ pub async fn import_bundle(
         include_env: payload.include_env && m.flags.include_env,
         include_volumes: payload.include_volumes,
         start_after: payload.start_after_import,
-        images: m.images.iter().map(|i| (i.file.clone(), i.r#ref.clone())).collect(),
+        images: m.images.iter().filter_map(|i| i.file.clone().map(|f| (f, i.r#ref.clone()))).collect(),
     };
     let state_bg = state.clone();
     let new_id = alloc.id.clone();

@@ -64,6 +64,7 @@ export default function TransferPanel() {
   const [showPicker, setShowPicker] = useState(false);
   const [includeEnv, setIncludeEnv] = useState(true);
   const [includeVolumes, setIncludeVolumes] = useState(true);
+  const [includeImages, setIncludeImages] = useState(true);
   const [exportingNow, setExportingNow] = useState<string | null>(null);
   const [exportLog, setExportLog] = useState<{ id: string; state: 'running' | 'done' | 'failed'; note?: string }[]>([]);
   const [exports, setExports] = useState<ExportSummary[]>([]);
@@ -138,7 +139,11 @@ export default function TransferPanel() {
     for (const p of queue) {
       setExportingNow(p.id);
       try {
-        const started = await exportProject(p.id, { include_env: includeEnv, include_volumes: includeVolumes });
+        const started = await exportProject(p.id, {
+          include_env: includeEnv,
+          include_volumes: includeVolumes,
+          include_images: includeImages,
+        });
         const job = await waitForJob(started.job_id);
         setExportLog((prev) =>
           prev.map((l) =>
@@ -220,6 +225,15 @@ export default function TransferPanel() {
                 className="accent-violet-500"
               />
               volume data
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-400">
+              <input
+                type="checkbox"
+                checked={includeImages}
+                onChange={(e) => setIncludeImages(e.target.checked)}
+                className="accent-violet-500"
+              />
+              images
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-400">
               <input

@@ -695,7 +695,7 @@ export interface ExportSummary {
 
 export async function exportProject(
   projectId: string,
-  options: { include_env: boolean; include_volumes: boolean },
+  options: { include_env: boolean; include_volumes: boolean; include_images?: boolean },
 ): Promise<{ job_id: string; project_id: string; status: string }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/export`, {
     method: 'POST',
