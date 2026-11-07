@@ -333,6 +333,9 @@ pub struct Project {
     pub service_count: Option<i64>,
     pub service_summary: Option<String>,
     pub deploy_type: Option<DeployType>,
+    /// Set on demo instances (Mode B clones): the demo parent project id.
+    /// Null on regular projects and demo parents themselves.
+    pub demo_parent_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

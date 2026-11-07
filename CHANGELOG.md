@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Demo mode (shared)** — enable per project from Settings → General to turn the app's URL into a public demo that resets on a schedule (default daily, configurable) or via *Reset now*.
+- **Demo baseline** — *Capture as demo baseline* freezes the running app's volumes and files; resets restore that state instead of wiping to clean (remove the baseline to revert to clean resets).
+- **Demo popover** — while demo mode is on, the Sleep button becomes the Demo popover (mode, reset interval, banner text, baseline actions) and the card's Auto-stop/Auto-start chips become demo chips.
+- Demo API: `GET/PUT /projects/{id}/demo`, `POST …/demo/reset`, `POST/DELETE …/demo/baseline`, `GET …/demo/sessions`, `DELETE …/demo/sessions/{sid}`.
+- Demo janitor runs the scheduled resets.
+
 ### Changed
 - Exports can skip uploaded images (`include_images`) for metadata-only re-homes — the target node must already have the image; import refuses (local target) or warns (agent target) when an unbundled image is missing there.
 

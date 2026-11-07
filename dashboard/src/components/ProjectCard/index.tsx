@@ -4,6 +4,7 @@ import {
   Copy,
   ExternalLink,
   FileKey2,
+  FlaskConical,
   Info,
   Layers,
   Loader2,
@@ -19,16 +20,19 @@ import {
   Trash2,
   WifiOff,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitHubBulkRunStatus } from '../../api';
 import {
   type Node as ApiNode,
+  type DemoState,
   DeployType,
   deleteProject,
+  getDemoState,
   NodeStatus,
   type Project,
   type ProjectStats,
   ProjectStatus,
+  putDemoConfig,
   recreateProject,
   redeployProject,
   startProject,
@@ -41,6 +45,7 @@ import StatusBadge from '../StatusBadge';
 import { useToast } from '../ToastContext';
 import AppSettingsPopover from './AppSettingsPopover';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import DemoSettingsPopover from './DemoSettingsPopover';
 import EnvModal from './EnvModal';
 import GitHubBadge from './GitHubBadge';
 import GitHubRunsModal from './GitHubRunsModal';
@@ -110,6 +115,20 @@ export default function ProjectCard({
   const [customDomainInput, setCustomDomainInput] = useState(project.custom_domain ?? '');
   const [customDomainSaving, setCustomDomainSaving] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  // Demo mode state — drives the chip row + Demo popover while enabled
+  const [demoState, setDemoState] = useState<DemoState | null>(null);
+  const demoEnabled = !project.is_background && (demoState?.enabled ?? false);
+  const refreshDemo = useCallback(() => {
+    if (project.is_background) return;
+    getDemoState(project.id)
+      .then(setDemoState)
+      .catch(() => setDemoState({ enabled: false }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id, project.is_background]);
+  useEffect(() => {
+    refreshDemo();
+  }, [refreshDemo]);
 
   // Redeploy modal from actions dropdown (single-service only, uses project values)
   const [showRedeployModal, setShowRedeployModal] = useState(false);
@@ -370,29 +389,48 @@ export default function ProjectCard({
                 : ''}
           </p>
           <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-700/60 text-slate-400">
-              {project.is_background ? 'Background project' : 'Web app / HTTP API'}
-            </span>
-            {project.is_background ? (
-              <span className="text-slate-500">No managed URL</span>
+            {demoEnabled ? (
+              <>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-600/20 text-violet-300">
+                  <FlaskConical size={10} />
+                  Demo · {demoState?.config?.mode === 'session' ? 'Session' : 'Shared'}
+                </span>
+                {demoState?.config?.mode === 'session' && (
+                  <span className="text-slate-400">
+                    {demoState.active_sessions ?? 0}/{demoState.config?.max_instances ?? 5} live
+                  </span>
+                )}
+                {demoState?.config?.mode === 'shared' && demoState.config?.reset_interval_minutes && (
+                  <span className="text-slate-400">resets every {Math.round(demoState.config.reset_interval_minutes / 60)}h</span>
+                )}
+              </>
             ) : (
               <>
-                <span
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-                    autoStop ? 'bg-slate-700/60' : 'bg-slate-800/40'
-                  }`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${autoStop ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-                  <span className="text-slate-400">Auto-stop{autoStop && ` · ${timeoutMins}m`}</span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-700/60 text-slate-400">
+                  {project.is_background ? 'Background project' : 'Web app / HTTP API'}
                 </span>
-                <span
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-                    autoStart ? 'bg-slate-700/60' : 'bg-slate-800/40'
-                  }`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${autoStart ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-                  <span className="text-slate-400">Auto-start</span>
-                </span>
+                {project.is_background ? (
+                  <span className="text-slate-500">No managed URL</span>
+                ) : (
+                  <>
+                    <span
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
+                        autoStop ? 'bg-slate-700/60' : 'bg-slate-800/40'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${autoStop ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                      <span className="text-slate-400">Auto-stop{autoStop && ` · ${timeoutMins}m`}</span>
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
+                        autoStart ? 'bg-slate-700/60' : 'bg-slate-800/40'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${autoStart ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                      <span className="text-slate-400">Auto-start</span>
+                    </span>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -421,9 +459,33 @@ export default function ProjectCard({
       {/* Sleep + App + Services + Settings popovers */}
       <div className="relative mb-4">
         <div className="flex gap-2">
-          {/* Sleep button */}
+          {/* Sleep button — replaced by Demo while demo mode is on */}
           <div className="flex-1">
-            {openPopover === 'sleep' ? (
+            {demoEnabled ? (
+              openPopover === 'demo' ? (
+                <DemoSettingsPopover
+                  projectId={project.id}
+                  state={demoState ?? { enabled: true }}
+                  onDemoChanged={refreshDemo}
+                  onClose={() => {
+                    setOpenPopover(null);
+                    refreshDemo();
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setOpenPopover('demo')}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-md border transition-colors cursor-pointer bg-slate-900/50 border-violet-500/40 text-violet-300 hover:bg-slate-900/80"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <FlaskConical size={12} />
+                    <span className="text-[10px] uppercase tracking-wider">Demo</span>
+                  </div>
+                  <ChevronRight size={12} className="text-slate-500" />
+                </button>
+              )
+            ) : openPopover === 'sleep' ? (
               <SleepPopover
                 project={project}
                 onChange={(as, tm, astart) => {
@@ -507,6 +569,18 @@ export default function ProjectCard({
                   setShowGithubRuns(true);
                 }}
                 onRefresh={onRefresh}
+                demoEnabled={demoEnabled}
+                onToggleDemo={(enabled) => {
+                  putDemoConfig(project.id, { enabled, mode: 'shared' })
+                    .then(() => {
+                      showToast(
+                        enabled ? 'Demo mode enabled — defaults to Shared; open Demo on the card to configure' : 'Demo mode disabled',
+                        'success',
+                      );
+                      refreshDemo();
+                    })
+                    .catch((e) => showToast(e instanceof Error ? e.message : 'Failed to toggle demo mode'));
+                }}
                 onClose={() => {
                   setOpenPopover(null);
                   setProjectName(project.name ?? '');

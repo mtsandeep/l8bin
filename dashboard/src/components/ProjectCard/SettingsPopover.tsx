@@ -43,6 +43,8 @@ interface SettingsPopoverProps {
   onOpenGithubRuns: () => void;
   onRefresh: () => void;
   onClose: () => void;
+  demoEnabled: boolean;
+  onToggleDemo: (enabled: boolean) => void;
 }
 
 export default function SettingsPopover({
@@ -68,6 +70,8 @@ export default function SettingsPopover({
   onOpenGithubRuns,
   onRefresh,
   onClose,
+  demoEnabled,
+  onToggleDemo,
 }: SettingsPopoverProps) {
   const [settingsTab, setSettingsTab] = useState<'general' | 'routes' | 'capabilities'>('general');
 
@@ -356,6 +360,29 @@ export default function SettingsPopover({
                   : `Managed URL: ${project.id}.${domain}`}
               </div>
             </div>
+            {!project.is_background && (
+              <label className="flex items-center justify-between gap-2 cursor-pointer rounded bg-slate-900/50 px-2 py-2">
+                <span className="text-xs text-slate-300">
+                  Demo mode
+                  <span className="block text-[10px] text-slate-500">
+                    {demoEnabled
+                      ? 'Visitors get a self-cleaning demo — configure on the card'
+                      : 'Share this app as a public try-it link'}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={demoEnabled}
+                  onClick={() => onToggleDemo(!demoEnabled)}
+                  className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors cursor-pointer ${demoEnabled ? 'bg-violet-500' : 'bg-slate-600'}`}
+                >
+                  <span
+                    className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${demoEnabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
+                  />
+                </button>
+              </label>
+            )}
             <div>
               <span className="text-xs text-slate-400 block mb-1.5">Project name</span>
               <input

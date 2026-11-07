@@ -88,6 +88,14 @@ pub(crate) fn build_app(state: AppState) -> Router {
                 .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024 * 1024)),
         )
         .route("/projects/{id}/recreate", post(crate::routes::manage::handlers::recreate_project))
+        .route("/projects/{id}/demo", get(crate::routes::demo::get_demo).put(crate::routes::demo::put_demo))
+        .route("/projects/{id}/demo/reset", post(crate::routes::demo::reset_demo))
+        .route(
+            "/projects/{id}/demo/baseline",
+            post(crate::routes::demo::capture_baseline).delete(crate::routes::demo::delete_baseline),
+        )
+        .route("/projects/{id}/demo/sessions", get(crate::routes::demo::list_sessions))
+        .route("/projects/{id}/demo/sessions/{sid}", delete(crate::routes::demo::kill_session))
         .route("/projects/{id}/settings", patch(crate::routes::settings::update_project_settings))
         .route("/projects/{id}/services/{name}/start", post(crate::routes::manage::handlers::start_service))
         .route("/projects/{id}/services/{name}/stop", post(crate::routes::manage::handlers::stop_service))

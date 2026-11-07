@@ -542,6 +542,61 @@ export async function updateProjectSettings(projectId: string, settings: Project
   }
 }
 
+// ── Demo mode ────────────────────────────────────────────────────────────────
+
+export interface DemoConfig {
+  mode: 'shared' | 'session';
+  max_instances: number;
+  session_ttl_minutes: number;
+  prewarm: number;
+  reset_interval_minutes: number | null;
+  banner_text: string;
+  bar_enabled: boolean;
+  last_reset_at: number | null;
+  baseline_captured_at: number | null;
+}
+
+export interface DemoState {
+  enabled: boolean;
+  config?: DemoConfig;
+  baseline_captured?: boolean;
+  active_sessions?: number;
+  instances?: number;
+}
+
+async function demoFetch<T>(projectId: string, path: string, init?: RequestInit, fallback: string = 'Demo request failed'): Promise<T> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}${path}`, {
+    credentials: 'include',
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, fallback));
+  }
+  return res.json() as Promise<T>;
+}
+
+export function getDemoState(projectId: string): Promise<DemoState> {
+  return demoFetch<DemoState>(projectId, '/demo', undefined, 'Failed to load demo state');
+}
+
+export function putDemoConfig(projectId: string, body: Record<string, unknown>): Promise<DemoState> {
+  return demoFetch<DemoState>(projectId, '/demo', { method: 'PUT', body: JSON.stringify(body) }, 'Failed to update demo settings');
+}
+
+export function resetDemo(projectId: string): Promise<unknown> {
+  return demoFetch(projectId, '/demo/reset', { method: 'POST' }, 'Failed to reset demo');
+}
+
+export function captureDemoBaseline(projectId: string): Promise<unknown> {
+  return demoFetch(projectId, '/demo/baseline', { method: 'POST' }, 'Failed to capture demo baseline');
+}
+
+export function removeDemoBaseline(projectId: string): Promise<unknown> {
+  return demoFetch(projectId, '/demo/baseline', { method: 'DELETE' }, 'Failed to remove demo baseline');
+}
+
 export async function redeployProject(
   projectId: string,
   image: string,

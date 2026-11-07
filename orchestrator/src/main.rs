@@ -9,6 +9,7 @@ mod config;
 mod copy_engine;
 use utoipa::OpenApi;
 mod db;
+mod demo;
 mod dns_ledger;
 mod github;
 mod nodes;
@@ -478,6 +479,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn janitor background task
     tokio::spawn(sleep::janitor::run_janitor(state.clone(), shutdown_rx.clone()));
+
+    // Spawn demo lifecycle loop (scheduled resets, session TTL teardown)
+    demo::janitor::spawn(state.clone());
 
     // Spawn heartbeat background task
     tokio::spawn(nodes::heartbeat::run_heartbeat(state.clone(), shutdown_rx.clone()));

@@ -182,6 +182,7 @@ pub async fn run_container(State(state): State<AgentState>, Json(req): Json<RunR
         service_count: None,
         service_summary: None,
         deploy_type: None,
+        demo_parent_id: None,
         created_at: 0,
         updated_at: 0,
     };
@@ -252,6 +253,7 @@ pub async fn recreate_container(State(state): State<AgentState>, Json(req): Json
         service_count: None,
         service_summary: None,
         deploy_type: None,
+        demo_parent_id: None,
         created_at: 0,
         updated_at: 0,
     };
@@ -379,6 +381,7 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
             service_count: None,
             service_summary: None,
             deploy_type: None,
+            demo_parent_id: None,
             created_at: 0,
             updated_at: 0,
         };

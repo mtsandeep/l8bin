@@ -2,6 +2,7 @@ pub mod auth;
 pub mod backup;
 pub mod caddy;
 pub mod capabilities;
+pub mod demo;
 pub mod deploy;
 pub mod deploy_tokens;
 pub mod device_auth;
