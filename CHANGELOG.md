@@ -7,6 +7,13 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Exports can skip uploaded images (`include_images`) for metadata-only re-homes — the target node must already have the image; import refuses (local target) or warns (agent target) when an unbundled image is missing there.
 
+### Fixed
+- Installer fails fast with the `usermod`/re-login remedy when the user can't reach the Docker socket, instead of running the whole install and dying at `docker compose up` with a misleading full-disk hint.
+- A sudo run that installs Docker adds the invoking user to the `docker` group (get.docker.com adds nobody) and asks whether to continue as root (`/opt/litebin`) or exit to re-run as that user (`~/litebin`); `L8B_YES=1` continues as root.
+- Non-root users without Docker get the docker-first path (keeps `~/litebin`) spelled out alongside the sudo path (`/opt/litebin`, root for updates).
+- Docker/hardening notices print once per run — install flows that redirect to update flows (already-running install) printed them twice.
+- Restarting (update, staged-restart, install start) force-recreates the stack — the consent prompt says restart, and a no-op `compose up` could previously fail verification with a false "Orchestrator was not recreated" (e.g. after an install finished manually, leaving no `.version`).
+
 ## [0.4.25] - 2026-11-04
 
 ### Fixed

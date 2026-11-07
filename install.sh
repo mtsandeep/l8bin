@@ -99,8 +99,12 @@ install_docker() {
 }
 
 ensure_docker() {
+  # Run-once: install flows redirect to update flows which re-invoke these.
+  [ "${_L8B_DOCKER:-0}" = 1 ] && return 0
   if command -v docker &>/dev/null; then
     info "Docker found: $(docker --version)"
+    _L8B_DOCKER=1
+    ensure_docker_access
     return
   fi
 
@@ -114,11 +118,30 @@ ensure_docker() {
     echo ""
     if prompt_yes "Install Docker now?" y && install_docker && command -v docker &>/dev/null; then
       info "Docker installed: $(docker --version)"
+      _L8B_DOCKER=1
+      if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+        # get.docker.com adds nobody to the docker group.
+        if ! id -nG "$SUDO_USER" 2>/dev/null | grep -qw docker; then
+          usermod -aG docker "$SUDO_USER" \
+            && info "Added '$SUDO_USER' to the docker group — re-login to use docker without sudo."
+        fi
+        if ! prompt_yes "Continue as root? (y: /opt/litebin, n: re-run as '$SUDO_USER' in ~/litebin)" y; then
+          info "Log out & back in as '$SUDO_USER' (activates the docker group), then re-run:"
+          echo "    curl -fsSL ${L8B_IN} | bash -s ${L8B_CMD}"
+          exit 0
+        fi
+      fi
+      ensure_docker_access
       return
     fi
   elif is_linux; then
     echo ""
-    echo "  Re-run as root to let the installer set it up:"
+    echo "  Keep this user install (~/litebin) — install Docker first:"
+    echo "    curl -fsSL https://get.docker.com | sudo sh"
+    echo "    sudo usermod -aG docker $(id -un)   # get.docker.com adds nobody"
+    echo "  Log out & back in, then re-run this installer as your user."
+    echo ""
+    echo "  Or run it all as root (installs to /opt/litebin; updates need root):"
     echo "    curl -fsSL ${L8B_IN} | sudo bash -s master"
   fi
 
@@ -136,15 +159,40 @@ ensure_docker() {
 }
 
 ensure_docker_compose() {
+  [ "${_L8B_COMPOSE:-0}" = 1 ] && return 0
   if docker compose version &>/dev/null 2>&1; then
+    _L8B_COMPOSE=1
     info "Docker Compose available: $(docker compose version --short 2>/dev/null || echo 'ok')"
   else
     die "Docker Compose is not available. Install Docker Compose plugin: https://docs.docker.com/compose/install/"
   fi
 }
 
+# Daemon preflight — 'docker --version' passes without socket access.
+ensure_docker_access() {
+  docker ps &>/dev/null && return 0
+  echo ""
+  if ! is_linux; then
+    die "Docker is installed but the daemon is unreachable — is Docker running?"
+  fi
+  if [ ! -S /var/run/docker.sock ]; then
+    sleep 2 && docker ps &>/dev/null && return 0 # daemon warmup
+    die "Docker daemon is not running (no /var/run/docker.sock). Start it: sudo systemctl start docker"
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    die "Docker daemon refused a root connection — check: systemctl status docker"
+  fi
+  error "User '$(id -un)' can't reach the Docker daemon."
+  echo "  Fix (group changes need a NEW login session):"
+  echo "    sudo usermod -aG docker $(id -un)"
+  echo "  Re-login (or: newgrp docker), then re-run."
+  exit 1
+}
+
 # Daemon resource protection — docs/architecture/resource-protection.md.
 harden_daemons() {
+  [ "${_L8B_HARDENED:-0}" = 1 ] && return 0
+  _L8B_HARDENED=1
   is_linux || return 0
   if [ "$(id -u)" -ne 0 ]; then
     warn "Daemon resource protection needs root — skipped. Apply later with:"
@@ -520,6 +568,9 @@ compose_up() {
   local out
   if ! out=$(cd "$install_dir" && docker compose up -d --build "$@" 2>&1); then
     echo "$out" | tail -20 >&2
+    if echo "$out" | grep -qi "permission denied.*docker.sock"; then
+      die "No Docker socket access for user '$(id -un)'. Fix: sudo usermod -aG docker $(id -un), re-login (or: newgrp docker), then: cd ${install_dir} && docker compose up -d --build"
+    fi
     die "docker compose up failed (output above). Check 'df -h' — a full disk fails the build. Then re-run: cd ${install_dir} && docker compose up -d --build"
   fi
   echo "$out" | grep -E 'Container|Started|Stopped|Recreated|Creating|Removing|Warning|Error' || true
@@ -577,7 +628,7 @@ update_pending() {
 apply_pending_update() {
   local install_dir="$1" name="$2" restart_epoch
   restart_epoch=$(date +%s)
-  compose_up "$install_dir"
+  compose_up "$install_dir" --force-recreate
   sleep 3
   if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = "true" ] \
     && container_created_since "$name" "$restart_epoch"; then
@@ -981,7 +1032,7 @@ EOF
   info "Starting LiteBin..."
   local start_epoch
   start_epoch=$(date +%s)
-  compose_up "$install_dir"
+  compose_up "$install_dir" --force-recreate
   sleep 3
   if [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" != "true" ] \
     || ! container_created_since litebin-orchestrator "$start_epoch"; then
@@ -1556,9 +1607,6 @@ update_master() {
     esac
   fi
 
-  local is_reinstall=false
-  [ "$current_version" = "$target_release" ] && is_reinstall=true
-
   # Confirm
   echo ""
   if [ "$current_version" = "$target_release" ]; then
@@ -1664,7 +1712,7 @@ update_master() {
   info "Restarting LiteBin..."
   local restart_epoch
   restart_epoch=$(date +%s)
-  compose_up "$install_dir"
+  compose_up "$install_dir" --force-recreate
 
   # Verify
   echo ""
@@ -1678,11 +1726,6 @@ update_master() {
     echo -e "${GREEN}${BOLD}  LiteBin ${target_release} is running!${NC}"
     echo ""
     echo -e "  Manage:  ${DIM}cd ${install_dir} && docker compose logs -f --tail 100 orchestrator${NC}"
-  elif [ "$is_reinstall" = true ] \
-    && [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" = "true" ]; then
-    # Reinstall with unchanged bits — nothing to recreate is fine.
-    echo "$target_release" > "${install_dir}/.version"
-    info "No changes to apply — orchestrator already running ${target_release}."
   else
     die "Orchestrator was not recreated — the update did not apply. Re-run: cd ${install_dir} && docker compose up -d --build (logs: docker compose logs orchestrator)"
   fi
@@ -2006,6 +2049,7 @@ set_domain_cmd() {
 }
 
 # -- Main --------------------------------------------------------------------
+L8B_CMD="${1:-master}"
 case "${1:-}" in
   master)  install_master ;;
   agent)   install_agent "${2:-}" ;;
