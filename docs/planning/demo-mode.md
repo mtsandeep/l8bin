@@ -155,6 +155,18 @@ Session cookie: random token, SHA-256 stored, HttpOnly, SameSite=Lax, expires wi
 
 Extracted from duplicate internals (`copy_engine/`): allocate fresh project id via `ids.rs` (dodges reserved subdomains + existing ids), copy service spec (image tags shared, no copy), create volumes per definitions (**empty**, or seeded from the baseline), create network, register routing, set `demo_parent_id`. Base project state irrelevant (stopped is fine). Multi-service/compose projects supported.
 
+### Seamless model (agreed 2026-11-08 — target UX; supersedes the enable-time data-mode choice)
+
+Invariant the user holds: **"Visitors always see your last snapshot. The edit copy is how you make the next one."**
+
+- **Enable (one click)**: snapshot the parent (brief stop, as any capture) → create edit + shared/pool instances **seeded from it** → visitors see the app as of enable-time. No data-mode decision at the door.
+- **Recapture** (from the edit instance) = the next snapshot; demos reset to it.
+- **"Start from scratch"** (small opt-in action): drops the snapshot → visitors get fresh image-state apps (the old "Deployed data", now the exception for self-seeding apps, not a default choice).
+- **Disable = delete everything**: instances, sessions, snapshot (seeds incl.), config. Parent untouched and serves normally. No paused/resume state — re-enabling rebuilds a fresh snapshot in one click.
+- Reset is phrased **"Restore demo to snapshot"**. Shared/Session stays a real choice; TTL/max/banner unchanged.
+
+Build deltas from current code: auto-capture in the enable path before instance creation; popover data section becomes snapshot language + start-from-scratch action; disable also removes seed volumes/tar (today rows cascade but seed data lingers); resolves the "edit instance created empty" and "baseline dies on disable" gaps by design (both become moot — edit is seeded at enable, snapshot deletion is intended).
+
 ### Instance model (agreed 2026-11-08, supersedes the base-cookie bypass)
 
 Everything is an instance; the parent is a pure spec template — never serves traffic, never edited, can stay stopped. `demo_config` records `edit_instance_id` (+ `shared_instance_id` for shared mode). Edit instances get unguessable ids (`{parent}-edit-{rand}`) — the popover opens them by URL, no auth exchange (accepted trade-off: link = access, never expires).

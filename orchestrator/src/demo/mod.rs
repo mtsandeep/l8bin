@@ -128,16 +128,80 @@ pub fn mid_operation(status: &litebin_common::types::ProjectStatus) -> bool {
 }
 
 /// Delete a project's DB row and its node resources via the existing delete
-/// path (containers, volumes, networks, routes, images). Callable directly,
-/// like `start_project`.
-pub async fn teardown_instance(state: &AppState, project_id: &str) {
-    if let Err((code, message)) =
-        crate::routes::manage::handlers::delete_project(
-            axum::extract::State(state.clone()),
-            axum::extract::Path(project_id.to_string()),
+/// path (containers, volumes, networks, routes, images). Boxed: delete_project
+/// → teardown_all → here is an async cycle at the type level.
+pub fn teardown_instance(
+    state: &AppState,
+    project_id: &str,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    let state = state.clone();
+    let project_id = project_id.to_string();
+    Box::pin(async move {
+        if let Err((code, message)) =
+            crate::routes::manage::handlers::delete_project(
+                axum::extract::State(state),
+                axum::extract::Path(project_id.clone()),
+            )
+            .await
+        {
+            tracing::warn!(project = project_id, status = %code, error = %message, "demo: instance teardown failed");
+        }
+    })
+}
+
+/// Delete everything demo-created for a parent: sessions, every instance
+/// (edit, shared, pool, orphans), the snapshot, the config. Used by demo
+/// disable and by parent deletion (children FK-block the parent's DELETE).
+/// No-op when demo was never enabled.
+pub async fn teardown_all(state: &AppState, parent: &litebin_common::types::Project) {
+    let config = get_config(&state.db, &parent.id).await.ok().flatten();
+    teardown_heavy(state, &parent.id, config).await;
+}
+
+/// Fast disable: the config row dies immediately (demo off, gatekeeper stops
+/// intercepting — the toggle returns at once); the heavy cleanup runs in the
+/// background. The janitor's orphan sweep is the safety net if any of it
+/// fails or races.
+pub async fn disable(state: &AppState, parent_id: &str) {
+    let config = get_config(&state.db, parent_id).await.ok().flatten();
+    let _ = sqlx::query("DELETE FROM demo_config WHERE project_id = ?")
+        .bind(parent_id)
+        .execute(&state.db)
+        .await;
+    let state_bg = state.clone();
+    let id = parent_id.to_string();
+    tokio::spawn(async move {
+        teardown_heavy(&state_bg, &id, config).await;
+    });
+}
+
+/// Sessions → snapshot → edit/shared → every remaining child.
+async fn teardown_heavy(state: &AppState, parent_id: &str, config: Option<DemoConfig>) {
+    if let Some(config) = config {
+        let _ = sqlx::query("UPDATE demo_sessions SET status = 'ended' WHERE parent_project_id = ? AND status = 'active'")
+            .bind(parent_id)
+            .execute(&state.db)
+            .await;
+        if let Ok(Some(parent)) = sqlx::query_as::<_, litebin_common::types::Project>(
+            "SELECT * FROM projects WHERE id = ?",
         )
+        .bind(parent_id)
+        .fetch_optional(&state.db)
         .await
-    {
-        tracing::warn!(project = project_id, status = %code, error = %message, "demo: instance teardown failed");
+        {
+            let _ = baseline::remove(state, &parent).await;
+        }
+        for id in [config.edit_instance_id.as_ref(), config.shared_instance_id.as_ref()].into_iter().flatten() {
+            teardown_instance(state, id).await;
+        }
+    }
+    // Sweep every remaining child — pool strays and racing-janitor orphans.
+    let leftovers: Vec<String> = sqlx::query_scalar("SELECT id FROM projects WHERE demo_parent_id = ?")
+        .bind(parent_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+    for id in leftovers {
+        teardown_instance(state, &id).await;
     }
 }

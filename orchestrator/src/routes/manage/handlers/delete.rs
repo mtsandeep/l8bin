@@ -69,6 +69,12 @@ pub async fn delete_project(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
         .ok_or((StatusCode::NOT_FOUND, format!("project '{}' not found", project_id)))?;
 
+    // Demo parents: tear down the demo (instances FK-block this DELETE).
+    // Demo instances pass through — deleting one directly just removes it.
+    if project.demo_parent_id.is_none() {
+        crate::demo::teardown_all(&state, &project).await;
+    }
+
     // Remove container(s) — branch on node location
     let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
 

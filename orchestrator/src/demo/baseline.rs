@@ -50,20 +50,16 @@ pub async fn load(state: &AppState, parent_id: &str) -> anyhow::Result<Baseline>
 /// previous seed.
 pub async fn capture(state: &AppState, parent: &litebin_common::types::Project) -> anyhow::Result<()> {
     let config = crate::demo::get_config(&state.db, &parent.id).await?;
-    // First capture seeds from the PARENT (the deployed + prepped app — the
-    // only good copy; instances start volume-empty, so capturing from the
-    // edit instance then would freeze blank data). Recaptures come from the
-    // edit instance where the operator makes changes.
-    let source: litebin_common::types::Project = match (
-        config.as_ref().and_then(|c| c.edit_instance_id.clone()),
-        config.as_ref().map(|c| c.baseline_captured_at.is_some()),
-    ) {
-        (Some(id), Some(true)) => sqlx::query_as("SELECT * FROM projects WHERE id = ?")
+    // Source: the edit instance (the operator's draft) whenever it exists;
+    // the parent only before instances are provisioned (the enable flow
+    // captures before creating them).
+    let source: litebin_common::types::Project = match config.as_ref().and_then(|c| c.edit_instance_id.clone()) {
+        Some(id) => sqlx::query_as("SELECT * FROM projects WHERE id = ?")
             .bind(&id)
             .fetch_optional(&state.db)
             .await?
             .unwrap_or_else(|| parent.clone()),
-        _ => parent.clone(),
+        None => parent.clone(),
     };
     let node = parent_node(&source);
     let was_running = matches!(

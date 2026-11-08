@@ -18,8 +18,9 @@ use litebin_common::types::{Project, ProjectStatus};
 
 pub const DEMO_COOKIE: &str = "l8b_demo";
 
-const PENDING_TITLE: &str = "Starting your demo…";
-const PENDING_MSG: &str = "Your demo instance is starting.";
+const PENDING_TITLE: &str = "Preparing your demo…";
+const PENDING_MSG: &str = "Please wait while we prepare the demo for you.";
+const ENDED_MSG: &str = "This demo instance and its data are gone.<br><a href=\"/\" class=\"cta\" onclick=\"location.reload();return false\">Start a new demo</a>";
 const DEMO_PREFIX: &str = "/__demo__/";
 
 /// Per-parent claim serialization — capacity check + session INSERT must be
@@ -88,7 +89,7 @@ pub async fn handle_wake(
             if !demo::mid_operation(&shared.status) && shared.auto_start_enabled {
                 spawn_start(state, &shared.id);
             }
-            return Some(page(PENDING_TITLE, PENDING_MSG, None, true));
+            return Some(page(PENDING_TITLE, PENDING_MSG, None, true, true));
         }
         return Some(
             inject_bar(
@@ -111,7 +112,13 @@ pub async fn handle_wake(
                 .bind(&session.id)
                 .execute(&state.db)
                 .await;
-            return Some(page("Demo session ended", "Reload to start a new one — you'll get a fresh instance.", None, false));
+            return Some(page(
+                "Demo session ended",
+                &format!("Your {}-minute demo ran out — the instance and its data are gone.<br><a href=\"/\" class=\"cta\" onclick=\"location.reload();return false\">Start a new demo</a>", config.session_ttl_minutes),
+                None,
+                false,
+                false,
+            ));
         }
         let _ = sqlx::query("UPDATE demo_sessions SET last_seen_at = ? WHERE id = ?")
             .bind(chrono::Utc::now().timestamp())
@@ -238,7 +245,7 @@ async fn claim(
                 Ok(id) => id,
                 Err(e) => {
                     tracing::error!(project = %parent.id, error = %e, "demo: instance spawn failed");
-                    return Some(page("Demo unavailable", "Could not start a demo instance — try again shortly.", Some(15), false));
+                    return Some(page("Demo unavailable", "Could not start a demo instance — try again shortly.", Some(15), false, false));
                 }
             }
         }
@@ -262,7 +269,7 @@ async fn claim(
     .await
     {
         tracing::error!(project = %parent.id, error = %e, "demo: session insert failed");
-        return Some(page("Demo unavailable", "Could not start a demo session — try again.", Some(10), false));
+        return Some(page("Demo unavailable", "Could not start a demo session — try again.", Some(10), false, false));
     }
 
     // Proxy and attach the session cookie to whatever comes back (page or
@@ -372,12 +379,12 @@ fn strip_meta_csp(html: &mut String) {
 /// The bottom bar: banner (operator-configured, trusted raw HTML — links,
 /// emphasis, whatever they want) + a right-side timer — a session countdown,
 /// or the shared demo's next reset time.
+/// The bottom bar: banner (raw operator HTML) + timer; collapses (persisted
+/// in localStorage) to a centered "Demo mm:ss" badge.
 fn bar_snippet(config: &DemoConfig) -> String {
     let banner = &config.banner_text;
     format!(
-        "<style>#l8b-demo-bar{{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;display:flex;justify-content:space-between;gap:12px;align-items:center;background:rgba(15,23,42,.92);color:#e2e8f0;font:12px/1.4 system-ui,sans-serif;padding:7px 14px;border-top:1px solid #334155}}#l8b-demo-bar .t{{color:#2dd4bf;font-variant-numeric:tabular-nums;white-space:nowrap}}</style>\
-<div id=\"l8b-demo-bar\"><span>{banner}</span><span class=\"t\" id=\"l8b-demo-t\"></span></div>\
-<script>(function(){{var el=document.getElementById('l8b-demo-t');if(!el)return;fetch('/__demo__/status',{{cache:'no-store'}}).then(function(r){{return r.json()}}).then(function(j){{if(j.resets_at){{el.textContent='resets '+new Date(j.resets_at*1000).toLocaleTimeString([],{{hour:'numeric',minute:'2-digit'}});return;}}if(!j.expires_at){{el.textContent='';return;}}var end=j.expires_at*1000;function t(){{var s=Math.max(0,Math.round((end-Date.now())/1000));el.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');if(s>0)setTimeout(t,1000);else location.reload();}}t();}}).catch(function(){{}});}})();</script>"
+        "<style>#l8b-demo-bar{{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;display:flex;align-items:center;gap:12px;background:rgba(15,23,42,.7);backdrop-filter:blur(1px);transition:background .2s;color:#e2e8f0;font:12px/1.4 system-ui,sans-serif;padding:7px 10px 7px 10px;border-top:1px solid rgba(51,65,85,.5);&:hover{{background:rgba(15,23,42,.85)}}& .lg{{display:flex;flex:none}}& .lg svg{{display:block}}& .b{{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}& .t{{color:#2dd4bf;font-variant-numeric:tabular-nums;white-space:nowrap}}& a{{color:#5eead4;text-decoration:underline;text-underline-offset:2px}}& .lbl{{display:none}}& .r{{display:flex;align-items:center;gap:6px;white-space:nowrap}}& .tg{{display:flex;background:none;border:none;padding:3px;border-radius:6px;cursor:pointer;color:#94a3b8}}& .tg:hover{{color:#e2e8f0;background:rgba(51,65,85,.5)}}&.min{{left:50%;right:auto;transform:translateX(-50%);border:1px solid rgba(51,65,85,.5);border-bottom:none;border-radius:6px 6px 0 0;padding:4px 8px 5px 8px;gap:8px;font-size:11px}}&.min .b{{display:none}}&.min .lbl{{display:inline}}}}</style><div id=\"l8b-demo-bar\"><a class=\"lg\" href=\"https://l8bin.com\" target=\"_blank\" rel=\"noopener\" aria-label=\"L8Bin.com\" title=\"Powered by L8Bin.com\"><svg width=\"11\" height=\"15\" viewBox=\"22 14 52 70\"><rect x=\"22\" y=\"48\" width=\"52\" height=\"36\" rx=\"3\" fill=\"#8b5cf6\"/><rect x=\"40\" y=\"32\" width=\"6\" height=\"12\" rx=\"2\" fill=\"#06b6d4\" opacity=\"0.55\"/><rect x=\"54\" y=\"24\" width=\"6\" height=\"16\" rx=\"2\" fill=\"#06b6d4\" opacity=\"0.8\"/><rect x=\"68\" y=\"14\" width=\"6\" height=\"20\" rx=\"2\" fill=\"#06b6d4\"/></svg></a><span class=\"b\">{banner}</span><span class=\"r\"><span class=\"lbl\">Demo</span><span class=\"t\" id=\"l8b-demo-t\"></span><button type=\"button\" class=\"tg\" id=\"l8b-demo-tg\" aria-label=\"Collapse or expand the demo bar\"><svg id=\"l8b-demo-chev\" width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6 9l6 6 6-6\"/></svg></button></span></div><script>(function(){{var el=document.getElementById('l8b-demo-t');if(!el)return;var bar=document.getElementById('l8b-demo-bar'),chev=document.getElementById('l8b-demo-chev'),tg=document.getElementById('l8b-demo-tg');function apply(m){{bar.classList.toggle('min',m);if(chev)chev.style.transform=m?'rotate(180deg)':'';}}var m=false;try{{m=localStorage.getItem('l8b_demo_bar_min')==='1'}}catch(e){{}}apply(m);if(tg)tg.onclick=function(){{m=!m;try{{localStorage.setItem('l8b_demo_bar_min',m?'1':'0')}}catch(e){{}}apply(m)}};fetch('/__demo__/status',{{cache:'no-store'}}).then(function(r){{return r.json()}}).then(function(j){{if(j.resets_at){{el.textContent=new Date(j.resets_at*1000).toLocaleTimeString([],{{hour:'numeric',minute:'2-digit'}});return;}}if(!j.expires_at){{el.textContent='';return;}}var end=j.expires_at*1000;function t(){{var s=Math.max(0,Math.round((end-Date.now())/1000));el.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');if(s>0)setTimeout(t,1000);else location.reload();}}t();}}).catch(function(){{}});}})();</script>"
     )
 }
 
@@ -401,7 +408,7 @@ async fn proxy_session(
         .ok()
         .flatten();
     let Some(instance) = instance else {
-        return page("Demo session ended", "Reload to start a new one.", None, false); // torn down mid-session
+        return page("Demo session ended", ENDED_MSG, None, false, false); // torn down mid-session
     };
 
     // Stopped (janitor or fresh boot) → start; the pending page polls until ready.
@@ -409,7 +416,7 @@ async fn proxy_session(
         if !demo::mid_operation(&instance.status) && instance.auto_start_enabled {
             spawn_start(state, &instance.id);
         }
-        return page(PENDING_TITLE, PENDING_MSG, None, true);
+        return page(PENDING_TITLE, PENDING_MSG, None, true, true);
     }
 
     let is_remote = instance.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
@@ -419,7 +426,7 @@ async fn proxy_session(
         {
             return resp;
         }
-        return page(PENDING_TITLE, PENDING_MSG, None, true);
+        return page(PENDING_TITLE, PENDING_MSG, None, true, true);
     }
 
     if instance.deploy_type == Some(litebin_common::types::DeployType::Compose) {
@@ -437,13 +444,13 @@ async fn proxy_session(
                 return resp;
             }
             spawn_start(state, &instance.id);
-            return page(PENDING_TITLE, PENDING_MSG, None, true);
+            return page(PENDING_TITLE, PENDING_MSG, None, true, true);
         }
-        return page(PENDING_TITLE, PENDING_MSG, None, true);
+        return page(PENDING_TITLE, PENDING_MSG, None, true, true);
     }
 
     let Some(port) = instance.internal_port.map(|p| p as u16) else {
-        return page("Demo unavailable", "This demo instance has no routed port.", Some(10), false);
+        return page("Demo unavailable", "This demo instance has no routed port.", Some(10), false, false);
     };
     let upstream = format!("{}:{}", litebin_common::types::container_name(&instance.id, "web", None), port);
     let resp = crate::routes::waker::proxy_with_retry(
@@ -458,7 +465,7 @@ async fn proxy_session(
     .await;
     if resp.status() == StatusCode::BAD_GATEWAY {
         spawn_start(state, &instance.id);
-        return page(PENDING_TITLE, PENDING_MSG, None, true);
+        return page(PENDING_TITLE, PENDING_MSG, None, true, true);
     }
     resp
 }
@@ -609,16 +616,18 @@ async fn wait_page(state: &AppState, config: &DemoConfig, parent_id: &str) -> Re
         &format!("All {} demo sessions are in use — {}. Retrying automatically…", config.max_instances, in_x),
         Some(30),
         false,
+        false,
     )
 }
 
-/// Shared themed fringe page. `refresh_secs` = meta-refresh interval (pages
-/// that poll instead pass None); `spinner` adds the loading ring.
-fn page(title: &str, message: &str, refresh_secs: Option<u32>, spinner: bool) -> Response {
+/// Shared themed fringe page. `refresh_secs` = meta-refresh interval;
+/// `spinner` adds the loading ring; `poll` reloads once the status endpoint
+/// reports the instance ready (spin-up pages only — ended pages stay put
+/// until the visitor deliberately starts over).
+fn page(title: &str, message: &str, refresh_secs: Option<u32>, spinner: bool, poll: bool) -> Response {
     let refresh_tag = refresh_tag(refresh_secs);
-    let poll = if refresh_secs.is_none() {
-        // Pending/expired pages poll the gatekeeper status endpoint.
-        "<script>setInterval(async()=>{try{const r=await fetch('/__demo__/status',{cache:'no-store'});const j=await r.json();if(j.state==='ready'||j.state==='none')location.reload();}catch(e){}},1500)</script>"
+    let poll = if poll {
+        "<script>setInterval(async()=>{try{const r=await fetch('/__demo__/status',{cache:'no-store'});const j=await r.json();if(j.state==='ready')location.reload();}catch(e){}},1500)</script>"
     } else {
         ""
     };
@@ -630,15 +639,7 @@ fn page(title: &str, message: &str, refresh_secs: Option<u32>, spinner: bool) ->
          body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;\
          background:radial-gradient(1200px 600px at 50% -10%,#1e293b 0%,#0b1120 60%);\
          color:#e2e8f0;font:14px/1.6 system-ui,-apple-system,sans-serif}}\
-         .card{{max-width:420px;margin:24px;text-align:center;background:rgba(15,23,42,.82);\
-         border:1px solid rgba(51,65,85,.6);border-radius:16px;padding:36px 32px;\
-         box-shadow:0 20px 60px rgba(0,0,0,.45);backdrop-filter:blur(6px)}}\
-         .ring{{width:34px;height:34px;margin:0 auto 18px;border-radius:50%;\
-         border:3px solid #334155;border-top-color:#8b5cf6;animation:spin 1s linear infinite}}\
-         @keyframes spin{{to{{transform:rotate(360deg)}}}}\
-         h1{{font-size:17px;font-weight:600;margin:0 0 8px;color:#f1f5f9}}\
-         p{{margin:0;color:#94a3b8;font-size:13.5px}}</style></head>\
-         <body><div class=\"card\">{spinner_html}<h1>{title}</h1><p>{message}</p></div>{poll}</body></html>"
+         .card{{max-width:420px;margin:24px;text-align:center;         & .ring{{width:34px;height:34px;margin:0 auto 18px;border-radius:50%;border:3px solid #334155;border-top-color:#8b5cf6;animation:spin 1s linear infinite}}         & h1{{font-size:17px;font-weight:600;margin:0 0 8px;color:#f1f5f9}}         & p{{margin:0 0 14px;color:#94a3b8;font-size:13.5px;line-height:1.6}}         & a{{color:#a78bfa;text-decoration:underline;text-underline-offset:3px}}         & .cta{{display:inline-block;margin-top:4px;padding:7px 20px;border-radius:8px;background:#8b5cf6;color:#fff;font-weight:600;text-decoration:none}}}}footer{{position:fixed;left:0;right:0;bottom:14px;text-align:center;font-size:11px;color:#64748b}}footer a{{color:#94a3b8;text-decoration:none}}         @keyframes spin{{to{{transform:rotate(360deg)}}}}</style></head>         <body><div class=\"card\">{spinner_html}<h1>{title}</h1><p>{message}</p></div>{poll}<footer>Powered by <a href=\"https://l8bin.com\">L8Bin.com</a></footer></body></html>"
     );
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")],

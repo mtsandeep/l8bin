@@ -25,7 +25,26 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
     expire_sessions(state).await;
     prewarm_refill(state).await;
     ensure_long_lived(state).await;
+    sweep_orphans(state).await;
     Ok(())
+}
+
+/// Demo children whose parent has no demo_config — leftovers of a disable
+/// that raced a janitor tick (or manual deletion). Reaped so nothing demo-
+/// created outlives disable.
+async fn sweep_orphans(state: &AppState) {
+    let orphans: Vec<String> = sqlx::query_scalar(
+        "SELECT p.id FROM projects p \
+         WHERE p.demo_parent_id IS NOT NULL \
+         AND NOT EXISTS (SELECT 1 FROM demo_config c WHERE c.project_id = p.demo_parent_id)",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for id in orphans {
+        tracing::info!(project = %id, "demo janitor: orphaned instance reaped");
+        crate::demo::teardown_instance(state, &id).await;
+    }
 }
 
 /// Self-heal the edit + shared instances (created on enable, recreated here

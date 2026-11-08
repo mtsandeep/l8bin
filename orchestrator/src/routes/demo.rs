@@ -158,14 +158,27 @@ pub async fn put_demo(
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}"));
     }
 
-    // Provision the long-lived instances (edit always, shared in shared
-    // mode) in the background — the janitor self-heals them every tick.
-    if let Ok(Some(mut cfg)) = demo::get_config(&state.db, &project_id).await {
+    // Seamless enable: snapshot the parent first (visitors see the app as of
+    // now), then provision the instances seeded from that snapshot. The
+    // janitor self-heals them every tick thereafter.
+    {
+        let first_enable = demo::get_config(&state.db, &project_id)
+            .await
+            .ok()
+            .flatten()
+            .is_none_or(|c| c.baseline_captured_at.is_none());
         let state_bg = state.clone();
         let parent = project.clone();
         tokio::spawn(async move {
-            if let Err(e) = demo::ensure_instances(&state_bg, &mut cfg, &parent).await {
-                tracing::warn!(project = %parent.id, error = %e, "demo: instance provisioning failed");
+            if first_enable && let Err(e) = demo::baseline::capture(&state_bg, &parent).await {
+                tracing::warn!(project = %parent.id, error = %e, "demo: enable snapshot failed — instances start fresh");
+            }
+            // ensure_instances loads the (now-stamped) baseline itself and
+            // seeds edit/shared from it.
+            if let Ok(Some(mut cfg)) = demo::get_config(&state_bg.db, &parent.id).await {
+                if let Err(e) = demo::ensure_instances(&state_bg, &mut cfg, &parent).await {
+                    tracing::warn!(project = %parent.id, error = %e, "demo: instance provisioning failed");
+                }
             }
         });
     }
@@ -273,6 +286,15 @@ pub async fn delete_baseline(
     match demo::baseline::remove(&state, &project).await {
         Ok(()) => {
             propagate_seed_change(&state, &project_id).await;
+            // The edit copy holds the discarded edits — wipe it to a clean
+            // boot so the next publish can't resurrect them.
+            if let Some(edit_id) =
+                demo::get_config(&state.db, &project_id).await.ok().flatten().and_then(|c| c.edit_instance_id)
+            {
+                if let Err(e) = demo::reset::wipe_instance(&state, &edit_id).await {
+                    tracing::warn!(project = %project_id, error = %e, "demo: edit-copy wipe failed");
+                }
+            }
             (StatusCode::OK, Json(json!({ "status": "removed" }))).into_response()
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
@@ -398,21 +420,12 @@ async fn propagate_seed_change(state: &AppState, parent_id: &str) {
     }
 }
 
-/// Disable: end sessions, tear down every demo instance (edit + shared +
-/// pool), drop config. The parent is untouched and serves normally again.
+/// Disable: config off immediately (instant toggle), full cleanup in the
+/// background. The parent is untouched and serves normally again.
 async fn disable_demo(state: &AppState, project: &Project) -> anyhow::Result<()> {
-    if let Some(config) = demo::get_config(&state.db, &project.id).await? {
-        end_sessions(state, &project.id).await;
-        for id in [config.edit_instance_id.as_ref(), config.shared_instance_id.as_ref()].into_iter().flatten() {
-            demo::teardown_instance(state, id).await;
-        }
-    }
-    sqlx::query("DELETE FROM demo_config WHERE project_id = ?")
-        .bind(&project.id)
-        .execute(&state.db)
-        .await?;
+    demo::disable(state, &project.id).await;
     let _ = state.route_sync_tx.send(());
-    tracing::info!(project = %project.id, "demo mode disabled");
+    tracing::info!(project = %project.id, "demo mode disabled (cleanup in background)");
     Ok(())
 }
 

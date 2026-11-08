@@ -10,6 +10,34 @@ use crate::demo;
 use crate::AppState;
 use litebin_common::types::{Project, ProjectStatus};
 
+/// Wipe one instance back to a clean boot (no baseline restore) — used by
+/// "discard edits" so the edit copy doesn't resurrect discarded data on the
+/// next publish.
+pub async fn wipe_instance(state: &AppState, instance_id: &str) -> anyhow::Result<()> {
+    let instance: Project = sqlx::query_as("SELECT * FROM projects WHERE id = ?")
+        .bind(instance_id)
+        .fetch_one(&state.db)
+        .await?;
+    let node = demo::parent_node(&instance);
+
+    copy_engine::stop_on_source(state, instance_id, &node).await?;
+    let volumes = crate::routes::manage::handlers::volume_list(&state.db, &instance).await;
+    if let NodeRef::Local = &node {
+        for volume in &volumes {
+            let _ = state.docker.remove_volume(volume).await;
+        }
+    }
+    match crate::routes::manage::handlers::start_project(
+        axum::extract::State(state.clone()),
+        axum::extract::Path(instance_id.to_string()),
+    )
+    .await
+    {
+        Ok(_) => Ok(()),
+        Err((code, message)) => Err(anyhow::anyhow!("start after wipe failed ({code}): {message}")),
+    }
+}
+
 /// Trigger a background reset of a shared-mode demo. Returns immediately.
 pub async fn reset_project(state: &AppState, parent_id: &str) -> anyhow::Result<()> {
     let parent: Project = sqlx::query_as("SELECT * FROM projects WHERE id = ?")

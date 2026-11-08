@@ -1,4 +1,4 @@
-import { ChevronDown, FlaskConical, RotateCcw } from 'lucide-react';
+import { ChevronDown, FlaskConical, Pencil, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { captureDemoBaseline, type DemoState, putDemoConfig, removeDemoBaseline, resetDemo } from '../../api';
 import { useToast } from '../ToastContext';
@@ -6,7 +6,7 @@ import { useToast } from '../ToastContext';
 /** "07/11/2026 8:10:12 pm" — locale date + 12-hour time with am/pm. */
 function formatCaptured(epochSeconds: number): string {
   const d = new Date(epochSeconds * 1000);
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}`;
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}`;
 }
 
 interface DemoSettingsPopoverProps {
@@ -33,8 +33,7 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
   const [barEnabled, setBarEnabled] = useState(cfg?.bar_enabled ?? true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const hadBaseline = !!cfg?.baseline_captured_at;
-  const [useBaseline, setUseBaseline] = useState(hadBaseline);
+  const baselineAt = cfg?.baseline_captured_at;
   const ref = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
 
@@ -76,20 +75,8 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
         banner_text: bannerText,
         bar_enabled: barEnabled,
       });
-      // The data picker applies transitions only — capturing on every save
-      // would restart the app each time; Deployed data removes the seed.
-      if (useBaseline && !hadBaseline) {
-        await captureDemoBaseline(projectId);
-        showToast('Saved — baseline capture started (the app restarts briefly)', 'success');
-      } else if (!useBaseline && hadBaseline) {
-        await removeDemoBaseline(projectId);
-        showToast('Saved — baseline removed, demos start from image defaults', 'success');
-      } else {
-        showToast('Demo settings saved', 'success');
-      }
+      showToast('Demo settings saved', 'success');
       onDemoChanged();
-      // Capture runs async server-side; refresh again once it has settled.
-      if (useBaseline && !hadBaseline) setTimeout(onDemoChanged, 4000);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to save demo settings';
       setError(message);
@@ -99,14 +86,14 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
     }
   };
 
-  const disable = () =>
-    run('disable', () => putDemoConfig(projectId, { enabled: false }), 'Demo mode disabled — demo traffic now hits this app directly');
+  const resetNow = () => run('reset', () => resetDemo(projectId), 'Demo reset to published data');
 
-  const resetNow = () => run('reset', () => resetDemo(projectId), 'Demo reset started');
-
-  const capture = () => run('capture', () => captureDemoBaseline(projectId), 'Baseline capture started (the app restarts briefly)');
-
-  const baselineAt = cfg?.baseline_captured_at;
+  const publish = () =>
+    run(
+      'capture',
+      () => captureDemoBaseline(projectId).then(() => new Promise((r) => setTimeout(r, 4000))),
+      'Publishing — the demo picks it up automatically',
+    );
 
   return (
     <div ref={ref}>
@@ -135,18 +122,16 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
                 key={m}
                 type="button"
                 onClick={() => setMode(m)}
-                className={`flex-1 py-1.5 rounded text-xs font-medium capitalize transition-colors cursor-pointer ${
+                className={`flex-1 py-1.5 rounded text-xs font-medium transition-colors cursor-pointer ${
                   mode === m ? 'bg-teal-600 text-white' : 'bg-slate-700/60 text-slate-300 hover:bg-slate-700'
                 }`}
               >
-                {m}
+                {m === 'shared' ? 'Shared demo' : 'Personal demos'}
               </button>
             ))}
           </div>
           <p className="text-[11px] leading-relaxed text-slate-400 mt-1.5">
-            {mode === 'shared'
-              ? 'One demo instance for all visitors — data resets on the interval below.'
-              : 'Every visitor gets a private instance with fresh data for the TTL below.'}
+            {mode === 'shared' ? 'Everyone sees the same demo and data' : 'Every visitor gets a private demo with fresh data'}
           </p>
         </div>
 
@@ -224,82 +209,66 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
           </label>
         </div>
 
-        {/* Baseline */}
+        {/* Save — config above; demo data below acts directly */}
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={save}
+          className="w-full py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer"
+        >
+          {busy === 'save' ? 'Saving…' : 'Save'}
+        </button>
+
+        {/* Demo data — icon actions; tooltips carry the verbs */}
         <div className="border-t border-slate-700/50 pt-2 space-y-1.5">
           <span className="text-xs text-slate-400 block">Demo data</span>
-          <div className="flex gap-1">
-            {([false, true] as const).map((v) => (
-              <button
-                key={String(v)}
-                type="button"
-                onClick={() => setUseBaseline(v)}
-                className={`flex-1 py-1.5 rounded text-xs font-medium transition-colors cursor-pointer ${
-                  useBaseline === v ? 'bg-teal-600 text-white' : 'bg-slate-700/60 text-slate-300 hover:bg-slate-700'
-                }`}
-              >
-                {v ? 'Current data' : 'Deployed data'}
-              </button>
-            ))}
+          <div className="grid grid-cols-4 gap-2">
+            <button
+              type="button"
+              disabled={busy !== null || !cfg?.edit_instance_id}
+              onClick={() => cfg?.edit_instance_id && window.open(`https://${cfg.edit_instance_id}.${domain}/`, '_blank')}
+              title="Edit demo data — your private copy; Publish to make it live"
+              aria-label="Edit demo data"
+              className="flex items-center justify-center py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-50 cursor-pointer"
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null || !cfg?.edit_instance_id}
+              onClick={publish}
+              title="Publish — make the edit copy's data what visitors see"
+              aria-label="Publish"
+              className="flex items-center justify-center py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer"
+            >
+              <Upload size={13} />
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null || !baselineAt}
+              onClick={() => run('scratch', () => removeDemoBaseline(projectId), 'Edits discarded — demos run the original app data')}
+              title="Discard edits — drop published data and edit-copy changes; demos boot the original app"
+              aria-label="Discard edits"
+              className="flex items-center justify-center py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-400 hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <Trash2 size={13} />
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null || !baselineAt || mode !== 'shared'}
+              onClick={resetNow}
+              title={mode === 'shared' ? 'Reset — shared demo back to the published data' : 'Personal demos reset automatically — nothing to reset'}
+              aria-label="Reset to published data"
+              className="flex items-center justify-center py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-400 hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <RotateCcw size={13} />
+            </button>
           </div>
           <p className="text-[11px] leading-relaxed text-slate-400">
-            {useBaseline
-              ? baselineAt
-                ? <>Last stored data captured at {formatCaptured(baselineAt)} · <button type="button" disabled={busy !== null} onClick={capture} className="text-teal-300 hover:text-teal-200 disabled:opacity-50 cursor-pointer underline underline-offset-2">{busy === 'capture' ? 'capturing…' : 'Recapture'}</button></>
-                : 'Save captures the app’s current data'
-              : mode === 'shared'
-                ? 'Resets restore the app’s deployed data — whatever the image ships'
-                : "Each visitor's instance starts from the app’s deployed data"}
+            {baselineAt
+              ? <>Visitors see the data published {formatCaptured(baselineAt)}</>
+              : 'Fresh app state — nothing published; visitors get a freshly initialized app'}
           </p>
-        </div>
-
-        {/* Actions */}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={save}
-            className="flex-1 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer"
-          >
-            {busy === 'save' ? 'Saving…' : 'Save'}
-          </button>
-          {mode === 'shared' && (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={resetNow}
-              title={useBaseline && baselineAt ? 'Wipes the app and restores the captured data' : 'Wipes the app back to clean state'}
-              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-50 cursor-pointer"
-            >
-              <RotateCcw size={11} />
-              {busy === 'reset'
-                ? useBaseline && baselineAt
-                  ? 'Restoring…'
-                  : 'Resetting…'
-                : useBaseline && baselineAt
-                  ? 'Restore now'
-                  : 'Reset now'}
-            </button>
-          )}
-        </div>
-        <div className="flex gap-2">
-          {cfg?.edit_instance_id && (
-            <button
-              type="button"
-              onClick={() => window.open(`https://${cfg.edit_instance_id}.${domain}/`, '_blank')}
-              title="Your private edit copy — change demo data here, then Recapture"
-              className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-300 hover:text-slate-100 cursor-pointer"
-            >
-              Open edit instance
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={disable}
-            className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-400 hover:text-red-400 disabled:opacity-50 cursor-pointer"
-          >
-            {busy === 'disable' ? 'Disabling…' : 'Disable demo mode'}
-          </button>
         </div>
       </div>
     </div>
