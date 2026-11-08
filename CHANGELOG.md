@@ -6,10 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Demo mode (shared)** — enable per project from Settings → General to turn the app's URL into a public demo that resets on a schedule (default daily, configurable) or via *Reset now*.
+- **Demo mode (session)** — every visitor gets a private instance of the app with fresh data for a fixed TTL (default 15 min); instances come from a pre-warmed pool, spawn on demand, and are deleted at expiry; at capacity visitors get a wait page that retries automatically.
+- **Demo edit instance** — a private copy for preparing demo data (opened from the Demo popover); *Recapture* freezes its state as the baseline every demo starts from. Shared mode serves visitors from its own shared instance — the project itself stays a pure, stoppable template.
+- **Demo bottom bar** — operator-defined text (HTML allowed, e.g. links) with a session countdown or the next reset time, injected into demo pages.
+- Demo instances view — the users icon on demo cards lists the edit/shared instances (stop/start) and live sessions (running time, time left, end session).
 - **Demo baseline** — *Capture as demo baseline* freezes the running app's volumes and files; resets restore that state instead of wiping to clean (remove the baseline to revert to clean resets).
 - **Demo popover** — while demo mode is on, the Sleep button becomes the Demo popover (mode, reset interval, banner text, baseline actions) and the card's Auto-stop/Auto-start chips become demo chips.
+- Demo traffic routes through the master's gatekeeper (demo hosts and instance hosts re-route to the orchestrator; direct instance links bounce to the demo host). In Cloudflare mode, demo host records point at the master.
 - Demo API: `GET/PUT /projects/{id}/demo`, `POST …/demo/reset`, `POST/DELETE …/demo/baseline`, `GET …/demo/sessions`, `DELETE …/demo/sessions/{sid}`.
-- Demo janitor runs the scheduled resets.
+- Demo janitor runs the scheduled resets, expires sessions, and keeps the pre-warm pool topped up.
 
 ### Changed
 - Exports can skip uploaded images (`include_images`) for metadata-only re-homes — the target node must already have the image; import refuses (local target) or warns (agent target) when an unbundled image is missing there.

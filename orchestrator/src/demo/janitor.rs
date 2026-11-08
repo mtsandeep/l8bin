@@ -1,14 +1,7 @@
 //! Demo janitor — the demo lifecycle loop (a sibling of the scale-to-zero
-//! janitor). Every tick it:
-//!
-//! 1. Runs scheduled Mode A resets whose interval elapsed.
-//! 2. Expires Mode B sessions past their hard TTL and tears down their
-//!    instance projects (in-flight connections die with the containers —
-//!    hard kill by design, no drain grace).
-//!
-//! Prewarm refills and orphan-instance reconciliation land with the session
-//! pool (gatekeeper step); the loop is started unconditionally so the reset
-//! scheduler works the moment Mode A ships.
+//! janitor). Every tick: scheduled shared-mode resets, session hard-TTL
+//! expiry (teardown is a hard kill — no drain grace), prewarm refills, and
+//! self-healing of the edit/shared instances.
 
 use crate::demo;
 use crate::AppState;
@@ -30,7 +23,81 @@ pub fn spawn(state: AppState) {
 async fn tick(state: &AppState) -> anyhow::Result<()> {
     scheduled_resets(state).await?;
     expire_sessions(state).await;
+    prewarm_refill(state).await;
+    ensure_long_lived(state).await;
     Ok(())
+}
+
+/// Self-heal the edit + shared instances (created on enable, recreated here
+/// if deleted out-of-band).
+async fn ensure_long_lived(state: &AppState) {
+    let parents: Vec<String> = sqlx::query_scalar("SELECT project_id FROM demo_config").fetch_all(&state.db).await.unwrap_or_default();
+    for parent_id in parents {
+        let Ok(Some(mut config)) = crate::demo::get_config(&state.db, &parent_id).await else { continue };
+        let Ok(Some(parent)) = sqlx::query_as::<_, litebin_common::types::Project>("SELECT * FROM projects WHERE id = ?")
+            .bind(&parent_id)
+            .fetch_optional(&state.db)
+            .await
+        else {
+            continue;
+        };
+        if let Err(e) = crate::demo::ensure_instances(state, &mut config, &parent).await {
+            tracing::warn!(project = %parent_id, error = %e, "demo janitor: instance ensure failed");
+        }
+    }
+}
+
+/// Mode B prewarm: keep `prewarm` unclaimed instances ready per demo parent
+/// (running preferred; a stopped prewarm still avoids the creation path).
+/// One spawn per parent per tick — refills are never urgent.
+async fn prewarm_refill(state: &AppState) {
+    let parents: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT c.project_id, c.prewarm, c.max_instances FROM demo_config c \
+         JOIN projects p ON p.id = c.project_id WHERE c.mode = 'session' AND c.prewarm > 0",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    for (parent_id, prewarm, max_instances) in parents {
+        let unclaimed: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projects p \
+             WHERE p.demo_parent_id = ? AND p.status IN ('running', 'stopped', 'importing') \
+             AND p.id NOT IN (SELECT edit_instance_id FROM demo_config WHERE project_id = ? \
+                               UNION SELECT shared_instance_id FROM demo_config WHERE project_id = ?) \
+             AND NOT EXISTS (SELECT 1 FROM demo_sessions s WHERE s.instance_project_id = p.id AND s.status = 'active')",
+        )
+        .bind(&parent_id)
+        .bind(&parent_id)
+        .bind(&parent_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projects p WHERE p.demo_parent_id = ? \
+             AND p.id NOT IN (SELECT edit_instance_id FROM demo_config WHERE project_id = ? \
+                               UNION SELECT shared_instance_id FROM demo_config WHERE project_id = ?)",
+        )
+        .bind(&parent_id)
+        .bind(&parent_id)
+        .bind(&parent_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+        if unclaimed < prewarm && total < max_instances {
+            let parent: Option<litebin_common::types::Project> =
+                sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(&parent_id).fetch_optional(&state.db).await.ok().flatten();
+            let Some(parent) = parent else { continue };
+            let baseline = crate::demo::baseline::load(state, &parent_id).await.ok();
+            tracing::info!(project = %parent_id, "demo janitor: prewarm refill");
+            let _ = crate::demo::clone::create_instance(
+                state,
+                &parent,
+                crate::demo::clone::CloneOpts { start: true, baseline, requested_id: None },
+            )
+            .await;
+        }
+    }
 }
 
 /// Mode A: `reset_interval_minutes` elapsed since `last_reset_at` (or never

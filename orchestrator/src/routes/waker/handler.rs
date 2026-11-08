@@ -90,7 +90,7 @@ async fn wake_wait_response(state: &AppState, project_id: &str) -> Response {
 }
 
 /// Docker-network upstream: `litebin-{id}:{internal_port}` for single-service, the running public service for multi.
-async fn resolve_request_upstream(
+pub(crate) async fn resolve_request_upstream(
     state: &AppState,
     project: &crate::db::models::Project,
     path: &str,
@@ -325,6 +325,21 @@ pub async fn wake_for_host(
 
     if project.is_background {
         return (StatusCode::NOT_FOUND, not_found_page_html()).into_response();
+    }
+
+    // Demo gatekeeper: session-mode demo hosts, instance-host redirects, and
+    // /__demo__/* endpoints. Returns None for all non-demo traffic.
+    if let Some(resp) = crate::demo::gatekeeper::handle_wake(
+        &state,
+        &project,
+        &method,
+        uri,
+        headers,
+        &body,
+    )
+    .await
+    {
+        return resp;
     }
 
     // Use project.id as the canonical key for everything (wake locks, display, etc.)

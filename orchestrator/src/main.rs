@@ -357,7 +357,14 @@ async fn main() -> anyhow::Result<()> {
         wake_failures,
         wake_guards: Arc::new(DashMap::new()),
         route_sync_tx,
-        proxy_client: litebin_common::net::client_builder().build().unwrap_or_default(),
+        // Never follow redirects: this client proxies visitor traffic, where a
+        // 3xx (e.g. an app's `/ → /admin` setup redirect) must reach the
+        // browser verbatim — following it internally serves the wrong page at
+        // the wrong URL and breaks SPA routing.
+        proxy_client: litebin_common::net::client_builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default(),
         multi_svc_health_check: Arc::new(DashMap::new()),
         port_mismatches: Arc::new(DashMap::new()),
         deploy_logs: Arc::new(DashMap::new()),

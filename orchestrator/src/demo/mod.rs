@@ -3,11 +3,12 @@
 //! Two exclusive modes: `shared` (one instance for all visitors, reset on an
 //! interval) and `session` (a clone per visitor with a hard TTL). Instances
 //! are real projects created by the copy engine, marked with
-//! `projects.demo_parent_id` and hidden from the main grid. The base project
-//! is the template spec — it never serves visitor traffic in session mode.
+//! `projects.demo_parent_id` and hidden from the main grid. The parent is a
+//! pure spec template — all visitor traffic is served by instances.
 
 pub mod baseline;
 pub mod clone;
+pub mod gatekeeper;
 pub mod janitor;
 pub mod reset;
 
@@ -28,6 +29,8 @@ pub struct DemoConfig {
     pub bar_enabled: bool,
     pub last_reset_at: Option<i64>,
     pub baseline_captured_at: Option<i64>,
+    pub edit_instance_id: Option<String>,
+    pub shared_instance_id: Option<String>,
     pub updated_at: i64,
 }
 
@@ -45,6 +48,74 @@ pub fn parent_node(project: &litebin_common::types::Project) -> NodeRef {
         Some(id) if id != "local" => NodeRef::Agent(id.to_string()),
         _ => NodeRef::Local,
     }
+}
+
+async fn instance_exists(state: &AppState, parent_id: &str, instance_id: &str) -> bool {
+    sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ? AND demo_parent_id = ?")
+        .bind(instance_id)
+        .bind(parent_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+        > 0
+}
+
+/// Ensure the long-lived instances exist (and are recorded on the config):
+/// the operator's edit instance always, the visitor-facing shared instance in
+/// shared mode. Self-healing — safe to call from the janitor every tick.
+pub async fn ensure_instances(state: &AppState, config: &mut DemoConfig, parent: &litebin_common::types::Project) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let baseline = baseline::load(state, &parent.id).await.ok();
+
+    let edit_present = match config.edit_instance_id.as_deref() {
+        Some(id) => instance_exists(state, &parent.id, id).await,
+        None => false,
+    };
+    if !edit_present {
+        let suffix: String = uuid::Uuid::new_v4().simple().to_string().chars().take(4).collect();
+        let id = clone::create_instance(
+            state,
+            parent,
+            clone::CloneOpts {
+                start: true,
+                baseline: baseline.clone(),
+                requested_id: Some(format!("{}-edit-{suffix}", parent.id)),
+            },
+        )
+        .await?;
+        sqlx::query("UPDATE demo_config SET edit_instance_id = ?, updated_at = ? WHERE project_id = ?")
+            .bind(&id)
+            .bind(now)
+            .bind(&parent.id)
+            .execute(&state.db)
+            .await?;
+        config.edit_instance_id = Some(id);
+        tracing::info!(project = %parent.id, "demo: edit instance created");
+    }
+
+    let want_shared = config.mode == "shared";
+    let shared_present = match config.shared_instance_id.as_deref() {
+        Some(id) => instance_exists(state, &parent.id, id).await,
+        None => false,
+    };
+    if want_shared && !shared_present {
+        let id = clone::create_instance(
+            state,
+            parent,
+            clone::CloneOpts { start: true, baseline, requested_id: Some(format!("{}-shared", parent.id)) },
+        )
+        .await?;
+        sqlx::query("UPDATE demo_config SET shared_instance_id = ?, updated_at = ? WHERE project_id = ?")
+            .bind(&id)
+            .bind(now)
+            .bind(&parent.id)
+            .execute(&state.db)
+            .await?;
+        config.shared_instance_id = Some(id);
+        tracing::info!(project = %parent.id, "demo: shared instance created");
+    }
+
+    Ok(())
 }
 
 /// Whether the project is in a state a reset/clone must not interrupt.

@@ -23,7 +23,7 @@ pub(super) fn try_acquire_project_lock(
 
 /// Reverse-proxy a request to a container on the Docker network.
 /// Streams the response back to the client.
-pub(super) async fn proxy_request(
+pub(crate) async fn proxy_request(
     client: &reqwest::Client,
     method: Method,
     upstream: &str,
@@ -75,7 +75,7 @@ pub(super) async fn proxy_request_url(
 }
 
 /// Proxy with bounded retries on 502/hung attempts; returns the last 502 once the budget elapses.
-pub(super) async fn proxy_with_retry(
+pub(crate) async fn proxy_with_retry(
     client: &reqwest::Client,
     method: Method,
     uri: &axum::http::Uri,
@@ -124,7 +124,7 @@ async fn proxy_url_attempt(
 
 /// Proxy through the agent's Caddy (master Caddy's app-traffic transport). None when unreachable — callers
 /// fall back to the waiting page.
-pub(super) async fn remote_proxy_response(
+pub(crate) async fn remote_proxy_response(
     state: &AppState,
     project: &crate::db::models::Project,
     method: Method,

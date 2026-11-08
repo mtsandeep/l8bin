@@ -554,6 +554,8 @@ export interface DemoConfig {
   bar_enabled: boolean;
   last_reset_at: number | null;
   baseline_captured_at: number | null;
+  edit_instance_id: string | null;
+  shared_instance_id: string | null;
 }
 
 export interface DemoState {
@@ -595,6 +597,41 @@ export function captureDemoBaseline(projectId: string): Promise<unknown> {
 
 export function removeDemoBaseline(projectId: string): Promise<unknown> {
   return demoFetch(projectId, '/demo/baseline', { method: 'DELETE' }, 'Failed to remove demo baseline');
+}
+
+export interface DemoSession {
+  id: string;
+  instance_project_id: string;
+  created_at: number;
+  expires_at: number;
+  last_seen_at: number;
+  status: string;
+  instance_status: string | null;
+}
+
+export interface DemoLongLived {
+  id: string;
+  kind: 'edit' | 'shared';
+  status: string | null;
+}
+
+export interface DemoSessionsResponse {
+  sessions: DemoSession[];
+  long_lived: DemoLongLived[];
+}
+
+export async function getDemoSessions(projectId: string): Promise<DemoSessionsResponse> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/demo/sessions`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to load demo sessions');
+  return (await res.json()) as DemoSessionsResponse;
+}
+
+export async function killDemoSession(projectId: string, sessionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/demo/sessions/${sessionId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to end demo session');
 }
 
 export async function redeployProject(

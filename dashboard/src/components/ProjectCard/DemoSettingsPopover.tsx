@@ -1,6 +1,6 @@
 import { ChevronDown, FlaskConical, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { type DemoState, captureDemoBaseline, putDemoConfig, removeDemoBaseline, resetDemo } from '../../api';
+import { captureDemoBaseline, type DemoState, putDemoConfig, removeDemoBaseline, resetDemo } from '../../api';
 import { useToast } from '../ToastContext';
 
 /** "07/11/2026 8:10:12 pm" — locale date + 12-hour time with am/pm. */
@@ -11,6 +11,7 @@ function formatCaptured(epochSeconds: number): string {
 
 interface DemoSettingsPopoverProps {
   projectId: string;
+  domain: string;
   state: DemoState;
   /** Refresh the card's demo state (chips) after any change. */
   onDemoChanged: () => void;
@@ -19,7 +20,7 @@ interface DemoSettingsPopoverProps {
 
 /** Demo mode settings — mode, lifecycle options, banner, baseline.
  *  Replaces the Sleep slot on the card while demo mode is on. */
-export default function DemoSettingsPopover({ projectId, state, onDemoChanged, onClose }: DemoSettingsPopoverProps) {
+export default function DemoSettingsPopover({ projectId, domain, state, onDemoChanged, onClose }: DemoSettingsPopoverProps) {
   const cfg = state.config;
   const [mode, setMode] = useState<'shared' | 'session'>(cfg?.mode ?? 'shared');
   const [resetHours, setResetHours] = useState<string>(
@@ -75,8 +76,8 @@ export default function DemoSettingsPopover({ projectId, state, onDemoChanged, o
         banner_text: bannerText,
         bar_enabled: barEnabled,
       });
-      // Baseline checkbox applies transitions only — capturing on every save
-      // would restart the app each time; unchecking removes the seed.
+      // The data picker applies transitions only — capturing on every save
+      // would restart the app each time; Deployed data removes the seed.
       if (useBaseline && !hadBaseline) {
         await captureDemoBaseline(projectId);
         showToast('Saved — baseline capture started (the app restarts briefly)', 'success');
@@ -200,12 +201,12 @@ export default function DemoSettingsPopover({ projectId, state, onDemoChanged, o
 
         {/* Bar */}
         <div>
-          <span className="text-xs text-slate-400 block mb-1.5">Bottom bar text</span>
-          <input
-            type="text"
+          <span className="text-xs text-slate-400 block mb-1.5">Bottom bar text (HTML allowed, e.g. links)</span>
+          <textarea
+            rows={2}
             value={bannerText}
             onChange={(e) => setBannerText(e.target.value)}
-            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500 resize-y"
           />
           <label className="flex items-center justify-between gap-2 cursor-pointer mt-1.5">
             <span className="text-xs text-slate-300">Show the demo bar to visitors</span>
@@ -280,14 +281,26 @@ export default function DemoSettingsPopover({ projectId, state, onDemoChanged, o
             </button>
           )}
         </div>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={disable}
-          className="w-full py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-400 hover:text-red-400 disabled:opacity-50 cursor-pointer"
-        >
-          {busy === 'disable' ? 'Disabling…' : 'Disable demo mode'}
-        </button>
+        <div className="flex gap-2">
+          {cfg?.edit_instance_id && (
+            <button
+              type="button"
+              onClick={() => window.open(`https://${cfg.edit_instance_id}.${domain}/`, '_blank')}
+              title="Your private edit copy — change demo data here, then Recapture"
+              className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-300 hover:text-slate-100 cursor-pointer"
+            >
+              Open edit instance
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={disable}
+            className="flex-1 py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-400 hover:text-red-400 disabled:opacity-50 cursor-pointer"
+          >
+            {busy === 'disable' ? 'Disabling…' : 'Disable demo mode'}
+          </button>
+        </div>
       </div>
     </div>
   );

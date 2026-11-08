@@ -15,7 +15,7 @@ use serde_json::json;
 
 use crate::demo;
 use crate::AppState;
-use litebin_common::types::{Project, ProjectStatus};
+use litebin_common::types::Project;
 
 fn err(status: StatusCode, message: String) -> axum::response::Response {
     (status, Json(json!({ "error": message }))).into_response()
@@ -158,21 +158,25 @@ pub async fn put_demo(
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}"));
     }
 
-    // Switching modes tears down the other mode's state: sessions (B) or a
-    // final reset back to baseline (A).
-    if mode_change {
-        if mode == "shared" {
-            end_sessions(&state, &project_id).await;
-        } else {
-            let _ = demo::reset::reset_project(&state, &project_id).await;
-        }
-        let _ = sqlx::query("UPDATE demo_config SET last_reset_at = NULL WHERE project_id = ?")
-            .bind(&project_id)
-            .execute(&state.db)
-            .await;
+    // Provision the long-lived instances (edit always, shared in shared
+    // mode) in the background — the janitor self-heals them every tick.
+    if let Ok(Some(mut cfg)) = demo::get_config(&state.db, &project_id).await {
+        let state_bg = state.clone();
+        let parent = project.clone();
+        tokio::spawn(async move {
+            if let Err(e) = demo::ensure_instances(&state_bg, &mut cfg, &parent).await {
+                tracing::warn!(project = %parent.id, error = %e, "demo: instance provisioning failed");
+            }
+        });
+    }
+
+    // Switching modes tears down the other mode's sessions.
+    if mode_change && mode == "shared" {
+        end_sessions(&state, &project_id).await;
     }
 
     tracing::info!(project = %project_id, mode, "demo mode enabled/updated");
+    let _ = state.route_sync_tx.send(()); // re-route the demo host through the gatekeeper
     (StatusCode::OK, Json(json!({ "enabled": true, "mode": mode }))).into_response()
 }
 
@@ -238,8 +242,12 @@ pub async fn capture_baseline(
     let state_bg = state.clone();
     let id = project_id.clone();
     tokio::spawn(async move {
-        if let Err(e) = demo::baseline::capture(&state_bg, &project).await {
-            tracing::error!(project = %id, error = %e, "baseline capture failed");
+        match demo::baseline::capture(&state_bg, &project).await {
+            Ok(()) => {
+                // Apply the new seed to what's already running.
+                propagate_seed_change(&state_bg, &id).await;
+            }
+            Err(e) => tracing::error!(project = %id, error = %e, "baseline capture failed"),
         }
     });
     (StatusCode::ACCEPTED, Json(json!({ "status": "capturing" }))).into_response()
@@ -263,7 +271,10 @@ pub async fn delete_baseline(
         Err(resp) => return resp,
     };
     match demo::baseline::remove(&state, &project).await {
-        Ok(()) => (StatusCode::OK, Json(json!({ "status": "removed" }))).into_response(),
+        Ok(()) => {
+            propagate_seed_change(&state, &project_id).await;
+            (StatusCode::OK, Json(json!({ "status": "removed" }))).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
@@ -301,7 +312,28 @@ pub async fn list_sessions(
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
-    (StatusCode::OK, Json(json!({ "sessions": rows }))).into_response()
+
+    // Long-lived instances (edit + shared) — visible and stoppable, never deleted here.
+    let mut long_lived: Vec<serde_json::Value> = Vec::new();
+    if let Ok(Some(config)) = demo::get_config(&state.db, &project_id).await {
+        for (kind, id) in [
+            ("edit", config.edit_instance_id.as_deref()),
+            ("shared", config.shared_instance_id.as_deref()),
+        ]
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        {
+            let status: Option<String> = sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+            long_lived.push(json!({ "id": id, "kind": kind, "status": status }));
+        }
+    }
+
+    (StatusCode::OK, Json(json!({ "sessions": rows, "long_lived": long_lived }))).into_response()
 }
 
 /// DELETE /projects/:id/demo/sessions/:sid — kill one session + its instance.
@@ -335,13 +367,44 @@ pub async fn kill_session(
     (StatusCode::OK, Json(json!({ "status": "ended" }))).into_response()
 }
 
-/// Disable: end all sessions (B), one final reset to baseline (A), drop config.
+/// A baseline capture/removal changed the demo's seed — apply it to what's
+/// already running: shared mode resets the shared instance (restores or
+/// clears); session mode purges unclaimed pool instances so the next claim
+/// spawns from the new seed. The janitor refills the pool.
+async fn propagate_seed_change(state: &AppState, parent_id: &str) {
+    let Ok(Some(config)) = demo::get_config(&state.db, parent_id).await else { return };
+    if config.mode == "shared" {
+        if let Err(e) = demo::reset::reset_project(state, parent_id).await {
+            tracing::warn!(project = %parent_id, error = %e, "demo: seed-change reset skipped");
+        }
+        return;
+    }
+    let stale: Vec<String> = sqlx::query_scalar(
+        "SELECT p.id FROM projects p \
+         WHERE p.demo_parent_id = ? \
+         AND p.id NOT IN (SELECT edit_instance_id FROM demo_config WHERE project_id = ? \
+                           UNION SELECT shared_instance_id FROM demo_config WHERE project_id = ?) \
+         AND NOT EXISTS (SELECT 1 FROM demo_sessions s WHERE s.instance_project_id = p.id AND s.status = 'active')",
+    )
+    .bind(parent_id)
+    .bind(parent_id)
+    .bind(parent_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for id in stale {
+        tracing::info!(project = %parent_id, instance = %id, "demo: purging stale-seed pool instance");
+        demo::teardown_instance(state, &id).await;
+    }
+}
+
+/// Disable: end sessions, tear down every demo instance (edit + shared +
+/// pool), drop config. The parent is untouched and serves normally again.
 async fn disable_demo(state: &AppState, project: &Project) -> anyhow::Result<()> {
-    let config = demo::get_config(&state.db, &project.id).await?;
-    if let Some(config) = config {
+    if let Some(config) = demo::get_config(&state.db, &project.id).await? {
         end_sessions(state, &project.id).await;
-        if config.mode == "shared" && project.status != ProjectStatus::Deploying {
-            let _ = demo::reset::reset_project(state, &project.id).await;
+        for id in [config.edit_instance_id.as_ref(), config.shared_instance_id.as_ref()].into_iter().flatten() {
+            demo::teardown_instance(state, id).await;
         }
     }
     sqlx::query("DELETE FROM demo_config WHERE project_id = ?")

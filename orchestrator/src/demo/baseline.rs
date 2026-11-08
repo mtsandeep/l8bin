@@ -1,11 +1,11 @@
-//! Demo baseline — a frozen seed of the base project's data.
+//! Demo baseline — a frozen seed of the demo's starting data.
 //!
 //! Named volumes are captured as seed volumes on the parent's node
 //! (`l8b_demo_seed_{parent}_{n}` — the `l8b_` prefix can never collide with
 //! the `litebin_{project}_` scope). The project dir (compose.yaml, .env,
 //! relative binds) is captured as a tar under `data/demo-seeds/{id}/`.
-//! Capture briefly stops the base for a consistent snapshot; clones and
-//! resets restore from the frozen copy and never touch the running base.
+//! Capture briefly stops its source for a consistent snapshot; instances and
+//! resets restore from the frozen copy and never touch the running source.
 
 use std::path::PathBuf;
 
@@ -17,6 +17,7 @@ use crate::demo::parent_node;
 use crate::AppState;
 
 /// A baseline row set: seed volumes + the project-dir tar path (if captured).
+#[derive(Clone)]
 pub struct Baseline {
     pub volumes: Vec<(String, String)>, // (source_volume, seed_volume)
     pub project_tar: Option<PathBuf>,
@@ -42,26 +43,44 @@ pub async fn load(state: &AppState, parent_id: &str) -> anyhow::Result<Baseline>
     Ok(Baseline { volumes, project_tar })
 }
 
-/// Capture the base project's current state as the demo baseline.
-/// Briefly stops the base for a consistent snapshot, then restarts it if it
-/// was running. Re-capture overwrites the previous seed.
+/// Capture the demo's starting data as the baseline: the first capture from
+/// the PARENT (the deployed, configured app — instances start volume-empty),
+/// recaptures from the operator's edit instance. Briefly stops the source
+/// for a consistent snapshot, then restarts it. Re-capture overwrites the
+/// previous seed.
 pub async fn capture(state: &AppState, parent: &litebin_common::types::Project) -> anyhow::Result<()> {
-    let node = parent_node(parent);
+    let config = crate::demo::get_config(&state.db, &parent.id).await?;
+    // First capture seeds from the PARENT (the deployed + prepped app — the
+    // only good copy; instances start volume-empty, so capturing from the
+    // edit instance then would freeze blank data). Recaptures come from the
+    // edit instance where the operator makes changes.
+    let source: litebin_common::types::Project = match (
+        config.as_ref().and_then(|c| c.edit_instance_id.clone()),
+        config.as_ref().map(|c| c.baseline_captured_at.is_some()),
+    ) {
+        (Some(id), Some(true)) => sqlx::query_as("SELECT * FROM projects WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_else(|| parent.clone()),
+        _ => parent.clone(),
+    };
+    let node = parent_node(&source);
     let was_running = matches!(
-        parent.status,
+        source.status,
         litebin_common::types::ProjectStatus::Running | litebin_common::types::ProjectStatus::Degraded
     );
 
     if was_running {
-        copy_engine::stop_on_source(state, &parent.id, &node).await?;
+        copy_engine::stop_on_source(state, &source.id, &node).await?;
     }
 
-    let result = capture_locked(state, parent, &node).await;
+    let result = capture_locked(state, parent, &source, &node).await;
 
     if was_running {
         let _ = crate::routes::manage::handlers::start_project(
             axum::extract::State(state.clone()),
-            axum::extract::Path(parent.id.clone()),
+            axum::extract::Path(source.id.clone()),
         )
         .await;
     }
@@ -75,15 +94,18 @@ pub async fn capture(state: &AppState, parent: &litebin_common::types::Project) 
         .bind(&parent.id)
         .execute(&state.db)
         .await?;
-    tracing::info!(project = %parent.id, "demo baseline captured");
+    tracing::info!(project = %parent.id, source = %source.id, "demo baseline captured");
     Ok(())
 }
 
-/// Snapshot while the base is stopped. Wipes the previous seed first so a
-/// failed capture never leaves a half-old half-new baseline.
+/// Snapshot while the source is stopped. Wipes the previous seed first so a
+/// failed capture never leaves a half-old half-new baseline. Volume names and
+/// the project-dir tar are stored PARENT-scoped so restores re-scope cleanly
+/// to any target.
 async fn capture_locked(
     state: &AppState,
     parent: &litebin_common::types::Project,
+    source: &litebin_common::types::Project,
     node: &NodeRef,
 ) -> anyhow::Result<()> {
     remove_seed_volumes(state, &parent.id, node).await?;
@@ -92,30 +114,43 @@ async fn capture_locked(
         .execute(&state.db)
         .await?;
 
-    let volumes = crate::routes::manage::handlers::volume_list(&state.db, parent).await;
-    for (i, source) in volumes.iter().enumerate() {
+    let volumes = crate::routes::manage::handlers::volume_list(&state.db, source).await;
+    for (i, scoped) in volumes.iter().enumerate() {
         let seed = seed_name(&parent.id, i);
-        copy_engine::transfer_volume(state, node, node, source, &seed).await?;
+        copy_engine::transfer_volume(state, node, node, scoped, &seed).await?;
+        let parent_scoped = if source.id == parent.id {
+            scoped.clone()
+        } else {
+            copy_engine::rescope_volume(scoped, &source.id, &parent.id)
+        };
         sqlx::query(
             "INSERT INTO demo_baseline_volumes (parent_project_id, source_volume, seed_volume) VALUES (?, ?, ?)",
         )
         .bind(&parent.id)
-        .bind(source)
+        .bind(&parent_scoped)
         .bind(&seed)
         .execute(&state.db)
         .await?;
     }
 
-    // Project dir: compose.yaml/.env/relative binds. Absent for single-service
-    // image projects that never wrote files — a missing export means no seed.
+    // Project dir: compose.yaml/.env/relative binds, stored parent-rooted.
+    // Absent for single-service image projects that never wrote files — a
+    // missing export means no seed.
     let dir = seeds_dir(state).join(&parent.id);
     tokio::fs::create_dir_all(&dir).await?;
     let tar_path = dir.join("project.tar");
-    match node.transfer_out(state, &litebin_common::docker::TransferKind::ProjectDir(parent.id.clone())).await {
+    match node.transfer_out(state, &litebin_common::docker::TransferKind::ProjectDir(source.id.clone())).await {
         Ok(stream) => {
+            let tar_stream: std::pin::Pin<Box<dyn futures_util::Stream<Item = bytes::Bytes> + Send>> =
+                if source.id == parent.id {
+                    stream
+                } else {
+                    let tmp = copy_engine::spool_dir(state);
+                    Box::pin(copy_engine::reroot::reroot(stream, &source.id, &parent.id, true, &tmp).await?)
+                };
             let mut file = tokio::fs::File::create(&tar_path).await?;
-            let mut stream = stream;
-            while let Some(chunk) = stream.next().await {
+            let mut tar_stream = tar_stream;
+            while let Some(chunk) = tar_stream.next().await {
                 file.write_all(&chunk).await?;
             }
             file.flush().await?;
@@ -147,7 +182,8 @@ pub async fn remove(state: &AppState, parent: &litebin_common::types::Project) -
     Ok(())
 }
 
-/// Restore the baseline into project id `new_id` (the parent id on reset).
+/// Restore the baseline into project id `new_id` (the shared instance on
+/// reset, a fresh instance on clone).
 /// Volumes copy seed → scoped target; the project-dir tar re-roots
 /// `{parent}/…` → `{new_id}/…` (binds inside ride along).
 pub async fn restore(state: &AppState, parent_id: &str, new_id: &str, baseline: &Baseline) -> anyhow::Result<()> {

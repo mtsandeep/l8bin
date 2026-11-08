@@ -31,7 +31,9 @@ pub async fn all_project_stats(
     // Stats endpoint just reads DB — no need to sync on every poll.
     let mut caddy_dirty = false;
 
-    let projects = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects")
+    // Demo instances stay off the main grid (stats included) — nested under their parent.
+    let projects =
+        sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE demo_parent_id IS NULL")
         .fetch_all(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;

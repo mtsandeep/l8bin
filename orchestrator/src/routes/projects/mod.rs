@@ -174,7 +174,10 @@ pub async fn get_project(
     security(("session_auth" = []))
 )]
 pub async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<ProjectResponse>>, (StatusCode, String)> {
-    let projects = sqlx::query_as::<_, Project>("SELECT * FROM projects ORDER BY updated_at DESC")
+    // Demo instances stay off the main grid — they render nested under their parent.
+    let projects = sqlx::query_as::<_, Project>(
+        "SELECT * FROM projects WHERE demo_parent_id IS NULL ORDER BY updated_at DESC",
+    )
         .fetch_all(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;

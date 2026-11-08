@@ -155,6 +155,22 @@ Session cookie: random token, SHA-256 stored, HttpOnly, SameSite=Lax, expires wi
 
 Extracted from duplicate internals (`copy_engine/`): allocate fresh project id via `ids.rs` (dodges reserved subdomains + existing ids), copy service spec (image tags shared, no copy), create volumes per definitions (**empty**, or seeded from the baseline), create network, register routing, set `demo_parent_id`. Base project state irrelevant (stopped is fine). Multi-service/compose projects supported.
 
+### Instance model (agreed 2026-11-08, supersedes the base-cookie bypass)
+
+Everything is an instance; the parent is a pure spec template — never serves traffic, never edited, can stay stopped. `demo_config` records `edit_instance_id` (+ `shared_instance_id` for shared mode). Edit instances get unguessable ids (`{parent}-edit-{rand}`) — the popover opens them by URL, no auth exchange (accepted trade-off: link = access, never expires).
+
+| Instance | Created | Serves | Lifetime |
+|---|---|---|---|
+| Edit | on demo enable | operator only (popover URL) | until disable/redeploy |
+| Shared | on shared enable | all visitors | until disable/redeploy; resets restore baseline into it |
+| Session | on demand (prewarm/spawn) | one visitor each | hard TTL |
+
+- **Recapture captures from the edit instance** (first capture with no edit instance yet falls back to the parent).
+- Reset engine retargets the shared instance; gatekeeper shared mode proxies to it (bar included).
+- Edit + shared instance hosts: exempt from the instance-host 301; no bar.
+- Prewarm/pick queries exclude edit/shared ids; disable tears down all instances.
+- Parent redeploy → recreate edit + shared instances from the new spec (baseline data survives).
+
 ### Demo baseline (optional seed)
 
 Image data is the zero-config base — no baseline means clones boot fresh and self-initialize. For prepared demo data (seeded account, sample content):
@@ -261,3 +277,16 @@ An instances expander on the card (under the chips): per instance — status (ru
 9. dev-s1 e2e (shared reset cycle, session lifecycle, capacity, restart recovery, agent-node demo)
 
 Related: `access-control.md` (same caddy route surface; password protection could later gate demos), `template-catalog.md` (the baseline mechanism doubles as template seeding if a catalog ever lands).
+
+## Known gaps / follow-ups (2026-11-08)
+
+1. **Deleting a demo parent FK-errors** — `demo_parent_id` has no cascade, so `DELETE /projects/{id}` fails until children are deleted. Fix: `delete_project` tears down sessions + edit/shared + pool instances before deleting the parent.
+2. **Parent card stats ignore instances** — CPU/mem/disk tiles reflect only the (stopped) parent; they should sum all demo children, and the instances modal can show per-instance rows.
+3. **Mode switch leaves the shared instance running** — switching shared → session should stop it (keep it for an instant switch-back).
+4. **Parent redeploy doesn't refresh edit/shared instances** — they keep the old image and `.env` (pool spawns pick the new spec up anyway). Fix: recreate edit/shared on redeploy/recreate completion. Same applies to parent limit and env changes — they propagate to new instances only.
+5. **Migrating a demo parent** leaves instances on the old node — block or move them with it.
+6. **Agent-node demo is code-complete but not e2e-tested** (mTLS proxy hop, cloudflare re-point) — dev-s1.
+7. **Custom demo domains** in zones litebin doesn't control need a manual re-point to the master.
+8. **Bar injection is best-effort** — SPAs that rewrite `<body>` can lose it on client-side navigation; pages over 2 MiB pass through unbarred.
+9. **Duplicating/exporting a demo parent** yields a plain project — demo config and baseline seeds don't travel (acceptable, but surprising if unexpected).
+10. **No node-level demo budget** — N demo projects × `max_instances` each; operator discipline only (global cap explicitly rejected during design).

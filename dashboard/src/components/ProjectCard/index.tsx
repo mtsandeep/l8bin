@@ -18,6 +18,7 @@ import {
   Square,
   Terminal,
   Trash2,
+  Users,
   WifiOff,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -45,6 +46,7 @@ import StatusBadge from '../StatusBadge';
 import { useToast } from '../ToastContext';
 import AppSettingsPopover from './AppSettingsPopover';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import DemoSessionsModal from './DemoSessionsModal';
 import DemoSettingsPopover from './DemoSettingsPopover';
 import EnvModal from './EnvModal';
 import GitHubBadge from './GitHubBadge';
@@ -118,6 +120,7 @@ export default function ProjectCard({
 
   // Demo mode state — drives the chip row + Demo popover while enabled
   const [demoState, setDemoState] = useState<DemoState | null>(null);
+  const [showDemoSessions, setShowDemoSessions] = useState(false);
   const demoEnabled = !project.is_background && (demoState?.enabled ?? false);
   const refreshDemo = useCallback(() => {
     if (project.is_background) return;
@@ -395,6 +398,17 @@ export default function ProjectCard({
                   <FlaskConical size={10} />
                   Demo · {demoState?.config?.mode === 'session' ? 'Session' : 'Shared'}
                 </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowDemoSessions((v) => !v);
+                  }}
+                  title="Demo instances — edit/shared state and live sessions"
+                  className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-slate-700/60 text-slate-400 hover:text-slate-200 cursor-pointer"
+                >
+                  <Users size={9} />
+                </button>
                 {demoState?.config?.mode === 'session' && (
                   <span className="text-slate-400">
                     {demoState.active_sessions ?? 0}/{demoState.config?.max_instances ?? 5} live
@@ -434,6 +448,9 @@ export default function ProjectCard({
               </>
             )}
           </div>
+          {demoEnabled && showDemoSessions && (
+            <DemoSessionsModal projectId={project.id} onChanged={refreshDemo} onClose={() => setShowDemoSessions(false)} />
+          )}
         </div>
       </div>
 
@@ -465,6 +482,7 @@ export default function ProjectCard({
               openPopover === 'demo' ? (
                 <DemoSettingsPopover
                   projectId={project.id}
+                  domain={domain}
                   state={demoState ?? { enabled: true }}
                   onDemoChanged={refreshDemo}
                   onClose={() => {

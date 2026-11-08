@@ -249,6 +249,27 @@ pub(crate) async fn resolve_routes_for_domain(
 
     let mut routes = resolve_routes(&all_running, db, domain).await?;
 
+    // Demo mode: the parent's host is the gatekeeper's surface and instance
+    // hosts must not be reachable container-direct (they'd bypass session
+    // capacity) — both route through the orchestrator, never to containers.
+    {
+        let mut demo_ids: std::collections::HashSet<String> =
+            sqlx::query_scalar("SELECT project_id FROM demo_config").fetch_all(db).await?.into_iter().collect();
+        demo_ids.extend(
+            sqlx::query_scalar::<_, String>("SELECT id FROM projects WHERE demo_parent_id IS NOT NULL")
+                .fetch_all(db)
+                .await?,
+        );
+        for route in routes.iter_mut() {
+            if demo_ids.contains(&route.project_id) {
+                route.upstream = orchestrator_upstream.to_string();
+                route.upstream_tls = false;
+                route.container_upstream = None;
+                route.host_rewrite = None;
+            }
+        }
+    }
+
     let background_projects =
         sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE is_background = 1").fetch_all(db).await?;
     for project in background_projects {

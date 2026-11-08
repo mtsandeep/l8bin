@@ -4,11 +4,8 @@
 //! Everything rides the duplicate machinery minus what a same-node demo clone
 //! never needs: no image transfer (same daemon), no route copying (the demo
 //! host belongs to the parent), no source stop (the parent keeps running —
-//! baseline seeds are frozen copies).
-//!
-//! Not called until the session pool ships (gatekeeper step); prewarms and
-//! clone-on-arrival are its callers.
-#![allow(dead_code)]
+//! baseline seeds are frozen copies). Callers: ensure_instances, the
+//! gatekeeper's claim path, and the janitor's prewarm refill.
 
 use crate::copy_engine;
 use crate::demo::{self, baseline::Baseline};
@@ -22,6 +19,8 @@ pub struct CloneOpts {
     pub start: bool,
     /// Seed volumes + project dir from the captured baseline (empty otherwise).
     pub baseline: Option<Baseline>,
+    /// Requested id (edit/shared instances); pool instances auto-name.
+    pub requested_id: Option<String>,
 }
 
 /// Create a demo instance of `parent`. Returns the new project id immediately;
@@ -29,7 +28,8 @@ pub struct CloneOpts {
 pub async fn create_instance(state: &AppState, parent: &Project, opts: CloneOpts) -> anyhow::Result<String> {
     let reserved = [state.platform.dashboard_subdomain(), state.platform.poke_subdomain()];
     let base = format!("{}-demo", parent.id);
-    let alloc = copy_engine::allocate_project_id(&state.db, &reserved, None, &base).await?;
+    let alloc =
+        copy_engine::allocate_project_id(&state.db, &reserved, opts.requested_id.as_deref(), &base).await?;
 
     insert_instance_rows(state, parent, &alloc.id).await?;
 
