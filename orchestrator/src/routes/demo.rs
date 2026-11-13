@@ -183,9 +183,19 @@ pub async fn put_demo(
         });
     }
 
-    // Switching modes tears down the other mode's sessions.
-    if mode_change && mode == "shared" {
-        end_sessions(&state, &project_id).await;
+    // Mode switch: to shared ends sessions; to session removes the shared instance.
+    if mode_change {
+        if mode == "shared" {
+            end_sessions(&state, &project_id).await;
+        } else if let Ok(Some(cfg)) = demo::get_config(&state.db, &project_id).await
+            && let Some(shared_id) = cfg.shared_instance_id
+        {
+            demo::teardown_instance(&state, &shared_id).await;
+            let _ = sqlx::query("UPDATE demo_config SET shared_instance_id = NULL WHERE project_id = ?")
+                .bind(&project_id)
+                .execute(&state.db)
+                .await;
+        }
     }
 
     tracing::info!(project = %project_id, mode, "demo mode enabled/updated");

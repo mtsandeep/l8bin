@@ -177,6 +177,8 @@ Everything is an instance; the parent is a pure spec template — never serves t
 | Shared | on shared enable | all visitors | until disable/redeploy; resets restore baseline into it |
 | Session | on demand (prewarm/spawn) | one visitor each | hard TTL |
 
+Pool dynamics worth knowing: instances are **deleted at expiry, not recycled** — so under churn the pool sits at 0 unclaimed until the janitor's next tick (≤60s) refills it, bounded by max live (prewarm fills only up to max, counting claimed slots). Prewarmed idles are **invisible in the UI** (the modal lists sessions; unclaimed copies have no row) and may show as `stopped` — that's auto-stop, still a fast claim. "0 prewarm at a glance" is normal, not a fault.
+
 - **Recapture captures from the edit instance** (first capture with no edit instance yet falls back to the parent).
 - Reset engine retargets the shared instance; gatekeeper shared mode proxies to it (bar included).
 - Edit + shared instance hosts: exempt from the instance-host 301; no bar.
@@ -196,7 +198,7 @@ Image data is the zero-config base — no baseline means clones boot fresh and s
 
 ### Teardown
 
-Janitor sweep: sessions past `expires_at` (or `ended`) → delete instance project through the existing delete path (containers, volumes, networks, caddy route) + remove session row. Teardown is a **hard kill** — no drain grace. A freed slot triggers a background prewarm refill (creation off the hot path). Partial/failed clones are cleaned immediately when the creation task reports failure, not just by the reconcile loop. Reconcile loop also orphans-checks: instance projects with no live session row get cleaned (crash recovery after orchestrator restart; sessions persist in SQLite so this is a safety net).
+Janitor (60s tick): scheduled shared resets; session hard-TTL expiry → teardown is a **hard kill** (no drain grace; instance deleted, session row cascades — FK enforcement is on at the pool level); prewarm refill; edit/shared self-heal; orphan sweep (children whose parent has no demo_config); stale-session sweep (retry failed expiry teardowns — skipping instances with a live session — and drop rows whose instance is gone). Claim never hands out an instance any session row still references. Partial/failed clones are cleaned immediately on creation failure.
 
 ### Demo bar (injection)
 

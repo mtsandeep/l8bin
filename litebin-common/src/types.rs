@@ -533,6 +533,8 @@ pub struct RunServiceConfig {
     pub raw_port_host_overrides: HashMap<String, u16>,
     /// True only for services approved to use LiteBin's read-only Docker observation proxy.
     pub docker_observe: bool,
+    /// Docker Desktop grouping label — demo children set their parent's id.
+    pub label_group: Option<String>,
     /// Internal marker authorizing the managed sidecar to mount the daemon socket.
     pub is_managed_docker_proxy: bool,
 }
@@ -565,6 +567,7 @@ impl RunServiceConfig {
         Self {
             project_id: project.id.clone(),
             service_name: "web".to_string(),
+            label_group: project.demo_parent_id.clone(),
             instance_id: None,
             image: project.image.clone().unwrap_or_default(),
             port: project.internal_port.map(|p| p as u16),

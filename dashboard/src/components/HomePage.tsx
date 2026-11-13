@@ -37,7 +37,7 @@ export default function HomePage() {
   const { nodes } = useNodes(user);
   const githubStatus = useGithubStatus();
 
-  const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'offline' | null>(null);
+  const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'offline' | 'demo' | null>(null);
   const [search, setSearch] = useState('');
   const [stackExpanded, setStackExpanded] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
@@ -75,6 +75,7 @@ export default function HomePage() {
     return !!node && node.status !== NodeStatus.Online;
   };
   const offline = projects.filter(isOffline).length;
+  const demos = projects.filter((p) => p.demo_mode).length;
 
   const sortedProjects = [...projects].sort((a, b) => a.id.localeCompare(b.id));
   const query = search.trim().toLowerCase();
@@ -84,7 +85,9 @@ export default function HomePage() {
     statusFilter
       ? statusFilter === 'offline'
         ? sortedProjects.filter(isOffline)
-        : sortedProjects.filter((p) => p.status === statusFilter)
+        : statusFilter === 'demo'
+          ? sortedProjects.filter((p) => p.demo_mode)
+          : sortedProjects.filter((p) => p.status === statusFilter)
       : sortedProjects
   ).filter(matchesSearch);
 
@@ -309,6 +312,15 @@ export default function HomePage() {
                 className={`hover:underline cursor-pointer ${statusFilter === ProjectStatus.Stopping ? 'underline' : ''}`}
               >
                 <span className="text-orange-400 font-medium">{stopping}</span> stopping
+              </button>
+            )}
+            {demos > 0 && (
+              <button
+                type="button"
+                onClick={() => setStatusFilter(statusFilter === 'demo' ? null : 'demo')}
+                className={`hover:underline cursor-pointer ${statusFilter === 'demo' ? 'underline' : ''}`}
+              >
+                <span className="text-violet-400 font-medium">{demos}</span> demos
               </button>
             )}
             {offline > 0 && (

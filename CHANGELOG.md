@@ -15,12 +15,20 @@ All notable changes to this project will be documented in this file.
 - Demo traffic routes through the master's gatekeeper (demo hosts and instance hosts re-route to the orchestrator; direct instance links bounce to the demo host). In Cloudflare mode, demo host records point at the master.
 - Demo API: `GET/PUT /projects/{id}/demo`, `POST …/demo/reset`, `POST/DELETE …/demo/baseline`, `GET …/demo/sessions`, `DELETE …/demo/sessions/{sid}`.
 - Demo janitor runs the scheduled resets, expires sessions, and keeps the pre-warm pool topped up.
+- `N demos` filter chip in the dashboard stats bar; demo instance containers group under their parent in Docker.
 
 ### Changed
 - Exports can skip uploaded images (`include_images`) for metadata-only re-homes — the target node must already have the image; import refuses (local target) or warns (agent target) when an unbundled image is missing there.
 
 ### Fixed
 - Installer fails fast with the `usermod`/re-login remedy when the user can't reach the Docker socket, instead of running the whole install and dying at `docker compose up` with a misleading full-disk hint.
+- **Demo pool never filled / instances spawned unbounded** — a NULL `shared_instance_id` poisoned the capacity SQL (`NOT IN` with NULL never matches), so prewarm spawned a new clone every tick and claims never reused instances; the same NULL trap is guarded in all pool queries.
+- **Hung demo clones** — concurrent baseline restores could deadlock the Docker streams; clones are serialized per parent, restores carry a 3-minute cap, and stuck `importing` instances are reaped after 10 minutes.
+- **Expired sessions could linger with running instances** — teardown is retried each tick; session rows whose instance vanished are dropped (FK cascades are now enforced on every connection).
+- **Proxy followed app redirects** — 3xx responses reach the browser verbatim (an app's `/ → /admin` redirect was served as the final page, breaking its SPA).
+- **Shared-demo wake ping-pong** — the status endpoint probes the app before reporting ready; the wait page shows real slot state instead of a leaked instance count.
+- Switching to personal demos removes the shared instance (recreated on switch-back); deleting a demo-enabled project tears down its whole demo first; disabling demo returns instantly (cleanup runs in the background).
+- Recycled demo instance names could collide with a not-yet-removed container — the stale container is cleared and the start retried.
 - A sudo run that installs Docker adds the invoking user to the `docker` group (get.docker.com adds nobody) and asks whether to continue as root (`/opt/litebin`) or exit to re-run as that user (`~/litebin`); `L8B_YES=1` continues as root.
 - Non-root users without Docker get the docker-first path (keeps `~/litebin`) spelled out alongside the sudo path (`/opt/litebin`, root for updates).
 - Docker/hardening notices print once per run — install flows that redirect to update flows (already-running install) printed them twice.

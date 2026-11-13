@@ -202,9 +202,9 @@ async fn claim(
     let instance: Option<String> = sqlx::query_scalar(
         "SELECT p.id FROM projects p \
          WHERE p.demo_parent_id = ? AND p.status IN ('running', 'stopped') \
-         AND p.id NOT IN (SELECT edit_instance_id FROM demo_config WHERE project_id = ? \
-                           UNION SELECT shared_instance_id FROM demo_config WHERE project_id = ?) \
-         AND NOT EXISTS (SELECT 1 FROM demo_sessions s WHERE s.instance_project_id = p.id AND s.status = 'active') \
+         AND p.id NOT IN (SELECT edit_instance_id FROM demo_config WHERE project_id = ? AND edit_instance_id IS NOT NULL \
+                           UNION SELECT shared_instance_id FROM demo_config WHERE project_id = ? AND shared_instance_id IS NOT NULL) \
+         AND NOT EXISTS (SELECT 1 FROM demo_sessions s WHERE s.instance_project_id = p.id) \
          ORDER BY CASE p.status WHEN 'running' THEN 0 ELSE 1 END, p.created_at LIMIT 1",
     )
     .bind(&parent.id)
@@ -222,8 +222,8 @@ async fn claim(
         None => {
             let total: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM projects p WHERE p.demo_parent_id = ? \
-                 AND p.id NOT IN (SELECT edit_instance_id FROM demo_config WHERE project_id = ? \
-                                   UNION SELECT shared_instance_id FROM demo_config WHERE project_id = ?)",
+                 AND p.id NOT IN (SELECT edit_instance_id FROM demo_config WHERE project_id = ? AND edit_instance_id IS NOT NULL \
+                                   UNION SELECT shared_instance_id FROM demo_config WHERE project_id = ? AND shared_instance_id IS NOT NULL)",
             )
             .bind(&parent.id)
             .bind(&parent.id)
@@ -384,7 +384,7 @@ fn strip_meta_csp(html: &mut String) {
 fn bar_snippet(config: &DemoConfig) -> String {
     let banner = &config.banner_text;
     format!(
-        "<style>#l8b-demo-bar{{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;display:flex;align-items:center;gap:12px;background:rgba(15,23,42,.7);backdrop-filter:blur(1px);transition:background .2s;color:#e2e8f0;font:12px/1.4 system-ui,sans-serif;padding:7px 10px 7px 10px;border-top:1px solid rgba(51,65,85,.5);&:hover{{background:rgba(15,23,42,.85)}}& .lg{{display:flex;flex:none}}& .lg svg{{display:block}}& .b{{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}& .t{{color:#2dd4bf;font-variant-numeric:tabular-nums;white-space:nowrap}}& a{{color:#5eead4;text-decoration:underline;text-underline-offset:2px}}& .lbl{{display:none}}& .r{{display:flex;align-items:center;gap:6px;white-space:nowrap}}& .tg{{display:flex;background:none;border:none;padding:3px;border-radius:6px;cursor:pointer;color:#94a3b8}}& .tg:hover{{color:#e2e8f0;background:rgba(51,65,85,.5)}}&.min{{left:50%;right:auto;transform:translateX(-50%);border:1px solid rgba(51,65,85,.5);border-bottom:none;border-radius:6px 6px 0 0;padding:4px 8px 5px 8px;gap:8px;font-size:11px}}&.min .b{{display:none}}&.min .lbl{{display:inline}}}}</style><div id=\"l8b-demo-bar\"><a class=\"lg\" href=\"https://l8bin.com\" target=\"_blank\" rel=\"noopener\" aria-label=\"L8Bin.com\" title=\"Powered by L8Bin.com\"><svg width=\"11\" height=\"15\" viewBox=\"22 14 52 70\"><rect x=\"22\" y=\"48\" width=\"52\" height=\"36\" rx=\"3\" fill=\"#8b5cf6\"/><rect x=\"40\" y=\"32\" width=\"6\" height=\"12\" rx=\"2\" fill=\"#06b6d4\" opacity=\"0.55\"/><rect x=\"54\" y=\"24\" width=\"6\" height=\"16\" rx=\"2\" fill=\"#06b6d4\" opacity=\"0.8\"/><rect x=\"68\" y=\"14\" width=\"6\" height=\"20\" rx=\"2\" fill=\"#06b6d4\"/></svg></a><span class=\"b\">{banner}</span><span class=\"r\"><span class=\"lbl\">Demo</span><span class=\"t\" id=\"l8b-demo-t\"></span><button type=\"button\" class=\"tg\" id=\"l8b-demo-tg\" aria-label=\"Collapse or expand the demo bar\"><svg id=\"l8b-demo-chev\" width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6 9l6 6 6-6\"/></svg></button></span></div><script>(function(){{var el=document.getElementById('l8b-demo-t');if(!el)return;var bar=document.getElementById('l8b-demo-bar'),chev=document.getElementById('l8b-demo-chev'),tg=document.getElementById('l8b-demo-tg');function apply(m){{bar.classList.toggle('min',m);if(chev)chev.style.transform=m?'rotate(180deg)':'';}}var m=false;try{{m=localStorage.getItem('l8b_demo_bar_min')==='1'}}catch(e){{}}apply(m);if(tg)tg.onclick=function(){{m=!m;try{{localStorage.setItem('l8b_demo_bar_min',m?'1':'0')}}catch(e){{}}apply(m)}};fetch('/__demo__/status',{{cache:'no-store'}}).then(function(r){{return r.json()}}).then(function(j){{if(j.resets_at){{el.textContent=new Date(j.resets_at*1000).toLocaleTimeString([],{{hour:'numeric',minute:'2-digit'}});return;}}if(!j.expires_at){{el.textContent='';return;}}var end=j.expires_at*1000;function t(){{var s=Math.max(0,Math.round((end-Date.now())/1000));el.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');if(s>0)setTimeout(t,1000);else location.reload();}}t();}}).catch(function(){{}});}})();</script>"
+        "<style>#l8b-demo-bar{{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;display:flex;align-items:center;gap:12px;background:rgba(15,23,42,.7);backdrop-filter:blur(1px);transition:background .2s;color:#e2e8f0;font:13px/1.4 system-ui,sans-serif;padding:8px 16px;border-top:1px solid rgba(51,65,85,.5);&:hover{{background:rgba(15,23,42,.85)}}& .lg{{display:flex;flex:none}}& .lg svg{{display:block}}& .b{{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}& .t{{color:#2dd4bf;font-variant-numeric:tabular-nums;white-space:nowrap}}& a{{color:#5eead4;text-decoration:underline;text-underline-offset:2px}}& .lbl{{display:none}}& .r{{display:flex;align-items:center;gap:6px;white-space:nowrap;margin-right:18px}}& .tg{{position:absolute;right:7px;top:50%;transform:translateY(-50%);display:flex;align-items:center;background:none;border:none;outline:none;padding:0;line-height:0;cursor:pointer;color:#94a3b8}}& .tg:focus,& .tg:focus-visible{{outline:none;box-shadow:none}}& .tg:hover{{color:#e2e8f0}}& .tg svg{{display:block}}&.min{{left:50%;right:auto;transform:translateX(-50%);border:1px solid rgba(51,65,85,.5);border-bottom:none;border-radius:6px 6px 0 0;padding:4px 8px 5px 8px;gap:8px;font-size:11px}}&.min .b{{display:none}}&.min .lbl{{display:inline}}}}</style><div id=\"l8b-demo-bar\"><a class=\"lg\" href=\"https://l8bin.com\" target=\"_blank\" rel=\"noopener\" aria-label=\"L8Bin.com\" title=\"Powered by L8Bin.com\"><svg width=\"11\" height=\"15\" viewBox=\"22 14 52 70\"><rect x=\"22\" y=\"48\" width=\"52\" height=\"36\" rx=\"3\" fill=\"#8b5cf6\"/><rect x=\"40\" y=\"32\" width=\"6\" height=\"12\" rx=\"2\" fill=\"#06b6d4\" opacity=\"0.55\"/><rect x=\"54\" y=\"24\" width=\"6\" height=\"16\" rx=\"2\" fill=\"#06b6d4\" opacity=\"0.8\"/><rect x=\"68\" y=\"14\" width=\"6\" height=\"20\" rx=\"2\" fill=\"#06b6d4\"/></svg></a><span class=\"b\">{banner}</span><span class=\"r\"><span class=\"lbl\">Demo</span><span class=\"t\" id=\"l8b-demo-t\"></span><button type=\"button\" class=\"tg\" id=\"l8b-demo-tg\" aria-label=\"Collapse or expand the demo bar\"><svg id=\"l8b-demo-ico\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"4 14 10 14 10 20\"/><polyline points=\"20 10 14 10 14 4\"/><line x1=\"14\" y1=\"10\" x2=\"21\" y2=\"3\"/><line x1=\"3\" y1=\"21\" x2=\"10\" y2=\"14\"/></svg></button></span></div><script>(function(){{var el=document.getElementById('l8b-demo-t');if(!el)return;var bar=document.getElementById('l8b-demo-bar'),ico=document.getElementById('l8b-demo-ico'),tg=document.getElementById('l8b-demo-tg');var MIN='<polyline points=\"4 14 10 14 10 20\"/><polyline points=\"20 10 14 10 14 4\"/><line x1=\"14\" y1=\"10\" x2=\"21\" y2=\"3\"/><line x1=\"3\" y1=\"21\" x2=\"10\" y2=\"14\"/>';var MAX='<path d=\"M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3\"/>';function apply(m){{bar.classList.toggle('min',m);if(ico)ico.innerHTML=m?MAX:MIN;}}var m=false;try{{m=localStorage.getItem('l8b_demo_bar_min')==='1'}}catch(e){{}}apply(m);if(tg)tg.onclick=function(){{m=!m;try{{localStorage.setItem('l8b_demo_bar_min',m?'1':'0')}}catch(e){{}}apply(m)}};fetch('/__demo__/status',{{cache:'no-store'}}).then(function(r){{return r.json()}}).then(function(j){{if(j.resets_at){{el.textContent=new Date(j.resets_at*1000).toLocaleTimeString([],{{hour:'numeric',minute:'2-digit'}});return;}}if(!j.expires_at){{el.textContent='';return;}}var end=j.expires_at*1000;function t(){{var s=Math.max(0,Math.round((end-Date.now())/1000));el.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');if(s>0)setTimeout(t,1000);else location.reload();}}t();}}).catch(function(){{}});}})();</script>"
     )
 }
 
@@ -598,7 +598,7 @@ async fn redirect_to_demo_host(state: &AppState, parent_id: &str) -> Response {
         .unwrap()
 }
 
-async fn wait_page(state: &AppState, config: &DemoConfig, parent_id: &str) -> Response {
+async fn wait_page(state: &AppState, _config: &DemoConfig, parent_id: &str) -> Response {
     let earliest: Option<i64> = sqlx::query_scalar(
         "SELECT MIN(expires_at) FROM demo_sessions WHERE parent_project_id = ? AND status = 'active'",
     )
@@ -607,17 +607,12 @@ async fn wait_page(state: &AppState, config: &DemoConfig, parent_id: &str) -> Re
     .await
     .ok()
     .flatten();
-    let in_x = earliest
-        .map(|e| ((e - chrono::Utc::now().timestamp()).max(0) / 60).max(1))
-        .map(|mins| format!("the next one frees within ~{mins} min"))
-        .unwrap_or_else(|| "one frees up soon".into());
-    page(
-        "Demo capacity reached",
-        &format!("All {} demo sessions are in use — {}. Retrying automatically…", config.max_instances, in_x),
-        Some(30),
-        false,
-        false,
-    )
+    let live = earliest.map(|e| {
+        let mins = ((e - chrono::Utc::now().timestamp()).max(0) / 60).max(1);
+        format!("Next demo slot opens in ~{mins} min.")
+    });
+    let msg = live.unwrap_or_else(|| "Demo instances are being prepared.".to_string());
+    page("Demo capacity reached", &(msg + " Retrying automatically…"), Some(30), false, false)
 }
 
 /// Shared themed fringe page. `refresh_secs` = meta-refresh interval;
@@ -639,7 +634,7 @@ fn page(title: &str, message: &str, refresh_secs: Option<u32>, spinner: bool, po
          body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;\
          background:radial-gradient(1200px 600px at 50% -10%,#1e293b 0%,#0b1120 60%);\
          color:#e2e8f0;font:14px/1.6 system-ui,-apple-system,sans-serif}}\
-         .card{{max-width:420px;margin:24px;text-align:center;         & .ring{{width:34px;height:34px;margin:0 auto 18px;border-radius:50%;border:3px solid #334155;border-top-color:#8b5cf6;animation:spin 1s linear infinite}}         & h1{{font-size:17px;font-weight:600;margin:0 0 8px;color:#f1f5f9}}         & p{{margin:0 0 14px;color:#94a3b8;font-size:13.5px;line-height:1.6}}         & a{{color:#a78bfa;text-decoration:underline;text-underline-offset:3px}}         & .cta{{display:inline-block;margin-top:4px;padding:7px 20px;border-radius:8px;background:#8b5cf6;color:#fff;font-weight:600;text-decoration:none}}}}footer{{position:fixed;left:0;right:0;bottom:14px;text-align:center;font-size:11px;color:#64748b}}footer a{{color:#94a3b8;text-decoration:none}}         @keyframes spin{{to{{transform:rotate(360deg)}}}}</style></head>         <body><div class=\"card\">{spinner_html}<h1>{title}</h1><p>{message}</p></div>{poll}<footer>Powered by <a href=\"https://l8bin.com\">L8Bin.com</a></footer></body></html>"
+         .card{{max-width:420px;margin:24px;text-align:center;         & .ring{{width:34px;height:34px;margin:0 auto 18px;border-radius:50%;border:3px solid #334155;border-top-color:#8b5cf6;animation:spin 1s linear infinite}}         & h1{{font-size:17px;font-weight:600;margin:0 0 8px;color:#f1f5f9}}         & p{{margin:0 0 14px;color:#94a3b8;font-size:13.5px;line-height:1.6}}         & a{{color:#a78bfa;text-decoration:underline;text-underline-offset:3px}}         & .cta{{display:inline-block;margin-top:4px;padding:7px 20px;border-radius:8px;background:#8b5cf6;color:#fff;font-weight:600;text-decoration:none}}}}footer{{position:fixed;left:0;right:0;bottom:44px;text-align:center;font-size:11px;color:#64748b}}footer a{{color:#94a3b8;text-decoration:none}}         @keyframes spin{{to{{transform:rotate(360deg)}}}}</style></head>         <body><div class=\"card\">{spinner_html}<h1>{title}</h1><p>{message}</p></div>{poll}<footer>Powered by <a href=\"https://l8bin.com\">L8Bin.com</a></footer></body></html>"
     );
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")],

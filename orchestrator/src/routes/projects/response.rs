@@ -36,6 +36,8 @@ pub struct ProjectResponse {
     pub public_stats: Option<ServiceInfo>,
     /// Waker wrong-port hint; absent when no 502 signal (heuristic, not health).
     pub port_mismatch: Option<PortMismatch>,
+    /// True when demo mode is enabled on this project.
+    pub demo_mode: bool,
 }
 
 /// The port the proxy dials vs the ports the container declares.
@@ -106,6 +108,11 @@ type PublicServiceRow = (
 
 pub(super) async fn to_project_response(project: &Project, state: &crate::AppState) -> ProjectResponse {
     let db = &state.db;
+    let demo_mode: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM demo_config WHERE project_id = ?)")
+        .bind(&project.id)
+        .fetch_one(db)
+        .await
+        .unwrap_or(false);
     let public_stats = if project.deploy_type == Some(DeployType::Compose) {
         // Multi-service: look up the public service from project_services
         let row: Option<PublicServiceRow> = sqlx::query_as(
@@ -202,5 +209,6 @@ pub(super) async fn to_project_response(project: &Project, state: &crate::AppSta
             .port_mismatches
             .get(&project.id)
             .map(|entry| PortMismatch { routed_port: entry.0, container_ports: entry.1.clone() }),
+        demo_mode,
     }
 }

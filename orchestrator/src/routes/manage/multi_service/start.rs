@@ -49,6 +49,12 @@ async fn build_run_plan(
         litebin_common::compose_run::ComposeRunPlan::single_service(config)
     };
 
+    if let Some(parent) = &project.demo_parent_id {
+        for config in &mut plan.configs {
+            config.label_group = Some(parent.clone());
+        }
+    }
+
     if project.is_background {
         plan.pub_service_name = None;
         for config in &mut plan.configs {

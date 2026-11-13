@@ -36,7 +36,9 @@ pub async fn create_instance(state: &AppState, parent: &Project, opts: CloneOpts
     let new_id = alloc.id.clone();
     let parent_id = parent.id.clone();
     let state_bg = state.clone();
+    let lock = clone_lock(&parent_id).await;
     tokio::spawn(async move {
+        let _guard = lock.lock().await;
         let job = CloneJob { parent_id, new_id: new_id.clone(), start: opts.start, baseline: opts.baseline };
         if let Err(e) = run_clone(&state_bg, &job).await {
             tracing::error!(project = %new_id, parent = %job.parent_id, error = %e, "demo clone failed");
@@ -47,6 +49,15 @@ pub async fn create_instance(state: &AppState, parent: &Project, opts: CloneOpts
         }
     });
     Ok(alloc.id)
+}
+
+/// One clone payload per parent at a time — concurrent local tar streams
+/// into the same daemon can deadlock.
+static CLONE_LOCKS: std::sync::LazyLock<dashmap::DashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>> =
+    std::sync::LazyLock::new(|| dashmap::DashMap::new());
+
+async fn clone_lock(parent_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    CLONE_LOCKS.entry(parent_id.to_string()).or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(()))).clone()
 }
 
 struct CloneJob {
@@ -65,6 +76,7 @@ async fn run_clone(state: &AppState, job: &CloneJob) -> anyhow::Result<()> {
     let node = demo::parent_node(&parent);
     let logs = crate::routes::deploy::logs::push_deploy_log;
 
+    tracing::info!(project = %new_id, parent = %parent_id, "demo clone: starting");
     logs(state, new_id, &format!("demo instance cloning from '{parent_id}'"));
 
     // Compose projects need their project dir (compose.yaml, .env, binds);
@@ -72,8 +84,19 @@ async fn run_clone(state: &AppState, job: &CloneJob) -> anyhow::Result<()> {
     if parent.deploy_type == Some(litebin_common::types::DeployType::Compose) {
         match &job.baseline {
             Some(b) if b.project_tar.is_some() || !b.volumes.is_empty() => {
-                demo::baseline::restore(state, parent_id, new_id, b).await?;
-                logs(state, new_id, "baseline restored");
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(180),
+                    demo::baseline::restore(state, parent_id, new_id, b),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {
+                        tracing::info!(project = %new_id, "demo clone: baseline restored");
+                        logs(state, new_id, "baseline restored");
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => anyhow::bail!("baseline restore timed out after 180s"),
+                }
             }
             _ => {
                 let tmp = copy_engine::spool_dir(state);
@@ -87,12 +110,7 @@ async fn run_clone(state: &AppState, job: &CloneJob) -> anyhow::Result<()> {
 
     if job.start {
         logs(state, new_id, "starting");
-        match crate::routes::manage::handlers::start_project(
-            axum::extract::State(state.clone()),
-            axum::extract::Path(new_id.to_string()),
-        )
-        .await
-        {
+        match start_with_name_conflict_retry(state, new_id).await {
             Ok(_) => logs(state, new_id, "started"),
             Err((code, message)) => anyhow::bail!("start failed ({code}): {message}"),
         }
@@ -101,6 +119,33 @@ async fn run_clone(state: &AppState, job: &CloneJob) -> anyhow::Result<()> {
     let _ = state.route_sync_tx.send(());
     logs(state, new_id, "demo instance ready");
     Ok(())
+}
+
+/// The id allocator only checks the DB; a container from a torn-down instance
+/// can still hold the name. On a 409, clear stale containers and retry once.
+async fn start_with_name_conflict_retry(
+    state: &AppState,
+    new_id: &str,
+) -> Result<(), (axum::http::StatusCode, String)> {
+    match crate::routes::manage::handlers::start_project(
+        axum::extract::State(state.clone()),
+        axum::extract::Path(new_id.to_string()),
+    )
+    .await
+    {
+        Ok(_) => Ok(()),
+        Err((_code, message)) if message.contains("already in use") => {
+            tracing::warn!(project = %new_id, "demo clone: name held by a stale container, clearing and retrying");
+            let _ = state.docker.remove_by_name(new_id).await;
+            crate::routes::manage::handlers::start_project(
+                axum::extract::State(state.clone()),
+                axum::extract::Path(new_id.to_string()),
+            )
+            .await
+            .map(|_| ())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// DB rows for the instance: spec copied from the parent, volumes re-scoped,

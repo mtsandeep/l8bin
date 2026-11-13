@@ -206,6 +206,7 @@ impl ComposeRunPlan {
         let proxy_config = RunServiceConfig {
             project_id: project_id.to_string(),
             service_name: proxy_name.clone(),
+            label_group: None,
             instance_id,
             image: crate::types::DOCKER_OBSERVE_PROXY_IMAGE.to_string(),
             port: None,
@@ -357,6 +358,7 @@ fn build_configs(
             Some(RunServiceConfig {
                 project_id: project_id.to_string(),
                 service_name: svc_name.clone(),
+                label_group: None,
                 instance_id: instance_id.map(|s| s.to_string()),
                 image,
                 port,

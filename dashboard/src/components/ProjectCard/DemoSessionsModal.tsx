@@ -1,4 +1,4 @@
-import { Play, Square, X } from 'lucide-react';
+import { Loader2, Play, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import {
   type DemoLongLived,
@@ -20,7 +20,8 @@ function duration(sec: number): string {
 }
 
 /** Modal listing a demo's instances: edit + shared (stop/start) and live
- *  sessions (running time, time left, end). */
+ *  sessions (running time, time left, end). Row actions reflect immediately
+ *  (per-row busy state) and refresh when the backend confirms. */
 export default function DemoSessionsModal({
   projectId,
   onChanged,
@@ -33,6 +34,7 @@ export default function DemoSessionsModal({
   const [sessions, setSessions] = useState<DemoSession[] | null>(null);
   const [longLived, setLongLived] = useState<DemoLongLived[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string[]>([]);
   const { showToast } = useToast();
 
   const load = useCallback(() => {
@@ -60,17 +62,30 @@ export default function DemoSessionsModal({
     Promise.resolve(fn())
       .then(() => {
         showToast(done, 'success');
-        setTimeout(load, 1500);
+        load();
         onChanged();
       })
       .catch((e) => showToast(e instanceof Error ? e.message : 'Failed'))
       .finally(() => setBusy(null));
   };
 
-  const kill = (sessionId: string) =>
-    act(`kill:${sessionId}`, () => killDemoSession(projectId, sessionId), 'Session ended');
+  const kill = (sessionId: string) => {
+    setRemoving((r) => [...r, sessionId]); // reflect immediately; row shows Removing…
+    killDemoSession(projectId, sessionId)
+      .then(() => {
+        showToast('Session ended — instance removed', 'success');
+        load();
+        onChanged();
+      })
+      .catch((e) => {
+        showToast(e instanceof Error ? e.message : 'Failed to end session');
+        setRemoving((r) => r.filter((id) => id !== sessionId));
+      });
+  };
 
-  const active = (sessions ?? []).filter((s) => s.status === 'active').length;
+  const active = (sessions ?? []).filter((s) => s.status === 'active' && !removing.includes(s.id)).length;
+
+  const BusyIcon = () => <Loader2 size={12} className="animate-spin text-slate-400" />;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
@@ -89,6 +104,7 @@ export default function DemoSessionsModal({
         <div className="max-h-96 overflow-y-auto px-4 py-3 space-y-1.5">
           {longLived.map((inst) => {
             const running = inst.status === 'running' || inst.status === 'degraded';
+            const rowBusy = busy === `stop:${inst.id}` || busy === `start:${inst.id}`;
             return (
               <div
                 key={inst.id}
@@ -107,27 +123,36 @@ export default function DemoSessionsModal({
                   </span>
                 </span>
                 <span className="flex items-center gap-3 shrink-0">
-                  <span className={running ? 'text-emerald-400' : 'text-slate-500'}>{inst.status ?? '—'}</span>
-                  {running ? (
-                    <button
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() => act(`stop:${inst.id}`, () => stopProject(inst.id), `${inst.kind} instance stopped`)}
-                      title="Stop (auto-wakes when needed)"
-                      className="text-slate-500 hover:text-red-400 disabled:opacity-50 cursor-pointer"
-                    >
-                      <Square size={12} />
-                    </button>
+                  {rowBusy ? (
+                    <>
+                      <span className="text-amber-400">{busy === `stop:${inst.id}` ? 'Stopping…' : 'Starting…'}</span>
+                      <BusyIcon />
+                    </>
                   ) : (
-                    <button
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() => act(`start:${inst.id}`, () => startProject(inst.id), `${inst.kind} instance started`)}
-                      title="Start now"
-                      className="text-slate-500 hover:text-emerald-400 disabled:opacity-50 cursor-pointer"
-                    >
-                      <Play size={12} />
-                    </button>
+                    <>
+                      <span className={running ? 'text-emerald-400' : 'text-slate-500'}>{inst.status ?? '—'}</span>
+                      {running ? (
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => act(`stop:${inst.id}`, () => stopProject(inst.id), `${inst.kind} instance stopped`)}
+                          title="Stop (auto-wakes when needed)"
+                          className="text-slate-500 hover:text-red-400 disabled:opacity-50 cursor-pointer"
+                        >
+                          <Square size={12} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => act(`start:${inst.id}`, () => startProject(inst.id), `${inst.kind} instance started`)}
+                          title="Start now"
+                          className="text-slate-500 hover:text-emerald-400 disabled:opacity-50 cursor-pointer"
+                        >
+                          <Play size={12} />
+                        </button>
+                      )}
+                    </>
                   )}
                 </span>
               </div>
@@ -141,43 +166,57 @@ export default function DemoSessionsModal({
           {sessions !== null && sessions.length === 0 && longLived.length === 0 && (
             <p className="text-xs text-slate-500">No instances yet.</p>
           )}
-          {sessions?.map((s) => (
-            <div
-              key={s.id}
-              className="flex items-center justify-between gap-3 rounded bg-slate-900/50 px-3 py-2 text-xs"
-            >
-              <span className="font-mono text-slate-400 truncate" title={s.instance_project_id}>
-                {s.instance_project_id}
-              </span>
-              <span className="flex items-center gap-3 shrink-0">
-                <span className="text-slate-400" title="Running for">
-                  {duration(s.created_at)}
+          {sessions?.map((s) => {
+            const isRemoving = removing.includes(s.id);
+            return (
+              <div
+                key={s.id}
+                className={`flex items-center justify-between gap-3 rounded bg-slate-900/50 px-3 py-2 text-xs transition-opacity ${
+                  isRemoving ? 'opacity-60' : ''
+                }`}
+              >
+                <span className="font-mono text-slate-400 truncate" title={s.instance_project_id}>
+                  {s.instance_project_id}
                 </span>
-                {s.status === 'active' ? (
-                  <span className={minsLeft(s.expires_at) > 3 ? 'text-emerald-400' : 'text-amber-400'}>
-                    {minsLeft(s.expires_at)}m left
-                  </span>
-                ) : (
-                  <span className="text-slate-500">{s.status}</span>
-                )}
-                <span className="text-slate-500">{s.instance_status ?? '—'}</span>
-                {(s.status === 'active' || s.status === 'expired') && (
-                  <button
-                    type="button"
-                    onClick={() => kill(s.id)}
-                    title={
-                      s.status === 'active'
-                        ? 'End this session and remove its instance'
-                        : 'Remove this lingering instance now'
-                    }
-                    className="text-slate-500 hover:text-red-400 cursor-pointer"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </span>
-            </div>
-          ))}
+                <span className="flex items-center gap-3 shrink-0">
+                  {isRemoving ? (
+                    <>
+                      <span className="text-amber-400">Removing…</span>
+                      <BusyIcon />
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-slate-400" title="Running for">
+                        {duration(s.created_at)}
+                      </span>
+                      {s.status === 'active' ? (
+                        <span className={minsLeft(s.expires_at) > 3 ? 'text-emerald-400' : 'text-amber-400'}>
+                          {minsLeft(s.expires_at)}m left
+                        </span>
+                      ) : (
+                        <span className="text-slate-500">{s.status}</span>
+                      )}
+                      <span className="text-slate-500">{s.instance_status ?? '—'}</span>
+                      {(s.status === 'active' || s.status === 'expired') && (
+                        <button
+                          type="button"
+                          onClick={() => kill(s.id)}
+                          title={
+                            s.status === 'active'
+                              ? 'End this session and remove its instance'
+                              : 'Remove this lingering instance now'
+                          }
+                          className="text-slate-500 hover:text-red-400 cursor-pointer"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

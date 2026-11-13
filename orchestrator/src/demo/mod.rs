@@ -1,10 +1,7 @@
-//! Demo mode — per-project public demos (docs/planning/demo-mode.md).
-//!
-//! Two exclusive modes: `shared` (one instance for all visitors, reset on an
-//! interval) and `session` (a clone per visitor with a hard TTL). Instances
-//! are real projects created by the copy engine, marked with
-//! `projects.demo_parent_id` and hidden from the main grid. The parent is a
-//! pure spec template — all visitor traffic is served by instances.
+//! Per-project public demos (docs/planning/demo-mode.md). `shared` serves
+//! all visitors from one instance; `session` gives each visitor a private
+//! clone with a hard TTL. Instances are real projects (`demo_parent_id`, off
+//! the main grid); the parent is a pure spec template.
 
 pub mod baseline;
 pub mod clone;
@@ -60,9 +57,8 @@ async fn instance_exists(state: &AppState, parent_id: &str, instance_id: &str) -
         > 0
 }
 
-/// Ensure the long-lived instances exist (and are recorded on the config):
-/// the operator's edit instance always, the visitor-facing shared instance in
-/// shared mode. Self-healing — safe to call from the janitor every tick.
+/// Create the edit instance (always) and shared (shared mode) if missing;
+/// idempotent, safe every tick.
 pub async fn ensure_instances(state: &AppState, config: &mut DemoConfig, parent: &litebin_common::types::Project) -> anyhow::Result<()> {
     let now = chrono::Utc::now().timestamp();
     let baseline = baseline::load(state, &parent.id).await.ok();
@@ -127,9 +123,8 @@ pub fn mid_operation(status: &litebin_common::types::ProjectStatus) -> bool {
     )
 }
 
-/// Delete a project's DB row and its node resources via the existing delete
-/// path (containers, volumes, networks, routes, images). Boxed: delete_project
-/// → teardown_all → here is an async cycle at the type level.
+/// Delete via the normal project path. Boxed: delete_project, teardown_all
+/// and this fn form an async cycle at the type level.
 pub fn teardown_instance(
     state: &AppState,
     project_id: &str,
@@ -149,19 +144,15 @@ pub fn teardown_instance(
     })
 }
 
-/// Delete everything demo-created for a parent: sessions, every instance
-/// (edit, shared, pool, orphans), the snapshot, the config. Used by demo
-/// disable and by parent deletion (children FK-block the parent's DELETE).
-/// No-op when demo was never enabled.
+/// Delete all demo state (sessions, instances, snapshot, config); no-op if
+/// never enabled. Used by disable and parent deletion (FK ordering).
 pub async fn teardown_all(state: &AppState, parent: &litebin_common::types::Project) {
     let config = get_config(&state.db, &parent.id).await.ok().flatten();
     teardown_heavy(state, &parent.id, config).await;
 }
 
-/// Fast disable: the config row dies immediately (demo off, gatekeeper stops
-/// intercepting — the toggle returns at once); the heavy cleanup runs in the
-/// background. The janitor's orphan sweep is the safety net if any of it
-/// fails or races.
+/// Fast disable: config deleted inline (instant toggle), cleanup in the
+/// background; the orphan sweep is the safety net.
 pub async fn disable(state: &AppState, parent_id: &str) {
     let config = get_config(&state.db, parent_id).await.ok().flatten();
     let _ = sqlx::query("DELETE FROM demo_config WHERE project_id = ?")

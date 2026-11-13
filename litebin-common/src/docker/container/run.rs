@@ -289,7 +289,8 @@ impl DockerManager {
                 let mut labels = HashMap::new();
                 labels.insert("litebin.project_id".to_string(), config.project_id.clone());
                 labels.insert("com.docker.compose.service".to_string(), config.service_name.clone());
-                labels.insert("com.docker.compose.project".to_string(), config.project_id.clone());
+                let group = config.label_group.clone().unwrap_or_else(|| config.project_id.clone());
+                labels.insert("com.docker.compose.project".to_string(), group);
                 if let Some(ref existing_labels) = body.labels {
                     labels.extend(existing_labels.clone());
                 }

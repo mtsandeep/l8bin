@@ -12,8 +12,10 @@ pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let options =
-        SqliteConnectOptions::from_str(database_url)?.create_if_missing(true).busy_timeout(Duration::from_secs(5));
+    let options = SqliteConnectOptions::from_str(database_url)?
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_secs(5))
+        .foreign_keys(true);
 
     let pool = SqlitePoolOptions::new().max_connections(10).connect_with(options).await?;
 

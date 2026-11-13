@@ -82,6 +82,7 @@ export interface Project {
   description: string | null;
   is_background: boolean;
   is_staged: boolean;
+  demo_mode: boolean;
   node_id: string | null;
   status: ProjectStatus;
   last_active_at: number | null;
