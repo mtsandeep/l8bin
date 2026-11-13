@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.26] - 2026-11-13
+
 ### Added
 - **Demo mode (shared)** — enable per project from Settings → General to turn the app's URL into a public demo that resets on a schedule (default daily, configurable) or via *Reset now*.
 - **Demo mode (session)** — every visitor gets a private instance of the app with fresh data for a fixed TTL (default 15 min); instances come from a pre-warmed pool, spawn on demand, and are deleted at expiry; at capacity visitors get a wait page that retries automatically.
