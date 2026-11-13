@@ -7,10 +7,10 @@
 //! baseline seeds are frozen copies). Callers: ensure_instances, the
 //! gatekeeper's claim path, and the janitor's prewarm refill.
 
+use crate::AppState;
 use crate::copy_engine;
 use crate::demo::{self, baseline::Baseline};
 use crate::status::{self, ProjectUpdateFields};
-use crate::AppState;
 use litebin_common::types::{Project, ProjectStatus};
 
 /// Options for spawning a demo instance.
@@ -28,8 +28,7 @@ pub struct CloneOpts {
 pub async fn create_instance(state: &AppState, parent: &Project, opts: CloneOpts) -> anyhow::Result<String> {
     let reserved = [state.platform.dashboard_subdomain(), state.platform.poke_subdomain()];
     let base = format!("{}-demo", parent.id);
-    let alloc =
-        copy_engine::allocate_project_id(&state.db, &reserved, opts.requested_id.as_deref(), &base).await?;
+    let alloc = copy_engine::allocate_project_id(&state.db, &reserved, opts.requested_id.as_deref(), &base).await?;
 
     insert_instance_rows(state, parent, &alloc.id).await?;
 
@@ -54,7 +53,7 @@ pub async fn create_instance(state: &AppState, parent: &Project, opts: CloneOpts
 /// One clone payload per parent at a time — concurrent local tar streams
 /// into the same daemon can deadlock.
 static CLONE_LOCKS: std::sync::LazyLock<dashmap::DashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>> =
-    std::sync::LazyLock::new(|| dashmap::DashMap::new());
+    std::sync::LazyLock::new(dashmap::DashMap::new);
 
 async fn clone_lock(parent_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     CLONE_LOCKS.entry(parent_id.to_string()).or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(()))).clone()
@@ -69,10 +68,8 @@ struct CloneJob {
 
 async fn run_clone(state: &AppState, job: &CloneJob) -> anyhow::Result<()> {
     let (parent_id, new_id) = (&job.parent_id, &job.new_id);
-    let parent: Project = sqlx::query_as("SELECT * FROM projects WHERE id = ?")
-        .bind(parent_id)
-        .fetch_one(&state.db)
-        .await?;
+    let parent: Project =
+        sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(parent_id).fetch_one(&state.db).await?;
     let node = demo::parent_node(&parent);
     let logs = crate::routes::deploy::logs::push_deploy_log;
 
@@ -215,13 +212,15 @@ async fn insert_instance_rows(state: &AppState, parent: &Project, new_id: &str) 
     .fetch_all(&state.db)
     .await?;
     for (scoped_name, container_path, service_name) in volumes {
-        sqlx::query("INSERT INTO project_volumes (project_id, service_name, volume_name, container_path) VALUES (?, ?, ?, ?)")
-            .bind(new_id)
-            .bind(service_name)
-            .bind(copy_engine::rescope_volume(&scoped_name, &parent.id, new_id))
-            .bind(container_path)
-            .execute(&state.db)
-            .await?;
+        sqlx::query(
+            "INSERT INTO project_volumes (project_id, service_name, volume_name, container_path) VALUES (?, ?, ?, ?)",
+        )
+        .bind(new_id)
+        .bind(service_name)
+        .bind(copy_engine::rescope_volume(&scoped_name, &parent.id, new_id))
+        .bind(container_path)
+        .execute(&state.db)
+        .await?;
     }
     Ok(())
 }

@@ -329,16 +329,7 @@ pub async fn wake_for_host(
 
     // Demo gatekeeper: session-mode demo hosts, instance-host redirects, and
     // /__demo__/* endpoints. Returns None for all non-demo traffic.
-    if let Some(resp) = crate::demo::gatekeeper::handle_wake(
-        &state,
-        &project,
-        &method,
-        uri,
-        headers,
-        &body,
-    )
-    .await
-    {
+    if let Some(resp) = crate::demo::gatekeeper::handle_wake(&state, &project, &method, uri, headers, &body).await {
         return resp;
     }
 

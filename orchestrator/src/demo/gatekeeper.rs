@@ -7,13 +7,13 @@
 
 use std::sync::{Arc, LazyLock};
 
-use axum::http::{header, HeaderMap, Method, StatusCode, Uri};
+use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use dashmap::DashMap;
 use sha2::{Digest, Sha256};
 
-use crate::demo::{self, DemoConfig};
 use crate::AppState;
+use crate::demo::{self, DemoConfig};
 use litebin_common::types::{Project, ProjectStatus};
 
 pub const DEMO_COOKIE: &str = "l8b_demo";
@@ -25,8 +25,7 @@ const DEMO_PREFIX: &str = "/__demo__/";
 
 /// Per-parent claim serialization — capacity check + session INSERT must be
 /// atomic against concurrent first-hitters (all claims are in-process).
-static CLAIM_LOCKS: LazyLock<DashMap<String, Arc<tokio::sync::Mutex<()>>>> =
-    LazyLock::new(|| DashMap::new());
+static CLAIM_LOCKS: LazyLock<DashMap<String, Arc<tokio::sync::Mutex<()>>>> = LazyLock::new(DashMap::new);
 
 async fn claim_lock(parent_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     CLAIM_LOCKS.entry(parent_id.to_string()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).clone()
@@ -52,15 +51,16 @@ pub async fn handle_wake(
         let parent_config = demo::get_config(&state.db, parent_id).await.ok().flatten();
         let long_lived = parent_config
             .as_ref()
-            .map(|c| c.edit_instance_id.as_deref() == Some(project.id.as_str()) || c.shared_instance_id.as_deref() == Some(project.id.as_str()))
+            .map(|c| {
+                c.edit_instance_id.as_deref() == Some(project.id.as_str())
+                    || c.shared_instance_id.as_deref() == Some(project.id.as_str())
+            })
             .unwrap_or(false);
         if long_lived {
             return None;
         }
-        let valid = session_for_request(state, headers, parent_id)
-            .await
-            .map(|s| s.instance == project.id)
-            .unwrap_or(false);
+        let valid =
+            session_for_request(state, headers, parent_id).await.map(|s| s.instance == project.id).unwrap_or(false);
         if valid {
             return None;
         }
@@ -84,7 +84,7 @@ pub async fn handle_wake(
             .await
             .ok()
             .flatten();
-        let Some(shared) = shared else { return None };
+        let shared = shared?;
         if !matches!(shared.status, ProjectStatus::Running | ProjectStatus::Degraded) {
             if !demo::mid_operation(&shared.status) && shared.auto_start_enabled {
                 spawn_start(state, &shared.id);
@@ -92,11 +92,7 @@ pub async fn handle_wake(
             return Some(page(PENDING_TITLE, PENDING_MSG, None, true, true));
         }
         return Some(
-            inject_bar(
-                proxy_session(state, &shared_id, method, uri, headers, body.clone()).await,
-                &config,
-            )
-            .await,
+            inject_bar(proxy_session(state, &shared_id, method, uri, headers, body.clone()).await, &config).await,
         );
     }
 
@@ -114,7 +110,10 @@ pub async fn handle_wake(
                 .await;
             return Some(page(
                 "Demo session ended",
-                &format!("Your {}-minute demo ran out — the instance and its data are gone.<br><a href=\"/\" class=\"cta\" onclick=\"location.reload();return false\">Start a new demo</a>", config.session_ttl_minutes),
+                &format!(
+                    "Your {}-minute demo ran out — the instance and its data are gone.<br><a href=\"/\" class=\"cta\" onclick=\"location.reload();return false\">Start a new demo</a>",
+                    config.session_ttl_minutes
+                ),
                 None,
                 false,
                 false,
@@ -126,11 +125,8 @@ pub async fn handle_wake(
             .execute(&state.db)
             .await;
         return Some(
-            inject_bar(
-                proxy_session(state, &session.instance, method, uri, headers, body.clone()).await,
-                &config,
-            )
-            .await,
+            inject_bar(proxy_session(state, &session.instance, method, uri, headers, body.clone()).await, &config)
+                .await,
         );
     }
 
@@ -186,13 +182,12 @@ async fn claim(
     let lock = claim_lock(&parent.id).await;
     let _guard = lock.lock().await;
 
-    let active: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM demo_sessions WHERE parent_project_id = ? AND status = 'active'",
-    )
-    .bind(&parent.id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    let active: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM demo_sessions WHERE parent_project_id = ? AND status = 'active'")
+            .bind(&parent.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
     if active >= config.max_instances {
         return Some(wait_page(state, config, &parent.id).await);
     }
@@ -245,7 +240,13 @@ async fn claim(
                 Ok(id) => id,
                 Err(e) => {
                     tracing::error!(project = %parent.id, error = %e, "demo: instance spawn failed");
-                    return Some(page("Demo unavailable", "Could not start a demo instance — try again shortly.", Some(15), false, false));
+                    return Some(page(
+                        "Demo unavailable",
+                        "Could not start a demo instance — try again shortly.",
+                        Some(15),
+                        false,
+                        false,
+                    ));
                 }
             }
         }
@@ -314,11 +315,8 @@ async fn inject_html(resp: Response, snippet: &str) -> Response {
         return resp;
     }
     // HTML over the injection cap passes through unbarred, still streamed.
-    if let Some(len) = resp
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok())
+    if let Some(len) =
+        resp.headers().get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok())
         && len > 2 * 1024 * 1024
     {
         return resp;
@@ -343,8 +341,8 @@ async fn inject_html(resp: Response, snippet: &str) -> Response {
     let lower = html.to_ascii_lowercase();
     let at = lower.rfind("</body>").or_else(|| lower.rfind("</html>"));
     match at {
-        Some(i) => html.insert_str(i, &snippet),
-        None => html.push_str(&snippet),
+        Some(i) => html.insert_str(i, snippet),
+        None => html.push_str(snippet),
     }
 
     parts.headers.insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
@@ -421,8 +419,16 @@ async fn proxy_session(
 
     let is_remote = instance.node_id.as_deref().map(|n| n != "local").unwrap_or(false);
     if is_remote {
-        if let Some(resp) =
-            crate::routes::waker::remote_proxy_response(state, &instance, method.clone(), uri, headers, body, std::time::Duration::from_secs(2)).await
+        if let Some(resp) = crate::routes::waker::remote_proxy_response(
+            state,
+            &instance,
+            method.clone(),
+            uri,
+            headers,
+            body,
+            std::time::Duration::from_secs(2),
+        )
+        .await
         {
             return resp;
         }
@@ -497,21 +503,13 @@ async fn instance_answers(state: &AppState, instance: &Project) -> bool {
         }
     } else {
         match instance.internal_port.map(|p| p as u16) {
-            Some(port) => format!(
-                "http://{}:{}/",
-                litebin_common::types::container_name(&instance.id, "web", None),
-                port
-            ),
+            Some(port) => {
+                format!("http://{}:{}/", litebin_common::types::container_name(&instance.id, "web", None), port)
+            }
             None => return false,
         }
     };
-    state
-        .proxy_client
-        .get(&url)
-        .timeout(std::time::Duration::from_millis(1500))
-        .send()
-        .await
-        .is_ok()
+    state.proxy_client.get(&url).timeout(std::time::Duration::from_millis(1500)).send().await.is_ok()
 }
 
 /// `GET /__demo__/status` — the pending page's poll and the bar's data
@@ -565,7 +563,7 @@ async fn status_endpoint(state: &AppState, headers: &HeaderMap, config: &DemoCon
                 .ok()
                 .flatten();
             match instance.as_ref().map(|p| &p.status) {
-                Some(s) if matches!(s, ProjectStatus::Running | ProjectStatus::Degraded) => {
+                Some(ProjectStatus::Running | ProjectStatus::Degraded) => {
                     let ready = instance_answers(state, instance.as_ref().unwrap()).await;
                     serde_json::json!({ "state": if ready { "ready" } else { "pending" }, "expires_at": session.expires_at })
                 }
@@ -636,11 +634,7 @@ fn page(title: &str, message: &str, refresh_secs: Option<u32>, spinner: bool, po
          color:#e2e8f0;font:14px/1.6 system-ui,-apple-system,sans-serif}}\
          .card{{max-width:420px;margin:24px;text-align:center;         & .ring{{width:34px;height:34px;margin:0 auto 18px;border-radius:50%;border:3px solid #334155;border-top-color:#8b5cf6;animation:spin 1s linear infinite}}         & h1{{font-size:17px;font-weight:600;margin:0 0 8px;color:#f1f5f9}}         & p{{margin:0 0 14px;color:#94a3b8;font-size:13.5px;line-height:1.6}}         & a{{color:#a78bfa;text-decoration:underline;text-underline-offset:3px}}         & .cta{{display:inline-block;margin-top:4px;padding:7px 20px;border-radius:8px;background:#8b5cf6;color:#fff;font-weight:600;text-decoration:none}}}}footer{{position:fixed;left:0;right:0;bottom:44px;text-align:center;font-size:11px;color:#64748b}}footer a{{color:#94a3b8;text-decoration:none}}         @keyframes spin{{to{{transform:rotate(360deg)}}}}</style></head>         <body><div class=\"card\">{spinner_html}<h1>{title}</h1><p>{message}</p></div>{poll}<footer>Powered by <a href=\"https://l8bin.com\">L8Bin.com</a></footer></body></html>"
     );
-    (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")],
-        html,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")], html).into_response()
 }
 
 fn refresh_tag(secs: Option<u32>) -> String {

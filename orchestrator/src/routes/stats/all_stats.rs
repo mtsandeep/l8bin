@@ -34,9 +34,9 @@ pub async fn all_project_stats(
     // Demo instances stay off the main grid (stats included) — nested under their parent.
     let projects =
         sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE demo_parent_id IS NULL")
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
 
     // Batch-load services for ALL projects upfront
     let all_ids: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();

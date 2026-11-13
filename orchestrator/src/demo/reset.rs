@@ -5,19 +5,17 @@
 //! Runs in the background; visitors see the gatekeeper's pending page while
 //! the shared instance restarts.
 
+use crate::AppState;
 use crate::copy_engine::{self, NodeRef};
 use crate::demo;
-use crate::AppState;
 use litebin_common::types::{Project, ProjectStatus};
 
 /// Wipe one instance back to a clean boot (no baseline restore) — used by
 /// "discard edits" so the edit copy doesn't resurrect discarded data on the
 /// next publish.
 pub async fn wipe_instance(state: &AppState, instance_id: &str) -> anyhow::Result<()> {
-    let instance: Project = sqlx::query_as("SELECT * FROM projects WHERE id = ?")
-        .bind(instance_id)
-        .fetch_one(&state.db)
-        .await?;
+    let instance: Project =
+        sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(instance_id).fetch_one(&state.db).await?;
     let node = demo::parent_node(&instance);
 
     copy_engine::stop_on_source(state, instance_id, &node).await?;
@@ -40,10 +38,8 @@ pub async fn wipe_instance(state: &AppState, instance_id: &str) -> anyhow::Resul
 
 /// Trigger a background reset of a shared-mode demo. Returns immediately.
 pub async fn reset_project(state: &AppState, parent_id: &str) -> anyhow::Result<()> {
-    let parent: Project = sqlx::query_as("SELECT * FROM projects WHERE id = ?")
-        .bind(parent_id)
-        .fetch_one(&state.db)
-        .await?;
+    let parent: Project =
+        sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(parent_id).fetch_one(&state.db).await?;
     if demo::mid_operation(&parent.status) {
         anyhow::bail!("project is {} — wait for it to settle", parent.status);
     }
@@ -74,10 +70,8 @@ pub async fn reset_project(state: &AppState, parent_id: &str) -> anyhow::Result<
 }
 
 async fn run_reset(state: &AppState, parent_id: &str) -> anyhow::Result<()> {
-    let parent: Project = sqlx::query_as("SELECT * FROM projects WHERE id = ?")
-        .bind(parent_id)
-        .fetch_one(&state.db)
-        .await?;
+    let parent: Project =
+        sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(parent_id).fetch_one(&state.db).await?;
 
     // The reset wipes the visitor-facing shared instance (the parent is a
     // pure template; pre-provisioning configs fall back to the parent).

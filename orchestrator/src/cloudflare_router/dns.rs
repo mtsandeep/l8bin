@@ -32,8 +32,12 @@ pub(crate) async fn desired_dns_records(
 
     // Demo-enabled projects route through the master (gatekeeper) — their
     // records target the master IP wherever the project itself runs.
-    let demo_parents: HashSet<String> =
-        sqlx::query_scalar("SELECT project_id FROM demo_config").fetch_all(db).await.unwrap_or_default().into_iter().collect();
+    let demo_parents: HashSet<String> = sqlx::query_scalar("SELECT project_id FROM demo_config")
+        .fetch_all(db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
 
     for (project_id, node_id, custom_domain, is_background) in &all_projects {
         let mut ip = match (*is_background, node_id.as_deref()) {

@@ -12,9 +12,9 @@ use std::path::PathBuf;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
+use crate::AppState;
 use crate::copy_engine::{self, NodeRef};
 use crate::demo::parent_node;
-use crate::AppState;
 
 /// A baseline row set: seed volumes + the project-dir tar path (if captured).
 #[derive(Clone)]
@@ -32,12 +32,11 @@ fn seeds_dir(state: &AppState) -> PathBuf {
 
 /// Load the captured baseline for a parent; `volumes` empty + no tar = none.
 pub async fn load(state: &AppState, parent_id: &str) -> anyhow::Result<Baseline> {
-    let volumes: Vec<(String, String)> = sqlx::query_as(
-        "SELECT source_volume, seed_volume FROM demo_baseline_volumes WHERE parent_project_id = ?",
-    )
-    .bind(parent_id)
-    .fetch_all(&state.db)
-    .await?;
+    let volumes: Vec<(String, String)> =
+        sqlx::query_as("SELECT source_volume, seed_volume FROM demo_baseline_volumes WHERE parent_project_id = ?")
+            .bind(parent_id)
+            .fetch_all(&state.db)
+            .await?;
     let tar = seeds_dir(state).join(parent_id).join("project.tar");
     let project_tar = tokio::fs::metadata(&tar).await.is_ok().then_some(tar);
     Ok(Baseline { volumes, project_tar })
@@ -200,20 +199,10 @@ pub async fn restore(state: &AppState, parent_id: &str, new_id: &str, baseline: 
                 Box::pin(raw)
             } else {
                 let tmp = copy_engine::spool_dir(state);
-                Box::pin(copy_engine::reroot::reroot(
-                    Box::pin(raw),
-                    parent_id,
-                    new_id,
-                    true,
-                    &tmp,
-                ).await?)
+                Box::pin(copy_engine::reroot::reroot(Box::pin(raw), parent_id, new_id, true, &tmp).await?)
             };
-        node.transfer_in(
-            state,
-            &litebin_common::docker::TransferKind::ProjectDir(new_id.to_string()),
-            tar_stream,
-        )
-        .await?;
+        node.transfer_in(state, &litebin_common::docker::TransferKind::ProjectDir(new_id.to_string()), tar_stream)
+            .await?;
     }
     Ok(())
 }
@@ -238,9 +227,7 @@ async fn remove_seed_volumes(state: &AppState, parent_id: &str, node: &NodeRef) 
             NodeRef::Agent(_) => {
                 let empty: std::pin::Pin<Box<dyn futures_util::Stream<Item = bytes::Bytes> + Send>> =
                     Box::pin(futures_util::stream::empty());
-                let _ = node
-                    .transfer_in(state, &litebin_common::docker::TransferKind::Volume(seed), empty)
-                    .await;
+                let _ = node.transfer_in(state, &litebin_common::docker::TransferKind::Volume(seed), empty).await;
             }
         }
     }

@@ -13,8 +13,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::demo;
 use crate::AppState;
+use crate::demo;
 use litebin_common::types::Project;
 
 fn err(status: StatusCode, message: String) -> axum::response::Response {
@@ -39,10 +39,7 @@ async fn load_project(state: &AppState, id: &str) -> Result<Project, axum::respo
     tag = "manage",
     security(("session_auth" = []))
 )]
-pub async fn get_demo(
-    State(state): State<AppState>,
-    Path(project_id): Path<String>,
-) -> axum::response::Response {
+pub async fn get_demo(State(state): State<AppState>, Path(project_id): Path<String>) -> axum::response::Response {
     let Ok(config) = demo::get_config(&state.db, &project_id).await else {
         return err(StatusCode::INTERNAL_SERVER_ERROR, "db error".into());
     };
@@ -127,11 +124,7 @@ pub async fn put_demo(
     if !matches!(mode, "shared" | "session") {
         return err(StatusCode::BAD_REQUEST, "mode must be 'shared' or 'session'".into());
     }
-    let mode_change = demo::get_config(&state.db, &project_id)
-        .await
-        .ok()
-        .flatten()
-        .is_none_or(|c| c.mode != mode);
+    let mode_change = demo::get_config(&state.db, &project_id).await.ok().flatten().is_none_or(|c| c.mode != mode);
 
     let now = chrono::Utc::now().timestamp();
     let updated = sqlx::query(
@@ -175,10 +168,10 @@ pub async fn put_demo(
             }
             // ensure_instances loads the (now-stamped) baseline itself and
             // seeds edit/shared from it.
-            if let Ok(Some(mut cfg)) = demo::get_config(&state_bg.db, &parent.id).await {
-                if let Err(e) = demo::ensure_instances(&state_bg, &mut cfg, &parent).await {
-                    tracing::warn!(project = %parent.id, error = %e, "demo: instance provisioning failed");
-                }
+            if let Ok(Some(mut cfg)) = demo::get_config(&state_bg.db, &parent.id).await
+                && let Err(e) = demo::ensure_instances(&state_bg, &mut cfg, &parent).await
+            {
+                tracing::warn!(project = %parent.id, error = %e, "demo: instance provisioning failed");
             }
         });
     }
@@ -212,10 +205,7 @@ pub async fn put_demo(
     tag = "manage",
     security(("session_auth" = []))
 )]
-pub async fn reset_demo(
-    State(state): State<AppState>,
-    Path(project_id): Path<String>,
-) -> axum::response::Response {
+pub async fn reset_demo(State(state): State<AppState>, Path(project_id): Path<String>) -> axum::response::Response {
     let project = match load_project(&state, &project_id).await {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -224,7 +214,10 @@ pub async fn reset_demo(
         return err(StatusCode::BAD_REQUEST, "demo mode is not enabled".into());
     };
     if config.mode != "shared" {
-        return err(StatusCode::BAD_REQUEST, "manual reset applies to shared mode — session instances reset by expiring".into());
+        return err(
+            StatusCode::BAD_REQUEST,
+            "manual reset applies to shared mode — session instances reset by expiring".into(),
+        );
     }
     if demo::mid_operation(&project.status) {
         return err(StatusCode::CONFLICT, format!("project is {} — wait for it to settle", project.status));
@@ -300,10 +293,9 @@ pub async fn delete_baseline(
             // boot so the next publish can't resurrect them.
             if let Some(edit_id) =
                 demo::get_config(&state.db, &project_id).await.ok().flatten().and_then(|c| c.edit_instance_id)
+                && let Err(e) = demo::reset::wipe_instance(&state, &edit_id).await
             {
-                if let Err(e) = demo::reset::wipe_instance(&state, &edit_id).await {
-                    tracing::warn!(project = %project_id, error = %e, "demo: edit-copy wipe failed");
-                }
+                tracing::warn!(project = %project_id, error = %e, "demo: edit-copy wipe failed");
             }
             (StatusCode::OK, Json(json!({ "status": "removed" }))).into_response()
         }
@@ -320,10 +312,7 @@ pub async fn delete_baseline(
     tag = "manage",
     security(("session_auth" = []))
 )]
-pub async fn list_sessions(
-    State(state): State<AppState>,
-    Path(project_id): Path<String>,
-) -> axum::response::Response {
+pub async fn list_sessions(State(state): State<AppState>, Path(project_id): Path<String>) -> axum::response::Response {
     #[derive(sqlx::FromRow, serde::Serialize)]
     struct SessionRow {
         id: String,
@@ -348,12 +337,10 @@ pub async fn list_sessions(
     // Long-lived instances (edit + shared) — visible and stoppable, never deleted here.
     let mut long_lived: Vec<serde_json::Value> = Vec::new();
     if let Ok(Some(config)) = demo::get_config(&state.db, &project_id).await {
-        for (kind, id) in [
-            ("edit", config.edit_instance_id.as_deref()),
-            ("shared", config.shared_instance_id.as_deref()),
-        ]
-        .into_iter()
-        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        for (kind, id) in
+            [("edit", config.edit_instance_id.as_deref()), ("shared", config.shared_instance_id.as_deref())]
+                .into_iter()
+                .filter_map(|(k, v)| v.map(|v| (k, v)))
         {
             let status: Option<String> = sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
                 .bind(id)

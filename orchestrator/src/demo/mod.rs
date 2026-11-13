@@ -11,8 +11,8 @@ pub mod reset;
 
 use sqlx::FromRow;
 
-use crate::copy_engine::NodeRef;
 use crate::AppState;
+use crate::copy_engine::NodeRef;
 
 #[derive(Debug, Clone, serde::Serialize, FromRow, utoipa::ToSchema)]
 pub struct DemoConfig {
@@ -59,7 +59,11 @@ async fn instance_exists(state: &AppState, parent_id: &str, instance_id: &str) -
 
 /// Create the edit instance (always) and shared (shared mode) if missing;
 /// idempotent, safe every tick.
-pub async fn ensure_instances(state: &AppState, config: &mut DemoConfig, parent: &litebin_common::types::Project) -> anyhow::Result<()> {
+pub async fn ensure_instances(
+    state: &AppState,
+    config: &mut DemoConfig,
+    parent: &litebin_common::types::Project,
+) -> anyhow::Result<()> {
     let now = chrono::Utc::now().timestamp();
     let baseline = baseline::load(state, &parent.id).await.ok();
 
@@ -117,10 +121,7 @@ pub async fn ensure_instances(state: &AppState, config: &mut DemoConfig, parent:
 /// Whether the project is in a state a reset/clone must not interrupt.
 pub fn mid_operation(status: &litebin_common::types::ProjectStatus) -> bool {
     use litebin_common::types::ProjectStatus as S;
-    matches!(
-        status,
-        S::Deploying | S::Migrating | S::Exporting | S::Stopping | S::Importing
-    )
+    matches!(status, S::Deploying | S::Migrating | S::Exporting | S::Stopping | S::Importing)
 }
 
 /// Delete via the normal project path. Boxed: delete_project, teardown_all
@@ -132,12 +133,11 @@ pub fn teardown_instance(
     let state = state.clone();
     let project_id = project_id.to_string();
     Box::pin(async move {
-        if let Err((code, message)) =
-            crate::routes::manage::handlers::delete_project(
-                axum::extract::State(state),
-                axum::extract::Path(project_id.clone()),
-            )
-            .await
+        if let Err((code, message)) = crate::routes::manage::handlers::delete_project(
+            axum::extract::State(state),
+            axum::extract::Path(project_id.clone()),
+        )
+        .await
         {
             tracing::warn!(project = project_id, status = %code, error = %message, "demo: instance teardown failed");
         }
@@ -155,10 +155,7 @@ pub async fn teardown_all(state: &AppState, parent: &litebin_common::types::Proj
 /// background; the orphan sweep is the safety net.
 pub async fn disable(state: &AppState, parent_id: &str) {
     let config = get_config(&state.db, parent_id).await.ok().flatten();
-    let _ = sqlx::query("DELETE FROM demo_config WHERE project_id = ?")
-        .bind(parent_id)
-        .execute(&state.db)
-        .await;
+    let _ = sqlx::query("DELETE FROM demo_config WHERE project_id = ?").bind(parent_id).execute(&state.db).await;
     let state_bg = state.clone();
     let id = parent_id.to_string();
     tokio::spawn(async move {
@@ -169,16 +166,16 @@ pub async fn disable(state: &AppState, parent_id: &str) {
 /// Sessions → snapshot → edit/shared → every remaining child.
 async fn teardown_heavy(state: &AppState, parent_id: &str, config: Option<DemoConfig>) {
     if let Some(config) = config {
-        let _ = sqlx::query("UPDATE demo_sessions SET status = 'ended' WHERE parent_project_id = ? AND status = 'active'")
-            .bind(parent_id)
-            .execute(&state.db)
-            .await;
-        if let Ok(Some(parent)) = sqlx::query_as::<_, litebin_common::types::Project>(
-            "SELECT * FROM projects WHERE id = ?",
-        )
-        .bind(parent_id)
-        .fetch_optional(&state.db)
-        .await
+        let _ =
+            sqlx::query("UPDATE demo_sessions SET status = 'ended' WHERE parent_project_id = ? AND status = 'active'")
+                .bind(parent_id)
+                .execute(&state.db)
+                .await;
+        if let Ok(Some(parent)) =
+            sqlx::query_as::<_, litebin_common::types::Project>("SELECT * FROM projects WHERE id = ?")
+                .bind(parent_id)
+                .fetch_optional(&state.db)
+                .await
         {
             let _ = baseline::remove(state, &parent).await;
         }

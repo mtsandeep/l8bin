@@ -1,8 +1,8 @@
 //! Demo lifecycle loop (60s tick): shared resets, session TTL expiry,
 //! prewarm refill, edit/shared self-heal, orphan + stuck-import sweeps.
 
-use crate::demo;
 use crate::AppState;
+use crate::demo;
 
 const TICK_SECS: u64 = 60;
 
@@ -62,13 +62,15 @@ async fn sweep_orphans(state: &AppState) {
 
 /// Self-heal edit + shared instances if deleted out-of-band.
 async fn ensure_long_lived(state: &AppState) {
-    let parents: Vec<String> = sqlx::query_scalar("SELECT project_id FROM demo_config").fetch_all(&state.db).await.unwrap_or_default();
+    let parents: Vec<String> =
+        sqlx::query_scalar("SELECT project_id FROM demo_config").fetch_all(&state.db).await.unwrap_or_default();
     for parent_id in parents {
         let Ok(Some(mut config)) = crate::demo::get_config(&state.db, &parent_id).await else { continue };
-        let Ok(Some(parent)) = sqlx::query_as::<_, litebin_common::types::Project>("SELECT * FROM projects WHERE id = ?")
-            .bind(&parent_id)
-            .fetch_optional(&state.db)
-            .await
+        let Ok(Some(parent)) =
+            sqlx::query_as::<_, litebin_common::types::Project>("SELECT * FROM projects WHERE id = ?")
+                .bind(&parent_id)
+                .fetch_optional(&state.db)
+                .await
         else {
             continue;
         };
@@ -114,8 +116,12 @@ async fn prewarm_refill(state: &AppState) {
         .await
         .unwrap_or(0);
         if unclaimed < prewarm && total < max_instances {
-            let parent: Option<litebin_common::types::Project> =
-                sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(&parent_id).fetch_optional(&state.db).await.ok().flatten();
+            let parent: Option<litebin_common::types::Project> = sqlx::query_as("SELECT * FROM projects WHERE id = ?")
+                .bind(&parent_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
             let Some(parent) = parent else { continue };
             let baseline = crate::demo::baseline::load(state, &parent_id).await.ok();
             tracing::info!(project = %parent_id, "demo janitor: prewarm refill");
@@ -160,13 +166,12 @@ async fn scheduled_resets(state: &AppState) -> anyhow::Result<()> {
 
 /// Hard TTL: expired sessions flip to `expired`; instance teardown cascades the row.
 async fn expire_sessions(state: &AppState) {
-    let expired: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, instance_project_id FROM demo_sessions WHERE status = 'active' AND expires_at <= ?",
-    )
-    .bind(chrono::Utc::now().timestamp())
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let expired: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, instance_project_id FROM demo_sessions WHERE status = 'active' AND expires_at <= ?")
+            .bind(chrono::Utc::now().timestamp())
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
 
     for (session_id, instance_id) in expired {
         let _ = sqlx::query("UPDATE demo_sessions SET status = 'expired' WHERE id = ?")
