@@ -1,7 +1,8 @@
-import { Box, DatabaseBackup, FileArchive, Key, SlidersHorizontal } from 'lucide-react';
+import { Box, DatabaseBackup, FileArchive, Info, Key, SlidersHorizontal } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import GithubMark from '../GithubMark';
+import AboutPanel from './AboutPanel';
 import BackupPanel from './BackupPanel';
 import GeneralPanel from './GeneralPanel';
 import GitHubPanel from './GitHubPanel';
@@ -10,7 +11,7 @@ import TokensPanel from './TokensPanel';
 import TransferPanel from './TransferPanel';
 
 interface Props {
-  section: 'general' | 'tokens' | 'backup' | 'github' | 'registries' | 'transfer';
+  section: 'general' | 'tokens' | 'backup' | 'github' | 'registries' | 'transfer' | 'about';
 }
 
 const SECTIONS = [
@@ -20,6 +21,7 @@ const SECTIONS = [
   { id: 'backup', label: 'Backup', icon: DatabaseBackup },
   { id: 'transfer', label: 'Export / Import', icon: FileArchive },
   { id: 'github', label: 'GitHub', icon: GithubMark },
+  { id: 'about', label: 'About', icon: Info },
 ] as const;
 
 export default function SettingsPage({ section }: Props) {
@@ -75,6 +77,8 @@ export default function SettingsPage({ section }: Props) {
             <TransferPanel />
           ) : section === 'github' ? (
             <GitHubPanel />
+          ) : section === 'about' ? (
+            <AboutPanel />
           ) : (
             <BackupPanel />
           )}

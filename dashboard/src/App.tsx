@@ -48,6 +48,7 @@ function AppContent() {
         <Route path="/settings/backup" element={<SettingsPage section="backup" key="backup" />} />
         <Route path="/settings/github" element={<SettingsPage section="github" key="github" />} />
         <Route path="/settings/github/callback" element={<GithubCallbackPage key="github-callback" />} />
+        <Route path="/settings/about" element={<SettingsPage section="about" key="about" />} />
         <Route path="/connect" element={<ConnectPage />} />
         <Route path="/" element={<HomePage />} />
       </Routes>

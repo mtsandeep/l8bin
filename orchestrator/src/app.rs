@@ -41,6 +41,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/auth/device", get(crate::routes::device_auth::lookup_device_request))
         .route("/auth/device/approve", post(crate::routes::device_auth::approve_device_request))
         .route("/status", get(crate::routes::auth::status))
+        .route("/version/latest", get(crate::routes::version::latest))
         // POST binds a session user; deploy endpoints stage projects instead.
         .route("/projects", post(crate::routes::projects::create_project))
         .route_layer(login_required!(auth::backend::PasswordBackend, login_url = "/auth/login"));

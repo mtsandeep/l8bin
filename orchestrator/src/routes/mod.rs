@@ -24,6 +24,7 @@ pub mod registries;
 pub mod scan;
 pub mod settings;
 pub mod stats;
+pub mod version;
 pub mod volumes;
 pub mod wake_report;
 pub mod waker;

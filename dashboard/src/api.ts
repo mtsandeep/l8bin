@@ -1030,6 +1030,25 @@ export async function fetchVersion(): Promise<string> {
   }
 }
 
+export interface LatestVersionInfo {
+  /** e.g. `0.4.27` — null when the GitHub check could not run. */
+  latest_version: string | null;
+  /** Release page for the latest version; the releases list when unknown. */
+  release_url: string;
+  /** Unix seconds of the last successful check; null when none succeeded. */
+  checked_at: number | null;
+}
+
+export async function fetchLatestVersion(): Promise<LatestVersionInfo | null> {
+  try {
+    const res = await fetch(`${API_BASE}/version/latest`, { credentials: 'include' });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export function timeAgo(timestamp: number | null): string {
   if (!timestamp) return 'never';
   const seconds = Math.floor(Date.now() / 1000 - timestamp);

@@ -138,6 +138,8 @@ use utoipa::OpenApi;
         // Meta
         crate::routes::meta::get_meta,
         crate::routes::meta::whoami,
+        // Version
+        crate::routes::version::latest,
         // Env
         crate::routes::env::get_project_env,
         crate::routes::env::update_project_env,
@@ -287,6 +289,7 @@ use utoipa::OpenApi;
             crate::routes::meta::MetaResponse,
             crate::routes::meta::WhoamiResponse,
             crate::routes::health::SystemStatsResponse,
+            crate::routes::version::LatestVersionResponse,
             // GitHub
             crate::routes::github::connect::ConnectionStatus,
             crate::routes::github::connect::ConnectionSummary,
