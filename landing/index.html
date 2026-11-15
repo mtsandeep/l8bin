@@ -3,8 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LiteBin — Self-Host Every Side Project. Sleep to Zero. Under 58MB.</title>
-  <meta name="description" content="No per-app fees. Deploy as many apps as your disk holds. They sleep to zero when idle, wake in seconds. Self-hosted, open source. Platform overhead: under 58MB." />
+  <title>LiteBin (L8Bin): Self-Hosted App Manager for Side Projects</title>
+  <meta name="description" content="Self-hosted app manager for side projects. One cheap VPS, entire stack under 58MB. Apps sleep to zero when idle, wake on the first request. No per-app fees." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="LiteBin" />
+  <meta property="og:title" content="LiteBin (L8Bin): Self-Hosted App Manager for Side Projects" />
+  <meta property="og:description" content="The deploy experience of Railway or Vercel on a VPS you already pay for. Deploy from your laptop, GitHub, dashboard, or AI agent. Apps sleep to zero and wake on the first request. It's just Docker underneath, nothing locked in." />
+  <meta property="og:url" content="https://l8bin.com/" />
+  <meta property="og:image" content="https://l8bin.com/social-preview-hero.png" />
+  <meta property="og:image:width" content="1280" />
+  <meta property="og:image:height" content="640" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="LiteBin (L8Bin): Self-Hosted App Manager for Side Projects" />
+  <meta name="twitter:description" content="The deploy experience of Railway or Vercel, self-hosted on your own VPS. Apps sleep to zero, wake on the first request. It's just Docker underneath, nothing locked in." />
+  <meta name="twitter:image" content="https://l8bin.com/social-preview-hero.png" />
   <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
@@ -15,9 +27,6 @@
 <body id="top" class="bg-night-950 text-zinc-300 antialiased selection:bg-violet-500/30">
 
   <!-- WIP Banner -->
-  <div class="bg-violet-500/10 border-b border-violet-500/20 px-4 py-2 text-center">
-    <p class="text-xs text-violet-300 font-mono">Early release: expect some rough edges. Feedback welcome.</p>
-  </div>
 
   <!-- Nav -->
   <nav class="sticky top-0 z-50 border-b border-white/5 bg-night-950/80 backdrop-blur-xl">
@@ -65,12 +74,15 @@
             <span class="text-emerald-400">#selfHosted</span><span class="text-zinc-700">/</span><span class="text-cyan-400">Open Source</span><span class="text-zinc-700">/</span><span class="text-amber-400">Lightweight</span>
           </p>
           <h1 id="glitch-title" data-variants="LITEBIN|L8BIN|L8B.IN|L8=50+8|L8BIN"
-            class="text-6xl lg:text-8xl font-black text-zinc-100 tracking-tighter leading-none mb-5"></h1>
-          <p class="text-lg text-zinc-400 leading-relaxed mb-4">
-            Every time I wanted to show someone a demo, it was already gone — killed to free up RAM for the next one. One cheap VPS meant one app. Cloud free tiers work until you hit their framework limits or your app gets purged for inactivity. Existing self-hosted platforms are built for always-on production workloads. Nothing fit what I needed.
+            class="text-6xl lg:text-8xl font-black text-zinc-100 tracking-tighter leading-none mb-5">L<span style="color:#7c3aed">8</span>BIN</h1>
+          <p class="text-lg text-zinc-200 leading-relaxed mb-3">
+            <span class="font-semibold">LiteBin is a self-hosted app manager.</span> The deploy experience of Railway or Vercel, on a VPS you already pay for. Deploy from your laptop, GitHub, the dashboard, or your AI agent. Idle apps sleep to zero and wake on the first request.
+          </p>
+          <p class="text-lg text-zinc-400 leading-relaxed mb-3">
+            <span class="font-semibold text-zinc-200">It's just Docker</span>, but you never have to touch it: your app is containerized automatically with auto TLS, so you worry about the app, not the infra. Want more control? SSH in anytime.
           </p>
           <p class="text-lg text-zinc-400 leading-relaxed mb-8">
-            <span class="text-zinc-200 font-semibold">So I built LiteBin</span> — entire stack under 58MB. Push from your laptop, no building on the VPS. Apps sleep to zero when idle, wake on the first request. Deploy as many as your disk holds.
+            Side projects and apps in development just need to be up, without heavy tooling in the way. So I built LiteBin to be exactly that: lightweight enough that the whole stack rests under 58MB, leaving the rest of the VPS for your apps. And when they reach a scale that needs Kubernetes or a DevOps team, your containers move with you.
           </p>
           <div class="flex flex-col sm:flex-row gap-3 justify-center">
             <a href="#start" class="px-6 py-3 bg-white text-night-950 font-bold rounded-xl hover:bg-violet-200 transition text-base flex items-center justify-center gap-2">
@@ -85,6 +97,10 @@
         </div>
         <!-- Right: memory card -->
         <div class="flex flex-col">
+        <div class="mb-4 px-1">
+          <p class="text-2xl font-normal text-zinc-100 tracking-tight mb-2.5">See LiteBin <span class="text-violet-400">in action</span>, live.</p>
+          <p class="text-sm font-mono text-zinc-500"><span class="text-lg font-bold text-zinc-100">512MB</span> VPS <span class="text-zinc-700">·</span> <span class="text-lg font-bold text-zinc-100">5</span> apps <span class="text-zinc-700">·</span> <span class="text-lg font-bold text-zinc-100">9</span> containers</p>
+        </div>
         <div id="memory-card" class="glass rounded-2xl p-7 glow">
           <div class="flex items-center gap-3 -mx-7 -mt-7 mb-5 px-5 py-3 rounded-t-2xl bg-black/40 border-b border-white/5">
             <div class="flex gap-1.5 shrink-0" aria-hidden="true">
@@ -138,7 +154,6 @@
     </div>
   </header>
 
-
   <!-- Core: more apps per VPS -->
   <section id="core" class="py-24 border-t border-white/5">
     <div class="max-w-6xl mx-auto px-6 fade-in">
@@ -146,7 +161,7 @@
         <h2 class="text-4xl font-black text-zinc-100 tracking-tighter mb-3">One tiny VPS. <span class="grad-text">All your apps.</span></h2>
         <p class="text-zinc-500 font-mono text-sm max-w-2xl mx-auto">LiteBin itself sips memory and idle apps sleep to zero, so the deploy threshold drops to nothing. Spin up the fifteenth experiment; it costs the same as the first.</p>
       </div>
-      <div class="grid md:grid-cols-3 gap-5">
+      <div class="grid md:grid-cols-2 gap-5">
         <div class="p-6 glass rounded-2xl">
           <div class="text-lg font-bold text-zinc-200 mb-2">Sleep to zero</div>
           <p class="text-sm text-zinc-400 leading-relaxed">No traffic? The app's RAM goes back to your VPS. Every idle project costs exactly nothing. No meters, no purge policies, no "inactive app deleted".</p>
@@ -159,6 +174,10 @@
           <div class="text-lg font-bold text-zinc-200 mb-2">Always-on when it matters</div>
           <p class="text-sm text-zinc-400 leading-relaxed">Paying users, a live demo, anything where the first second matters: flip that project to always-on. It's a per-project choice you can make anytime.</p>
         </div>
+        <div class="p-6 glass rounded-2xl">
+          <div class="text-lg font-bold text-zinc-200 mb-2">Built-in proxy and domains</div>
+          <p class="text-sm text-zinc-400 leading-relaxed">Caddy routes every app on a subdomain or your own custom domain, certificates handled automatically. One wildcard DNS record covers the whole box.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -170,7 +189,14 @@
     <div class="max-w-6xl mx-auto px-6 relative z-10">
       <div class="text-center mb-12 fade-in">
         <h2 class="text-3xl font-black text-zinc-100 mb-2 uppercase tracking-tight">See it <span class="text-fuchsia-400">Sleep</span> & <span class="text-violet-400">Wake</span>.</h2>
-        <p class="text-zinc-500 text-sm">The core feature, live on real LiteBin instances.</p>
+        <p class="text-zinc-500 text-sm">Do all your apps really need to run 24/7?</p>
+        <div class="flex flex-wrap justify-center gap-2 mt-4">
+          <span class="text-[11px] font-mono px-3 py-1 rounded-full border border-white/10 bg-white/3 text-zinc-400">personal tools</span>
+          <span class="text-[11px] font-mono px-3 py-1 rounded-full border border-white/10 bg-white/3 text-zinc-400">staging</span>
+          <span class="text-[11px] font-mono px-3 py-1 rounded-full border border-white/10 bg-white/3 text-zinc-400">demos</span>
+          <span class="text-[11px] font-mono px-3 py-1 rounded-full border border-white/10 bg-white/3 text-zinc-400">side projects</span>
+          <span class="text-[11px] font-mono px-3 py-1 rounded-full border border-white/10 bg-white/3 text-zinc-400">internal tools</span>
+        </div>
       </div>
       <!-- Wake cycle widget -->
       <div class="mb-12 fade-in">
@@ -257,32 +283,28 @@
       <div class="grid md:grid-cols-2 gap-5 fade-in">
         <a href="https://react-demo.l8b.in" target="_blank" class="p-4 glass rounded-xl hover:border-fuchsia-500/50 hover:bg-fuchsia-500/5 transition-all duration-300 group flex items-center gap-3">
           <div class="min-w-0">
-            <div class="flex items-center gap-2 mb-0.5">
+            <div class="flex flex-wrap items-center gap-2 mb-0.5">
               <h4 class="font-bold text-zinc-200 text-sm">Aggressive Demo</h4>
               <span class="text-[10px] font-mono text-fuchsia-400 bg-fuchsia-500/10 px-1.5 py-0.5 rounded">60s sleep</span>
+              <span class="text-fuchsia-400 font-mono text-xs">react-demo.l8b.in</span>
             </div>
             <p class="text-xs text-zinc-400">Sleeps after 60 seconds — come back in a minute and watch it wake.</p>
           </div>
-          <div class="ml-auto flex items-center gap-2.5 shrink-0">
-            <span class="text-fuchsia-400 font-mono text-xs hidden sm:inline">react-demo.l8b.in</span>
-            <div class="w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center text-zinc-500 transition-all duration-300 group-hover:border-fuchsia-500/50 group-hover:text-fuchsia-400 group-hover:translate-x-0.5" aria-hidden="true">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
-            </div>
+          <div class="ml-auto w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center text-zinc-500 transition-all duration-300 group-hover:border-fuchsia-500/50 group-hover:text-fuchsia-400 group-hover:translate-x-0.5 shrink-0" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
           </div>
         </a>
         <a href="https://portfolio.l8b.in" target="_blank" class="p-4 glass rounded-xl hover:border-violet-500/50 hover:bg-violet-500/5 transition-all duration-300 group flex items-center gap-3">
           <div class="min-w-0">
-            <div class="flex items-center gap-2 mb-0.5">
+            <div class="flex flex-wrap items-center gap-2 mb-0.5">
               <h4 class="font-bold text-zinc-200 text-sm">Portfolio Demo</h4>
               <span class="text-[10px] font-mono text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded">15m sleep</span>
+              <span class="text-violet-400 font-mono text-xs">portfolio.l8b.in</span>
             </div>
             <p class="text-xs text-zinc-400">Real-world timer — stays warm longer, still scales to zero when idle.</p>
           </div>
-          <div class="ml-auto flex items-center gap-2.5 shrink-0">
-            <span class="text-violet-400 font-mono text-xs hidden sm:inline">portfolio.l8b.in</span>
-            <div class="w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center text-zinc-500 transition-all duration-300 group-hover:border-violet-500/50 group-hover:text-violet-400 group-hover:translate-x-0.5" aria-hidden="true">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
-            </div>
+          <div class="ml-auto w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center text-zinc-500 transition-all duration-300 group-hover:border-violet-500/50 group-hover:text-violet-400 group-hover:translate-x-0.5 shrink-0" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
           </div>
         </a>
       </div>
@@ -415,7 +437,7 @@
         </div>
       </div>
       <div class="p-6 glass rounded-2xl text-center">
-        <p class="text-sm text-zinc-400">Anything you want live without a per-app bill — a demo, a portfolio, a side project, an internal tool, a small SaaS. <span class="text-zinc-200 font-semibold">Custom domains and TLS included.</span></p>
+        <p class="text-sm text-zinc-400">Anything you want live without a per-app bill: a demo, a portfolio, a staging box, a side project, an internal tool, a small SaaS. <span class="text-zinc-200 font-semibold">Custom domains and TLS included.</span></p>
       </div>
     </div>
   </section>
@@ -436,8 +458,8 @@
     <div class="max-w-6xl mx-auto px-6 fade-in">
       <div class="grid lg:grid-cols-2 gap-16 items-center">
         <div>
-          <h2 class="text-3xl font-black text-zinc-100 mb-5 uppercase tracking-tight">One Manager.<br/><span class="text-violet-400">Unlimited Bins.</span></h2>
-          <p class="text-zinc-400 leading-relaxed mb-6 text-sm">Manage a fleet of tiny droplets from a single command center. LiteBin uses <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">mTLS</code> to secure communication between your Manager and Agents.</p>
+          <h2 class="text-3xl font-black text-zinc-100 mb-5 uppercase tracking-tight">One Manager.<br/><span class="text-violet-400">Unlimited VPS.</span></h2>
+          <p class="text-zinc-400 leading-relaxed mb-6 text-sm">Manage a fleet of VPS from a single command center. LiteBin uses <code class="text-xs bg-white/5 px-1.5 py-0.5 rounded font-mono">mTLS</code> to secure communication between your Manager and Agents.</p>
           <ul class="space-y-3 text-sm text-zinc-400">
             <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Mix any VPS, any provider: a 512MB box from Hetzner, a spare DigitalOcean droplet, an old home server. Each server hosts its own set of apps; more servers means room for more projects.</span></li>
             <li class="flex gap-3"><span class="text-violet-400 mt-0.5">✔</span><span>Remote control: restart, reload, and update any app from a single dashboard.</span></li>
@@ -525,7 +547,7 @@
               <td class="p-4 text-zinc-300 font-semibold text-sm">Made for</td>
               <td class="p-4 hidden md:table-cell">High-traffic production apps</td>
               <td class="p-4 hidden md:table-cell">Production self-hosted workloads</td>
-              <td class="p-4 text-violet-400 bg-violet-500/3 font-bold text-sm">Anything you want live without per-app bills: demos, portfolios, side projects, internal tools, small SaaS</td>
+              <td class="p-4 text-violet-400 bg-violet-500/3 font-bold text-sm">Anything you want live without per-app bills: demos, portfolios, a staging box, side projects, internal tools, small SaaS</td>
             </tr>
           </tbody>
         </table>
