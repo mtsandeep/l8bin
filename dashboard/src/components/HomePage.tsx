@@ -38,6 +38,7 @@ export default function HomePage() {
   const githubStatus = useGithubStatus();
 
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'offline' | 'demo' | null>(null);
+  const [nodeFilter, setNodeFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [stackExpanded, setStackExpanded] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
@@ -81,6 +82,7 @@ export default function HomePage() {
   const query = search.trim().toLowerCase();
   const matchesSearch = (p: Project) =>
     p.id.toLowerCase().includes(query) || (p.name ?? '').toLowerCase().includes(query);
+  const matchesNode = (p: Project) => nodeFilter === 'all' || (p.node_id ?? 'local') === nodeFilter;
   const filteredProjects = (
     statusFilter
       ? statusFilter === 'offline'
@@ -89,7 +91,9 @@ export default function HomePage() {
           ? sortedProjects.filter((p) => p.demo_mode)
           : sortedProjects.filter((p) => p.status === statusFilter)
       : sortedProjects
-  ).filter(matchesSearch);
+  )
+    .filter(matchesNode)
+    .filter(matchesSearch);
 
   return (
     <div className="flex-1 bg-slate-950 text-slate-200">
@@ -346,6 +350,31 @@ export default function HomePage() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
+            {nodes.length > 1 && (
+              <div className="relative">
+                <Server
+                  size={13}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+                />
+                <select
+                  value={nodeFilter}
+                  onChange={(e) => setNodeFilter(e.target.value)}
+                  aria-label="Filter by node"
+                  className="appearance-none bg-slate-800/50 border border-slate-700/50 rounded-lg pl-7 pr-6 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500/50 transition-colors cursor-pointer"
+                >
+                  <option value="all">All nodes</option>
+                  {nodes.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={12}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+                />
+              </div>
+            )}
             <div className="relative">
               <Search
                 size={13}
@@ -398,9 +427,11 @@ export default function HomePage() {
                 ? `No projects match "${search.trim()}"`
                 : statusFilter
                   ? `No ${statusFilter} projects`
-                  : 'No projects yet'}
+                  : nodeFilter !== 'all'
+                    ? `No projects on ${nodeById.get(nodeFilter)?.name ?? nodeFilter}`
+                    : 'No projects yet'}
             </p>
-            {!statusFilter && !query && (
+            {!statusFilter && !query && nodeFilter === 'all' && (
               <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
                 <button
                   type="button"

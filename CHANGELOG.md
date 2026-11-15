@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Node filter in the dashboard** — when more than one node is connected, a dropdown next to the search box (default *All nodes*) shows only the projects running on the selected node; composes with the status filters and search.
+
 ## [0.4.26] - 2026-11-13
 
 ### Added
