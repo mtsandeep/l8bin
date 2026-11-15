@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.27] - 2026-11-15
+
 ### Added
 - **Settings → About** — shows the running LiteBin version and the latest release (checked server-side against GitHub, cached one hour) with an *Up to date* / *Update available* badge, per-OS upgrade commands with copy buttons and staged-restart notes, and the repository card (source URL, star on GitHub, feature-request link to issues). Backed by the new `GET /version/latest` endpoint.
 - **Node filter in the dashboard** — when more than one node is connected, a dropdown next to the search box (default *All nodes*) shows only the projects running on the selected node; composes with the status filters and search.
