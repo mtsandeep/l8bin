@@ -125,6 +125,7 @@ Already have the `l8b` binary? Register it directly:
 
 - [Platform domains](topics/domains.md) — Routing modes, domain changes, sslip fallback, Cloudflare DNS
 - [Multi-server setup](topics/multi-server.md) — Remote node configuration via mTLS
+- [Importing containers](topics/import-containers.md) — Adopt existing Docker containers as projects, zero downtime
 - [Multi-service projects](topics/multi-service.md) — Compose-based deployments
 - [Volumes](topics/volumes.md) — Named volumes, bind mounts, and cleanup
 - [Registries](topics/registries.md) — Managed registry credentials, multi-registry pulls, agent distribution
@@ -132,6 +133,7 @@ Already have the `l8b` binary? Register it directly:
 - [Env & secrets](topics/env-secrets.md) — Per-project .env files and injection
 - [Security internals](topics/security.md) — Auth, mTLS, deploy tokens
 - [Backup](topics/backup.md) — Litestream sidecar, S3/R2 destinations, restore
+- [Demo mode](topics/demo-mode.md) — Public demos: shared mode with scheduled resets, per-session instances with a hard TTL, baseline seeding
 - [GitHub connect](topics/github-connect.md) — GitHub App/PAT connect and deploy-from-repo
 - [AI-native](topics/ai-native.md) — agent operability: token scopes, JSON output, MCP, device pairing
 - [FAQ](topics/faq.md) — Troubleshooting

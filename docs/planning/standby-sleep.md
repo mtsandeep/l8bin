@@ -65,7 +65,7 @@ Largest idle footprint per expected re-wake cost — an app that wakes hourly sh
 - **Reservations accounting.** Sum of never-evictable apps' expected footprints should fit the node; everything else is best-effort. No hard enforcement needed at this scale, but document the expectation.
 - **Interplay with `memory_limit_mb`.** Limits contain a misbehaving app's blast radius (per-container OOM kill); standby eviction handles node-level packing. Two separate mechanisms, deliberately — same split as K8s limits vs node-pressure eviction.
 - **Eviction cap.** Bound evictions per time window as a second flap guard beyond the hysteresis marks.
-- **Swap.** Present swap (e.g., 512MB on the test node) makes the optimistic fast path much safer — transient overshoot degrades into swap, not OOM. Document as recommended, not required.
+- **Swap.** Present swap (e.g., 512MB on a small node) makes the optimistic fast path much safer — transient overshoot degrades into swap, not OOM. Document as recommended, not required.
 
 ## Priority
 

@@ -2,4 +2,5 @@
 # Written by `l8b init`, updated automatically after a successful deploy.
 # Commit this file — it holds no secrets; env values live on the server (l8b env push).
 project = "l8bin"
+node = "local"
 server = "https://dash.l8b.in"
