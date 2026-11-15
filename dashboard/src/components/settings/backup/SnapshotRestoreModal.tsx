@@ -1,5 +1,5 @@
-import { AlertTriangle } from "lucide-react";
-import type { Busy, FileRestore, RunFn } from "./helpers";
+import { AlertTriangle } from 'lucide-react';
+import type { Busy, FileRestore, RunFn } from './helpers';
 
 interface Props {
   fileRestore: FileRestore | null;
@@ -10,13 +10,7 @@ interface Props {
 }
 
 /** Confirmation for a file-based restore (daily snapshot or manual backup). */
-export default function SnapshotRestoreModal({
-  fileRestore,
-  busy,
-  run,
-  onClose,
-  onStarted,
-}: Props) {
+export default function SnapshotRestoreModal({ fileRestore, busy, run, onClose, onStarted }: Props) {
   if (!fileRestore) return null;
 
   return (
@@ -24,20 +18,14 @@ export default function SnapshotRestoreModal({
       <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl">
         <div className="flex items-center gap-2 mb-3">
           <AlertTriangle size={16} className="text-amber-400" />
-          <h3 className="text-sm font-semibold text-slate-100">
-            Restore local snapshot
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-100">Restore local snapshot</h3>
         </div>
         <p className="text-xs text-slate-300 mb-1">
-          Replace the current database with{" "}
-          <span className="font-medium">{fileRestore.label}</span>?{" "}
-          {fileRestore.hint}
+          Replace the current database with <span className="font-medium">{fileRestore.label}</span>? {fileRestore.hint}
         </p>
         <ul className="text-xs text-slate-400 list-disc list-inside mb-3 mt-2 space-y-1">
           <li>Discards everything written since that snapshot</li>
-          <li>
-            Sessions are restored from the snapshot — you will sign in again
-          </li>
+          <li>Sessions are restored from the snapshot — you will sign in again</li>
           <li>Kept on the server: litebin.db.pre-restore</li>
         </ul>
         <div className="flex gap-2">
@@ -52,7 +40,7 @@ export default function SnapshotRestoreModal({
           <button
             type="button"
             onClick={() =>
-              run("restore", async () => {
+              run('restore', async () => {
                 await fileRestore.run();
                 onClose();
                 onStarted();
@@ -61,7 +49,7 @@ export default function SnapshotRestoreModal({
             disabled={busy !== null}
             className="flex-1 py-2 rounded-md text-xs font-medium bg-amber-600 text-white hover:bg-amber-500 transition-colors disabled:opacity-50 cursor-pointer"
           >
-            {busy === "restore" ? "Restoring…" : "Restore"}
+            {busy === 'restore' ? 'Restoring…' : 'Restore'}
           </button>
         </div>
       </div>

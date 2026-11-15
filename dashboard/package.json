@@ -8,14 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "biome lint .",
     "format": "biome format . --write",
-    "check": "biome check .",
-    "prepare": "simple-git-hooks"
-  },
-  "simple-git-hooks": {
-    "pre-commit": "nano-staged"
-  },
-  "nano-staged": {
-    "*.{ts,tsx,js,jsx,json,css}": "biome check --write --no-errors-on-unmatched"
+    "check": "biome check ."
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
@@ -32,8 +25,6 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "nano-staged": "^0.8.0",
-    "simple-git-hooks": "^2.12.0",
     "typescript": "~5.9.3",
     "vite": "^8.0.1"
   }

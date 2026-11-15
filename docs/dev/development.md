@@ -65,6 +65,19 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+**Pre-commit hooks:** after cloning, run `scripts/dev-setup.sh` once — every
+commit then runs, on the staged files only:
+
+- `rustfmt` (auto-fixes changed `*.rs` and re-stages them)
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` when Rust
+  files or a `Cargo.toml`/`Cargo.lock` changed (clippy compiles whole crates,
+  so it cannot run per-file; the first run builds, later runs are incremental)
+- `biome check --write` on changed `dashboard/` files (auto-fixes format and
+  safe lint issues, re-stages them; unfixable lint errors block the commit)
+
+Escape hatches: `L8B_SKIP_CLIPPY=1 git commit …` skips clippy for that commit,
+`git commit --no-verify` skips the hook entirely.
+
 Fix formatting with `cargo fmt --all`. If clippy reports a new warning, fix it
 or, for intentionally verbose API signatures, add a targeted
 `#[allow(clippy::too_many_arguments)]` on the function.

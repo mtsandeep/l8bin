@@ -1,6 +1,6 @@
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { ProjectStatus, fetchAllStats, fetchDeployLogs } from '../../api';
+import { fetchAllStats, fetchDeployLogs, ProjectStatus } from '../../api';
 
 interface Props {
   /** Title; " failed" is appended when the operation errors. */
@@ -71,10 +71,7 @@ export default function OperationProgressModal({
   const handleClose = () => onClose(isDone);
 
   return (
-    <div
-      data-l8b-modal
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-    >
+    <div data-l8b-modal className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-slate-900 border border-slate-700/50 rounded-lg p-5 max-w-md w-full mx-4 shadow-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">

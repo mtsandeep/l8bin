@@ -567,7 +567,12 @@ export interface DemoState {
   instances?: number;
 }
 
-async function demoFetch<T>(projectId: string, path: string, init?: RequestInit, fallback: string = 'Demo request failed'): Promise<T> {
+async function demoFetch<T>(
+  projectId: string,
+  path: string,
+  init?: RequestInit,
+  fallback: string = 'Demo request failed',
+): Promise<T> {
   const res = await fetch(`${API_BASE}/projects/${projectId}${path}`, {
     credentials: 'include',
     ...init,
@@ -585,7 +590,12 @@ export function getDemoState(projectId: string): Promise<DemoState> {
 }
 
 export function putDemoConfig(projectId: string, body: Record<string, unknown>): Promise<DemoState> {
-  return demoFetch<DemoState>(projectId, '/demo', { method: 'PUT', body: JSON.stringify(body) }, 'Failed to update demo settings');
+  return demoFetch<DemoState>(
+    projectId,
+    '/demo',
+    { method: 'PUT', body: JSON.stringify(body) },
+    'Failed to update demo settings',
+  );
 }
 
 export function resetDemo(projectId: string): Promise<unknown> {
@@ -879,19 +889,17 @@ export async function deleteImportArchive(file: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete bundle');
 }
 
-export async function importBundle(
-  payload: {
-    file: string;
-    new_id?: string;
-    name?: string;
-    description?: string;
-    target_node_id: string;
-    include_env: boolean;
-    include_volumes: boolean;
-    start_after_import: boolean;
-    delete_after_import: boolean;
-  },
-): Promise<{ project_id: string; status: string; warnings: string[] }> {
+export async function importBundle(payload: {
+  file: string;
+  new_id?: string;
+  name?: string;
+  description?: string;
+  target_node_id: string;
+  include_env: boolean;
+  include_volumes: boolean;
+  start_after_import: boolean;
+  delete_after_import: boolean;
+}): Promise<{ project_id: string; status: string; warnings: string[] }> {
   const res = await fetch(`${API_BASE}/imports`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

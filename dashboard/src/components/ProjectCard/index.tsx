@@ -48,11 +48,11 @@ import AppSettingsPopover from './AppSettingsPopover';
 import DeleteConfirmModal from './DeleteConfirmModal';
 import DemoSessionsModal from './DemoSessionsModal';
 import DemoSettingsPopover from './DemoSettingsPopover';
+import DuplicateModal from './DuplicateModal';
 import EnvModal from './EnvModal';
+import ExportModal from './ExportModal';
 import GitHubBadge from './GitHubBadge';
 import GitHubRunsModal from './GitHubRunsModal';
-import DuplicateModal from './DuplicateModal';
-import ExportModal from './ExportModal';
 import MigrateModal from './MigrateModal';
 import ProjectDetailsModal from './ProjectDetailsModal';
 import StatsGrid from './ProjectStats';
@@ -153,8 +153,7 @@ export default function ProjectCard({
   const absoluteBinds = services.reduce(
     (acc, s) =>
       acc +
-      (s.volumes?.filter((v) => v.volume_name?.startsWith('/') && !v.volume_name.endsWith('docker.sock'))
-        .length ?? 0),
+      (s.volumes?.filter((v) => v.volume_name?.startsWith('/') && !v.volume_name.endsWith('docker.sock')).length ?? 0),
     0,
   );
   const primaryService = project.public_stats ?? services[0] ?? null;
@@ -415,7 +414,9 @@ export default function ProjectCard({
                   </span>
                 )}
                 {demoState?.config?.mode === 'shared' && demoState.config?.reset_interval_minutes && (
-                  <span className="text-slate-400">resets every {Math.round(demoState.config.reset_interval_minutes / 60)}h</span>
+                  <span className="text-slate-400">
+                    resets every {Math.round(demoState.config.reset_interval_minutes / 60)}h
+                  </span>
                 )}
               </>
             ) : (
@@ -449,7 +450,11 @@ export default function ProjectCard({
             )}
           </div>
           {demoEnabled && showDemoSessions && (
-            <DemoSessionsModal projectId={project.id} onChanged={refreshDemo} onClose={() => setShowDemoSessions(false)} />
+            <DemoSessionsModal
+              projectId={project.id}
+              onChanged={refreshDemo}
+              onClose={() => setShowDemoSessions(false)}
+            />
           )}
         </div>
       </div>
@@ -592,7 +597,9 @@ export default function ProjectCard({
                   putDemoConfig(project.id, { enabled, mode: 'shared' })
                     .then(() => {
                       showToast(
-                        enabled ? 'Demo mode enabled — defaults to Shared; open Demo on the card to configure' : 'Demo mode disabled',
+                        enabled
+                          ? 'Demo mode enabled — defaults to Shared; open Demo on the card to configure'
+                          : 'Demo mode disabled',
                         'success',
                       );
                       refreshDemo();

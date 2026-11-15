@@ -1,4 +1,15 @@
-import { ArrowRightLeft, Copy, ExternalLink, FileArchive, Loader2, Plus, Route, Settings, Trash2, X as XIcon } from 'lucide-react';
+import {
+  ArrowRightLeft,
+  Copy,
+  ExternalLink,
+  FileArchive,
+  Loader2,
+  Plus,
+  Route,
+  Settings,
+  Trash2,
+  X as XIcon,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -466,18 +477,14 @@ export default function SettingsPopover({
                     const target = `${project.id}.${domain}`;
                     // Both hosts of the www↔bare pair need records; the note marks
                     // the non-canonical one (it redirects to what you entered).
-                    const bare =
-                      cd.startsWith('www.') && cd.slice(4).includes('.') ? cd.slice(4) : cd;
+                    const bare = cd.startsWith('www.') && cd.slice(4).includes('.') ? cd.slice(4) : cd;
                     const www = `www.${bare}`;
                     const isApex = bare.split('.').length <= 2;
                     const mono = (s: string) => <span className="text-slate-400 font-mono">{s}</span>;
                     const redirected = cd === bare ? www : bare;
                     const note = (host: string) =>
                       host === redirected ? (
-                        <span className="text-slate-500">
-                          {' '}
-                          ({redirected === www ? 'www' : 'non-www'} redirect)
-                        </span>
+                        <span className="text-slate-500"> ({redirected === www ? 'www' : 'non-www'} redirect)</span>
                       ) : null;
                     return (
                       <>

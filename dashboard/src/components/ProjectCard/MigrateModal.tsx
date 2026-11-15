@@ -1,6 +1,6 @@
 import { ArrowRightLeft, Database, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { type Node, ProjectStatus, migrateProject } from '../../api';
+import { migrateProject, type Node, ProjectStatus } from '../../api';
 import { useToast } from '../ToastContext';
 import OperationProgressModal from './OperationProgressModal';
 
@@ -40,12 +40,8 @@ export default function MigrateModal({
 }: Props) {
   const sourceArch = nodes.find((n) => n.id === currentNodeId)?.architecture ?? null;
   const onlineNodes = nodes.filter((n) => n.id !== currentNodeId && n.status === 'online');
-  const compatible = onlineNodes.filter(
-    (n) => !sourceArch || !n.architecture || n.architecture === sourceArch,
-  );
-  const incompatible = onlineNodes.filter(
-    (n) => sourceArch && n.architecture && n.architecture !== sourceArch,
-  );
+  const compatible = onlineNodes.filter((n) => !sourceArch || !n.architecture || n.architecture === sourceArch);
+  const incompatible = onlineNodes.filter((n) => sourceArch && n.architecture && n.architecture !== sourceArch);
   const [targetId, setTargetId] = useState('');
   const [migrateVolumes, setMigrateVolumes] = useState(true);
   const [migrating, setMigrating] = useState(false);
@@ -116,10 +112,7 @@ export default function MigrateModal({
   }
 
   return (
-    <div
-      data-l8b-modal
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-    >
+    <div data-l8b-modal className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-slate-900 border border-slate-700/50 rounded-lg p-5 max-w-md w-full mx-4 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -149,6 +142,7 @@ export default function MigrateModal({
               : 'Files transfer to the target',
             'Project restarts on the target node',
           ].map((step, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static step list, never reordered
             <li key={i} className="flex items-start gap-2 text-[11px] text-slate-400">
               <span className="w-4 h-4 rounded-full bg-slate-800 border border-slate-700 text-slate-500 text-[9px] flex items-center justify-center shrink-0 mt-0.5">
                 {i + 1}
@@ -188,13 +182,11 @@ export default function MigrateModal({
         )}
 
         {onlineNodes.length === 0 ? (
-          <p className="text-xs text-slate-500 py-4 text-center">
-            No other online nodes available. Add a node first.
-          </p>
+          <p className="text-xs text-slate-500 py-4 text-center">No other online nodes available. Add a node first.</p>
         ) : (
           <div className="space-y-4">
             <div>
-              <label className="block text-xs text-slate-400 mb-1.5">Target node</label>
+              <span className="block text-xs text-slate-400 mb-1.5">Target node</span>
               <div className="space-y-1">
                 {compatible.map((node) => nodeButton(node, false))}
                 {incompatible.map((node) => nodeButton(node, true))}

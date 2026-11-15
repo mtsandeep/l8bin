@@ -20,7 +20,13 @@ interface DemoSettingsPopoverProps {
 
 /** Demo mode settings — mode, lifecycle options, banner, baseline.
  *  Replaces the Sleep slot on the card while demo mode is on. */
-export default function DemoSettingsPopover({ projectId, domain, state, onDemoChanged, onClose }: DemoSettingsPopoverProps) {
+export default function DemoSettingsPopover({
+  projectId,
+  domain,
+  state,
+  onDemoChanged,
+  onClose,
+}: DemoSettingsPopoverProps) {
   const cfg = state.config;
   const [mode, setMode] = useState<'shared' | 'session'>(cfg?.mode ?? 'shared');
   const [resetHours, setResetHours] = useState<string>(
@@ -131,7 +137,9 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
             ))}
           </div>
           <p className="text-[11px] leading-relaxed text-slate-400 mt-1.5">
-            {mode === 'shared' ? 'Everyone sees the same demo and data' : 'Every visitor gets a private demo with fresh data'}
+            {mode === 'shared'
+              ? 'Everyone sees the same demo and data'
+              : 'Every visitor gets a private demo with fresh data'}
           </p>
         </div>
 
@@ -226,7 +234,9 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
             <button
               type="button"
               disabled={busy !== null || !cfg?.edit_instance_id}
-              onClick={() => cfg?.edit_instance_id && window.open(`https://${cfg.edit_instance_id}.${domain}/`, '_blank')}
+              onClick={() =>
+                cfg?.edit_instance_id && window.open(`https://${cfg.edit_instance_id}.${domain}/`, '_blank')
+              }
               title="Edit demo data — your private copy; Publish to make it live"
               aria-label="Edit demo data"
               className="flex items-center justify-center py-1.5 rounded text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-50 cursor-pointer"
@@ -246,7 +256,9 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
             <button
               type="button"
               disabled={busy !== null || !baselineAt}
-              onClick={() => run('scratch', () => removeDemoBaseline(projectId), 'Edits discarded — demos run the original app data')}
+              onClick={() =>
+                run('scratch', () => removeDemoBaseline(projectId), 'Edits discarded — demos run the original app data')
+              }
               title="Discard edits — drop published data and edit-copy changes; demos boot the original app"
               aria-label="Discard edits"
               className="flex items-center justify-center py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-400 hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
@@ -257,7 +269,11 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
               type="button"
               disabled={busy !== null || !baselineAt || mode !== 'shared'}
               onClick={resetNow}
-              title={mode === 'shared' ? 'Reset — shared demo back to the published data' : 'Personal demos reset automatically — nothing to reset'}
+              title={
+                mode === 'shared'
+                  ? 'Reset — shared demo back to the published data'
+                  : 'Personal demos reset automatically — nothing to reset'
+              }
               aria-label="Reset to published data"
               className="flex items-center justify-center py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-400 hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
@@ -265,9 +281,11 @@ export default function DemoSettingsPopover({ projectId, domain, state, onDemoCh
             </button>
           </div>
           <p className="text-[11px] leading-relaxed text-slate-400">
-            {baselineAt
-              ? <>Visitors see the data published {formatCaptured(baselineAt)}</>
-              : 'Fresh app state — nothing published; visitors get a freshly initialized app'}
+            {baselineAt ? (
+              <>Visitors see the data published {formatCaptured(baselineAt)}</>
+            ) : (
+              'Fresh app state — nothing published; visitors get a freshly initialized app'
+            )}
           </p>
         </div>
       </div>

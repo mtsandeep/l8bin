@@ -121,7 +121,9 @@ export default function GeneralPanel() {
   const [cfValidating, setCfValidating] = useState(false);
   const [revealCount, setRevealCount] = useState<number | null>(null);
   const didAnimate = useRef(false);
-  const [cfValidation, setCfValidation] = useState<{ ok: boolean; zone_name?: string | null; errors: string[] } | null>(null);
+  const [cfValidation, setCfValidation] = useState<{ ok: boolean; zone_name?: string | null; errors: string[] } | null>(
+    null,
+  );
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -243,7 +245,8 @@ export default function GeneralPanel() {
 
   const cfSaved = !!(settings && settings.cloudflare_api_token && settings.cloudflare_zone_id);
   const cfDirty =
-    !!settings && (cfToken !== (settings.cloudflare_api_token || '') || cfZoneId !== (settings.cloudflare_zone_id || ''));
+    !!settings &&
+    (cfToken !== (settings.cloudflare_api_token || '') || cfZoneId !== (settings.cloudflare_zone_id || ''));
 
   const validateCf = async () => {
     setCfValidating(true);
@@ -277,7 +280,9 @@ export default function GeneralPanel() {
       });
       setSettings(updated);
       showToast(
-        deleteRecords ? `Removed Cloudflare: ${deleted} DNS record(s) deleted` : 'Cloudflare removed — DNS records kept',
+        deleteRecords
+          ? `Removed Cloudflare: ${deleted} DNS record(s) deleted`
+          : 'Cloudflare removed — DNS records kept',
         'success',
       );
     } catch (e) {
@@ -341,7 +346,9 @@ export default function GeneralPanel() {
     try {
       const result = await domainPreflight(domainDraft.trim(), {
         routing_mode: domainRouting === 'cloudflare' ? 'cloudflare_dns' : 'master_proxy',
-        ...(domainRouting === 'cloudflare' && domainCfToken.trim() ? { cloudflare_api_token: domainCfToken.trim() } : {}),
+        ...(domainRouting === 'cloudflare' && domainCfToken.trim()
+          ? { cloudflare_api_token: domainCfToken.trim() }
+          : {}),
         ...(domainRouting === 'cloudflare' && domainCfZone.trim() ? { cloudflare_zone_id: domainCfZone.trim() } : {}),
       });
       setDomainPreflightResult(result);
@@ -364,7 +371,9 @@ export default function GeneralPanel() {
       const needsAck = !sslipMode && (domainPreflightResult?.warnings.length ?? 0) > 0;
       const { job_id } = await domainApply(domainDraft.trim(), needsAck ? domainAck : false, {
         routing_mode: domainRouting === 'cloudflare' ? 'cloudflare_dns' : 'master_proxy',
-        ...(domainRouting === 'cloudflare' && domainCfToken.trim() ? { cloudflare_api_token: domainCfToken.trim() } : {}),
+        ...(domainRouting === 'cloudflare' && domainCfToken.trim()
+          ? { cloudflare_api_token: domainCfToken.trim() }
+          : {}),
         ...(domainRouting === 'cloudflare' && domainCfZone.trim() ? { cloudflare_zone_id: domainCfZone.trim() } : {}),
       });
       const job = await fetchDomainJob(job_id);
@@ -439,7 +448,10 @@ export default function GeneralPanel() {
               </button>
             </div>
             <p className="text-xs text-slate-600 mt-1">
-              Projects get subdomains like <span className="text-slate-400 font-mono">{'{id}'}.{domain}</span>
+              Projects get subdomains like{' '}
+              <span className="text-slate-400 font-mono">
+                {'{id}'}.{domain}
+              </span>
             </p>
           </div>
 
@@ -771,8 +783,7 @@ export default function GeneralPanel() {
               <h3 className="text-sm font-semibold text-slate-100">Change platform domain</h3>
             </div>
 
-            {domainJob &&
-            (domainJob.status === 'running' || domainJob.status === 'pending' || revealCount !== null) ? (
+            {domainJob && (domainJob.status === 'running' || domainJob.status === 'pending' || revealCount !== null) ? (
               <div className="space-y-3">
                 <p className="text-xs text-slate-300">
                   {revealCount !== null ? 'Finishing up…' : `Applying domain change to ${domainJob.domain}…`}
@@ -809,8 +820,8 @@ export default function GeneralPanel() {
                 <p className="text-xs text-slate-500">Open the new dashboard and sign in again.</p>
                 {settings.previous_domain && (
                   <p className="text-xs text-slate-500">
-                    <span className="font-mono text-slate-400">*.{settings.previous_domain}</span> keeps working for
-                    24h ·{' '}
+                    <span className="font-mono text-slate-400">*.{settings.previous_domain}</span> keeps working for 24h
+                    ·{' '}
                     <button
                       type="button"
                       onClick={async () => {
@@ -882,13 +893,15 @@ export default function GeneralPanel() {
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-slate-500">
-                  <span className="font-mono text-slate-400">{settings.domain}</span> keeps working for 24h after
-                  the change.
+                  <span className="font-mono text-slate-400">{settings.domain}</span> keeps working for 24h after the
+                  change.
                 </p>
                 <div className="flex items-center justify-between rounded-md border border-slate-700/50 bg-slate-900/60 px-3 py-2">
                   <div>
                     <p className="text-xs text-slate-300">Temporary mode</p>
-                    <p className="text-[10px] text-slate-500">runs on an auto-assigned sslip.io domain — no domain needed</p>
+                    <p className="text-[10px] text-slate-500">
+                      runs on an auto-assigned sslip.io domain — no domain needed
+                    </p>
                   </div>
                   <button
                     type="button"
@@ -935,43 +948,43 @@ export default function GeneralPanel() {
                 </div>
 
                 {!sslipMode && (
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1.5">Routing mode</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDomainRouting('master');
-                        setDomainPreflightResult(null);
-                        setDomainAck(false);
-                      }}
-                      className={`px-3 py-2 rounded-md text-xs border text-left cursor-pointer ${
-                        domainRouting === 'master'
-                          ? 'bg-cyan-600/10 border-cyan-500/40 text-cyan-200'
-                          : 'bg-slate-900 border-slate-700/50 text-slate-400'
-                      }`}
-                    >
-                      Master proxy
-                      <span className="block text-[10px] text-slate-500">your DNS, records point here</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDomainRouting('cloudflare');
-                        setDomainPreflightResult(null);
-                        setDomainAck(false);
-                      }}
-                      className={`px-3 py-2 rounded-md text-xs border text-left cursor-pointer ${
-                        domainRouting === 'cloudflare'
-                          ? 'bg-cyan-600/10 border-cyan-500/40 text-cyan-200'
-                          : 'bg-slate-900 border-slate-700/50 text-slate-400'
-                      }`}
-                    >
-                      Cloudflare DNS
-                      <span className="block text-[10px] text-slate-500">records managed for you</span>
-                    </button>
+                  <div>
+                    <span className="block text-xs text-slate-300 mb-1.5">Routing mode</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDomainRouting('master');
+                          setDomainPreflightResult(null);
+                          setDomainAck(false);
+                        }}
+                        className={`px-3 py-2 rounded-md text-xs border text-left cursor-pointer ${
+                          domainRouting === 'master'
+                            ? 'bg-cyan-600/10 border-cyan-500/40 text-cyan-200'
+                            : 'bg-slate-900 border-slate-700/50 text-slate-400'
+                        }`}
+                      >
+                        Master proxy
+                        <span className="block text-[10px] text-slate-500">your DNS, records point here</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDomainRouting('cloudflare');
+                          setDomainPreflightResult(null);
+                          setDomainAck(false);
+                        }}
+                        className={`px-3 py-2 rounded-md text-xs border text-left cursor-pointer ${
+                          domainRouting === 'cloudflare'
+                            ? 'bg-cyan-600/10 border-cyan-500/40 text-cyan-200'
+                            : 'bg-slate-900 border-slate-700/50 text-slate-400'
+                        }`}
+                      >
+                        Cloudflare DNS
+                        <span className="block text-[10px] text-slate-500">records managed for you</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
                 )}
 
                 {domainRouting === 'cloudflare' && !sslipMode && (
@@ -1052,27 +1065,27 @@ export default function GeneralPanel() {
                         {domainPreflightResult.checks
                           .filter((c) => c.id !== 'public_ip')
                           .map((c) => (
-                          <li key={c.id} className="flex items-center gap-2 text-[11px]">
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                c.status === 'ok'
-                                  ? 'bg-green-400'
-                                  : c.status === 'warn'
-                                    ? 'bg-amber-400'
-                                    : c.status === 'error'
-                                      ? 'bg-red-400'
-                                      : 'bg-slate-600'
-                              }`}
-                            />
-                            <span className="text-slate-400">
-                              {CHECK_LABELS[c.id] ?? c.id}
-                              {c.status !== 'skipped' && c.detail ? (
-                                <span className="text-slate-500"> — {c.detail}</span>
-                              ) : null}
-                              {c.status === 'skipped' ? <span className="text-slate-600"> (skipped)</span> : null}
-                            </span>
-                          </li>
-                        ))}
+                            <li key={c.id} className="flex items-center gap-2 text-[11px]">
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                  c.status === 'ok'
+                                    ? 'bg-green-400'
+                                    : c.status === 'warn'
+                                      ? 'bg-amber-400'
+                                      : c.status === 'error'
+                                        ? 'bg-red-400'
+                                        : 'bg-slate-600'
+                                }`}
+                              />
+                              <span className="text-slate-400">
+                                {CHECK_LABELS[c.id] ?? c.id}
+                                {c.status !== 'skipped' && c.detail ? (
+                                  <span className="text-slate-500"> — {c.detail}</span>
+                                ) : null}
+                                {c.status === 'skipped' ? <span className="text-slate-600"> (skipped)</span> : null}
+                              </span>
+                            </li>
+                          ))}
                       </ul>
                     ) : null}
                     {domainPreflightResult.plan && (

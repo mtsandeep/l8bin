@@ -1,7 +1,7 @@
-import { AlertTriangle } from "lucide-react";
-import { useState } from "react";
-import { revertBackupRestore } from "../../../api";
-import type { Busy, RunFn } from "./helpers";
+import { AlertTriangle } from 'lucide-react';
+import { useState } from 'react';
+import { revertBackupRestore } from '../../../api';
+import type { Busy, RunFn } from './helpers';
 
 interface Props {
   revertibleTo: string | null;
@@ -11,12 +11,7 @@ interface Props {
 }
 
 /** Undo last restore: row + confirmation modal, shown only when an undo exists. */
-export default function UndoRestore({
-  revertibleTo,
-  busy,
-  run,
-  onStarted,
-}: Props) {
+export default function UndoRestore({ revertibleTo, busy, run, onStarted }: Props) {
   const [showConfirm, setShowConfirm] = useState(false);
   if (!revertibleTo) return null;
 
@@ -31,8 +26,7 @@ export default function UndoRestore({
         Undo last restore
       </button>
       <p className="text-[11px] text-slate-600 mt-0.5">
-        returns the database to its state from{" "}
-        {new Date(revertibleTo).toLocaleString(undefined, { hour12: true })}
+        returns the database to its state from {new Date(revertibleTo).toLocaleString(undefined, { hour12: true })}
       </p>
 
       {showConfirm && (
@@ -40,20 +34,14 @@ export default function UndoRestore({
           <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl">
             <div className="flex items-center gap-2 mb-3">
               <AlertTriangle size={16} className="text-amber-400" />
-              <h3 className="text-sm font-semibold text-slate-100">
-                Undo last restore
-              </h3>
+              <h3 className="text-sm font-semibold text-slate-100">Undo last restore</h3>
             </div>
             <p className="text-xs text-slate-300 mb-1">
-              Return the database to the state right before the last restore
-              (kept as litebin.db.pre-restore)?
+              Return the database to the state right before the last restore (kept as litebin.db.pre-restore)?
             </p>
             <ul className="text-xs text-slate-400 list-disc list-inside mb-3 mt-2 space-y-1">
               <li>Everything written since the restore is discarded</li>
-              <li>
-                The restored state is kept aside in turn; undoing again flips
-                back
-              </li>
+              <li>The restored state is kept aside in turn; undoing again flips back</li>
               <li>Sessions are restored — you will sign in again</li>
             </ul>
             <div className="flex gap-2">
@@ -68,7 +56,7 @@ export default function UndoRestore({
               <button
                 type="button"
                 onClick={() =>
-                  run("restore", async () => {
+                  run('restore', async () => {
                     await revertBackupRestore();
                     setShowConfirm(false);
                     onStarted();
@@ -77,7 +65,7 @@ export default function UndoRestore({
                 disabled={busy !== null}
                 className="flex-1 py-2 rounded-md text-xs font-medium bg-amber-600 text-white hover:bg-amber-500 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                {busy === "restore" ? "Undoing…" : "Undo restore"}
+                {busy === 'restore' ? 'Undoing…' : 'Undo restore'}
               </button>
             </div>
           </div>

@@ -88,14 +88,21 @@ export default function DemoSessionsModal({
   const BusyIcon = () => <Loader2 size={12} className="animate-spin text-slate-400" />;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-lg bg-slate-800 border border-slate-700/70 rounded-lg shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    // biome-ignore lint/a11y/noStaticElementInteractions: full-screen backdrop — click outside dismisses
+    // biome-ignore lint/a11y/useKeyWithClickEvents: Escape is handled by the window-level keydown listener
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-lg bg-slate-800 border border-slate-700/70 rounded-lg shadow-2xl">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/50">
           <h2 className="text-sm font-medium text-slate-200">
-            Demo instances <span className="text-slate-500 font-normal">· {active} live session{active === 1 ? '' : 's'}</span>
+            Demo instances{' '}
+            <span className="text-slate-500 font-normal">
+              · {active} live session{active === 1 ? '' : 's'}
+            </span>
           </h2>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-200 cursor-pointer">
             <X size={16} />
@@ -135,7 +142,9 @@ export default function DemoSessionsModal({
                         <button
                           type="button"
                           disabled={busy !== null}
-                          onClick={() => act(`stop:${inst.id}`, () => stopProject(inst.id), `${inst.kind} instance stopped`)}
+                          onClick={() =>
+                            act(`stop:${inst.id}`, () => stopProject(inst.id), `${inst.kind} instance stopped`)
+                          }
                           title="Stop (auto-wakes when needed)"
                           className="text-slate-500 hover:text-red-400 disabled:opacity-50 cursor-pointer"
                         >
@@ -145,7 +154,9 @@ export default function DemoSessionsModal({
                         <button
                           type="button"
                           disabled={busy !== null}
-                          onClick={() => act(`start:${inst.id}`, () => startProject(inst.id), `${inst.kind} instance started`)}
+                          onClick={() =>
+                            act(`start:${inst.id}`, () => startProject(inst.id), `${inst.kind} instance started`)
+                          }
                           title="Start now"
                           className="text-slate-500 hover:text-emerald-400 disabled:opacity-50 cursor-pointer"
                         >

@@ -1,12 +1,6 @@
-import { Bookmark, X } from "lucide-react";
-import {
-  deleteBackupPoint,
-  restoreBackupPoint,
-  type BackupPoint,
-  type BackupStatus,
-  formatBytes,
-} from "../../../api";
-import type { Busy, FileRestore, RunFn } from "./helpers";
+import { Bookmark, X } from 'lucide-react';
+import { type BackupPoint, type BackupStatus, deleteBackupPoint, formatBytes, restoreBackupPoint } from '../../../api';
+import type { Busy, FileRestore, RunFn } from './helpers';
 
 interface Props {
   points: BackupPoint[];
@@ -19,48 +13,25 @@ interface Props {
 }
 
 /** Manual backups list with per-row restore and delete. */
-export default function ManualBackupsList({
-  points,
-  divider = true,
-  busy,
-  run,
-  onStatus,
-  onRestore,
-}: Props) {
+export default function ManualBackupsList({ points, divider = true, busy, run, onStatus, onRestore }: Props) {
   if (points.length === 0) return null;
 
   return (
-    <div
-      className={
-        divider ? "pt-3 border-t border-slate-800 space-y-2" : "space-y-2"
-      }
-    >
+    <div className={divider ? 'pt-3 border-t border-slate-800 space-y-2' : 'space-y-2'}>
       <p className="text-xs text-slate-500">Manual backups</p>
       {points.map((pt) => (
         <div
           key={pt.id}
           className="flex items-center gap-3 rounded-md border border-slate-700/30 bg-slate-900/50 px-3 py-2"
         >
-          <Bookmark
-            size={13}
-            className={
-              pt.available
-                ? "text-amber-300 shrink-0"
-                : "text-slate-600 shrink-0"
-            }
-          />
+          <Bookmark size={13} className={pt.available ? 'text-amber-300 shrink-0' : 'text-slate-600 shrink-0'} />
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-slate-200 truncate">
-              {pt.name}
-            </p>
+            <p className="text-xs font-medium text-slate-200 truncate">{pt.name}</p>
             <p className="text-xs text-slate-500">
               {new Date(pt.timestamp).toLocaleString(undefined, {
                 hour12: true,
-              })}{" "}
-              ·{" "}
-              {pt.available
-                ? formatBytes(pt.size_bytes)
-                : "snapshot file missing"}
+              })}{' '}
+              · {pt.available ? formatBytes(pt.size_bytes) : 'snapshot file missing'}
             </p>
           </div>
           <button
@@ -68,7 +39,7 @@ export default function ManualBackupsList({
             onClick={() =>
               onRestore({
                 label: `the manual backup "${pt.name}"`,
-                hint: "Restores the database exactly as it was when the backup was taken.",
+                hint: 'Restores the database exactly as it was when the backup was taken.',
                 run: async () => {
                   await restoreBackupPoint(pt.id);
                 },
@@ -82,7 +53,7 @@ export default function ManualBackupsList({
           <button
             type="button"
             onClick={() =>
-              run("point-del", async () => {
+              run('point-del', async () => {
                 const res = await deleteBackupPoint(pt.id);
                 onStatus(res.status);
               })

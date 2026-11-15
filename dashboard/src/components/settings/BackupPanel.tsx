@@ -1,18 +1,18 @@
-import { AlertTriangle, Check, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { disableBackup, fetchBackupStatus, type BackupStatus } from "../../api";
-import { useToast } from "../ToastContext";
-import SettingsCard from "./SettingsCard";
-import DestinationsCard from "./backup/DestinationsCard";
-import ExplainerCard from "./backup/ExplainerCard";
-import ManualBackupButton from "./backup/ManualBackupButton";
-import ManualBackupsList from "./backup/ManualBackupsList";
-import RestoreCard from "./backup/RestoreCard";
-import SnapshotRestoreModal from "./backup/SnapshotRestoreModal";
-import StatusBanner from "./backup/StatusBanner";
-import UndoRestore from "./backup/UndoRestore";
-import type { Busy, FileRestore, RunFn } from "./backup/helpers";
-import { deriveBackup } from "./backup/helpers";
+import { AlertTriangle, Check, RotateCcw } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { type BackupStatus, disableBackup, fetchBackupStatus } from '../../api';
+import { useToast } from '../ToastContext';
+import DestinationsCard from './backup/DestinationsCard';
+import ExplainerCard from './backup/ExplainerCard';
+import type { Busy, FileRestore, RunFn } from './backup/helpers';
+import { deriveBackup } from './backup/helpers';
+import ManualBackupButton from './backup/ManualBackupButton';
+import ManualBackupsList from './backup/ManualBackupsList';
+import RestoreCard from './backup/RestoreCard';
+import SnapshotRestoreModal from './backup/SnapshotRestoreModal';
+import StatusBanner from './backup/StatusBanner';
+import UndoRestore from './backup/UndoRestore';
+import SettingsCard from './SettingsCard';
 
 /**
  * Backup settings page. Owns the shared state (status, busy, restarting,
@@ -33,7 +33,7 @@ export default function BackupPanel() {
         setStatus(s);
         setError(null);
       })
-      .catch(() => setError("Failed to load backup status"));
+      .catch(() => setError('Failed to load backup status'));
   }, []);
 
   useEffect(() => {
@@ -55,7 +55,7 @@ export default function BackupPanel() {
       fetchBackupStatus()
         .then(() => {
           setRestarting(false);
-          showToast("Database restored from backup", "success");
+          showToast('Database restored from backup', 'success');
         })
         .catch(() => {});
     }, 1500);
@@ -68,7 +68,7 @@ export default function BackupPanel() {
     try {
       await fn();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Operation failed";
+      const msg = e instanceof Error ? e.message : 'Operation failed';
       setError(msg);
       showToast(msg);
     } finally {
@@ -77,11 +77,7 @@ export default function BackupPanel() {
   };
 
   if (!status) {
-    return (
-      <p className="text-xs text-slate-400">
-        {error ?? "Loading backup status…"}
-      </p>
-    );
+    return <p className="text-xs text-slate-400">{error ?? 'Loading backup status…'}</p>;
   }
 
   if (restarting) {
@@ -93,21 +89,18 @@ export default function BackupPanel() {
         </div>
         <ol className="max-w-xs mx-auto space-y-2 text-xs">
           <li className="flex items-center gap-2 text-slate-300">
-            <Check size={13} className="text-green-400" /> Restore snapshot
-            staged
+            <Check size={13} className="text-green-400" /> Restore snapshot staged
           </li>
           <li className="flex items-center gap-2 text-slate-300">
             <span className="w-[13px] h-[13px] rounded-full border-2 border-violet-400 border-t-transparent animate-spin" />
             Orchestrator restarting…
           </li>
           <li className="flex items-center gap-2 text-slate-500">
-            <span className="w-[13px] h-[13px] rounded-full border-2 border-slate-600" />{" "}
-            Back online shortly
+            <span className="w-[13px] h-[13px] rounded-full border-2 border-slate-600" /> Back online shortly
           </li>
         </ol>
         <p className="text-xs text-slate-500 text-center max-w-xs mx-auto">
-          You may be signed out — sessions are restored from the backup. Sign in
-          again if prompted.
+          You may be signed out — sessions are restored from the backup. Sign in again if prompted.
         </p>
       </div>
     );
@@ -120,16 +113,9 @@ export default function BackupPanel() {
     return (
       <div className="space-y-4">
         {error && (
-          <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
-            {error}
-          </div>
+          <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">{error}</div>
         )}
-        <ExplainerCard
-          status={status}
-          busy={busy}
-          run={run}
-          onStatus={setStatus}
-        >
+        <ExplainerCard status={status} busy={busy} run={run} onStatus={setStatus}>
           <ManualBackupButton busy={busy} run={run} onStatus={setStatus} />
         </ExplainerCard>
         {(status.points.length > 0 || status.revertible_to) && (
@@ -167,22 +153,14 @@ export default function BackupPanel() {
   return (
     <div className="space-y-5">
       {error && (
-        <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
-          {error}
-        </div>
+        <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">{error}</div>
       )}
 
       <StatusBanner status={status} derived={derived}>
         <ManualBackupButton busy={busy} run={run} onStatus={setStatus} />
       </StatusBanner>
 
-      <DestinationsCard
-        status={status}
-        derived={derived}
-        busy={busy}
-        run={run}
-        onStatus={setStatus}
-      />
+      <DestinationsCard status={status} derived={derived} busy={busy} run={run} onStatus={setStatus} />
 
       <RestoreCard
         status={status}
@@ -199,8 +177,7 @@ export default function BackupPanel() {
         <div>
           <p className="text-xs text-slate-300 font-medium">Disable backup</p>
           <p className="text-xs text-slate-500 mt-0.5">
-            Stops the sidecar. Existing replicas stay on disk and resume when
-            re-enabled.
+            Stops the sidecar. Existing replicas stay on disk and resume when re-enabled.
           </p>
         </div>
         <button
@@ -219,13 +196,11 @@ export default function BackupPanel() {
           <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl">
             <div className="flex items-center gap-2 mb-3">
               <AlertTriangle size={16} className="text-amber-400" />
-              <h3 className="text-sm font-semibold text-slate-100">
-                Disable backup
-              </h3>
+              <h3 className="text-sm font-semibold text-slate-100">Disable backup</h3>
             </div>
             <p className="text-xs text-slate-400 mb-4">
-              Stops continuous backup of the LiteBin database. Existing replicas
-              stay on disk and resume from where they left off if you re-enable.
+              Stops continuous backup of the LiteBin database. Existing replicas stay on disk and resume from where they
+              left off if you re-enable.
             </p>
             <div className="flex gap-2">
               <button
@@ -239,17 +214,17 @@ export default function BackupPanel() {
               <button
                 type="button"
                 onClick={() =>
-                  run("disable", async () => {
+                  run('disable', async () => {
                     const res = await disableBackup();
                     setStatus(res.status);
                     setShowDisableConfirm(false);
-                    showToast("Backup disabled", "success");
+                    showToast('Backup disabled', 'success');
                   })
                 }
                 disabled={busy !== null}
                 className="flex-1 py-2 rounded-md text-xs font-medium bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                {busy === "disable" ? "Disabling…" : "Disable"}
+                {busy === 'disable' ? 'Disabling…' : 'Disable'}
               </button>
             </div>
           </div>

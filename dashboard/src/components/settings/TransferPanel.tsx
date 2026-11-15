@@ -15,27 +15,27 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  type ExportJobInfo,
-  type ExportSummary,
-  type ImportArchiveSummary,
-  type Project,
-  ProjectStatus,
   deleteExport,
   deleteImportArchive,
   downloadExport,
+  type ExportJobInfo,
+  type ExportSummary,
   exportProject,
   fetchProjects,
   getExportJob,
+  type ImportArchiveSummary,
   importBundle,
   listExports,
   listImportArchives,
+  type Project,
+  ProjectStatus,
   uploadImportArchive,
 } from '../../api';
+import { useNodes } from '../../hooks/useNodes';
+import { useSettings } from '../../hooks/useSettings';
 import { useAuth } from '../AuthContext';
 import OperationProgressModal from '../ProjectCard/OperationProgressModal';
 import { useToast } from '../ToastContext';
-import { useNodes } from '../../hooks/useNodes';
-import { useSettings } from '../../hooks/useSettings';
 import SettingsCard from './SettingsCard';
 
 const ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -114,7 +114,9 @@ export default function TransferPanel() {
   }, []);
 
   useEffect(() => {
-    fetchProjects().then(setProjects).catch(() => {});
+    fetchProjects()
+      .then(setProjects)
+      .catch(() => {});
     refreshExports();
     refreshArchives();
   }, [refreshExports, refreshArchives]);
@@ -158,7 +160,9 @@ export default function TransferPanel() {
       } catch (e) {
         failures += 1;
         setExportLog((prev) =>
-          prev.map((l) => (l.id === p.id ? { ...l, state: 'failed', note: e instanceof Error ? e.message : 'failed' } : l)),
+          prev.map((l) =>
+            l.id === p.id ? { ...l, state: 'failed', note: e instanceof Error ? e.message : 'failed' } : l,
+          ),
         );
       }
     }
@@ -469,10 +473,11 @@ export default function TransferPanel() {
             <div className="rounded-md border border-slate-700/40 bg-slate-800/30 p-3 space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
+                  <label htmlFor="transfer-new-id" className="block text-[11px] text-slate-400 mb-1">
                     new id <span className="text-slate-600">(blank = original)</span>
                   </label>
                   <input
+                    id="transfer-new-id"
                     type="text"
                     value={newId}
                     onChange={(e) => setNewId(e.target.value.toLowerCase())}
@@ -482,8 +487,11 @@ export default function TransferPanel() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">target node</label>
+                  <label htmlFor="transfer-target-node" className="block text-[11px] text-slate-400 mb-1">
+                    target node
+                  </label>
                   <select
+                    id="transfer-target-node"
                     value={targetId}
                     onChange={(e) => setTargetId(e.target.value)}
                     className="w-full px-2.5 py-1.5 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-200 focus:outline-none focus:border-violet-500/50 cursor-pointer"
@@ -499,19 +507,39 @@ export default function TransferPanel() {
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-400">
-                  <input type="checkbox" checked={importVolumes} onChange={(e) => setImportVolumes(e.target.checked)} className="accent-violet-500" />
+                  <input
+                    type="checkbox"
+                    checked={importVolumes}
+                    onChange={(e) => setImportVolumes(e.target.checked)}
+                    className="accent-violet-500"
+                  />
                   volumes
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-400">
-                  <input type="checkbox" checked={importEnv} onChange={(e) => setImportEnv(e.target.checked)} className="accent-violet-500" />
+                  <input
+                    type="checkbox"
+                    checked={importEnv}
+                    onChange={(e) => setImportEnv(e.target.checked)}
+                    className="accent-violet-500"
+                  />
                   .env
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-400">
-                  <input type="checkbox" checked={startAfter} onChange={(e) => setStartAfter(e.target.checked)} className="accent-violet-500" />
+                  <input
+                    type="checkbox"
+                    checked={startAfter}
+                    onChange={(e) => setStartAfter(e.target.checked)}
+                    className="accent-violet-500"
+                  />
                   start
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-400">
-                  <input type="checkbox" checked={deleteAfter} onChange={(e) => setDeleteAfter(e.target.checked)} className="accent-violet-500" />
+                  <input
+                    type="checkbox"
+                    checked={deleteAfter}
+                    onChange={(e) => setDeleteAfter(e.target.checked)}
+                    className="accent-violet-500"
+                  />
                   delete file after
                 </label>
                 <button

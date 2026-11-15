@@ -1,6 +1,6 @@
 import { Database, Download, FileArchive, Loader2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type ExportJobInfo, downloadExport, exportProject, getExportJob } from '../../api';
+import { downloadExport, type ExportJobInfo, exportProject, getExportJob } from '../../api';
 import { useToast } from '../ToastContext';
 
 interface Props {
@@ -74,10 +74,7 @@ export default function ExportModal({ projectId, projectName, volumeCount, ephem
   };
 
   return (
-    <div
-      data-l8b-modal
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-    >
+    <div data-l8b-modal className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-slate-900 border border-slate-700/50 rounded-lg p-5 max-w-md w-full mx-4 shadow-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -107,6 +104,7 @@ export default function ExportModal({ projectId, projectName, volumeCount, ephem
               : 'Files and uploaded images are bundled',
             'Project restarts; the bundle lands in the exports folder',
           ].map((step, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static step list, never reordered
             <li key={i} className="flex items-start gap-2 text-[11px] text-slate-400">
               <span className="w-4 h-4 rounded-full bg-slate-800 border border-slate-700 text-slate-500 text-[9px] flex items-center justify-center shrink-0 mt-0.5">
                 {i + 1}
@@ -121,7 +119,6 @@ export default function ExportModal({ projectId, projectName, volumeCount, ephem
             {ephemeralGb.toFixed(2)} GB in anonymous volumes is not carried - name them in compose to persist.
           </div>
         ) : null}
-
 
         <div className="space-y-4">
           <label className="flex items-center gap-2 cursor-pointer">
@@ -182,7 +179,10 @@ export default function ExportModal({ projectId, projectName, volumeCount, ephem
                   {job.artifact && (
                     <button
                       type="button"
-                      onClick={() => downloadExport(job.artifact!).catch((e) => showToast(String(e)))}
+                      onClick={() => {
+                        const artifact = job.artifact;
+                        if (artifact) downloadExport(artifact).catch((e) => showToast(String(e)));
+                      }}
                       className="text-[11px] text-teal-400 hover:text-teal-300 transition-colors cursor-pointer flex items-center gap-1 shrink-0"
                     >
                       <Download size={11} />

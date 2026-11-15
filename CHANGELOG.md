@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Node filter in the dashboard** — when more than one node is connected, a dropdown next to the search box (default *All nodes*) shows only the projects running on the selected node; composes with the status filters and search.
 
+### Changed
+- **Repo-wide pre-commit hooks** — `scripts/dev-setup.sh` (run once per clone) enables a shared hook that checks only the staged files: rustfmt auto-fixes changed Rust files, clippy runs when Rust files or cargo manifests change, and biome auto-fixes changed dashboard files; replaces the dashboard-only `simple-git-hooks` setup that never installed.
+
 ## [0.4.26] - 2026-11-13
 
 ### Added

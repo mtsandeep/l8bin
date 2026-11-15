@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Repo-wide pre-commit hook — checks only what this commit touches:
+#   - rustfmt: auto-fixes staged *.rs files and re-stages them
+#   - clippy:  workspace-wide (it compiles whole crates, so it cannot run
+#              per-file; the first run compiles everything, later runs are
+#              incremental). Skip with L8B_SKIP_CLIPPY=1.
+#   - biome:   auto-fixes staged dashboard files (format + safe lint fixes)
+#              and re-stages them; unfixed lint errors block the commit.
+#
+# Enable once per clone:  scripts/dev-setup.sh
+# Bypass entirely:        git commit --no-verify
+set -e -o pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Files staged for this commit (added/copied/modified/renamed). On the
+# initial commit there is no HEAD to diff against — use the empty tree.
+against=HEAD
+git rev-parse --verify -q HEAD >/dev/null || against=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+
+rust_files=()
+web_files=()
+cargo_meta_changed=0
+while IFS= read -r -d '' f; do
+  case "$f" in
+    *.rs) rust_files+=("$f") ;;
+    dashboard/*.ts | dashboard/*.tsx | dashboard/*.js | dashboard/*.jsx | dashboard/*.json | dashboard/*.css)
+      web_files+=("$f")
+      ;;
+    Cargo.toml | Cargo.lock | */Cargo.toml) cargo_meta_changed=1 ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR -z "$against")
+
+# Re-stage only the files a fixer actually rewrote, so partially-staged
+# files keep their unstaged hunks out of the commit.
+restage_if_changed() {
+  touched=$(git diff --name-only -- "$@") || true
+  if [ -n "$touched" ]; then
+    # shellcheck disable=SC2086
+    git add $touched
+    echo "pre-commit: re-staged auto-fixed: $(echo $touched | tr '\n' ' ')"
+  fi
+}
+
+if [ ${#rust_files[@]} -gt 0 ]; then
+  if ! rustfmt --edition 2024 --config-path rustfmt.toml --check "${rust_files[@]}" >/dev/null 2>&1; then
+    echo "pre-commit: rustfmt fixing ${#rust_files[@]} Rust file(s)"
+    rustfmt --edition 2024 --config-path rustfmt.toml "${rust_files[@]}"
+    restage_if_changed "${rust_files[@]}"
+  fi
+
+  if [ -z "${L8B_SKIP_CLIPPY:-}" ]; then
+    echo "pre-commit: cargo clippy --workspace (first run compiles; skip with L8B_SKIP_CLIPPY=1)"
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+  fi
+elif [ "$cargo_meta_changed" = 1 ] && [ -z "${L8B_SKIP_CLIPPY:-}" ]; then
+  # Manifest/lockfile changes can pull in new lints without any .rs edit.
+  echo "pre-commit: cargo clippy --workspace (Cargo manifest changed; skip with L8B_SKIP_CLIPPY=1)"
+  cargo clippy --workspace --all-targets --locked -- -D warnings
+fi
+
+if [ ${#web_files[@]} -gt 0 ]; then
+  rel_files=()
+  for f in "${web_files[@]}"; do
+    rel_files+=("${f#dashboard/}")
+  done
+  echo "pre-commit: biome check --write on ${#rel_files[@]} dashboard file(s)"
+  (cd dashboard && npx biome check --write "${rel_files[@]}")
+  restage_if_changed "${web_files[@]}"
+fi

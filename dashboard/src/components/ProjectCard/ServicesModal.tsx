@@ -270,7 +270,9 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                   )}
 
                   {/* Absolute binds — not carried by transfers */}
-                  {svc.volumes?.some((v) => v.volume_name?.startsWith('/') && !v.volume_name?.endsWith('docker.sock')) && (
+                  {svc.volumes?.some(
+                    (v) => v.volume_name?.startsWith('/') && !v.volume_name?.endsWith('docker.sock'),
+                  ) && (
                     <div className="mt-2 rounded bg-amber-500/5 border border-amber-500/20 px-2 py-1.5">
                       <div className="text-[10px] text-amber-400/90 mb-0.5">
                         Absolute paths — stay on this server; move manually when exporting

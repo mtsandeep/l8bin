@@ -78,8 +78,7 @@ export default function RegistriesPanel() {
     setCreating(true);
     setError(null);
     try {
-      const credentials =
-        newUser.trim() ? { username: newUser.trim(), password: newPass } : undefined;
+      const credentials = newUser.trim() ? { username: newUser.trim(), password: newPass } : undefined;
       const created = await createRegistry(newName.trim(), newUrl.trim(), credentials);
       setRegistries((prev) => [...prev, created]);
       setNewName('');
@@ -99,7 +98,9 @@ export default function RegistriesPanel() {
 
   const handleAddGcrMirror = () => {
     setEditMirrors((prev) =>
-      prev.some((m) => m.url === GCR_MIRROR) ? prev : [...prev, { url: GCR_MIRROR, user: '', pass: '', showAuth: false }],
+      prev.some((m) => m.url === GCR_MIRROR)
+        ? prev
+        : [...prev, { url: GCR_MIRROR, user: '', pass: '', showAuth: false }],
     );
   };
 
@@ -202,7 +203,11 @@ export default function RegistriesPanel() {
     >
       <Key size={12} />
       {label}
-      {open ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />}
+      {open ? (
+        <ChevronDown size={14} className="text-slate-500" />
+      ) : (
+        <ChevronRight size={14} className="text-slate-500" />
+      )}
     </button>
   );
 
@@ -330,7 +335,9 @@ export default function RegistriesPanel() {
                       {registry.mirrors.length > 0 && (
                         <span
                           className="shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-500/15 text-cyan-300"
-                          title={registry.mirrors.map((m) => `${m.url}${m.has_auth ? ' (credentials)' : ''}`).join(', ')}
+                          title={registry.mirrors
+                            .map((m) => `${m.url}${m.has_auth ? ' (credentials)' : ''}`)
+                            .join(', ')}
                         >
                           {registry.mirrors.length} mirror{registry.mirrors.length > 1 ? 's' : ''}
                         </span>
@@ -339,7 +346,9 @@ export default function RegistriesPanel() {
                         className={`shrink-0 px-1.5 py-0.5 rounded text-xs font-medium ${
                           registry.has_auth ? 'bg-green-500/15 text-green-400' : 'bg-slate-700/50 text-slate-400'
                         }`}
-                        title={registry.has_auth ? `Credentials ending …${registry.auth_hint ?? ''}` : 'Anonymous pulls'}
+                        title={
+                          registry.has_auth ? `Credentials ending …${registry.auth_hint ?? ''}` : 'Anonymous pulls'
+                        }
                       >
                         {registry.has_auth ? `credentials …${registry.auth_hint ?? ''}` : 'anonymous'}
                       </span>
@@ -414,8 +423,11 @@ export default function RegistriesPanel() {
                   <div className="mt-3 space-y-3 border-t border-slate-700/30 pt-3">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs text-slate-400 mb-1">Name</label>
+                        <label htmlFor="edit-registry-name" className="block text-xs text-slate-400 mb-1">
+                          Name
+                        </label>
                         <input
+                          id="edit-registry-name"
                           type="text"
                           value={editName}
                           onChange={(e) => setEditName(e.target.value)}
@@ -423,8 +435,11 @@ export default function RegistriesPanel() {
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-slate-400 mb-1">URL</label>
+                        <label htmlFor="edit-registry-url" className="block text-xs text-slate-400 mb-1">
+                          URL
+                        </label>
                         <input
+                          id="edit-registry-url"
                           type="text"
                           value={editUrl}
                           onChange={(e) => setEditUrl(e.target.value)}
@@ -474,11 +489,18 @@ export default function RegistriesPanel() {
                         {editMirrors.map((mirror, index) => {
                           const stored = editingRegistry?.mirrors[index];
                           return (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: mirrors are managed positionally (updateMirror by index), inputs fully controlled
                             <div key={index} className="rounded-md border border-slate-700/40 p-2.5 space-y-2">
                               <div className="flex items-center gap-1">
                                 <div className="flex-1">
-                                  <label className="block text-xs text-slate-500 mb-1">URL</label>
+                                  <label
+                                    htmlFor={`edit-mirror-url-${index}`}
+                                    className="block text-xs text-slate-500 mb-1"
+                                  >
+                                    URL
+                                  </label>
                                   <input
+                                    id={`edit-mirror-url-${index}`}
                                     type="text"
                                     value={mirror.url}
                                     onChange={(e) => updateMirror(index, { url: e.target.value })}
@@ -531,7 +553,9 @@ export default function RegistriesPanel() {
                         })}
                         <button
                           type="button"
-                          onClick={() => setEditMirrors((prev) => [...prev, { url: '', user: '', pass: '', showAuth: false }])}
+                          onClick={() =>
+                            setEditMirrors((prev) => [...prev, { url: '', user: '', pass: '', showAuth: false }])
+                          }
                           className="px-2 py-1 rounded text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors cursor-pointer"
                         >
                           + Add mirror

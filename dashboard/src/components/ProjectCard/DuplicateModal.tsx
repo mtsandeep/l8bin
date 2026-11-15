@@ -1,6 +1,6 @@
 import { Copy, Database, Loader2, X } from 'lucide-react';
 import { useState } from 'react';
-import { type Node, ProjectStatus, duplicateProject } from '../../api';
+import { duplicateProject, type Node, ProjectStatus } from '../../api';
 import { useToast } from '../ToastContext';
 import OperationProgressModal from './OperationProgressModal';
 
@@ -83,7 +83,8 @@ export default function DuplicateModal({
   };
 
   const nodeButton = (node: Node, isCurrent: boolean) => {
-    const archBlocked = hasUploadedImage && !isCurrent && !!sourceArch && !!node.architecture && node.architecture !== sourceArch;
+    const archBlocked =
+      hasUploadedImage && !isCurrent && !!sourceArch && !!node.architecture && node.architecture !== sourceArch;
     const selected = targetId === node.id;
     return (
       <button
@@ -119,9 +120,7 @@ export default function DuplicateModal({
   };
 
   if (outcome) {
-    const successStatuses = startAfter
-      ? [ProjectStatus.Running, ProjectStatus.Degraded]
-      : [ProjectStatus.Stopped];
+    const successStatuses = startAfter ? [ProjectStatus.Running, ProjectStatus.Degraded] : [ProjectStatus.Stopped];
     return (
       <OperationProgressModal
         title={`Duplicating ${projectName}`}
@@ -139,10 +138,7 @@ export default function DuplicateModal({
   }
 
   return (
-    <div
-      data-l8b-modal
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-    >
+    <div data-l8b-modal className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-slate-900 border border-slate-700/50 rounded-lg p-5 max-w-md w-full mx-4 shadow-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -170,6 +166,7 @@ export default function DuplicateModal({
             'A new subdomain and fresh volumes are created for the copy',
             startAfter ? 'The copy starts alongside the original' : 'The copy is left stopped',
           ].map((step, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static step list, never reordered
             <li key={i} className="flex items-start gap-2 text-[11px] text-slate-400">
               <span className="w-4 h-4 rounded-full bg-slate-800 border border-slate-700 text-slate-500 text-[9px] flex items-center justify-center shrink-0 mt-0.5">
                 {i + 1}
@@ -200,8 +197,11 @@ export default function DuplicateModal({
 
         <div className="space-y-4">
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">New project id</label>
+            <label htmlFor="duplicate-new-id" className="block text-xs text-slate-400 mb-1.5">
+              New project id
+            </label>
             <input
+              id="duplicate-new-id"
               type="text"
               value={newId}
               onChange={(e) => setNewId(e.target.value.toLowerCase())}
@@ -220,15 +220,18 @@ export default function DuplicateModal({
             {idTakenLocally && <p className="text-[10px] text-red-400 mt-1">Same as the original id</p>}
             {idValid && !idTakenLocally && (
               <p className="text-[10px] text-slate-500 mt-1">
-                Subdomain: <span className="font-mono text-slate-400">{newId}.&lt;domain&gt;</span> — taken ids get a
-                -2 suffix automatically
+                Subdomain: <span className="font-mono text-slate-400">{newId}.&lt;domain&gt;</span> — taken ids get a -2
+                suffix automatically
               </p>
             )}
           </div>
 
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Name (optional)</label>
+            <label htmlFor="duplicate-name" className="block text-xs text-slate-400 mb-1">
+              Name (optional)
+            </label>
             <input
+              id="duplicate-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -238,7 +241,7 @@ export default function DuplicateModal({
           </div>
 
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5">Target node</label>
+            <span className="block text-xs text-slate-400 mb-1.5">Target node</span>
             <div className="space-y-1">
               {current && nodeButton(current, true)}
               {others.map((node) => nodeButton(node, false))}
@@ -267,7 +270,9 @@ export default function DuplicateModal({
               onChange={(e) => setIncludeEnv(e.target.checked)}
               className="accent-sky-500"
             />
-            <span className="text-xs text-slate-400">Copy .env secrets {includeEnv ? '' : '(copy starts with a blank .env)'}</span>
+            <span className="text-xs text-slate-400">
+              Copy .env secrets {includeEnv ? '' : '(copy starts with a blank .env)'}
+            </span>
           </label>
 
           <label className="flex items-center gap-2 cursor-pointer">

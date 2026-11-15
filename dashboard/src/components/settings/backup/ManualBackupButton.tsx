@@ -1,9 +1,9 @@
-import { DatabaseBackup } from "lucide-react";
-import { useState } from "react";
-import { createBackupPoint, type BackupStatus } from "../../../api";
-import { useToast } from "../../ToastContext";
-import type { Busy, RunFn } from "./helpers";
-import { inputCls } from "./helpers";
+import { DatabaseBackup } from 'lucide-react';
+import { useState } from 'react';
+import { type BackupStatus, createBackupPoint } from '../../../api';
+import { useToast } from '../../ToastContext';
+import type { Busy, RunFn } from './helpers';
+import { inputCls } from './helpers';
 
 interface Props {
   busy: Busy;
@@ -14,36 +14,36 @@ interface Props {
 /** Manual backup trigger: button + name modal (defaults to the current date-time). */
 export default function ManualBackupButton({ busy, run, onStatus }: Props) {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
+  const [name, setName] = useState('');
   const { showToast } = useToast();
 
   const defaultName = () => {
     const d = new Date();
     const month = [
-      "january",
-      "february",
-      "march",
-      "april",
-      "may",
-      "june",
-      "july",
-      "august",
-      "september",
-      "october",
-      "november",
-      "december",
+      'january',
+      'february',
+      'march',
+      'april',
+      'may',
+      'june',
+      'july',
+      'august',
+      'september',
+      'october',
+      'november',
+      'december',
     ][d.getMonth()];
     const hour = d.getHours() % 12 || 12;
-    const mins = String(d.getMinutes()).padStart(2, "0");
-    const ampm = d.getHours() < 12 ? "am" : "pm";
+    const mins = String(d.getMinutes()).padStart(2, '0');
+    const ampm = d.getHours() < 12 ? 'am' : 'pm';
     return `${d.getDate()} ${month} ${d.getFullYear()} ${hour}:${mins} ${ampm}`;
   };
 
   const create = async () => {
-    await run("point", async () => {
+    await run('point', async () => {
       const res = await createBackupPoint(name.trim() || defaultName());
       onStatus(res.status);
-      showToast("Manual backup saved, listed under Restore", "success");
+      showToast('Manual backup saved, listed under Restore', 'success');
     });
     setOpen(false);
   };
@@ -67,17 +67,10 @@ export default function ManualBackupButton({ busy, run, onStatus }: Props) {
           <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl">
             <div className="flex items-center gap-2 mb-3">
               <DatabaseBackup size={16} className="text-violet-400" />
-              <h3 className="text-sm font-semibold text-slate-100">
-                Create manual backup
-              </h3>
+              <h3 className="text-sm font-semibold text-slate-100">Create manual backup</h3>
             </div>
-            <p className="text-xs text-slate-400 mb-3">
-              Create snapshot of the live database right now
-            </p>
-            <label
-              htmlFor="manual-backup-name"
-              className="block text-xs text-slate-400 mb-1"
-            >
+            <p className="text-xs text-slate-400 mb-3">Create snapshot of the live database right now</p>
+            <label htmlFor="manual-backup-name" className="block text-xs text-slate-400 mb-1">
               Name
             </label>
             <input
@@ -87,6 +80,7 @@ export default function ManualBackupButton({ busy, run, onStatus }: Props) {
               onChange={(e) => setName(e.target.value)}
               className={inputCls}
               maxLength={64}
+              // biome-ignore lint/a11y/noAutofocus: deliberate — focus the name field when the dialog opens
               autoFocus
             />
             <div className="flex gap-2 mt-4">
@@ -104,7 +98,7 @@ export default function ManualBackupButton({ busy, run, onStatus }: Props) {
                 disabled={busy !== null}
                 className="flex-1 py-2 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                {busy === "point" ? "Creating…" : "Create backup"}
+                {busy === 'point' ? 'Creating…' : 'Create backup'}
               </button>
             </div>
           </div>

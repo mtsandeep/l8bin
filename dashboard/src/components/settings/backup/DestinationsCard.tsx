@@ -1,25 +1,10 @@
-import {
-  AlertTriangle,
-  Cloud,
-  CloudBackup,
-  DatabaseBackup,
-  HardDrive,
-  Pencil,
-  Plus,
-  Trash2,
-} from "lucide-react";
-import { useEffect, useState } from "react";
-import {
-  addBackupS3,
-  formatBytes,
-  removeBackupS3,
-  timeAgo,
-  type BackupStatus,
-} from "../../../api";
-import { useToast } from "../../ToastContext";
-import SettingsCard from "../SettingsCard";
-import type { Busy, DerivedBackup, RunFn } from "./helpers";
-import { inputCls, s3Provider } from "./helpers";
+import { AlertTriangle, Cloud, CloudBackup, DatabaseBackup, HardDrive, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { addBackupS3, type BackupStatus, formatBytes, removeBackupS3, timeAgo } from '../../../api';
+import { useToast } from '../../ToastContext';
+import SettingsCard from '../SettingsCard';
+import type { Busy, DerivedBackup, RunFn } from './helpers';
+import { inputCls, s3Provider } from './helpers';
 
 interface Props {
   status: BackupStatus;
@@ -30,34 +15,27 @@ interface Props {
 }
 
 /** Destinations: R2/S3 (primary when configured) and the local copy. */
-export default function DestinationsCard({
-  status,
-  derived,
-  busy,
-  run,
-  onStatus,
-}: Props) {
+export default function DestinationsCard({ status, derived, busy, run, onStatus }: Props) {
   const { s3Configured, replica, oldestMs, hasData, newestDaily } = derived;
   const { showToast } = useToast();
 
   const [formOpen, setFormOpen] = useState(false);
   const [existingNotice, setExistingNotice] = useState(false);
-  const [endpoint, setEndpoint] = useState("");
-  const [bucket, setBucket] = useState("");
-  const [prefix, setPrefix] = useState("");
-  const [accessKey, setAccessKey] = useState("");
-  const [secretKey, setSecretKey] = useState("");
+  const [endpoint, setEndpoint] = useState('');
+  const [bucket, setBucket] = useState('');
+  const [prefix, setPrefix] = useState('');
+  const [accessKey, setAccessKey] = useState('');
+  const [secretKey, setSecretKey] = useState('');
 
   // Keep the form prefilled from status while it is closed.
   useEffect(() => {
     if (formOpen) return;
-    setEndpoint(status.s3.endpoint || "");
-    setBucket(status.s3.bucket || "");
-    setPrefix(status.s3.prefix || "");
+    setEndpoint(status.s3.endpoint || '');
+    setBucket(status.s3.bucket || '');
+    setPrefix(status.s3.prefix || '');
   }, [formOpen, status.s3.endpoint, status.s3.bucket, status.s3.prefix]);
 
-  const formValid =
-    endpoint.trim() && bucket.trim() && accessKey.trim() && secretKey.trim();
+  const formValid = endpoint.trim() && bucket.trim() && accessKey.trim() && secretKey.trim();
 
   return (
     <SettingsCard icon={HardDrive} title="Destinations">
@@ -68,9 +46,7 @@ export default function DestinationsCard({
             <div className="flex items-center gap-3">
               <CloudBackup size={14} className="text-cyan-300 shrink-0" />
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-slate-200 truncate">
-                  {status.s3.bucket}
-                </p>
+                <p className="text-xs font-medium text-slate-200 truncate">{status.s3.bucket}</p>
                 <p className="text-xs text-slate-500">
                   {hasData && replica != null
                     ? `${replica.file_count} files · ${formatBytes(replica.size_bytes)} · restorable from ${
@@ -78,9 +54,9 @@ export default function DestinationsCard({
                           ? new Date(oldestMs).toLocaleString(undefined, {
                               hour12: true,
                             })
-                          : "—"
+                          : '—'
                       }`
-                    : "waiting for first sync… · 30-day retention"}
+                    : 'waiting for first sync… · 30-day retention'}
                 </p>
               </div>
               <span className="text-xs px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 font-semibold shrink-0">
@@ -100,7 +76,7 @@ export default function DestinationsCard({
                 </span>
                 {status.destination_health && !status.destination_health.ok && (
                   <span
-                    title={`${status.destination_health.detail ?? "probe failed"} — update Credentials if you rotated the keys in the provider console`}
+                    title={`${status.destination_health.detail ?? 'probe failed'} — update Credentials if you rotated the keys in the provider console`}
                     className="inline-flex items-center gap-1 text-[11px] text-amber-400 shrink-0"
                   >
                     <AlertTriangle size={11} /> not working
@@ -112,8 +88,8 @@ export default function DestinationsCard({
                   type="button"
                   onClick={() => {
                     setFormOpen(true);
-                    setAccessKey("");
-                    setSecretKey("");
+                    setAccessKey('');
+                    setSecretKey('');
                   }}
                   disabled={busy !== null}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-slate-300 hover:text-slate-100 hover:bg-slate-700/50 transition-colors cursor-pointer disabled:opacity-50"
@@ -123,13 +99,10 @@ export default function DestinationsCard({
                 <button
                   type="button"
                   onClick={() =>
-                    run("remove-s3", async () => {
+                    run('remove-s3', async () => {
                       const res = await removeBackupS3();
                       onStatus(res.status);
-                      showToast(
-                        "R2/S3 destination removed; local backup keeps running",
-                        "success",
-                      );
+                      showToast('R2/S3 destination removed; local backup keeps running', 'success');
                     })
                   }
                   disabled={busy !== null}
@@ -146,17 +119,15 @@ export default function DestinationsCard({
         <div className="flex items-center gap-3 rounded-md border border-slate-700/40 px-3 py-2.5">
           <DatabaseBackup size={14} className="text-green-400 shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-slate-200">
-              {s3Configured ? "Local daily backup" : "This server"}
-            </p>
+            <p className="text-xs font-medium text-slate-200">{s3Configured ? 'Local daily backup' : 'This server'}</p>
             <p className="text-xs text-slate-500">
               {s3Configured
                 ? newestDaily
-                  ? `${status.dailies.length} snapshot${status.dailies.length > 1 ? "s" : ""} · latest ${timeAgo(Math.floor(new Date(newestDaily.timestamp).getTime() / 1000))} · 30-day retention`
-                  : "daily snapshot from R2/S3 · 30-day retention"
+                  ? `${status.dailies.length} snapshot${status.dailies.length > 1 ? 's' : ''} · latest ${timeAgo(Math.floor(new Date(newestDaily.timestamp).getTime() / 1000))} · 30-day retention`
+                  : 'daily snapshot from R2/S3 · 30-day retention'
                 : hasData && replica != null
                   ? `${replica.file_count} files · ${formatBytes(replica.size_bytes)} · 30-day retention`
-                  : "backups/litebin.db · 30-day retention"}
+                  : 'backups/litebin.db · 30-day retention'}
             </p>
           </div>
           {s3Configured ? (
@@ -199,16 +170,11 @@ export default function DestinationsCard({
             <div className="flex items-center gap-2">
               <Cloud size={13} className="text-cyan-300" />
               <p className="text-xs font-medium text-slate-200">
-                {s3Configured
-                  ? "Update R2/S3 credentials"
-                  : "Add R2/S3 destination"}
+                {s3Configured ? 'Update R2/S3 credentials' : 'Add R2/S3 destination'}
               </p>
             </div>
             <div>
-              <label
-                htmlFor="backup-s3-endpoint"
-                className="block text-xs text-slate-400 mb-1"
-              >
+              <label htmlFor="backup-s3-endpoint" className="block text-xs text-slate-400 mb-1">
                 Endpoint
               </label>
               <input
@@ -222,10 +188,7 @@ export default function DestinationsCard({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label
-                  htmlFor="backup-s3-bucket"
-                  className="block text-xs text-slate-400 mb-1"
-                >
+                <label htmlFor="backup-s3-bucket" className="block text-xs text-slate-400 mb-1">
                   Bucket
                 </label>
                 <input
@@ -238,10 +201,7 @@ export default function DestinationsCard({
                 />
               </div>
               <div>
-                <label
-                  htmlFor="backup-s3-prefix"
-                  className="block text-xs text-slate-400 mb-1"
-                >
+                <label htmlFor="backup-s3-prefix" className="block text-xs text-slate-400 mb-1">
                   Prefix
                 </label>
                 <input
@@ -256,10 +216,7 @@ export default function DestinationsCard({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label
-                  htmlFor="backup-s3-access"
-                  className="block text-xs text-slate-400 mb-1"
-                >
+                <label htmlFor="backup-s3-access" className="block text-xs text-slate-400 mb-1">
                   Access key ID
                 </label>
                 <input
@@ -272,10 +229,7 @@ export default function DestinationsCard({
                 />
               </div>
               <div>
-                <label
-                  htmlFor="backup-s3-secret"
-                  className="block text-xs text-slate-400 mb-1"
-                >
+                <label htmlFor="backup-s3-secret" className="block text-xs text-slate-400 mb-1">
                   Secret access key
                 </label>
                 <input
@@ -292,7 +246,7 @@ export default function DestinationsCard({
               <button
                 type="button"
                 onClick={() =>
-                  run("s3", async () => {
+                  run('s3', async () => {
                     const res = await addBackupS3({
                       endpoint,
                       bucket,
@@ -305,19 +259,16 @@ export default function DestinationsCard({
                       return;
                     }
                     onStatus(res.status);
-                    setAccessKey("");
-                    setSecretKey("");
+                    setAccessKey('');
+                    setSecretKey('');
                     setFormOpen(false);
-                    showToast(
-                      "Destination saved; backup now streams to R2/S3",
-                      "success",
-                    );
+                    showToast('Destination saved; backup now streams to R2/S3', 'success');
                   })
                 }
                 disabled={busy !== null || !formValid}
                 className="px-4 py-1.5 rounded-md text-xs font-medium bg-cyan-600/80 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                {busy === "s3" ? "Saving…" : "Save destination"}
+                {busy === 's3' ? 'Saving…' : 'Save destination'}
               </button>
               <button
                 type="button"
@@ -338,15 +289,12 @@ export default function DestinationsCard({
           <div className="bg-slate-800 border border-slate-700/50 rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl">
             <div className="flex items-center gap-2 mb-3">
               <Cloud size={16} className="text-cyan-300" />
-              <h3 className="text-sm font-semibold text-slate-100">
-                Destination contains existing files
-              </h3>
+              <h3 className="text-sm font-semibold text-slate-100">Destination contains existing files</h3>
             </div>
             <p className="text-xs text-slate-400 mb-4">
-              This destination already holds backup files (from a previous setup
-              or another server). LiteBin starts a new backup alongside them;
-              the old files stay untouched. Remove them from the bucket console
-              if not wanted.
+              This destination already holds backup files (from a previous setup or another server). LiteBin starts a
+              new backup alongside them; the old files stay untouched. Remove them from the bucket console if not
+              wanted.
             </p>
             <div className="flex gap-2">
               <button
@@ -360,7 +308,7 @@ export default function DestinationsCard({
               <button
                 type="button"
                 onClick={() =>
-                  run("s3", async () => {
+                  run('s3', async () => {
                     const res = await addBackupS3(
                       {
                         endpoint,
@@ -373,19 +321,16 @@ export default function DestinationsCard({
                     );
                     setExistingNotice(false);
                     onStatus(res.status);
-                    setAccessKey("");
-                    setSecretKey("");
+                    setAccessKey('');
+                    setSecretKey('');
                     setFormOpen(false);
-                    showToast(
-                      "Destination saved; backup now streams to R2/S3",
-                      "success",
-                    );
+                    showToast('Destination saved; backup now streams to R2/S3', 'success');
                   })
                 }
                 disabled={busy !== null}
                 className="flex-1 py-2 rounded-md text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                {busy === "s3" ? "Saving…" : "Continue"}
+                {busy === 's3' ? 'Saving…' : 'Continue'}
               </button>
             </div>
           </div>
