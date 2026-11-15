@@ -232,6 +232,30 @@ jobs:
           sha256sum linux/l8b-dashboard.tar.gz >> checksums.txt
           sha256sum linux/l8b-dashboard.zip >> checksums.txt
 
+      - name: Extract this version's changelog section
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$DISPATCH_TAG" ]; then
+            TAG="$DISPATCH_TAG"
+          fi
+          VERSION="${TAG#v}"
+          # Print only the "## [VERSION]" section: from its heading to the
+          # next "## [" heading (exclusive), with surrounding blanks trimmed.
+          awk -v ver="$VERSION" '
+            index($0, "## [" ver "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found && !started && NF == 0 { next }
+            found { started = 1; buf = buf $0 "\n" }
+            END { sub(/\n+$/, "", buf); printf "%s", buf }
+          ' CHANGELOG.md > release_body.md
+          if [ ! -s release_body.md ]; then
+            echo "::error::No '## [$VERSION]' section found in CHANGELOG.md — cannot build release notes"
+            exit 1
+          fi
+          head -5 release_body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -251,4 +275,4 @@ jobs:
             artifacts/docs/openapi.json
             artifacts/docs/cli-reference.md
             artifacts/docs/llms-full.txt
-          body_path: CHANGELOG.md
+          body_path: release_body.md

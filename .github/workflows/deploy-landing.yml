@@ -42,6 +42,6 @@ jobs:
         with:
           server: ${{ secrets.L8B_SERVER }}
           token: ${{ secrets.L8B_TOKEN }}
-          project_id: landing
+          project_id: l8bin
           port: '80'
           path: landing
