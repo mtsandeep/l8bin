@@ -30,7 +30,7 @@ pub enum DeployKind {
 }
 
 /// Pin the exact action version; bump deliberately (managed files reference it).
-pub const ACTION_REF: &str = "mtsandeep/l8bin-action@v0.2.1";
+pub const ACTION_REF: &str = "mtsandeep/l8bin-action@v1";
 pub const WORKFLOW_NAME: &str = "LiteBin Deploy";
 /// Repo-level secret shared by every project linked to the repo.
 pub const SERVER_SECRET: &str = "L8B_SERVER";

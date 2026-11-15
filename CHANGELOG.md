@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **l8bin-action updated to v1** (floating tag).
+
 ## [0.4.27] - 2026-11-15
 
 ### Added

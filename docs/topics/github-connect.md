@@ -69,7 +69,7 @@ per repo:
   path-filtered** (`paths: [<folder>/**]` for subfolder links; root links
   `paths-ignore` their own workflow file so re-links never self-trigger)
 - per-project concurrency group with cancel-in-progress
-- pinned `mtsandeep/l8bin-action@v0.2.1`, shared `L8B_SERVER` + per-project
+- pinned `mtsandeep/l8bin-action@v1`, shared `L8B_SERVER` + per-project
   `L8B_TOKEN_<PROJECT>` secrets referenced — never inlined
 - `port:` written only when the link specifies one — otherwise the CLI detects it
   from the Dockerfile `EXPOSE` at deploy time (the link form prefills from the
