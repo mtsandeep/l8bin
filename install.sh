@@ -2,6 +2,9 @@
 set -euo pipefail
 
 REPO="mtsandeep/l8bin"
+IMAGE_REPO="ghcr.io/${REPO}"
+# Release tag whose prebuilt images to pull (set when pull succeeds; empty = local assembly).
+L8B_IMAGE_TAG=""
 L8B_IN="${L8B_IN:-https://l8b.in}"
 CHANGELOG_URL="${CHANGELOG_URL:-https://github.com/${REPO}/releases}"
 VPS_SETUP_URL="${VPS_SETUP_URL:-https://gist.github.com/mtsandeep/fbcfe30351d78b8ff9ec9d3c75354ec6}"
@@ -566,7 +569,9 @@ compose_up() {
   local install_dir="$1"
   shift
   local out
-  if ! out=$(cd "$install_dir" && docker compose up -d --build "$@" 2>&1); then
+  local build_flag="--build"
+  [ -n "$L8B_IMAGE_TAG" ] && build_flag=""
+  if ! out=$(cd "$install_dir" && docker compose up -d $build_flag "$@" 2>&1); then
     echo "$out" | tail -20 >&2
     if echo "$out" | grep -qi "permission denied.*docker.sock"; then
       die "No Docker socket access for user '$(id -un)'. Fix: sudo usermod -aG docker $(id -un), re-login (or: newgrp docker), then: cd ${install_dir} && docker compose up -d --build"
@@ -577,6 +582,19 @@ compose_up() {
 }
 
 # (Re)generate the orchestrator Dockerfile.
+# Pull prebuilt release images; sets L8B_IMAGE_TAG on success. L8B_NO_PULL=1
+# forces the local-assembly path (offline installs, custom builds).
+pull_release_images() {
+  local tag="$1"
+  [ -z "${L8B_NO_PULL:-}" ] || return 1
+  local img
+  for img in orchestrator dashboard; do
+    docker pull "${IMAGE_REPO}/${img}:${tag}" >/dev/null 2>&1 || return 1
+  done
+  L8B_IMAGE_TAG="$tag"
+  return 0
+}
+
 write_orchestrator_dockerfile() {
   local install_dir="$1"
   cat > "${install_dir}/orchestrator/Dockerfile" <<'ORCH_DOCKERFILE'
@@ -667,10 +685,17 @@ generate_compose() {
 "
   fi
 
+  local orch_source="build: ./orchestrator"
+  local dash_source="build: ./dashboard"
+  if [ -n "$L8B_IMAGE_TAG" ]; then
+    orch_source="image: ${IMAGE_REPO}/orchestrator:${L8B_IMAGE_TAG}"
+    dash_source="image: ${IMAGE_REPO}/dashboard:${L8B_IMAGE_TAG}"
+  fi
+
   cat > "$dest" <<COMPOSE_EOF
 services:
   orchestrator:
-    build: ./orchestrator
+    ${orch_source}
     container_name: litebin-orchestrator
     restart: unless-stopped
     logging:
@@ -688,7 +713,7 @@ ${orch_volumes}
       - litebin-network
 
   dashboard:
-    build: ./dashboard
+    ${dash_source}
     container_name: litebin-dashboard
     restart: unless-stopped
     logging:
@@ -890,6 +915,11 @@ install_master() {
 
   # Generate orchestrator Dockerfile
   write_orchestrator_dockerfile "${install_dir}"
+
+  # Prefer prebuilt images (no local build; works on any runtime, incl. podman)
+  if pull_release_images "${release_url}"; then
+    info "Using prebuilt images (${IMAGE_REPO}...:${release_url})"
+  fi
 
   # -- Interactive prompts ------------------------------------------------
   echo ""
@@ -1695,6 +1725,10 @@ update_master() {
 
   write_orchestrator_dockerfile "${install_dir}"
 
+  if pull_release_images "${target_release}"; then
+    info "Using prebuilt images (${IMAGE_REPO}...:${target_release})"
+  fi
+
   # Download new dashboard
   install_dashboard_package "$install_dir" "$target_release"
 
@@ -1704,7 +1738,9 @@ update_master() {
     # Staged, not applied.
     echo "$target_release" > "${install_dir}/.version"
     info "Update staged — the running version is unchanged until you restart:"
-    echo -e "  ${DIM}cd ${install_dir} && docker compose up -d --build${NC}"
+    local apply_cmd="docker compose up -d --build"
+    [ -n "$L8B_IMAGE_TAG" ] && apply_cmd="docker compose up -d"
+    echo -e "  ${DIM}cd ${install_dir} && ${apply_cmd}${NC}"
     exit 0
   fi
 

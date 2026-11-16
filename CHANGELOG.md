@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 - **Podman nodes with CRIU checkpoint sleep** — nodes may run podman instead of Docker (same Docker-compatible API, `CONTAINER_RUNTIME=podman`); projects opt in via `sleep_mode: checkpoint` so idle apps are frozen with CRIU instead of stopped and wake by restore in ~1s with state intact — no app boot (~10× faster than cold boot on a real Java app). Checkpointing falls back to a plain stop on failure; wake tries restore before start. Node setup guide: `docs/topics/podman-nodes.md`.
 - **Checkpoint sleep UI** — Sleep popover gains a Stop/Checkpoint mode selector (enabled only on nodes reporting podman support), a Freeze button on the card for checkpoint stops, and a Frozen badge in place of Stopped while a project is frozen.
 
+### Changed
+- **Installs and updates pull prebuilt images from GHCR** — releases publish orchestrator/dashboard/agent images (amd64 + arm64); the installer pulls them instead of assembling images locally. Releases published before these images existed still install by local assembly, as they always did (`L8B_NO_PULL=1` forces it).
+
 ## [0.4.28] - 2026-11-15
 
 ### Changed

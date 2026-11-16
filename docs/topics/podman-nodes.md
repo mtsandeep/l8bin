@@ -51,6 +51,16 @@ it from the node list to enable the checkpoint option per project. The
 orchestrator's own ("local") node can run on podman the same way — set
 `CONTAINER_RUNTIME=podman` on the orchestrator container and mount the socket.
 
+Installs and updates pull prebuilt images from GHCR (`ghcr.io/mtsandeep/l8bin/…`),
+so no image builds happen on the server on either runtime. Set `L8B_NO_PULL=1`
+to force the local-assembly path (offline installs, custom builds).
+
+Building from a source checkout on podman: use `scripts/dev-up-podman.sh` —
+it builds with podman's native builder (buildah) and starts the stack without
+compose-side builds. Avoid `docker compose up --build` on podman: compose would
+either try to boot a buildkitd container (unsupported) or fall back to the
+deprecated classic build protocol (`DOCKER_BUILDKIT=0`).
+
 ## Enabling checkpoint sleep per project
 
 Dashboard → project → **Sleep** popover → **Sleep mode: Checkpoint** (only

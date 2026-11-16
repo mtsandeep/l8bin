@@ -206,8 +206,110 @@ jobs:
           name: windows
           path: staging/*
 
+  # Publish runtime images to GHCR, assembled from the release artifacts the
+  # installer would otherwise assemble locally (COPY-only builds — no compile).
+  # Installs then `docker pull` instead of building on the server, which also
+  # removes the compose-build/builder question on podman nodes.
+  publish-images:
+    needs: [check, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      OWNER_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: staging
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}" >> "$GITHUB_OUTPUT"
+
+      # Runtime Dockerfiles mirror install.sh's write_orchestrator_dockerfile /
+      # write_agent_dockerfile; the dashboard Dockerfile ships in its tarball.
+      - name: Assemble build contexts
+        run: |
+          mkdir -p ctx/orch-amd64 ctx/orch-arm64 ctx/agent-amd64 ctx/agent-arm64 ctx/dash
+          cp staging/litebin-orchestrator-x86_64-linux  ctx/orch-amd64/litebin-orchestrator
+          cp staging/litebin-orchestrator-aarch64-linux ctx/orch-arm64/litebin-orchestrator
+          cp staging/litebin-agent-x86_64-linux         ctx/agent-amd64/litebin-agent
+          cp staging/litebin-agent-aarch64-linux        ctx/agent-arm64/litebin-agent
+          for d in ctx/orch-amd64 ctx/orch-arm64; do
+            printf '%s\n' \
+              'FROM debian:trixie-slim' \
+              'RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*' \
+              'ENV _RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2' \
+              'COPY litebin-orchestrator /app/litebin-orchestrator' \
+              'RUN chmod +x /app/litebin-orchestrator' \
+              'WORKDIR /app' \
+              'RUN mkdir -p /app/data' \
+              'CMD ["/app/litebin-orchestrator"]' > "$d/Dockerfile"
+          done
+          for d in ctx/agent-amd64 ctx/agent-arm64; do
+            printf '%s\n' \
+              'FROM debian:trixie-slim' \
+              'RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*' \
+              'ENV _RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2' \
+              'COPY litebin-agent /usr/local/bin/litebin-agent' \
+              'RUN chmod +x /usr/local/bin/litebin-agent' \
+              'WORKDIR /etc/litebin' \
+              'RUN mkdir -p /etc/litebin/data' \
+              'EXPOSE 8443' \
+              'CMD ["/usr/local/bin/litebin-agent"]' > "$d/Dockerfile"
+          done
+          tar -xzf staging/l8b-dashboard.tar.gz -C ctx/dash
+
+      - name: Build and push multi-arch images
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          build() { # image ctx-dir platform
+            local name="$1" ctx="$2" platform="$3"
+            local repo="${REGISTRY}/${OWNER_REPO}/${name}"
+            local meta="/tmp/meta-${name}-${platform//\//-}.json"
+            docker buildx build \
+              --platform "$platform" \
+              --output "type=image,name=${repo},push-by-digest=true,name-canonical=true,push=true" \
+              --metadata-file "$meta" \
+              "$ctx"
+            jq -r '."containerimage.digest"' "$meta" > "/tmp/d-${name}-${platform//\//-}"
+          }
+          merge() { # image digest-suffixes...
+            local name="$1"; shift
+            local repo="${REGISTRY}/${OWNER_REPO}/${name}"
+            local sources=()
+            for s in "$@"; do sources+=("${repo}@$(cat "/tmp/d-${name}-${s}")"); done
+            docker buildx imagetools create -t "${repo}:${TAG}" -t "${repo}:latest" "${sources[@]}"
+          }
+          build orchestrator ctx/orch-amd64 linux/amd64
+          build orchestrator ctx/orch-arm64 linux/arm64
+          merge orchestrator linux-amd64 linux-arm64
+          build agent ctx/agent-amd64 linux/amd64
+          build agent ctx/agent-arm64 linux/arm64
+          merge agent linux-amd64 linux-arm64
+          build dashboard ctx/dash linux/amd64
+          build dashboard ctx/dash linux/arm64
+          merge dashboard linux-amd64 linux-arm64
+
   release:
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-macos, build-windows, publish-images]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
