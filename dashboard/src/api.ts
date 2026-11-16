@@ -90,6 +90,8 @@ export interface Project {
   auto_stop_timeout_mins: number;
   auto_start_enabled: boolean;
   allow_raw_ports: boolean;
+  sleep_mode: SleepMode;
+  frozen: boolean;
   custom_domain: string | null;
   service_count: number | null;
   service_summary: string | null;
@@ -103,6 +105,8 @@ export interface Project {
 export interface ProjectStats {
   project_id: string;
   status: ProjectStatus;
+  /** Present when the project is stopped via CRIU checkpoint ("frozen"). */
+  frozen?: boolean;
   last_active_at?: number | null;
   services: ServiceInfo[];
 }
@@ -149,6 +153,8 @@ export async function deployProject(payload: DeployPayload): Promise<void> {
   }
 }
 
+export type SleepMode = 'stop' | 'checkpoint';
+
 export interface ProjectSettings {
   name?: string;
   description?: string;
@@ -157,6 +163,7 @@ export interface ProjectSettings {
   auto_stop_timeout_mins?: number;
   auto_start_enabled?: boolean;
   allow_raw_ports?: boolean;
+  sleep_mode?: SleepMode;
   cmd?: string;
   memory_limit_mb?: number | null;
   cpu_limit?: number | null;
@@ -698,11 +705,14 @@ export async function recreateProject(projectId: string, services?: string[], pu
   return data.warnings ?? [];
 }
 
-export async function stopProject(projectId: string): Promise<string[] | undefined> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/stop`, {
-    method: 'POST',
-    credentials: 'include',
-  });
+export async function stopProject(projectId: string, opts?: { checkpoint?: boolean }): Promise<string[] | undefined> {
+  const init: RequestInit = { method: 'POST', credentials: 'include' };
+  // Only send a body when options are given — plain stop stays body-less.
+  if (opts) {
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify({ checkpoint: opts.checkpoint === true });
+  }
+  const res = await fetch(`${API_BASE}/projects/${projectId}/stop`, init);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(parseErrorMessage(text, 'Stop failed'));
@@ -1077,6 +1087,7 @@ export interface Node {
   container_count: number;
   last_seen_at: number | null;
   fail_count: number;
+  supports_checkpoint: boolean;
   created_at: number;
   updated_at: number;
 }

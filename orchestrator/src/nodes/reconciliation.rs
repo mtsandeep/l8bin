@@ -266,6 +266,7 @@ mod tests {
                 container_count INTEGER NOT NULL DEFAULT 0,
                 last_seen_at INTEGER,
                 fail_count INTEGER NOT NULL DEFAULT 0,
+                supports_checkpoint INTEGER NOT NULL DEFAULT 0,
                 agent_secret TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL

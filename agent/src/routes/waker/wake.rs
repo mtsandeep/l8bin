@@ -552,6 +552,7 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
                                         deploy_type: None,
                                         demo_parent_id: None,
                                         sleep_mode: litebin_common::types::SleepMode::Stop,
+            frozen: false,
                                         created_at: 0,
                                         updated_at: 0,
                                     };

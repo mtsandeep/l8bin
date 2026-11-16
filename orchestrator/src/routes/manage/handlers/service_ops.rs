@@ -148,7 +148,7 @@ pub async fn stop_service(
     } else {
         let mut services = HashSet::new();
         services.insert(service_name.clone());
-        stop_services(&state, &project_id, Some(&services)).await?;
+        stop_services(&state, &project_id, Some(&services), false).await?;
     }
 
     // Derive project status from aggregate service states

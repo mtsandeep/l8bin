@@ -702,6 +702,7 @@ services:
             deploy_type: Some(crate::types::DeployType::Image),
             demo_parent_id: None,
             sleep_mode: crate::types::SleepMode::Stop,
+            frozen: false,
             created_at: 0,
             updated_at: 0,
         };

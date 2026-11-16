@@ -50,6 +50,15 @@ LiteBin manages containers directly via the Docker API using the `bollard` crate
 - **Simple networking** — One bridge network (plus per-project networks for multi-service), DNS-based service discovery. No CNI plugins, no overlay networks, no network policies.
 - **Container lifecycle is simple** — `docker run`, `docker stop`, `docker rm`. The orchestrator handles scheduling. No pods, no ReplicaSets, no StatefulSets.
 
+**Podman note (amendment):** nodes may run [podman](../topics/podman-nodes.md)
+instead of Docker — it implements the same API, so `bollard` and every
+lifecycle path work unchanged. The motivation is CRIU checkpoint/restore: an
+opt-in per-project sleep mode (`sleep_mode: checkpoint`) freezes idle apps
+and wakes them in ~1 s with memory intact, skipping app boot entirely.
+Checkpoint/restore itself is driven through podman's native libpod API (it
+has no Docker API equivalent), with plain stop/start as the universal
+fallback so behavior on Docker nodes is byte-identical to before.
+
 Kubernetes would add: etcd, kube-apiserver, kube-scheduler, kube-controller-manager, kubelet, containerd, CNI — six additional system services, each consuming memory and requiring maintenance. For LiteBin's use case, this is pure overhead.
 
 ## Why Scale-to-Zero

@@ -1,24 +1,43 @@
 import { ChevronDown, Moon } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { type Project, updateProjectSettings } from '../../api';
+import { fetchNodes, type Project, type SleepMode, updateProjectSettings } from '../../api';
 import { useToast } from '../ToastContext';
 
 interface SleepPopoverProps {
   project: Project;
-  onChange: (autoStop: boolean, timeoutMins: number, autoStart: boolean) => void;
+  /** Parent-tracked so a saved choice persists across reopens. */
+  sleepMode?: SleepMode;
+  onChange: (autoStop: boolean, timeoutMins: number, autoStart: boolean, sleepMode: SleepMode) => void;
   onClose: () => void;
 }
 
-export default function SleepPopover({ project, onChange, onClose }: SleepPopoverProps) {
+export default function SleepPopover({ project, sleepMode: parentSleepMode, onChange, onClose }: SleepPopoverProps) {
   const [autoStop, setAutoStop] = useState(project.auto_stop_enabled);
   const [timeoutMins, setTimeoutMins] = useState(project.auto_stop_timeout_mins);
   const [autoStart, setAutoStart] = useState(project.auto_start_enabled);
+  const [sleepMode, setSleepMode] = useState<SleepMode>(parentSleepMode ?? project.sleep_mode ?? 'stop');
+  // Unknown (null) until the node list resolves; checkpoint stays disabled meanwhile.
+  const [checkpointSupported, setCheckpointSupported] = useState<boolean | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
   const autoStopWarningId = useId();
-  const initialRef = useRef({ autoStop, timeoutMins, autoStart });
+  const initialRef = useRef({ autoStop, timeoutMins, autoStart, sleepMode });
   const ref = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchNodes()
+      .then((nodes) => {
+        if (cancelled) return;
+        const node = nodes.find((n) => n.id === (project.node_id ?? 'local'));
+        setCheckpointSupported(node?.supports_checkpoint ?? false);
+      })
+      .catch(() => !cancelled && setCheckpointSupported(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [project.node_id]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -26,8 +45,17 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
         handleSaveAndClose();
       }
     };
+    const escapeHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleSaveAndClose();
+      }
+    };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('keydown', escapeHandler);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', escapeHandler);
+    };
   });
 
   const handleSaveAndClose = async () => {
@@ -37,12 +65,13 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
     if (autoStop !== initial.autoStop) patch.auto_stop_enabled = autoStop;
     if (timeoutMins !== initial.timeoutMins) patch.auto_stop_timeout_mins = timeoutMins;
     if (autoStart !== initial.autoStart) patch.auto_start_enabled = autoStart;
+    if (sleepMode !== initial.sleepMode) patch.sleep_mode = sleepMode;
 
     if (Object.keys(patch).length > 0) {
       setSettingsError(null);
       try {
         await updateProjectSettings(project.id, patch);
-        onChange(autoStop, timeoutMins, autoStart);
+        onChange(autoStop, timeoutMins, autoStart, sleepMode);
       } catch (e) {
         setSettingsError(e instanceof Error ? e.message : 'Failed to update settings');
         showToast(e instanceof Error ? e.message : 'Failed to update settings');
@@ -107,8 +136,46 @@ export default function SleepPopover({ project, onChange, onClose }: SleepPopove
               min={1}
               value={timeoutMins}
               onChange={(e) => setTimeoutMins(Number(e.target.value))}
-              className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 text-right focus:outline-none focus:border-violet-500"
+              className="w-16 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-200 text-right focus:outline-none focus:border-violet-500"
             />
+          </div>
+        )}
+        {!project.is_background && autoStop && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-slate-300">Sleep mode</span>
+              <div className="flex rounded-md border border-slate-600 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setSleepMode('stop')}
+                  className={`px-2 py-0.5 text-[11px] cursor-pointer transition-colors ${sleepMode === 'stop' ? 'bg-violet-500 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                >
+                  Stop
+                </button>
+                <button
+                  type="button"
+                  disabled={!checkpointSupported}
+                  onClick={() => setSleepMode('checkpoint')}
+                  title={checkpointSupported ? undefined : 'Requires a podman node with CRIU'}
+                  className={`px-2 py-0.5 text-[11px] transition-colors border-l border-slate-600 ${
+                    sleepMode === 'checkpoint'
+                      ? 'bg-violet-500 text-white'
+                      : checkpointSupported
+                        ? 'bg-slate-700 text-slate-300 hover:bg-slate-600 cursor-pointer'
+                        : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  }`}
+                >
+                  Checkpoint
+                </button>
+              </div>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-400">
+              {checkpointSupported
+                ? sleepMode === 'checkpoint'
+                  ? 'Idle apps are frozen with CRIU and resume in ~1s on the next request — no reboot, state preserved. Uses disk equal to app memory while sleeping.'
+                  : 'Idle apps stop and reboot on the next request (seconds for most frameworks).'
+                : 'Checkpoint sleep needs a node running podman with CRIU. This project’s node uses plain stop.'}
+            </p>
           </div>
         )}
         {!project.is_background && (

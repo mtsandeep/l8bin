@@ -9,6 +9,9 @@ pub use litebin_common::types::{ServiceInfo, ServiceVolumeInfo};
 pub struct StatsResponse {
     pub project_id: String,
     pub status: String,
+    /// True when stopped via CRIU checkpoint — dashboard "Frozen" badge.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub frozen: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_active_at: Option<i64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

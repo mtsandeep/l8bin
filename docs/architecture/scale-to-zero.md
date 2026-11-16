@@ -12,6 +12,13 @@ visitor returns → Caddy catch-all → waker holds the request
                      (waiting page + single reload only when the wake is slow)
 ```
 
+On podman nodes, projects with `sleep_mode: checkpoint` skip app boot at wake:
+the janitor CRIU-checkpoints the idle container instead of stopping it, and
+the waker restores it (~1 s, memory intact). See
+[podman-nodes.md](../topics/podman-nodes.md). Everything else in this document
+— held request, readiness probe, single-flight wake, recreate fallbacks —
+applies identically to both modes.
+
 ---
 
 # Part 1: Waker — Wake-on-Request

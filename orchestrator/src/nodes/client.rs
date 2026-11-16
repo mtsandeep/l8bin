@@ -351,9 +351,27 @@ impl AgentClient {
         self.post_json(litebin_common::agent_api::START_PATH, req, LIFECYCLE_TIMEOUT).await
     }
 
-    /// POST /containers/stop — stop a container (agent answers 200 with empty body).
-    pub async fn stop(&self, req: &litebin_common::agent_api::StopRequest) -> Result<(), AgentClientError> {
-        self.post_status(litebin_common::agent_api::STOP_PATH, req, LIFECYCLE_TIMEOUT).await
+    /// POST /containers/stop — returns whether the container checkpointed
+    /// (older agents' empty body → false).
+    pub async fn stop(
+        &self,
+        req: &litebin_common::agent_api::StopRequest,
+    ) -> Result<litebin_common::agent_api::StopOutcome, AgentClientError> {
+        let resp = self
+            .client
+            .post(self.url(litebin_common::agent_api::STOP_PATH))
+            .timeout(LIFECYCLE_TIMEOUT)
+            .json(req)
+            .send()
+            .await
+            .map_err(Self::map_transport)?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AgentClientError::Status { code: status, body });
+        }
+        // Empty or non-JSON body (older agents) → default outcome, not an error.
+        Ok(resp.json::<litebin_common::agent_api::StopOutcome>().await.unwrap_or_default())
     }
 
     /// POST /containers/stop-project — stop every container of a project.

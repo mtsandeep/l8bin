@@ -40,6 +40,10 @@ pub async fn transition(
     let mut qb = sqlx::QueryBuilder::new("UPDATE projects SET ");
     qb.push("status = ").push_bind(new_status.clone());
     qb.push(", updated_at = ").push_bind(now);
+    // Coming back to life invalidates any CRIU "frozen" badge.
+    if matches!(new_status, ProjectStatus::Running | ProjectStatus::Deploying | ProjectStatus::Importing) {
+        qb.push(", frozen = 0");
+    }
 
     if let Some(ref cid) = extra.container_id {
         qb.push(", container_id = ");
@@ -301,5 +305,14 @@ pub async fn sync_single_service_row(db: &SqlitePool, project_id: &str, containe
     .await
     {
         tracing::warn!(project_id = %project_id, error = %e, "status: failed to sync single service row");
+    }
+}
+
+/// Best-effort set/clear of the presentational "frozen" flag.
+pub async fn set_project_frozen(db: &sqlx::SqlitePool, project_id: &str, frozen: bool) {
+    if let Err(e) =
+        sqlx::query("UPDATE projects SET frozen = ? WHERE id = ?").bind(frozen).bind(project_id).execute(db).await
+    {
+        tracing::warn!(project_id = %project_id, error = %e, "failed to update frozen flag");
     }
 }

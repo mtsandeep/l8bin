@@ -392,6 +392,7 @@ pub(super) async fn batch_load_services(
 pub(super) fn make_stats_response(
     project_id: String,
     status: ProjectStatus,
+    frozen: bool,
     last_active_at: Option<i64>,
     services: Vec<ServiceInfo>,
 ) -> StatsResponse {
@@ -409,7 +410,13 @@ pub(super) fn make_stats_response(
     } else {
         ProjectStatus::Running
     };
-    StatsResponse { project_id, status: effective_status.to_string(), last_active_at, services }
+    StatsResponse {
+        project_id,
+        status: effective_status.to_string(),
+        frozen: frozen && effective_status == ProjectStatus::Stopped,
+        last_active_at,
+        services,
+    }
 }
 
 pub(super) fn inactive_project_status(project_status: ProjectStatus, services: &[ServiceInfo]) -> ProjectStatus {
@@ -491,6 +498,7 @@ mod tests {
         let response = make_stats_response(
             "test".to_string(),
             ProjectStatus::Running,
+            false,
             None,
             vec![
                 service("migration", ProjectStatus::Completed),
@@ -507,6 +515,7 @@ mod tests {
         let response = make_stats_response(
             "test".to_string(),
             ProjectStatus::Running,
+            false,
             None,
             vec![
                 service("migration", ProjectStatus::Completed),
@@ -523,6 +532,7 @@ mod tests {
         let response = make_stats_response(
             "test".to_string(),
             ProjectStatus::Running,
+            false,
             None,
             vec![
                 service("migration", ProjectStatus::Completed),

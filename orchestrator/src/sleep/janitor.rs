@@ -137,12 +137,23 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
         let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
         let containers = service_containers.get(&project.id).cloned().unwrap_or_default();
 
+        // Frozen badge only when every workload really checkpointed.
+        let mut any_outcome = false;
+        let mut all_checkpointed = true;
+        let mut record = |checkpointed: bool| {
+            any_outcome = true;
+            all_checkpointed &= checkpointed;
+        };
+
         if project.deploy_type == Some(DeployType::Compose) {
             // Multi-service: stop all service containers
             if is_local {
                 for (_svc_name, cid) in containers.iter().rev() {
-                    if let Some(container_id) = cid {
-                        stop_local_container(state, &project.id, container_id, project.sleep_mode).await;
+                    if let Some(container_id) = cid
+                        && let Some(outcome) =
+                            stop_local_container(state, &project.id, container_id, project.sleep_mode).await
+                    {
+                        record(outcome == litebin_common::docker::SleepOutcome::Checkpointed);
                     }
                 }
             } else {
@@ -151,8 +162,11 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
                     _ => continue,
                 };
                 for (_svc_name, cid) in containers.iter().rev() {
-                    if let Some(container_id) = cid {
-                        stop_remote_container(state, &project.id, &node_id, container_id, false).await;
+                    if let Some(container_id) = cid
+                        && let Some(checkpointed) =
+                            stop_remote_container(state, &project.id, &node_id, container_id, false).await
+                    {
+                        record(checkpointed);
                     }
                 }
             }
@@ -161,11 +175,22 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
         {
             // Single-service: stop the one container
             if is_local {
-                stop_local_container(state, &project.id, container_id, project.sleep_mode).await;
+                if let Some(outcome) = stop_local_container(state, &project.id, container_id, project.sleep_mode).await
+                {
+                    record(outcome == litebin_common::docker::SleepOutcome::Checkpointed);
+                }
             } else {
                 let node_id = project.node_id.as_deref().unwrap();
-                stop_remote_container(state, &project.id, node_id, container_id, false).await;
+                if let Some(checkpointed) =
+                    stop_remote_container(state, &project.id, node_id, container_id, false).await
+                {
+                    record(checkpointed);
+                }
             }
+        }
+
+        if any_outcome {
+            status::set_project_frozen(&state.db, &project.id, all_checkpointed).await;
         }
 
         let proxy_name =
@@ -217,18 +242,28 @@ async fn reap_orphaned_containers(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn stop_local_container(state: &AppState, project_id: &str, container_id: &str, sleep_mode: SleepMode) {
+/// Returns the outcome, or None when unknown (stop error) so callers skip
+/// flag updates. A vanished container counts as plain-stopped.
+async fn stop_local_container(
+    state: &AppState,
+    project_id: &str,
+    container_id: &str,
+    sleep_mode: SleepMode,
+) -> Option<litebin_common::docker::SleepOutcome> {
     let checkpoint = state.docker.supports_checkpoint() && sleep_mode == SleepMode::Checkpoint;
     match state.docker.sleep_container(container_id, checkpoint).await {
         Ok(outcome) => {
             tracing::info!(project = %project_id, outcome = ?outcome, "janitor: container put to sleep (idle)");
+            Some(outcome)
         }
         Err(e) => match DockerErrorKind::from_anyhow(&e) {
             DockerErrorKind::NotFound => {
                 tracing::warn!(project = %project_id, "janitor: container gone, already stopped");
+                Some(litebin_common::docker::SleepOutcome::Stopped)
             }
             _ => {
                 tracing::error!(project = %project_id, error = %e, "janitor: failed to stop container (orphan — cleaned up on next wake)");
+                None
             }
         },
     }
@@ -251,30 +286,43 @@ async fn stop_local_container_by_name(state: &AppState, project_id: &str, contai
     }
 }
 
-async fn stop_remote_container(state: &AppState, project_id: &str, node_id: &str, container_id: &str, remove: bool) {
+/// Returns Some(checkpointed) when the outcome is known, None otherwise.
+async fn stop_remote_container(
+    state: &AppState,
+    project_id: &str,
+    node_id: &str,
+    container_id: &str,
+    remove: bool,
+) -> Option<bool> {
     let agent = match crate::nodes::client::AgentClient::resolve(state, node_id).await {
         Ok(a) => a,
         Err(e) => {
             tracing::error!(project = %project_id, error = %e, "janitor: node client unavailable");
-            return;
+            return None;
         }
     };
 
     let result = if remove {
-        agent.remove(&litebin_common::agent_api::RemoveRequest { container_id: container_id.to_string() }).await
+        agent
+            .remove(&litebin_common::agent_api::RemoveRequest { container_id: container_id.to_string() })
+            .await
+            .map(|()| litebin_common::agent_api::StopOutcome { checkpointed: false })
     } else {
         agent.stop(&litebin_common::agent_api::StopRequest { container_id: container_id.to_string() }).await
     };
 
     match result {
-        Ok(()) => {
-            tracing::info!(project = %project_id, "janitor: remote container stopped (idle)");
+        Ok(outcome) => {
+            tracing::info!(project = %project_id, checkpointed = outcome.checkpointed, "janitor: remote container stopped (idle)");
+            Some(outcome.checkpointed)
         }
         Err(crate::nodes::client::AgentClientError::Status { body, .. }) => {
             tracing::warn!(project = %project_id, body = %body, "janitor: remote stop returned non-success");
+            None
         }
         Err(e) => {
             tracing::error!(project = %project_id, error = %e, "janitor: failed to stop remote container");
+            None
         }
     }
 }

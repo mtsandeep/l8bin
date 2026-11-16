@@ -79,7 +79,7 @@ async fn refresh_local_node(state: &AppState) {
     let now = chrono::Utc::now().timestamp();
 
     if let Err(e) = sqlx::query(
-        "UPDATE nodes SET total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, last_seen_at = ?, updated_at = ? WHERE id = 'local'",
+        "UPDATE nodes SET total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, supports_checkpoint = ?, last_seen_at = ?, updated_at = ? WHERE id = 'local'",
     )
     .bind(total)
     .bind(cpu)
@@ -87,6 +87,7 @@ async fn refresh_local_node(state: &AppState) {
     .bind(disk_free)
     .bind(disk_total)
     .bind(container_count)
+    .bind(state.docker.supports_checkpoint())
     .bind(now)
     .bind(now)
     .execute(&state.db)
@@ -289,7 +290,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
         (_, agent_ip) => agent_ip.clone(),
     };
     if let Err(e) = sqlx::query(
-        "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, public_ip = ?, architecture = ?, version = ?, protocol_version = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE nodes SET status = 'online', fail_count = 0, total_memory = ?, total_cpu = ?, available_memory = ?, disk_free = ?, disk_total = ?, container_count = ?, public_ip = ?, architecture = ?, version = ?, protocol_version = ?, supports_checkpoint = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
     )
     .bind(health.memory_total as i64)
     .bind(health.cpu_cores as f64)
@@ -301,6 +302,7 @@ async fn attempt_connect(state: &AppState, node: &litebin_common::types::Node) {
     .bind(&health.architecture)
     .bind(&health.version)
     .bind(health.protocol_version as i64)
+    .bind(health.supports_checkpoint)
     .bind(now)
     .bind(now)
     .bind(&node.id)
@@ -340,6 +342,7 @@ mod tests {
                 container_count INTEGER NOT NULL DEFAULT 0,
                 last_seen_at INTEGER,
                 fail_count INTEGER NOT NULL DEFAULT 0,
+                supports_checkpoint INTEGER NOT NULL DEFAULT 0,
                 agent_secret TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL

@@ -300,18 +300,17 @@ pub struct Node {
     pub container_count: i64,
     pub last_seen_at: Option<i64>,
     pub fail_count: i64,
+    /// Runtime supports CRIU checkpoint/restore (podman); from health reports.
+    #[serde(default)]
+    pub supports_checkpoint: bool,
     #[serde(skip_serializing)]
     pub agent_secret: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
 
-/// How a project's containers are put to sleep when idle.
-///
-/// `stop` — classic container stop (fresh process on wake).
-/// `checkpoint` — CRIU checkpoint/restore on podman nodes: process memory is
-/// frozen to disk and wake resumes it, skipping app boot entirely. Nodes
-/// without podman silently fall back to `stop`.
+/// Idle sleep mode: `stop` (default) or CRIU checkpoint on podman nodes
+/// (falls back to stop elsewhere).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(rename_all = "lowercase")]
@@ -351,9 +350,11 @@ pub struct Project {
     /// Set on demo instances (Mode B clones): the demo parent project id.
     /// Null on regular projects and demo parents themselves.
     pub demo_parent_id: Option<String>,
-    /// Idle sleep mode: plain stop vs CRIU checkpoint (podman nodes only).
     #[serde(default)]
     pub sleep_mode: SleepMode,
+    /// Stopped via CRIU checkpoint ("frozen"). Presentational only.
+    #[serde(default)]
+    pub frozen: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -458,8 +459,7 @@ pub struct HealthReport {
     pub container_count: u32,
     pub image_stats: ImageStats,
     pub public_ip: Option<String>,
-    /// True when the node runs podman with CRIU available, enabling
-    /// checkpoint/restore sleep. Absent from older agents — treat as false.
+    /// Runtime supports CRIU checkpoint/restore (podman).
     #[serde(default)]
     pub supports_checkpoint: bool,
 }

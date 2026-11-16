@@ -45,13 +45,16 @@ pub async fn stop_on_source(state: &AppState, project_id: &str, node: &NodeRef) 
     match node {
         NodeRef::Local => {
             let _ = state.docker.remove_by_name(project_id).await;
-            crate::routes::manage::multi_service::stop_services(state, project_id, None).await.ok();
+            crate::routes::manage::multi_service::stop_services(state, project_id, None, false).await.ok();
             Ok(())
         }
         NodeRef::Agent(node_id) => {
             let agent = crate::nodes::client::AgentClient::resolve(state, node_id).await?;
             agent
-                .stop_project(&litebin_common::agent_api::StopProjectRequest { project_id: project_id.to_string() })
+                .stop_project(&litebin_common::agent_api::StopProjectRequest {
+                    project_id: project_id.to_string(),
+                    checkpoint: None,
+                })
                 .await
                 .map(|_| ())
                 .map_err(|e| anyhow::anyhow!("source stop failed: {e}"))

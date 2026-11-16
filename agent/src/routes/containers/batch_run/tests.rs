@@ -398,7 +398,7 @@ async fn live_one_service_compose_uses_agent_lifecycle_and_log_handlers() {
         let (project_stop_status, project_stop) = response_json(
             crate::routes::containers::stop_project(
                 State(state.clone()),
-                Json(super::super::types::StopProjectRequest { project_id: project_id.clone() }),
+                Json(super::super::types::StopProjectRequest { project_id: project_id.clone(), checkpoint: None }),
             )
             .await
             .into_response(),

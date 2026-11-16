@@ -16,13 +16,21 @@ use crate::routes::manage::multi_service::{
 
 use super::shared::{can_attempt_full_stop, uses_compose_lifecycle};
 
+/// `{"checkpoint": true}` freezes with CRIU instead of a plain stop.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct StopProjectBody {
+    #[serde(default)]
+    pub checkpoint: Option<bool>,
+}
+
 #[utoipa::path(
     post,
     path = "/projects/{id}/stop",
-    description = "Stop a project asynchronously (local Docker or via the node agent); Caddy routes are removed immediately.",
+    description = "Stop a project asynchronously (local Docker or via the node agent); Caddy routes are removed immediately. Optional body {\"checkpoint\": true} freezes with CRIU (podman nodes).",
     params(
         ("id" = String, Path, description = "Project ID"),
     ),
+    request_body = Option<StopProjectBody>,
     responses(
         (status = 200, body = MessageResponse),
         (status = 400, description = "Bad request"),
@@ -35,6 +43,7 @@ use super::shared::{can_attempt_full_stop, uses_compose_lifecycle};
 pub async fn stop_project(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
+    body: Option<Json<StopProjectBody>>,
 ) -> Result<Json<MessageResponse>, (StatusCode, String)> {
     let project = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
         .bind(&project_id)
@@ -69,6 +78,7 @@ pub async fn stop_project(
         state.project_locks.entry(project_id.clone()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
     let project_id_bg = project_id.clone();
     let node_id_bg = project.node_id.clone();
+    let user_checkpoint = body.and_then(|Json(b)| b.checkpoint).unwrap_or(false);
     tokio::spawn(async move {
         let project_id = project_id_bg;
         // Only this task clears the 'stopping' status — never strand it on panic or lock close.
@@ -92,16 +102,29 @@ pub async fn stop_project(
                         return Err(format!("node client unavailable: {e}"));
                     }
                 };
-                if let Err(e) = agent
-                    .stop_project(&litebin_common::agent_api::StopProjectRequest { project_id: project_id.clone() })
+                match agent
+                    .stop_project(&litebin_common::agent_api::StopProjectRequest {
+                        project_id: project_id.clone(),
+                        checkpoint: Some(user_checkpoint),
+                    })
                     .await
                 {
-                    return Err(match e {
-                        nodes::client::AgentClientError::Status { body, .. } => {
-                            format!("agent project stop failed: {body}")
-                        }
-                        e => format!("agent project stop response unavailable: {e}"),
-                    });
+                    Ok(resp) => {
+                        status::set_project_frozen(
+                            &state.db,
+                            &project_id,
+                            resp.stopped_containers > 0 && resp.checkpointed_containers == resp.stopped_containers,
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        return Err(match e {
+                            nodes::client::AgentClientError::Status { body, .. } => {
+                                format!("agent project stop failed: {body}")
+                            }
+                            e => format!("agent project stop response unavailable: {e}"),
+                        });
+                    }
                 }
                 status::set_non_oneshot_services_stopped(&state.db, &project_id)
                     .await
@@ -109,7 +132,7 @@ pub async fn stop_project(
                 status::derive_and_set_project_status(&state.db, &project_id).await;
             } else {
                 // Local: stop all service containers (works for single and multi-service)
-                stop_services(&state, &project_id, None).await.map_err(|(_, error)| error)?;
+                stop_services(&state, &project_id, None, user_checkpoint).await.map_err(|(_, error)| error)?;
             }
             Ok(())
         })

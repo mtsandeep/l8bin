@@ -65,6 +65,7 @@ pub async fn project_stats(
         return Ok(Json(make_stats_response(
             project_id,
             project.status,
+            project.frozen,
             project.last_active_at,
             services_raw.into_iter().map(|(s, _)| s).collect(),
         )));
@@ -76,6 +77,7 @@ pub async fn project_stats(
         return Ok(Json(make_stats_response(
             project_id,
             project.status,
+            project.frozen,
             project.last_active_at,
             services_raw.into_iter().map(|(s, _)| s).collect(),
         )));
@@ -115,13 +117,14 @@ pub async fn project_stats(
         return Ok(Json(make_stats_response(
             project_id,
             ProjectStatus::Stopped,
+            project.frozen,
             project.last_active_at,
             services_raw.into_iter().map(|(s, _)| s).collect(),
         )));
     }
 
     let services = enrich_services(&services_raw, &per_container, &stopped_cids);
-    Ok(Json(make_stats_response(project_id, project.status, project.last_active_at, services)))
+    Ok(Json(make_stats_response(project_id, project.status, project.frozen, project.last_active_at, services)))
 }
 
 #[utoipa::path(

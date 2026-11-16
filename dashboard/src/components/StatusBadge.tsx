@@ -1,7 +1,10 @@
+import { Snowflake } from 'lucide-react';
 import { ProjectStatus } from '../api';
 
 interface StatusBadgeProps {
   status: ProjectStatus;
+  /** Stopped via CRIU checkpoint — renders as "Frozen" instead of "Stopped". */
+  frozen?: boolean;
 }
 
 const statusConfig: Record<string, { bg: string; text: string; dot: string; label: string }> = {
@@ -79,20 +82,23 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string; labe
   },
 };
 
-export default function StatusBadge({ status }: StatusBadgeProps) {
+export default function StatusBadge({ status, frozen = false }: StatusBadgeProps) {
   const config = statusConfig[status] ?? {
     bg: 'bg-slate-500/10',
     text: 'text-slate-400',
     dot: 'bg-slate-400',
     label: status,
   };
+  const isFrozen = frozen && status === ProjectStatus.Stopped;
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ${config.bg} ${config.text}`}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ${
+        isFrozen ? 'bg-cyan-500/10 text-cyan-400' : `${config.bg} ${config.text}`
+      }`}
     >
-      <span className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
-      {config.label}
+      {isFrozen ? <Snowflake size={11} /> : <span className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />}
+      {isFrozen ? 'Frozen' : config.label}
     </span>
   );
 }

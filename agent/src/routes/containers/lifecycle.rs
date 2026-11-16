@@ -184,6 +184,7 @@ pub async fn run_container(State(state): State<AgentState>, Json(req): Json<RunR
         deploy_type: None,
         demo_parent_id: None,
         sleep_mode: litebin_common::types::SleepMode::Stop,
+        frozen: false,
         created_at: 0,
         updated_at: 0,
     };
@@ -256,6 +257,7 @@ pub async fn recreate_container(State(state): State<AgentState>, Json(req): Json
         deploy_type: None,
         demo_parent_id: None,
         sleep_mode: litebin_common::types::SleepMode::Stop,
+        frozen: false,
         created_at: 0,
         updated_at: 0,
     };
@@ -385,6 +387,7 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
             deploy_type: None,
             demo_parent_id: None,
             sleep_mode: litebin_common::types::SleepMode::Stop,
+            frozen: false,
             created_at: 0,
             updated_at: 0,
         };
@@ -442,15 +445,19 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
 pub async fn stop_container(State(state): State<AgentState>, Json(req): Json<StopRequest>) -> impl IntoResponse {
     let checkpoint = container_wants_checkpoint(&state, &req.container_id).await;
     match state.docker.sleep_container(&req.container_id, checkpoint).await {
-        Ok(_) => StatusCode::OK.into_response(),
+        Ok(outcome) => (
+            StatusCode::OK,
+            Json(litebin_common::agent_api::StopOutcome {
+                checkpointed: outcome == litebin_common::docker::SleepOutcome::Checkpointed,
+            }),
+        )
+            .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response(),
     }
 }
 
-/// Resolve whether the project owning a container opted into checkpoint sleep.
-/// Reads the project id from the container name (`litebin-<project>` or
-/// `litebin-<project>.<service>`); returns false unless the node runtime
-/// actually supports CRIU.
+/// Checkpoint only when the owning project opted in and the runtime supports
+/// CRIU; project id comes from the container name.
 async fn container_wants_checkpoint(state: &AgentState, container_id: &str) -> bool {
     if !state.docker.supports_checkpoint() {
         return false;
@@ -503,10 +510,16 @@ pub async fn stop_project(State(state): State<AgentState>, Json(req): Json<StopP
         }
     };
 
-    let checkpoint = state.wants_checkpoint_sleep(&req.project_id);
+    let checkpoint = req.checkpoint.unwrap_or_else(|| state.wants_checkpoint_sleep(&req.project_id));
+    let mut checkpointed_containers = 0usize;
     for container_id in &workload_ids {
-        if let Err(error) = state.docker.sleep_container(container_id, checkpoint).await {
-            failures.push(format!("stop container {container_id}: {error}"));
+        match state.docker.sleep_container(container_id, checkpoint).await {
+            Ok(outcome) => {
+                if outcome == litebin_common::docker::SleepOutcome::Checkpointed {
+                    checkpointed_containers += 1;
+                }
+            }
+            Err(error) => failures.push(format!("stop container {container_id}: {error}")),
         }
     }
 
@@ -538,7 +551,8 @@ pub async fn stop_project(State(state): State<AgentState>, Json(req): Json<StopP
             .into_response();
     }
 
-    (StatusCode::OK, Json(StopProjectResponse { stopped_containers: workload_ids.len() })).into_response()
+    (StatusCode::OK, Json(StopProjectResponse { stopped_containers: workload_ids.len(), checkpointed_containers }))
+        .into_response()
 }
 
 /// POST /containers/remove

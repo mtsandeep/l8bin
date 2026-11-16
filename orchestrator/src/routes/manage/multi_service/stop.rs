@@ -9,14 +9,14 @@ use super::helpers::{approved_docker_observe_requesters, proxy_needed_after_stop
 
 // ── Stop services ─────────────────────────────────────────────────────────────
 
-/// Stop service containers for a multi-service project.
-/// If `services` is None, stops all running services.
-/// If `services` is Some, stops only the listed services.
-/// Updates `project_services` status internally. Caller handles `projects` table and sync_caddy.
+/// Stop service containers for a multi-service project (all services, or the
+/// filtered set). With `checkpoint: true` on a podman node, CRIU-checkpoints
+/// instead (falls back to stop). Updates `project_services` internally.
 pub async fn stop_services(
     state: &AppState,
     project_id: &str,
     services: Option<&HashSet<String>>,
+    checkpoint: bool,
 ) -> Result<(), (StatusCode, String)> {
     let project = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
         .bind(project_id)
@@ -33,6 +33,8 @@ pub async fn stop_services(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to fetch services: {e}")))?;
     let running_services: HashSet<String> = rows.iter().map(|(service, _)| service.clone()).collect();
 
+    let mut stopped_count = 0usize;
+    let mut checkpointed_count = 0usize;
     for (svc_name, cid) in rows.iter().rev() {
         // Apply service filter
         if let Some(filter) = services
@@ -41,14 +43,25 @@ pub async fn stop_services(
             continue;
         }
         if let Some(container_id) = cid {
-            state.docker.stop_container(container_id).await.map_err(|e| {
+            let use_checkpoint = checkpoint && state.docker.supports_checkpoint();
+            let outcome = state.docker.sleep_container(container_id, use_checkpoint).await.map_err(|e| {
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to stop service '{svc_name}': {e}"))
             })?;
-            tracing::info!(project = %project_id, service = %svc_name, "service stopped");
+            stopped_count += 1;
+            if outcome == litebin_common::docker::SleepOutcome::Checkpointed {
+                checkpointed_count += 1;
+            }
+            tracing::info!(project = %project_id, service = %svc_name, checkpoint = use_checkpoint, "service stopped");
         }
         status::set_service_stopped(&state.db, project_id, svc_name).await.map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to persist stopped service '{svc_name}': {e}"))
         })?;
+    }
+
+    // Frozen only when every stopped workload checkpointed; a plain stop
+    // (count 0) clears any stale flag.
+    if stopped_count > 0 {
+        status::set_project_frozen(&state.db, project_id, checkpointed_count == stopped_count).await;
     }
 
     // Persist the aggregate workload outcome before best-effort infrastructure

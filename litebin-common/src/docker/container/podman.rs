@@ -1,9 +1,6 @@
-//! CRIU checkpoint/restore via podman's native libpod API.
-//!
-//! Checkpoint/restore has no Docker API equivalent, so bollard cannot express
-//! it. Podman serves these endpoints on the same socket as its
-//! Docker-compatible API, so a minimal hand-rolled HTTP/1.1 call over the
-//! Unix socket avoids adding another client dependency.
+//! CRIU checkpoint/restore via podman's native libpod API — checkpoint/restore
+//! has no Docker API equivalent, so bollard cannot express it. Served on the
+//! same socket as the Docker-compatible API.
 
 use std::time::Duration;
 
@@ -22,18 +19,14 @@ const RESTORE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How a container was put to sleep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SleepOutcome {
-    /// CRIU checkpoint saved — process memory frozen to disk, wake via restore.
     Checkpointed,
-    /// Plain container stop (requested mode, or fallback after checkpoint failure).
     Stopped,
 }
 
 /// How a sleeping container was woken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WakeOutcome {
-    /// Resumed from a CRIU checkpoint — app boot skipped, memory restored.
     Restored,
-    /// Started normally (no checkpoint / docker runtime / restore failed).
     Started,
 }
 
@@ -95,20 +88,21 @@ impl DockerManager {
         self.runtime == RuntimeKind::Podman
     }
 
-    /// CRIU-checkpoint a running container (podman only). The container is
-    /// stopped and its full state persisted; `restore_container` resumes it.
+    /// CRIU-checkpoint a running container (podman only). Both flags are
+    /// required for real servers: `tcpEstablished` (keep-alive connections)
+    /// and `fileLocks` (embedded DBs like H2/SQLite).
     async fn podman_checkpoint(&self, container_id: &str) -> anyhow::Result<()> {
         let socket = self.podman_socket.as_deref().ok_or_else(|| anyhow::anyhow!("podman socket not configured"))?;
-        let path = format!("/v4.0.0/libpod/containers/{container_id}/checkpoint");
+        let path = format!("/v4.0.0/libpod/containers/{container_id}/checkpoint?tcpEstablished=true&fileLocks=true");
         let (code, body) = podman_post(socket, &path, CHECKPOINT_TIMEOUT).await?;
         if (200..300).contains(&code) { Ok(()) } else { Err(podman_error("checkpoint", container_id, code, &body)) }
     }
 
-    /// Restore a checkpointed container (podman only). The process resumes
-    /// from the frozen state — no app boot. The checkpoint archive is consumed.
+    /// Restore a checkpointed container (podman only) — no app boot. Flags
+    /// must mirror the checkpoint side.
     async fn podman_restore(&self, container_id: &str) -> anyhow::Result<()> {
         let socket = self.podman_socket.as_deref().ok_or_else(|| anyhow::anyhow!("podman socket not configured"))?;
-        let path = format!("/v4.0.0/libpod/containers/{container_id}/restore");
+        let path = format!("/v4.0.0/libpod/containers/{container_id}/restore?tcpEstablished=true&fileLocks=true");
         let (code, body) = podman_post(socket, &path, RESTORE_TIMEOUT).await?;
         if (200..300).contains(&code) { Ok(()) } else { Err(podman_error("restore", container_id, code, &body)) }
     }
@@ -145,8 +139,7 @@ impl DockerManager {
             match self.podman_restore(container_id).await {
                 Ok(()) => {
                     tracing::info!(container_id = %container_id, "container restored from checkpoint");
-                    // Restored containers skip the boot window; a brief yield
-                    // lets port mappings settle before callers probe.
+                    // Brief yield so port mappings settle before callers probe.
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     return Ok(WakeOutcome::Restored);
                 }

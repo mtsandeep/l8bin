@@ -127,6 +127,14 @@ pub struct StopRequest {
     pub container_id: String,
 }
 
+/// POST /containers/stop response — true when CRIU-checkpointed. Older
+/// agents' empty body deserializes as false.
+#[derive(Serialize, Deserialize, Default)]
+pub struct StopOutcome {
+    #[serde(default = "default_false")]
+    pub checkpointed: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct StopServiceRequest {
     pub project_id: String,
@@ -141,11 +149,17 @@ pub struct StopServiceResponse {
 #[derive(Serialize, Deserialize)]
 pub struct StopProjectRequest {
     pub project_id: String,
+    /// Explicit checkpoint override; absent (older callers) → pushed sleep_mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct StopProjectResponse {
     pub stopped_containers: usize,
+    /// How many stopped containers were CRIU-checkpointed (older agents → 0).
+    #[serde(default)]
+    pub checkpointed_containers: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -377,9 +391,7 @@ pub struct ProjectMetaRequest {
     pub allow_raw_ports: Option<HashMap<String, bool>>,
     pub docker_observe: Option<HashMap<String, bool>>,
     pub host_network: Option<HashMap<String, bool>>,
-    /// Per-project idle sleep mode (project_id -> sleep mode). Only checkpoint
-    /// entries are sent; absent projects use plain stop. Absent entirely on
-    /// older orchestrators — agents treat that as all-stop.
+    /// Only checkpoint entries are sent; everything else defaults to stop.
     #[serde(default)]
     pub sleep_mode: Option<HashMap<String, crate::types::SleepMode>>,
     /// Global default memory limit (MB) from orchestrator settings.

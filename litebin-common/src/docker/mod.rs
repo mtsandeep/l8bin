@@ -101,11 +101,9 @@ pub struct DockerHostInfo {
     pub rootless: Option<bool>,
 }
 
-/// Container runtime backing this node's `DockerManager`.
-///
-/// Both kinds speak the Docker-compatible API (bollard talks to either
-/// unchanged); podman additionally exposes CRIU checkpoint/restore through its
-/// native libpod API, enabling sleep-without-app-boot.
+/// Container runtime backing this node's `DockerManager`. Both speak the
+/// Docker-compatible API; podman additionally exposes CRIU checkpoint/restore
+/// via its native libpod API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeKind {
     Docker,
@@ -116,9 +114,7 @@ pub enum RuntimeKind {
 pub const DEFAULT_PODMAN_SOCKET: &str = "/run/podman/podman.sock";
 
 impl RuntimeKind {
-    /// Machine-local runtime selection: `CONTAINER_RUNTIME=podman` points the
-    /// manager at podman's Docker-compatible socket and enables checkpoint/
-    /// restore sleep. Unset or `docker` keeps stock Docker semantics.
+    /// Runtime selection: `CONTAINER_RUNTIME=podman` or Docker by default.
     pub fn from_env() -> Self {
         match std::env::var("CONTAINER_RUNTIME").as_deref() {
             Ok("podman") => Self::Podman,
@@ -178,8 +174,7 @@ impl DockerManager {
         let (docker, podman_socket) = match runtime {
             RuntimeKind::Docker => (Docker::connect_with_socket_defaults()?, None),
             RuntimeKind::Podman => {
-                // Honor DOCKER_HOST when explicitly set (rootless socket etc.),
-                // otherwise use the podman socket directly.
+                // DOCKER_HOST wins when explicitly set (e.g. rootless socket).
                 let socket = std::env::var("DOCKER_HOST").ok().filter(|h| !h.is_empty());
                 let docker = match socket {
                     Some(_) => Docker::connect_with_socket_defaults()?,

@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::db::models::Project;
 
 use super::super::stats::{ServiceInfo, ServiceVolumeInfo};
-use litebin_common::types::{DeployType, ProjectStatus, VolumeMount, scope_volume_source};
+use litebin_common::types::{DeployType, ProjectStatus, SleepMode, VolumeMount, scope_volume_source};
 
 // ── Public Stats (service-level data for the public service) ──────────────────
 // Reuses ServiceInfo from stats.rs — public_stats is just one service's info.
@@ -27,6 +27,10 @@ pub struct ProjectResponse {
     pub auto_stop_timeout_mins: i64,
     pub auto_start_enabled: bool,
     pub allow_raw_ports: bool,
+    /// Idle sleep mode: plain stop vs CRIU checkpoint (podman nodes).
+    pub sleep_mode: SleepMode,
+    /// True when the project is stopped via CRIU checkpoint ("frozen").
+    pub frozen: bool,
     pub custom_domain: Option<String>,
     pub service_count: Option<i64>,
     pub service_summary: Option<String>,
@@ -198,6 +202,9 @@ pub(super) async fn to_project_response(project: &Project, state: &crate::AppSta
         auto_stop_timeout_mins: project.auto_stop_timeout_mins,
         auto_start_enabled: project.auto_start_enabled,
         allow_raw_ports: project.allow_raw_ports,
+        sleep_mode: project.sleep_mode,
+        // Guard against a stale flag surviving a wake that bypassed transition().
+        frozen: project.frozen && project.status == ProjectStatus::Stopped,
         custom_domain: project.custom_domain.clone(),
         service_count: project.service_count,
         service_summary: project.service_summary.clone(),

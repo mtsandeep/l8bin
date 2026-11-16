@@ -107,6 +107,7 @@ mod tests {
                 container_count INTEGER NOT NULL DEFAULT 0,
                 last_seen_at INTEGER,
                 fail_count INTEGER NOT NULL DEFAULT 0,
+                supports_checkpoint INTEGER NOT NULL DEFAULT 0,
                 agent_secret TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
@@ -147,6 +148,7 @@ mod tests {
             deploy_type: None,
             demo_parent_id: None,
             sleep_mode: litebin_common::types::SleepMode::Stop,
+            frozen: false,
             created_at: 0,
             updated_at: 0,
         }

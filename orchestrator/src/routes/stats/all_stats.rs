@@ -78,6 +78,7 @@ pub async fn all_project_stats(
                 results.push(make_stats_response(
                     project.id.clone(),
                     project.status.clone(),
+                    project.frozen,
                     project.last_active_at,
                     services_raw.into_iter().map(|(s, _)| s).collect(),
                 ));
@@ -92,6 +93,7 @@ pub async fn all_project_stats(
                 results.push(make_stats_response(
                     project.id.clone(),
                     project.status.clone(),
+                    project.frozen,
                     project.last_active_at,
                     services_raw.into_iter().map(|(s, _)| s).collect(),
                 ));
@@ -107,6 +109,7 @@ pub async fn all_project_stats(
             results.push(make_stats_response(
                 project.id.clone(),
                 project.status.clone(),
+                project.frozen,
                 project.last_active_at,
                 services_raw.into_iter().map(|(s, _)| s).collect(),
             ));
@@ -130,10 +133,12 @@ pub async fn all_project_stats(
         // and only derive stopped/degraded when the project is in a stable terminal state
         let project_status =
             projects.iter().find(|p| p.id == project_id).map(|p| p.status.clone()).unwrap_or(ProjectStatus::Stopped);
+        let project_frozen = projects.iter().find(|p| p.id == project_id).map(|p| p.frozen).unwrap_or(false);
         let status = inactive_project_status(project_status, &services);
         results.push(make_stats_response(
             project_id.clone(),
             status,
+            project_frozen,
             last_active_map.get(&project_id).copied().flatten(),
             services,
         ));
@@ -228,9 +233,11 @@ pub async fn all_project_stats(
                     svc
                 })
                 .collect();
+            let project_frozen = projects.iter().find(|p| p.id == *project_id).map(|p| p.frozen).unwrap_or(false);
             results.push(make_stats_response(
                 project_id.clone(),
                 ProjectStatus::Stopped,
+                project_frozen,
                 last_active_map.get(project_id).copied().flatten(),
                 services,
             ));
@@ -238,9 +245,11 @@ pub async fn all_project_stats(
         }
 
         let services = enrich_services(&services_raw, &per_container, &stopped_cids);
+        let project_frozen = projects.iter().find(|p| p.id == *project_id).map(|p| p.frozen).unwrap_or(false);
         results.push(make_stats_response(
             project_id.clone(),
             ProjectStatus::Running,
+            project_frozen,
             last_active_map.get(project_id).copied().flatten(),
             services,
         ));
@@ -267,9 +276,12 @@ pub async fn all_project_stats(
                 tracing::warn!(node_id = %node_id, error = %e, "batch stats: node client unavailable");
                 for (project_id, _) in projects_containers {
                     let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+                    let project_frozen =
+                        projects.iter().find(|p| p.id == *project_id).map(|p| p.frozen).unwrap_or(false);
                     results.push(make_stats_response(
                         project_id.clone(),
                         ProjectStatus::Running,
+                        project_frozen,
                         last_active_map.get(project_id).copied().flatten(),
                         services_raw.into_iter().map(|(s, _)| s).collect(),
                     ));
@@ -284,9 +296,12 @@ pub async fn all_project_stats(
                 tracing::warn!(node_id = %node_id, error = ?e, "batch stats: node not found");
                 for (project_id, _) in projects_containers {
                     let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+                    let project_frozen =
+                        projects.iter().find(|p| p.id == *project_id).map(|p| p.frozen).unwrap_or(false);
                     results.push(make_stats_response(
                         project_id.clone(),
                         ProjectStatus::Running,
+                        project_frozen,
                         last_active_map.get(project_id).copied().flatten(),
                         services_raw.into_iter().map(|(s, _)| s).collect(),
                     ));
@@ -311,9 +326,12 @@ pub async fn all_project_stats(
                     tracing::warn!(node_id = %node_id, body = %body, "batch stats: agent returned error");
                     for (project_id, _) in projects_containers {
                         let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+                        let project_frozen =
+                            projects.iter().find(|p| p.id == *project_id).map(|p| p.frozen).unwrap_or(false);
                         results.push(make_stats_response(
                             project_id.clone(),
                             ProjectStatus::Running,
+                            project_frozen,
                             last_active_map.get(project_id).copied().flatten(),
                             services_raw.into_iter().map(|(s, _)| s).collect(),
                         ));
@@ -324,9 +342,12 @@ pub async fn all_project_stats(
                     tracing::warn!(node_id = %node_id, error = %e, "batch stats: agent unreachable");
                     for (project_id, _) in projects_containers {
                         let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+                        let project_frozen =
+                            projects.iter().find(|p| p.id == *project_id).map(|p| p.frozen).unwrap_or(false);
                         results.push(make_stats_response(
                             project_id.clone(),
                             ProjectStatus::Running,
+                            project_frozen,
                             last_active_map.get(project_id).copied().flatten(),
                             services_raw.into_iter().map(|(s, _)| s).collect(),
                         ));
@@ -391,11 +412,13 @@ pub async fn all_project_stats(
         for (project_id, _) in projects_containers {
             let mut services_raw = services_map.get(project_id).cloned().unwrap_or_default();
             super::helpers::apply_data_usage(&state, project_id, Some(node_id), &mut services_raw).await;
+            let project_frozen = projects.iter().find(|p| p.id == *project_id).map(|p| p.frozen).unwrap_or(false);
             if project_stats.contains_key(project_id) {
                 let services = enrich_services(&services_raw, &per_container, &stopped_cids);
                 results.push(make_stats_response(
                     project_id.clone(),
                     ProjectStatus::Running,
+                    project_frozen,
                     last_active_map.get(project_id).copied().flatten(),
                     services,
                 ));
@@ -404,6 +427,7 @@ pub async fn all_project_stats(
                 results.push(make_stats_response(
                     project_id.clone(),
                     ProjectStatus::Stopped,
+                    project_frozen,
                     last_active_map.get(project_id).copied().flatten(),
                     services,
                 ));

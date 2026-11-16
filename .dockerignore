@@ -1,3 +1,19 @@
 **/node_modules
 **/.git
 **/dist
+**/target
+# Not referenced by any Dockerfile COPY — kept out of the build context
+# (data/ and projects/ are bind-mounted at runtime, not baked into images).
+data
+projects
+test-apps
+landing
+npm
+scripts
+setup
+certs
+.github
+docs/*
+!docs/llms.txt
+*.db
+.env.example

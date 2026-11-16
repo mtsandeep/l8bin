@@ -239,7 +239,7 @@ async fn live_local_compose_background_uses_orchestrator_lifecycle() {
         anyhow::ensure!(logs.service_name.as_deref() == Some(SERVICE_NAME));
         anyhow::ensure!(logs.lines.iter().any(|line| line.contains(LOG_MARKER)));
 
-        stop_services(&state, &project_id, None)
+        stop_services(&state, &project_id, None, false)
             .await
             .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?;
         let (_, stopped_status, _) = service_row(&state.db, &project_id).await?;
@@ -355,7 +355,7 @@ async fn live_remote_compose_background_dispatches_through_agent_http() {
         anyhow::ensure!(logs.service_name.as_deref() == Some(SERVICE_NAME));
         anyhow::ensure!(logs.lines.iter().any(|line| line.contains(LOG_MARKER)));
 
-        let _ = stop_project(State(state.clone()), Path(project_id.clone()))
+        let _ = stop_project(State(state.clone()), Path(project_id.clone()), None)
             .await
             .map_err(|(status, error)| anyhow::anyhow!("{status}: {error}"))?;
         tokio::time::timeout(Duration::from_secs(30), async {

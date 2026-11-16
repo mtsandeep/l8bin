@@ -15,6 +15,7 @@ import {
   RotateCcw,
   ScrollText,
   Settings,
+  Snowflake,
   Square,
   Terminal,
   Trash2,
@@ -36,6 +37,7 @@ import {
   putDemoConfig,
   recreateProject,
   redeployProject,
+  type SleepMode,
   startProject,
   stopProject,
   timeAgo,
@@ -110,6 +112,7 @@ export default function ProjectCard({
   const [autoStop, setAutoStop] = useState(project.auto_stop_enabled);
   const [timeoutMins, setTimeoutMins] = useState(project.auto_stop_timeout_mins);
   const [autoStart, setAutoStart] = useState(project.auto_start_enabled);
+  const [sleepMode, setSleepMode] = useState<SleepMode>(project.sleep_mode ?? 'stop');
 
   // Settings state for gear popover
   const [projectName, setProjectName] = useState(project.name ?? '');
@@ -269,7 +272,7 @@ export default function ProjectCard({
               <h3 className="text-sm font-semibold text-slate-100 truncate" title={project.description || undefined}>
                 {project.name || project.id}
               </h3>
-              <StatusBadge status={stats?.status || project.status} />
+              <StatusBadge status={stats?.status || project.status} frozen={stats?.frozen ?? project.frozen} />
               {project.port_mismatch && (
                 <span
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[10px] text-amber-300 whitespace-nowrap"
@@ -511,10 +514,12 @@ export default function ProjectCard({
             ) : openPopover === 'sleep' ? (
               <SleepPopover
                 project={project}
-                onChange={(as, tm, astart) => {
+                sleepMode={sleepMode}
+                onChange={(as, tm, astart, smode) => {
                   setAutoStop(as);
                   setTimeoutMins(tm);
                   setAutoStart(astart);
+                  setSleepMode(smode);
                 }}
                 onClose={() => setOpenPopover(null)}
               />
@@ -795,6 +800,18 @@ export default function ProjectCard({
             >
               <Square size={12} />
               Stop
+            </button>
+          )}
+          {(isRunning || isDegraded) && sleepMode === 'checkpoint' && loading !== 'stop' && (
+            <button
+              type="button"
+              onClick={() => handleAction('stop', () => stopProject(project.id, { checkpoint: true }))}
+              disabled={loading !== null}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 transition-colors disabled:opacity-50 cursor-pointer"
+              title="Stops the app with a CRIU checkpoint (state preserved)"
+            >
+              <Snowflake size={12} />
+              Freeze
             </button>
           )}
           {(isStopping || loading === 'stop') && (
