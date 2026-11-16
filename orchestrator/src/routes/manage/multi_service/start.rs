@@ -440,7 +440,7 @@ pub async fn start_services(
                                     removed.insert(svc.clone());
                                 }
                         } else {
-                            // Stopped — start it (CRIU-restore when it slept via checkpoint)
+                            // Stopped — start it (restores from checkpoint if it froze)
                             match docker
                                 .wake_container(existing_cid, &svc, is_oneshot)
                                 .await

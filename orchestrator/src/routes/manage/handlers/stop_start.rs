@@ -16,7 +16,7 @@ use crate::routes::manage::multi_service::{
 
 use super::shared::{can_attempt_full_stop, uses_compose_lifecycle};
 
-/// `{"checkpoint": true}` freezes with CRIU instead of a plain stop.
+/// `{"checkpoint": true}` freezes with a checkpoint instead of a plain stop.
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct StopProjectBody {
     #[serde(default)]

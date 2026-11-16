@@ -3,7 +3,7 @@ import { ProjectStatus } from '../api';
 
 interface StatusBadgeProps {
   status: ProjectStatus;
-  /** Stopped via CRIU checkpoint — renders as "Frozen" instead of "Stopped". */
+  /** Stopped via checkpoint — renders as "Frozen" instead of "Stopped". */
   frozen?: boolean;
 }
 

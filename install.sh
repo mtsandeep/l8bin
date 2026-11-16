@@ -101,9 +101,42 @@ install_docker() {
   systemctl enable --now docker 2>/dev/null || true
 }
 
+# Install and activate the podman runtime, with its socket aliased at the
+# conventional /var/run/docker.sock so docker CLI/compose work unchanged.
+# litebin detects the runtime automatically at startup.
+ensure_podman() {
+  [ "${_L8B_PODMAN:-0}" = 1 ] && return 0
+  command -v docker &>/dev/null || {
+    info "Installing docker CLI + compose plugin (client only)..."
+    (apt-get update -qq && apt-get install -y docker-cli docker-compose-plugin)       || (dnf install -y docker-cli docker-compose-plugin)       || die "Install docker CLI + compose plugin manually, then re-run"
+  }
+  info "Installing podman..."
+  (apt-get update -qq && apt-get install -y podman criu)     || (dnf install -y podman criu)     || die "Failed to install podman/criu — install them manually and re-run"
+  systemctl enable --now podman.socket 2>/dev/null     || warn "podman.socket not enabled via systemd — start it manually"
+  if [ -S /var/run/docker.sock ] && docker ps &>/dev/null; then
+    die "A Docker daemon is already running here. --runtime podman targets hosts without Docker; unset it to keep using Docker."
+  fi
+  echo 'L! /var/run/docker.sock - - - - /run/podman/podman.sock' > /etc/tmpfiles.d/l8bin-podman.conf
+  systemd-tmpfiles --create 2>/dev/null || ln -sf /run/podman/podman.sock /var/run/docker.sock
+  [ -S /var/run/docker.sock ] || die "podman socket unavailable at /var/run/docker.sock"
+  docker ps &>/dev/null || die "docker CLI cannot reach the podman socket"
+  # Verify CRIU is actually usable (not just installed) — checkpoint sleep
+  # depends on it at freeze time. `criu check` self-tests kernel support.
+  command -v criu &>/dev/null || die "criu missing after install — checkpoint sleep needs it. Install criu and re-run."
+  criu check &>/dev/null || warn "criu check failed — checkpoint sleep may not work; pods will fall back to plain stop."
+  info "podman ready: $(podman --version 2>/dev/null || echo ok), $(criu --version 2>/dev/null | head -1)"
+  _L8B_PODMAN=1
+  _L8B_DOCKER=1
+}
+
 ensure_docker() {
   # Run-once: install flows redirect to update flows which re-invoke these.
   [ "${_L8B_DOCKER:-0}" = 1 ] && return 0
+  if [ "$L8B_RUNTIME" = "podman" ]; then
+    ensure_podman
+    ensure_docker_compose
+    return
+  fi
   if command -v docker &>/dev/null; then
     info "Docker found: $(docker --version)"
     _L8B_DOCKER=1
@@ -119,6 +152,20 @@ ensure_docker() {
     echo "  For a full VPS bootstrap (ssh keys, firewall, fail2ban + Docker):"
     echo "    ${VPS_SETUP_URL}"
     echo ""
+    if [ "$(id -u)" -eq 0 ] && { command -v apt-get &>/dev/null || command -v dnf &>/dev/null; }; then
+      echo "  Runtime choice:"
+      echo "    1) Docker (default)"
+      echo "    2) podman"
+      local rt_choice
+      echo -ne "  ${CYAN}Choose [1]:${NC} "
+      _tty_read rt_choice
+      if [ "${rt_choice:-1}" = "2" ]; then
+        L8B_RUNTIME=podman
+        ensure_podman
+        ensure_docker_compose
+        return
+      fi
+    fi
     if prompt_yes "Install Docker now?" y && install_docker && command -v docker &>/dev/null; then
       info "Docker installed: $(docker --version)"
       _L8B_DOCKER=1
@@ -607,6 +654,21 @@ WORKDIR /app
 RUN mkdir -p /app/data
 CMD ["/app/litebin-orchestrator"]
 ORCH_DOCKERFILE
+}
+
+# Ensure the litebin-agent image exists: podman nodes pull the published image
+# (no local builds); Docker nodes build locally as before.
+build_or_pull_agent_image() {
+  local install_dir="$1"
+  if [ "$L8B_RUNTIME" = "podman" ]; then
+    local tag
+    tag=$(get_latest_release)
+    [ -z "$tag" ] || [ "$tag" = "null" ] && tag="latest"
+    docker pull "${IMAGE_REPO}/agent:${tag}"       || docker pull "${IMAGE_REPO}/agent:latest"       || die "Cannot pull ${IMAGE_REPO}/agent — run with --runtime docker to build locally"
+    docker tag "${IMAGE_REPO}/agent:${tag}" litebin-agent 2>/dev/null       || docker tag "${IMAGE_REPO}/agent:latest" litebin-agent
+    return
+  fi
+  (cd "${install_dir}/agent" && docker build -t litebin-agent .)
 }
 
 write_agent_dockerfile() {
@@ -1391,7 +1453,7 @@ install_agent() {
       docker stop litebin-agent 2>/dev/null || true
       docker rm litebin-agent 2>/dev/null || true
 
-      (cd "$install_dir/agent" && docker build -t litebin-agent . >/dev/null 2>&1)
+      build_or_pull_agent_image "$install_dir" >/dev/null 2>&1
       run_agent_container "$install_dir" "$certs_dir" "$agent_port" >/dev/null
     else
       warn "No running agent container found. Run 'install.sh agent' to start one."
@@ -1525,7 +1587,7 @@ EOF
 
   # -- Build and start --------------------------------------------------
   info "Building agent image..."
-  (cd "${install_dir}/agent" && docker build -t litebin-agent .)
+  build_or_pull_agent_image "$install_dir"
 
   # Stop existing containers if present
   docker stop litebin-agent-caddy 2>/dev/null || true
@@ -2085,6 +2147,21 @@ set_domain_cmd() {
 }
 
 # -- Main --------------------------------------------------------------------
+# Global flag: --runtime docker|podman (default docker; also L8B_RUNTIME env).
+L8B_RUNTIME="${L8B_RUNTIME:-docker}"
+_newargs=()
+_skip=0
+for _a in "$@"; do
+  if [ "$_skip" = 1 ]; then L8B_RUNTIME="$_a"; _skip=0; continue; fi
+  case "$_a" in
+    --runtime)   _skip=1 ;;
+    --runtime=*) L8B_RUNTIME="${_a#--runtime=}" ;;
+    *)           _newargs+=("$_a") ;;
+  esac
+done
+set -- ${_newargs[@]+"${_newargs[@]}"}
+case "$L8B_RUNTIME" in docker|podman) ;; *) die "--runtime must be docker or podman" ;; esac
+
 L8B_CMD="${1:-master}"
 case "${1:-}" in
   master)  install_master ;;

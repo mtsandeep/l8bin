@@ -457,7 +457,7 @@ pub async fn stop_container(State(state): State<AgentState>, Json(req): Json<Sto
 }
 
 /// Checkpoint only when the owning project opted in and the runtime supports
-/// CRIU; project id comes from the container name.
+/// it; project id comes from the container name.
 async fn container_wants_checkpoint(state: &AgentState, container_id: &str) -> bool {
     if !state.docker.supports_checkpoint() {
         return false;

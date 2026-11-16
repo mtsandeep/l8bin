@@ -73,7 +73,7 @@ pub struct ProjectMetaEntry {
 }
 
 impl AgentState {
-    /// True when the project sleeps via CRIU checkpoint on this node.
+    /// True when the project sleeps via checkpoint on this node.
     pub fn wants_checkpoint_sleep(&self, project_id: &str) -> bool {
         self.docker.supports_checkpoint()
             && self.project_meta.read().ok().and_then(|meta| meta.get(project_id).map(|e| e.sleep_mode))

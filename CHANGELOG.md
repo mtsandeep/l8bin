@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- **Podman nodes with CRIU checkpoint sleep** — nodes may run podman instead of Docker (same Docker-compatible API, `CONTAINER_RUNTIME=podman`); projects opt in via `sleep_mode: checkpoint` so idle apps are frozen with CRIU instead of stopped and wake by restore in ~1s with state intact — no app boot (~10× faster than cold boot on a real Java app). Checkpointing falls back to a plain stop on failure; wake tries restore before start. Node setup guide: `docs/topics/podman-nodes.md`.
+- **Podman nodes with CRIU checkpoint sleep** — install with `--runtime podman` (or pick podman when the installer offers the choice); the node detects its runtime automatically, and projects opt in via `sleep_mode: checkpoint` so idle apps are frozen with CRIU instead of stopped and wake by restore in ~1s with state intact — no app boot (~10× faster than cold boot on a real Java app). Checkpointing falls back to a plain stop on failure; wake tries restore before start. Guide: `docs/topics/podman-nodes.md`.
 - **Checkpoint sleep UI** — Sleep popover gains a Stop/Checkpoint mode selector (enabled only on nodes reporting podman support), a Freeze button on the card for checkpoint stops, and a Frozen badge in place of Stopped while a project is frozen.
 
 ### Changed

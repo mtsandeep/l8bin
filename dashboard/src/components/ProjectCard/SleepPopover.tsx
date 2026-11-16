@@ -156,7 +156,7 @@ export default function SleepPopover({ project, sleepMode: parentSleepMode, onCh
                   type="button"
                   disabled={!checkpointSupported}
                   onClick={() => setSleepMode('checkpoint')}
-                  title={checkpointSupported ? undefined : 'Requires a podman node with CRIU'}
+                  title={checkpointSupported ? undefined : 'Requires a podman node'}
                   className={`px-2 py-0.5 text-[11px] transition-colors border-l border-slate-600 ${
                     sleepMode === 'checkpoint'
                       ? 'bg-violet-500 text-white'
@@ -172,9 +172,9 @@ export default function SleepPopover({ project, sleepMode: parentSleepMode, onCh
             <p className="text-[11px] leading-relaxed text-slate-400">
               {checkpointSupported
                 ? sleepMode === 'checkpoint'
-                  ? 'Idle apps are frozen with CRIU and resume in ~1s on the next request — no reboot, state preserved. Uses disk equal to app memory while sleeping.'
+                  ? 'Idle apps are frozen and resume in ~1s on the next request — no reboot, state preserved. Uses disk equal to app memory while sleeping.'
                   : 'Idle apps stop and reboot on the next request (seconds for most frameworks).'
-                : 'Checkpoint sleep needs a node running podman with CRIU. This project’s node uses plain stop.'}
+                : 'Checkpoint sleep needs a podman node. This project’s node uses plain stop.'}
             </p>
           </div>
         )}

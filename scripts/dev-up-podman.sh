@@ -28,5 +28,4 @@ echo "==> Starting stack (docker compose, no build)..."
 exec docker compose \
   -f docker-compose.yml \
   -f docker-compose.override.yml \
-  -f docker-compose.podman.yml \
   --profile master up -d "$@"

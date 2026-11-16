@@ -110,11 +110,15 @@ pub enum RuntimeKind {
     Podman,
 }
 
-/// Default podman rootful socket; override with `PODMAN_SOCKET`.
-pub const DEFAULT_PODMAN_SOCKET: &str = "/run/podman/podman.sock";
+/// Default socket for the compat API and libpod endpoints. On podman nodes
+/// the installer symlinks /var/run/docker.sock to the podman socket, so the
+/// conventional path works for both runtimes; `PODMAN_SOCKET` overrides.
+pub const DEFAULT_PODMAN_SOCKET: &str = "/var/run/docker.sock";
 
 impl RuntimeKind {
     /// Runtime selection: `CONTAINER_RUNTIME=podman` or Docker by default.
+    /// Auto-detection (see `DockerManager::detect_runtime`) can still upgrade
+    /// Docker→Podman at startup when unset.
     pub fn from_env() -> Self {
         match std::env::var("CONTAINER_RUNTIME").as_deref() {
             Ok("podman") => Self::Podman,
@@ -122,7 +126,7 @@ impl RuntimeKind {
         }
     }
 
-    /// Podman socket path from `PODMAN_SOCKET` or the rootful default.
+    /// Podman socket path from `PODMAN_SOCKET` or the conventional default.
     pub fn podman_socket() -> String {
         std::env::var("PODMAN_SOCKET").unwrap_or_else(|_| DEFAULT_PODMAN_SOCKET.to_string())
     }
@@ -135,6 +139,12 @@ pub fn security_options_are_rootless(options: Option<&[String]>) -> Option<bool>
             value == "rootless" || value.contains("name=rootless")
         })
     })
+}
+
+/// True when a daemon version response identifies itself as podman
+/// (podman reports a "Podman Engine" component).
+pub fn version_reports_podman(version: &bollard::models::SystemVersion) -> bool {
+    version.components.as_deref().unwrap_or_default().iter().any(|c| c.name.to_ascii_lowercase().contains("podman"))
 }
 
 pub fn require_host_network_eligible(rootless: Option<bool>, protocol_version: Option<i64>) -> anyhow::Result<()> {
@@ -201,6 +211,28 @@ impl DockerManager {
             registry_state: Arc::new(std::sync::RwLock::new(crate::registry::RegistryState::default())),
             resolved_refs: Arc::new(std::sync::RwLock::new(HashMap::new())),
         })
+    }
+
+    /// Detect the runtime from the daemon's own version response (podman
+    /// reports a "Podman Engine" component). No-op when `CONTAINER_RUNTIME`
+    /// is set (explicit override) or the probe fails. Call once at startup.
+    pub async fn detect_runtime(&mut self) {
+        if std::env::var_os("CONTAINER_RUNTIME").is_some() {
+            return;
+        }
+        match self.docker.version().await {
+            Ok(version) if version_reports_podman(&version) => {
+                let socket = std::env::var("DOCKER_HOST")
+                    .ok()
+                    .and_then(|h| h.strip_prefix("unix://").map(str::to_string))
+                    .unwrap_or_else(RuntimeKind::podman_socket);
+                tracing::info!(%socket, "podman detected via daemon version response");
+                self.runtime = RuntimeKind::Podman;
+                self.podman_socket = Some(socket);
+            }
+            Ok(_) => {}
+            Err(e) => tracing::debug!(error = %e, "runtime detection skipped (version probe failed)"),
+        }
     }
 
     /// Create a DockerManager without connecting to the Docker socket — for use in tests only.
@@ -315,6 +347,20 @@ mod host_info_tests {
         assert!(require_host_network_eligible(None, Some(3)).is_err());
         assert!(require_host_network_eligible(Some(true), Some(3)).is_err());
         assert!(require_host_network_eligible(Some(false), Some(2)).is_err());
+    }
+
+    #[test]
+    fn detects_podman_from_version_components() {
+        let mut version = bollard::models::SystemVersion::default();
+        assert!(!version_reports_podman(&version));
+
+        version.components =
+            Some(vec![bollard::models::SystemVersionComponents { name: "Podman Engine".into(), ..Default::default() }]);
+        assert!(version_reports_podman(&version));
+
+        version.components =
+            Some(vec![bollard::models::SystemVersionComponents { name: "Engine".into(), ..Default::default() }]);
+        assert!(!version_reports_podman(&version));
     }
 }
 

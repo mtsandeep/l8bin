@@ -40,7 +40,7 @@ pub async fn transition(
     let mut qb = sqlx::QueryBuilder::new("UPDATE projects SET ");
     qb.push("status = ").push_bind(new_status.clone());
     qb.push(", updated_at = ").push_bind(now);
-    // Coming back to life invalidates any CRIU "frozen" badge.
+    // Coming back to life invalidates the "frozen" badge.
     if matches!(new_status, ProjectStatus::Running | ProjectStatus::Deploying | ProjectStatus::Importing) {
         qb.push(", frozen = 0");
     }

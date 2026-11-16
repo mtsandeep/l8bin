@@ -249,6 +249,7 @@ async fn main() -> anyhow::Result<()> {
     // Init Docker manager with global defaults
     let mut docker =
         DockerManager::new(config.docker_network.clone(), default_mem_mb * 1024 * 1024, default_cpu_limit)?;
+    docker.detect_runtime().await;
     docker.detect_host_projects_dir().await;
 
     // Registry credentials for local pulls (kept fresh by the /registries endpoints)

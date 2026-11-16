@@ -127,7 +127,7 @@ pub struct StopRequest {
     pub container_id: String,
 }
 
-/// POST /containers/stop response — true when CRIU-checkpointed. Older
+/// POST /containers/stop response — true when checkpointed. Older
 /// agents' empty body deserializes as false.
 #[derive(Serialize, Deserialize, Default)]
 pub struct StopOutcome {
@@ -157,7 +157,7 @@ pub struct StopProjectRequest {
 #[derive(Serialize, Deserialize)]
 pub struct StopProjectResponse {
     pub stopped_containers: usize,
-    /// How many stopped containers were CRIU-checkpointed (older agents → 0).
+    /// How many stopped containers were checkpointed (older agents → 0).
     #[serde(default)]
     pub checkpointed_containers: usize,
 }

@@ -27,9 +27,9 @@ pub struct ProjectResponse {
     pub auto_stop_timeout_mins: i64,
     pub auto_start_enabled: bool,
     pub allow_raw_ports: bool,
-    /// Idle sleep mode: plain stop vs CRIU checkpoint (podman nodes).
+    /// Idle sleep mode: plain stop vs checkpoint (podman nodes).
     pub sleep_mode: SleepMode,
-    /// True when the project is stopped via CRIU checkpoint ("frozen").
+    /// True when the project is stopped via checkpoint ("frozen").
     pub frozen: bool,
     pub custom_domain: Option<String>,
     pub service_count: Option<i64>,

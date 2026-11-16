@@ -808,7 +808,7 @@ export default function ProjectCard({
               onClick={() => handleAction('stop', () => stopProject(project.id, { checkpoint: true }))}
               disabled={loading !== null}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 transition-colors disabled:opacity-50 cursor-pointer"
-              title="Stops the app with a CRIU checkpoint (state preserved)"
+              title="Stops the app and preserves its state"
             >
               <Snowflake size={12} />
               Freeze

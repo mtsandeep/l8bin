@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
         std::env::var("DEFAULT_MEMORY_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(256) * 1024 * 1024;
     let cpu_limit: f64 = std::env::var("DEFAULT_CPU_LIMIT").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5);
     let mut docker = DockerManager::new(docker_network, memory_limit, cpu_limit)?;
+    docker.detect_runtime().await;
     docker.detect_host_projects_dir().await;
     let removed_unsafe = docker.cleanup_unsafe_docker_socket_containers().await?;
     if removed_unsafe > 0 {

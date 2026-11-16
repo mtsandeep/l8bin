@@ -352,7 +352,7 @@ pub struct Project {
     pub demo_parent_id: Option<String>,
     #[serde(default)]
     pub sleep_mode: SleepMode,
-    /// Stopped via CRIU checkpoint ("frozen"). Presentational only.
+    /// Stopped via checkpoint ("frozen"). Presentational only.
     #[serde(default)]
     pub frozen: bool,
     pub created_at: i64,

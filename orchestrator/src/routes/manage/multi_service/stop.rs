@@ -10,7 +10,7 @@ use super::helpers::{approved_docker_observe_requesters, proxy_needed_after_stop
 // ── Stop services ─────────────────────────────────────────────────────────────
 
 /// Stop service containers for a multi-service project (all services, or the
-/// filtered set). With `checkpoint: true` on a podman node, CRIU-checkpoints
+/// filtered set). With `checkpoint: true` on a podman node, checkpoints
 /// instead (falls back to stop). Updates `project_services` internally.
 pub async fn stop_services(
     state: &AppState,

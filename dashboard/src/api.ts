@@ -105,7 +105,7 @@ export interface Project {
 export interface ProjectStats {
   project_id: string;
   status: ProjectStatus;
-  /** Present when the project is stopped via CRIU checkpoint ("frozen"). */
+  /** Present when stopped via checkpoint ("frozen"). */
   frozen?: boolean;
   last_active_at?: number | null;
   services: ServiceInfo[];

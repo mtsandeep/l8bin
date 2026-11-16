@@ -6,6 +6,35 @@ frozen with [CRIU](https://criu.org) instead of stopped, and the next request
 **resumes them in ~1 second with their memory intact** — no framework boot, no
 lost in-process state.
 
+## Rootful today; rootless is planned
+
+Podman nodes run **rootful** — the system podman socket takes the place dockerd
+has on Docker nodes. This matches litebin's node model (low ports 80/443 for
+Caddy, predictable port publishing, host-side bind paths) and behaves
+identically to a Docker node, just on podman.
+
+If you're choosing podman for **rootless isolation** (no root daemon — a fair
+and popular reason), that is not what this delivers today. Rootless podman
+changes the node's socket, port capabilities, and networking stack, and is a
+**planned option** rather than a current one. Until then, the honest framing:
+podman support today buys you checkpoint sleep and no-dockerd, not a
+rootless security boundary.
+
+## Installing a podman node
+
+One flag (or pick podman when the installer offers a runtime on a fresh host):
+
+```bash
+curl -fsSL l8b.in | sudo bash -s -- master --runtime podman
+# agent node: ... | sudo bash -s -- agent --runtime podman
+```
+
+The installer installs `podman + CRIU` and the docker CLI/compose plugin,
+enables `podman.socket`, and aliases it at `/var/run/docker.sock` so every
+docker command keeps working. LiteBin **detects the runtime automatically** at
+startup (podman identifies itself in the version response) — no env config.
+`CONTAINER_RUNTIME=podman` remains available as an explicit override.
+
 | | Stop sleep (default) | Checkpoint sleep (podman + CRIU) |
 |---|---|---|
 | Idle resource use | 0 CPU, 0 RAM | 0 CPU, 0 RAM (state on disk ≈ app memory) |
@@ -21,10 +50,10 @@ dashboard toggle cannot install or replace the host's container engine. The
 toggle described below only *opts projects in*; it is a no-op (falls back to
 plain stop) on nodes without podman.
 
-## Setting up a podman node
+## Setting up a podman node manually
 
-On the node (Debian/Ubuntu; rootful podman is required — rootless cannot
-publish ports the way litebin's proxy expects):
+What the installer does, spelled out (Debian/Ubuntu; rootful podman is
+required — rootless cannot publish ports the way litebin's proxy expects):
 
 ```bash
 # 1. Install podman + CRIU
@@ -66,10 +95,8 @@ deprecated classic build protocol (`DOCKER_BUILDKIT=0`).
 Dashboard → project → **Sleep** popover → **Sleep mode: Checkpoint** (only
 selectable when the project's node supports it). Via API:
 
-```bash
-curl -X PATCH https://your-litebin/api/projects/{id}/settings \
-  -H 'Content-Type: application/json' \
-  -d '{"sleep_mode": "checkpoint"}'
+```
+PATCH /projects/{id}/settings   {"sleep_mode": "checkpoint"}
 ```
 
 The setting is pushed to the agent over mTLS and persisted on the node, so
@@ -101,11 +128,16 @@ down.
 ## Verifying on a node
 
 ```bash
-# Any running litebin container, checkpoint + resume by hand:
-sudo podman container checkpoint litebin-myapp
-sudo podman ps -a | grep myapp          # Exited (checkpointed)
-sudo time podman container restore litebin-myapp
+# Checkpoint + resume by hand. The flags mirror what litebin itself passes:
+# real servers hold established TCP connections and file locks, which CRIU
+# refuses to dump without them.
+sudo podman container checkpoint --tcp-established --file-locks litebin-myapp
+sudo podman ps -a | grep litebin-myapp   # Exited (0)
+time sudo podman container restore --tcp-established --file-locks litebin-myapp
 ```
+
+Without the flags, simple apps checkpoint fine but real ones fail with
+"Connected TCP socket" / "file locks are hold" errors.
 
 Restoring an app with a visible in-memory counter (a request counter, cache
 hit meter) is the quickest end-to-end sanity check: the counter continues
@@ -113,8 +145,11 @@ from its frozen value instead of resetting.
 
 ## Limitations
 
-- Linux nodes only (CRIU is a Linux feature; WSL2 kernels work for
-  experimentation but some nftables-based podman networking features may not).
+- Linux nodes only (CRIU is a Linux feature). WSL2 works — the full stack,
+  deploys, and checkpoint/restore are validated on it; if podman networking
+  there fails with an nftables error (the WSL kernel's nftables support is
+  partial), set `firewall_driver = "iptables"` in
+  `/etc/containers/containers.conf`.
 - Established TCP connections are checkpointed with `--tcp-established`
   (required — real servers hold keep-alive connections, which CRIU otherwise
   refuses to dump). Connections to peers outside the checkpoint (e.g. Caddy's
