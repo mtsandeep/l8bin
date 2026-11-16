@@ -25,6 +25,9 @@ pub struct UpdateSettingsRequest {
     pub memory_limit_mb: Option<i64>,
     pub cpu_limit: Option<f64>,
     pub port: Option<i64>,
+    /// Idle sleep mode: `stop` (default) or `checkpoint` (CRIU checkpoint/
+    /// restore — effective on podman nodes, ignored elsewhere).
+    pub sleep_mode: Option<litebin_common::types::SleepMode>,
 }
 
 #[utoipa::path(
@@ -138,6 +141,7 @@ pub async fn update_project_settings(
     let mut has_memory_limit_mb = false;
     let mut has_cpu_limit = false;
     let mut has_port = false;
+    let mut has_sleep_mode = false;
 
     if payload.name.is_some() {
         set_clauses.push("name = ?");
@@ -183,6 +187,10 @@ pub async fn update_project_settings(
         set_clauses.push("internal_port = ?");
         has_port = true;
     }
+    if payload.sleep_mode.is_some() {
+        set_clauses.push("sleep_mode = ?");
+        has_sleep_mode = true;
+    }
 
     if !has_name
         && !has_description
@@ -195,6 +203,7 @@ pub async fn update_project_settings(
         && !has_memory_limit_mb
         && !has_cpu_limit
         && !has_port
+        && !has_sleep_mode
     {
         return Ok(Json(existing.unwrap()));
     }
@@ -243,6 +252,13 @@ pub async fn update_project_settings(
     }
     if has_port {
         query = query.bind(payload.port.unwrap());
+    }
+    let sleep_mode_changed = has_sleep_mode && payload.sleep_mode != Some(existing.as_ref().unwrap().sleep_mode);
+    if has_sleep_mode {
+        query = query.bind(match payload.sleep_mode.unwrap() {
+            litebin_common::types::SleepMode::Stop => "stop",
+            litebin_common::types::SleepMode::Checkpoint => "checkpoint",
+        });
     }
 
     query
@@ -306,8 +322,8 @@ pub async fn update_project_settings(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;
 
-    // Push project meta to agent if lifecycle or raw-port settings changed.
-    if (has_auto_start_enabled || has_allow_raw_ports)
+    // Push project meta to agent if lifecycle, raw-port, or sleep-mode settings changed.
+    if (has_auto_start_enabled || has_allow_raw_ports || sleep_mode_changed)
         && let Some(ref node_id) = updated.node_id
         && node_id != "local"
     {

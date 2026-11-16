@@ -440,12 +440,12 @@ pub async fn start_services(
                                     removed.insert(svc.clone());
                                 }
                         } else {
-                            // Stopped — try docker start (fast path)
+                            // Stopped — start it (CRIU-restore when it slept via checkpoint)
                             match docker
-                                .start_existing_container(existing_cid, &svc, is_oneshot)
+                                .wake_container(existing_cid, &svc, is_oneshot)
                                 .await
                             {
-                                Ok(()) => {
+                                Ok(_woke_via) => {
                                     any_started.store(true, std::sync::atomic::Ordering::Relaxed);
                                     if let Ok(mut started) = started_containers.lock() {
                                         started.push((svc.clone(), existing_cid.clone()));

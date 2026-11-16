@@ -183,6 +183,7 @@ pub async fn run_container(State(state): State<AgentState>, Json(req): Json<RunR
         service_summary: None,
         deploy_type: None,
         demo_parent_id: None,
+        sleep_mode: litebin_common::types::SleepMode::Stop,
         created_at: 0,
         updated_at: 0,
     };
@@ -254,6 +255,7 @@ pub async fn recreate_container(State(state): State<AgentState>, Json(req): Json
         service_summary: None,
         deploy_type: None,
         demo_parent_id: None,
+        sleep_mode: litebin_common::types::SleepMode::Stop,
         created_at: 0,
         updated_at: 0,
     };
@@ -382,6 +384,7 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
             service_summary: None,
             deploy_type: None,
             demo_parent_id: None,
+            sleep_mode: litebin_common::types::SleepMode::Stop,
             created_at: 0,
             updated_at: 0,
         };
@@ -437,10 +440,32 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
 
 /// POST /containers/stop
 pub async fn stop_container(State(state): State<AgentState>, Json(req): Json<StopRequest>) -> impl IntoResponse {
-    match state.docker.stop_container(&req.container_id).await {
-        Ok(()) => StatusCode::OK.into_response(),
+    let checkpoint = container_wants_checkpoint(&state, &req.container_id).await;
+    match state.docker.sleep_container(&req.container_id, checkpoint).await {
+        Ok(_) => StatusCode::OK.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response(),
     }
+}
+
+/// Resolve whether the project owning a container opted into checkpoint sleep.
+/// Reads the project id from the container name (`litebin-<project>` or
+/// `litebin-<project>.<service>`); returns false unless the node runtime
+/// actually supports CRIU.
+async fn container_wants_checkpoint(state: &AgentState, container_id: &str) -> bool {
+    if !state.docker.supports_checkpoint() {
+        return false;
+    }
+    let Ok(inspect) = state.docker.inspect_container(container_id).await else {
+        return false;
+    };
+    let Some(name) = inspect.name.as_deref().map(|n| n.trim_start_matches('/')) else {
+        return false;
+    };
+    let Some(suffix) = name.strip_prefix("litebin-") else {
+        return false;
+    };
+    let project_id = suffix.split('.').next().unwrap_or(suffix);
+    state.wants_checkpoint_sleep(project_id)
 }
 
 /// POST /containers/stop-service
@@ -451,7 +476,8 @@ pub async fn stop_service(State(state): State<AgentState>, Json(req): Json<StopS
             .into_response();
     }
 
-    match state.docker.stop_primary_service_container(&req.project_id, &req.service_name).await {
+    let checkpoint = state.wants_checkpoint_sleep(&req.project_id);
+    match state.docker.sleep_primary_service_container(&req.project_id, &req.service_name, checkpoint).await {
         Ok(stopped) => (StatusCode::OK, Json(StopServiceResponse { stopped })).into_response(),
         Err(error) => {
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: error.to_string() })).into_response()
@@ -477,8 +503,9 @@ pub async fn stop_project(State(state): State<AgentState>, Json(req): Json<StopP
         }
     };
 
+    let checkpoint = state.wants_checkpoint_sleep(&req.project_id);
     for container_id in &workload_ids {
-        if let Err(error) = state.docker.stop_container(container_id).await {
+        if let Err(error) = state.docker.sleep_container(container_id, checkpoint).await {
             failures.push(format!("stop container {container_id}: {error}"));
         }
     }

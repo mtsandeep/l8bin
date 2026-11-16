@@ -27,6 +27,7 @@ pub async fn update_project_meta(
                     allow_raw_ports: false,
                     docker_observe: false,
                     host_network: false,
+                    sleep_mode: litebin_common::types::SleepMode::default(),
                     default_memory_limit_mb: req.default_memory_limit_mb,
                     default_cpu_limit: req.default_cpu_limit,
                 },
@@ -55,6 +56,15 @@ pub async fn update_project_meta(
     if let Some(host_network) = req.host_network {
         for (id, val) in host_network {
             meta.entry(id).or_default().host_network = val;
+        }
+    }
+
+    // Overlay sleep mode (only checkpoint entries are pushed; the rest keep Stop)
+    if let Some(sleep_mode) = req.sleep_mode {
+        for (id, mode) in sleep_mode {
+            if let Some(entry) = meta.get_mut(&id) {
+                entry.sleep_mode = mode;
+            }
         }
     }
 

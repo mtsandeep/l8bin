@@ -35,5 +35,6 @@ pub async fn health(State(state): State<AgentState>) -> Json<HealthReport> {
         container_count,
         image_stats,
         public_ip: if state.config.public_ip.is_empty() { None } else { Some(state.config.public_ip.clone()) },
+        supports_checkpoint: state.docker.supports_checkpoint(),
     })
 }

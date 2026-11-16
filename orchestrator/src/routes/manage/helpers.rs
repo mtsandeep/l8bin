@@ -348,6 +348,7 @@ mod tests {
             service_summary: None,
             deploy_type: None,
             demo_parent_id: None,
+            sleep_mode: litebin_common::types::SleepMode::Stop,
             created_at: 0,
             updated_at: 0,
         }

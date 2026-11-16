@@ -1,5 +1,6 @@
 mod lifecycle;
 mod observe;
+mod podman;
 mod query;
 mod run;
 mod sidecar;
@@ -8,6 +9,7 @@ mod wait;
 
 pub(crate) use lifecycle::*;
 pub use observe::*;
+pub use podman::*;
 #[allow(unused_imports)]
 pub(crate) use query::*;
 #[allow(unused_imports)]

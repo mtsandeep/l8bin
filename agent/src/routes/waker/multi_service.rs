@@ -189,9 +189,10 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
                             // Failed or unknown exit — recreate
                             let _ = docker.remove_container(&existing_id).await;
                         } else {
-                            // Long-running container exists but is stopped — start it
+                            // Long-running container exists but is stopped —
+                            // start it (CRIU-restore when it slept via checkpoint)
                             docker
-                                .start_existing_container(&existing_id, &svc, is_oneshot)
+                                .wake_container(&existing_id, &svc, is_oneshot)
                                 .await
                                 .map_err(|e| format!("failed to start service '{}': {}", svc, e))?;
                             if let Ok(mut ids) = changed_container_ids.lock() {

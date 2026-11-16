@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use litebin_common::docker::DockerErrorKind;
-use litebin_common::types::{DeployType, ProjectStatus};
+use litebin_common::types::{DeployType, ProjectStatus, SleepMode};
 
 use crate::AppState;
 use crate::status::{self, ProjectUpdateFields};
@@ -142,7 +142,7 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
             if is_local {
                 for (_svc_name, cid) in containers.iter().rev() {
                     if let Some(container_id) = cid {
-                        stop_local_container(state, &project.id, container_id).await;
+                        stop_local_container(state, &project.id, container_id, project.sleep_mode).await;
                     }
                 }
             } else {
@@ -161,7 +161,7 @@ async fn sweep(state: &AppState, router: &dyn litebin_common::routing::RoutingPr
         {
             // Single-service: stop the one container
             if is_local {
-                stop_local_container(state, &project.id, container_id).await;
+                stop_local_container(state, &project.id, container_id, project.sleep_mode).await;
             } else {
                 let node_id = project.node_id.as_deref().unwrap();
                 stop_remote_container(state, &project.id, node_id, container_id, false).await;
@@ -217,18 +217,20 @@ async fn reap_orphaned_containers(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn stop_local_container(state: &AppState, project_id: &str, container_id: &str) {
-    if let Err(e) = state.docker.stop_container(container_id).await {
-        match DockerErrorKind::from_anyhow(&e) {
+async fn stop_local_container(state: &AppState, project_id: &str, container_id: &str, sleep_mode: SleepMode) {
+    let checkpoint = state.docker.supports_checkpoint() && sleep_mode == SleepMode::Checkpoint;
+    match state.docker.sleep_container(container_id, checkpoint).await {
+        Ok(outcome) => {
+            tracing::info!(project = %project_id, outcome = ?outcome, "janitor: container put to sleep (idle)");
+        }
+        Err(e) => match DockerErrorKind::from_anyhow(&e) {
             DockerErrorKind::NotFound => {
                 tracing::warn!(project = %project_id, "janitor: container gone, already stopped");
             }
             _ => {
                 tracing::error!(project = %project_id, error = %e, "janitor: failed to stop container (orphan — cleaned up on next wake)");
             }
-        }
-    } else {
-        tracing::info!(project = %project_id, "janitor: container stopped (idle)");
+        },
     }
 }
 

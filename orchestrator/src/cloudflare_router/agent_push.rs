@@ -37,8 +37,8 @@ pub async fn push_project_meta_to_agent(
     config: &crate::config::Config,
 ) {
     // Query all projects for this node
-    let rows: Vec<(String, bool, bool, bool)> = match sqlx::query_as(
-        "SELECT id, auto_start_enabled, allow_raw_ports, is_background FROM projects WHERE node_id = ?",
+    let rows: Vec<(String, bool, bool, bool, String)> = match sqlx::query_as(
+        "SELECT id, auto_start_enabled, allow_raw_ports, is_background, sleep_mode FROM projects WHERE node_id = ?",
     )
     .bind(node_id)
     .fetch_all(db)
@@ -51,11 +51,17 @@ pub async fn push_project_meta_to_agent(
         }
     };
 
-    let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _, _)| (id.clone(), *auto)).collect();
+    let projects: HashMap<String, bool> = rows.iter().map(|(id, auto, _, _, _)| (id.clone(), *auto)).collect();
     let background_projects: HashMap<String, bool> =
-        rows.iter().filter(|(_, _, _, background)| *background).map(|(id, _, _, _)| (id.clone(), true)).collect();
+        rows.iter().filter(|(_, _, _, background, _)| *background).map(|(id, _, _, _, _)| (id.clone(), true)).collect();
     let allow_raw_ports: HashMap<String, bool> =
-        rows.iter().filter(|(_, _, raw, _)| *raw).map(|(id, _, _, _)| (id.clone(), true)).collect();
+        rows.iter().filter(|(_, _, raw, _, _)| *raw).map(|(id, _, _, _, _)| (id.clone(), true)).collect();
+    // Only checkpoint entries are pushed — agents default everything else to stop.
+    let sleep_mode: HashMap<String, litebin_common::types::SleepMode> = rows
+        .iter()
+        .filter(|(_, _, _, _, mode)| mode == "checkpoint")
+        .map(|(id, _, _, _, _)| (id.clone(), litebin_common::types::SleepMode::Checkpoint))
+        .collect();
     let docker_observe: HashMap<String, bool> = sqlx::query_scalar::<_, String>(
         "SELECT pc.project_id FROM project_capabilities pc \
          JOIN projects p ON p.id = pc.project_id \
@@ -135,6 +141,7 @@ pub async fn push_project_meta_to_agent(
         allow_raw_ports: Some(allow_raw_ports),
         docker_observe: Some(docker_observe),
         host_network: Some(host_network),
+        sleep_mode: Some(sleep_mode),
         default_memory_limit_mb: Some(default_mem),
         default_cpu_limit: Some(default_cpu),
         path_routes: Some(path_routes),

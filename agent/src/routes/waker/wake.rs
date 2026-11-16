@@ -551,6 +551,7 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
                                         service_summary: None,
                                         deploy_type: None,
                                         demo_parent_id: None,
+                                        sleep_mode: litebin_common::types::SleepMode::Stop,
                                         created_at: 0,
                                         updated_at: 0,
                                     };
@@ -577,10 +578,10 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
                             }
                         }
 
-                        // Fast path: env unchanged, just start the existing container
+                        // Fast path: env unchanged, start (or CRIU-restore) the existing container
                         state_clone
                             .docker
-                            .start_existing_container(&container_id_clone, "web", false)
+                            .wake_container(&container_id_clone, "web", false)
                             .await?;
 
                         // Wait briefly for port assignment

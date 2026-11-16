@@ -377,6 +377,11 @@ pub struct ProjectMetaRequest {
     pub allow_raw_ports: Option<HashMap<String, bool>>,
     pub docker_observe: Option<HashMap<String, bool>>,
     pub host_network: Option<HashMap<String, bool>>,
+    /// Per-project idle sleep mode (project_id -> sleep mode). Only checkpoint
+    /// entries are sent; absent projects use plain stop. Absent entirely on
+    /// older orchestrators — agents treat that as all-stop.
+    #[serde(default)]
+    pub sleep_mode: Option<HashMap<String, crate::types::SleepMode>>,
     /// Global default memory limit (MB) from orchestrator settings.
     pub default_memory_limit_mb: Option<i64>,
     /// Global default CPU limit from orchestrator settings.
@@ -613,5 +618,28 @@ mod tests {
         assert!(!r.has_pending_changes);
         let out = serde_json::to_string(&EnvFileResponse { content: "A=1".into(), has_pending_changes: true }).unwrap();
         assert!(out.contains(r#""has_pending_changes":true"#));
+    }
+
+    #[test]
+    fn project_meta_request_carries_and_defaults_sleep_mode() {
+        let req = ProjectMetaRequest {
+            projects: HashMap::from([("p1".into(), true)]),
+            background_projects: None,
+            allow_raw_ports: None,
+            docker_observe: None,
+            host_network: None,
+            sleep_mode: Some(HashMap::from([("p1".into(), crate::types::SleepMode::Checkpoint)])),
+            default_memory_limit_mb: Some(256),
+            default_cpu_limit: None,
+            path_routes: None,
+        };
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["sleep_mode"]["p1"], "checkpoint");
+
+        // An older orchestrator's payload without the field still deserializes.
+        let legacy: ProjectMetaRequest =
+            serde_json::from_str(r#"{"projects":{"p1":true},"default_memory_limit_mb":256,"default_cpu_limit":null}"#)
+                .unwrap();
+        assert!(legacy.sleep_mode.is_none());
     }
 }

@@ -61,6 +61,10 @@ pub struct ProjectMetaEntry {
     pub docker_observe: bool,
     #[serde(default)]
     pub host_network: bool,
+    /// Idle sleep mode pushed by the orchestrator. `checkpoint` sleeps via CRIU
+    /// on podman nodes (wake restores memory instead of rebooting the app).
+    #[serde(default)]
+    pub sleep_mode: litebin_common::types::SleepMode,
     #[serde(default)]
     pub default_memory_limit_mb: Option<i64>,
     #[serde(default)]
@@ -68,6 +72,16 @@ pub struct ProjectMetaEntry {
     /// Custom path routes ({path -> upstream}) pushed by the orchestrator.
     #[serde(default)]
     pub path_routes: Option<std::collections::HashMap<String, String>>,
+}
+
+impl AgentState {
+    /// Whether this project should sleep via CRIU checkpoint. Only ever true
+    /// when the node's runtime supports it.
+    pub fn wants_checkpoint_sleep(&self, project_id: &str) -> bool {
+        self.docker.supports_checkpoint()
+            && self.project_meta.read().ok().and_then(|meta| meta.get(project_id).map(|e| e.sleep_mode))
+                == Some(litebin_common::types::SleepMode::Checkpoint)
+    }
 }
 
 pub fn load_registration_from_file() -> anyhow::Result<Option<AgentRegistration>> {

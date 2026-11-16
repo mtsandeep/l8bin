@@ -75,8 +75,12 @@ pub(crate) struct CpuSample {
 
 pub struct DockerManager {
     pub(crate) docker: Docker,
-    pub(crate) network: String,
-    pub(crate) memory_limit: Arc<AtomicI64>,
+    pub network: String,
+    /// Runtime serving the Docker-compatible API (docker or podman).
+    pub(crate) runtime: RuntimeKind,
+    /// Podman socket path when `runtime` is podman (libpod API for CRIU).
+    pub(crate) podman_socket: Option<String>,
+    pub memory_limit: Arc<AtomicI64>,
     pub(crate) cpu_limit: Arc<AtomicU64>, // f64 stored as bits
     /// Host-side path for the projects directory (detected via self-inspection).
     /// Used to translate `projects/...` bind mount paths to host paths.
@@ -95,6 +99,37 @@ pub struct DockerManager {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockerHostInfo {
     pub rootless: Option<bool>,
+}
+
+/// Container runtime backing this node's `DockerManager`.
+///
+/// Both kinds speak the Docker-compatible API (bollard talks to either
+/// unchanged); podman additionally exposes CRIU checkpoint/restore through its
+/// native libpod API, enabling sleep-without-app-boot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeKind {
+    Docker,
+    Podman,
+}
+
+/// Default podman rootful socket; override with `PODMAN_SOCKET`.
+pub const DEFAULT_PODMAN_SOCKET: &str = "/run/podman/podman.sock";
+
+impl RuntimeKind {
+    /// Machine-local runtime selection: `CONTAINER_RUNTIME=podman` points the
+    /// manager at podman's Docker-compatible socket and enables checkpoint/
+    /// restore sleep. Unset or `docker` keeps stock Docker semantics.
+    pub fn from_env() -> Self {
+        match std::env::var("CONTAINER_RUNTIME").as_deref() {
+            Ok("podman") => Self::Podman,
+            _ => Self::Docker,
+        }
+    }
+
+    /// Podman socket path from `PODMAN_SOCKET` or the rootful default.
+    pub fn podman_socket() -> String {
+        std::env::var("PODMAN_SOCKET").unwrap_or_else(|_| DEFAULT_PODMAN_SOCKET.to_string())
+    }
 }
 
 pub fn security_options_are_rootless(options: Option<&[String]>) -> Option<bool> {
@@ -121,6 +156,8 @@ impl Clone for DockerManager {
         Self {
             docker: self.docker.clone(),
             network: self.network.clone(),
+            runtime: self.runtime,
+            podman_socket: self.podman_socket.clone(),
             memory_limit: Arc::clone(&self.memory_limit),
             cpu_limit: Arc::clone(&self.cpu_limit),
             host_projects_dir: self.host_projects_dir.clone(),
@@ -137,10 +174,31 @@ impl DockerManager {
         Ok(DockerHostInfo { rootless: security_options_are_rootless(info.security_options.as_deref()) })
     }
     pub fn new(network: String, memory_limit: i64, cpu_limit: f64) -> anyhow::Result<Self> {
-        let docker = Docker::connect_with_socket_defaults()?;
+        let runtime = RuntimeKind::from_env();
+        let (docker, podman_socket) = match runtime {
+            RuntimeKind::Docker => (Docker::connect_with_socket_defaults()?, None),
+            RuntimeKind::Podman => {
+                // Honor DOCKER_HOST when explicitly set (rootless socket etc.),
+                // otherwise use the podman socket directly.
+                let socket = std::env::var("DOCKER_HOST").ok().filter(|h| !h.is_empty());
+                let docker = match socket {
+                    Some(_) => Docker::connect_with_socket_defaults()?,
+                    None => Docker::connect_with_socket(
+                        &RuntimeKind::podman_socket(),
+                        240,
+                        // Pin a compat API version podman implements.
+                        &bollard::ClientVersion { major_version: 1, minor_version: 41 },
+                    )?,
+                };
+                (docker, Some(RuntimeKind::podman_socket()))
+            }
+        };
+        tracing::info!(runtime = ?runtime, "container runtime selected");
         Ok(Self {
             docker,
             network,
+            runtime,
+            podman_socket,
             memory_limit: Arc::new(AtomicI64::new(memory_limit)),
             cpu_limit: Arc::new(AtomicU64::new(cpu_limit.to_bits())),
             host_projects_dir: None,
@@ -157,6 +215,8 @@ impl DockerManager {
         Self {
             docker,
             network: "test".to_string(),
+            runtime: RuntimeKind::Docker,
+            podman_socket: None,
             memory_limit: Arc::new(AtomicI64::new(0)),
             cpu_limit: Arc::new(AtomicU64::new(0.0_f64.to_bits())),
             host_projects_dir: None,
