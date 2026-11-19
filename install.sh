@@ -238,6 +238,29 @@ normalize_release_tag() {
   echo "v${tag#[vV]}"
 }
 
+# Semver-ish compare: 0 equal, 1 a newer, 2 b newer (pre-release < release).
+version_cmp() {
+  local a="${1#v}" b="${2#v}"
+  local acore="${a%%-*}" bcore="${b%%-*}"
+  local apre="${a#*-}" bpre="${b#*-}"
+  local IFS='.'
+  read -r -a A <<< "$acore"
+  read -r -a B <<< "$bcore"
+  unset IFS
+  local i d
+  for i in 0 1 2 3; do
+    d=$(( ${A[i]:-0} - ${B[i]:-0} ))
+    if [ "$d" -ne 0 ]; then
+      [ "$d" -gt 0 ] && echo 1 || echo 2
+      return
+    fi
+  done
+  [ "$apre" = "$a" ] && [ "$bpre" = "$b" ] && { echo 0; return; }
+  [ "$apre" = "$a" ] && { echo 1; return; }
+  [ "$bpre" = "$b" ] && { echo 2; return; }
+  echo 0
+}
+
 verify_release_exists() {
   local tag="$1"
   [ -n "${L8B_RELEASE_DIR:-}" ] && return 0
@@ -1586,8 +1609,18 @@ update_master() {
     fi
     target_release="$latest_release"
   else
+    local option_label option_target
+    if [ "$(version_cmp "$current_version" "$latest_release")" -eq 1 ]; then
+      # Pre-release ahead of latest stable — never offer the older stable.
+      warn "Installed pre-release ${current_version} is newer than latest stable ${latest_release}."
+      option_label="Reinstall ${current_version}"
+      option_target="$current_version"
+    else
+      option_label="Update to ${latest_release} (latest)"
+      option_target="$latest_release"
+    fi
     echo "  Options:"
-    echo -e "    1) Update to ${CYAN}${latest_release}${NC} (latest)"
+    echo -e "    1) ${CYAN}${option_label}${NC}"
     echo "    2) Enter a specific version"
     echo ""
     local choice
@@ -1595,14 +1628,14 @@ update_master() {
     _tty_read choice
     case "${choice:-1}" in
       2)
-        prompt "Enter version (e.g. v0.1.2)" target_release ""
+        prompt "Enter version (e.g. v0.1.2, v0.2.0-beta.1)" target_release ""
         target_release=$(normalize_release_tag "$target_release")
         [ -z "$target_release" ] && die "Version is required"
         # Verify release exists on GitHub
         verify_release_exists "$target_release"
         ;;
       *)
-        target_release="$latest_release"
+        target_release="$option_target"
         ;;
     esac
   fi
@@ -1820,8 +1853,18 @@ update_agent() {
     fi
     target_release="$latest_release"
   else
+    local option_label option_target
+    if [ "$(version_cmp "$current_version" "$latest_release")" -eq 1 ]; then
+      # Pre-release ahead of latest stable — never offer the older stable.
+      warn "Installed pre-release ${current_version} is newer than latest stable ${latest_release}."
+      option_label="Reinstall ${current_version}"
+      option_target="$current_version"
+    else
+      option_label="Update to ${latest_release} (latest)"
+      option_target="$latest_release"
+    fi
     echo "  Options:"
-    echo -e "    1) Update to ${CYAN}${latest_release}${NC} (latest)"
+    echo -e "    1) ${CYAN}${option_label}${NC}"
     echo "    2) Enter a specific version"
     echo ""
     local choice
@@ -1829,14 +1872,14 @@ update_agent() {
     _tty_read choice
     case "${choice:-1}" in
       2)
-        prompt "Enter version (e.g. v0.1.2)" target_release ""
+        prompt "Enter version (e.g. v0.1.2, v0.2.0-beta.1)" target_release ""
         target_release=$(normalize_release_tag "$target_release")
         [ -z "$target_release" ] && die "Version is required"
         # Verify release exists on GitHub
         verify_release_exists "$target_release"
         ;;
       *)
-        target_release="$latest_release"
+        target_release="$option_target"
         ;;
     esac
   fi

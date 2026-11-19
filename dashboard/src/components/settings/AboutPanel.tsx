@@ -13,12 +13,34 @@ const INSTALL_CMD = 'curl -fsSL https://l8b.in | bash';
 const UPDATE_CMD = 'curl -fsSL https://l8b.in | bash -s update';
 
 /** Numeric segment compare: 0.4.9 < 0.4.10 < 0.5.0. */
+// Semver compare incl. pre-releases (0.5.0-beta.1 < 0.5.0): compare cores
+// numerically, then a pre-release sorts before its own release.
 function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
+  const parse = (v: string) => {
+    const [core, pre] = v.replace(/^v/, '').split(/-(.+)/);
+    return { core: core.split('.').map(Number), pre: pre?.split('.') ?? null };
+  };
+  const va = parse(a);
+  const vb = parse(b);
+  for (let i = 0; i < Math.max(va.core.length, vb.core.length); i++) {
+    const d = (va.core[i] || 0) - (vb.core[i] || 0);
     if (d !== 0) return d;
+  }
+  if (!va.pre && !vb.pre) return 0;
+  if (!va.pre) return 1;
+  if (!vb.pre) return -1;
+  for (let i = 0; i < Math.max(va.pre.length, vb.pre.length); i++) {
+    const x = va.pre[i];
+    const y = vb.pre[i];
+    if (x === undefined) return -1; // 0.5.0-beta < 0.5.0-beta.1
+    if (y === undefined) return 1;
+    const nx = Number(x);
+    const ny = Number(y);
+    if (!Number.isNaN(nx) && !Number.isNaN(ny)) {
+      if (nx !== ny) return nx - ny;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
   }
   return 0;
 }
@@ -85,7 +107,14 @@ export default function AboutPanel() {
         <div className="space-y-2 text-xs">
           <div className="flex items-center justify-between gap-3">
             <span className="text-slate-500">Running</span>
-            <span className="font-mono text-slate-200">{version ? `v${version}` : '—'}</span>
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="font-mono text-slate-200">{version ? `v${version}` : '—'}</span>
+              {version?.includes('-') && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                  pre-release
+                </span>
+              )}
+            </span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-slate-500">Latest release</span>

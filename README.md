@@ -6,6 +6,10 @@
 
 Self-hosted App Manager. Deploy single or multi-service apps from your dashboard, CLI, or GitHub Actions — with volume persistence, custom routing, and automatic HTTPS.
 
+<p align="center">
+  <img src="landing/public/social-preview-brand.png" alt="LiteBin" width="800">
+</p>
+
 ## Why LiteBin
 
 Cloud hosting platforms are great until you check the bill for side projects you built months ago. Self-hosted PaaS platforms are built for production workloads — customer-facing apps that need uptime guarantees, multi-tenant isolation, and rollback safety. Your weekend demo doesn't need that overhead.
@@ -106,17 +110,16 @@ Or start from the dashboard — **Nodes → Add Node** — which walks you throu
 
 ## Documentation
 
-| Topic | Link |
+Full documentation lives at **[l8bin.com/docs](https://l8bin.com/docs)** and is always current.
+
+| Core | Link |
 |---|---|
+| Quick start | [l8bin.com/quickstart](https://l8bin.com/quickstart) |
 | Architecture | [docs/architecture/architecture.md](docs/architecture/architecture.md) |
 | Design decisions | [docs/architecture/decisions.md](docs/architecture/decisions.md) |
-| Multi-server (agents, mTLS) | [docs/topics/multi-server.md](docs/topics/multi-server.md) |
-| Volumes & persistence | [docs/topics/volumes.md](docs/topics/volumes.md) |
-| Configuration & DNS records | [docs/topics/configuration.md](docs/topics/configuration.md) · [`.env.example`](.env.example) |
-| GitHub connect | [docs/topics/github-connect.md](docs/topics/github-connect.md) |
-| Security · Backup | [docs/topics/security.md](docs/topics/security.md) · [docs/topics/backup.md](docs/topics/backup.md) |
 | FAQ / troubleshooting | [docs/topics/faq.md](docs/topics/faq.md) |
-| CLI reference · REST API | [docs/reference/cli.md](docs/reference/cli.md) · [API docs](https://l8bin.com/docs) · [openapi.json](https://l8bin.com/docs/openapi.json) |
+| CLI reference | [docs/reference/cli.md](docs/reference/cli.md) |
+| REST API | [API docs](https://l8bin.com/docs) · [openapi.json](https://l8bin.com/docs/openapi.json) |
 | llms.txt (for agents) | [l8bin.com/llms.txt](https://l8bin.com/llms.txt) · [l8bin.com/llms-full.txt](https://l8bin.com/llms-full.txt) (with API spec) |
 
 ## Development
