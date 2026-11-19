@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Beta releases** — `cargo release beta` tags pre-releases (`v0.4.29-beta.1`) that publish as GitHub pre-releases, so stable installs never see them; the installer's update menu can install any specific version (option 2) and knows a pre-release outranks the older stable (never offers a downgrade); the dashboard's About panel shows a *pre-release* chip.
+
 ## [0.4.29-beta.1] - 2026-11-19
 
 ### Added

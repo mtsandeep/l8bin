@@ -1600,54 +1600,47 @@ update_master() {
     exit 0
   fi
 
-  local target_release
-
-  if [ "$current_version" = "$latest_release" ]; then
-    if ! prompt_yes "Already up to date. Reinstall?"; then
-      info "Cancelled."
-      exit 0
-    fi
-    target_release="$latest_release"
+  local target_release option_label option_target default_choice=1
+  if [ "$(version_cmp "$current_version" "$latest_release")" -eq 2 ]; then
+    option_label="Update to ${latest_release} (latest)"
+    option_target="$latest_release"
   else
-    local option_label option_target
-    if [ "$(version_cmp "$current_version" "$latest_release")" -eq 1 ]; then
-      # Pre-release ahead of latest stable — never offer the older stable.
+    # Up to date, or a pre-release ahead of latest stable — never offer the
+    # older stable. Default to cancel so an Enter keypress never reinstalls.
+    if [ "$current_version" != "$latest_release" ]; then
       warn "Installed pre-release ${current_version} is newer than latest stable ${latest_release}."
-      option_label="Reinstall ${current_version}"
-      option_target="$current_version"
-    else
-      option_label="Update to ${latest_release} (latest)"
-      option_target="$latest_release"
     fi
-    echo "  Options:"
-    echo -e "    1) ${CYAN}${option_label}${NC}"
-    echo "    2) Enter a specific version"
-    echo ""
-    local choice
-    echo -ne "  ${CYAN}Choose [1]:${NC} "
-    _tty_read choice
-    case "${choice:-1}" in
-      2)
-        prompt "Enter version (e.g. v0.1.2, v0.2.0-beta.1)" target_release ""
-        target_release=$(normalize_release_tag "$target_release")
-        [ -z "$target_release" ] && die "Version is required"
-        # Verify release exists on GitHub
-        verify_release_exists "$target_release"
-        ;;
-      *)
-        target_release="$option_target"
-        ;;
-    esac
+    option_label="Reinstall ${current_version}"
+    option_target="$current_version"
+    default_choice=3
   fi
-
-  # Confirm
+  echo "  Options:"
+  echo -e "    1) ${CYAN}${option_label}${NC}"
+  echo "    2) Enter a specific version"
+  echo "    3) Cancel"
   echo ""
-  if [ "$current_version" = "$target_release" ]; then
-    if ! prompt_yes "Reinstall ${current_version}?"; then
+  local choice
+  echo -ne "  ${CYAN}Choose [${default_choice}]:${NC} "
+  _tty_read choice
+  case "${choice:-$default_choice}" in
+    2)
+      prompt "Enter version (e.g. v0.1.2, v0.2.0-beta.1)" target_release ""
+      target_release=$(normalize_release_tag "$target_release")
+      [ -z "$target_release" ] && die "Version is required"
+      # Verify release exists on GitHub
+      verify_release_exists "$target_release"
+      ;;
+    3)
       info "Cancelled."
       exit 0
-    fi
-  elif ! prompt_yes "Update from ${current_version} to ${target_release}?"; then
+      ;;
+    *)
+      target_release="$option_target"
+      ;;
+  esac
+
+  # Confirm updates only — a reinstall picked from the menu is already explicit.
+  if [ "$current_version" != "$target_release" ] && ! prompt_yes "Update from ${current_version} to ${target_release}?"; then
     info "Cancelled."
     exit 0
   fi
@@ -1844,54 +1837,47 @@ update_agent() {
   echo -e "  Changelog: ${DIM}${CHANGELOG_URL}${NC}"
   echo ""
 
-  local target_release
-
-  if [ "$current_version" = "$latest_release" ]; then
-    if ! prompt_yes "Already up to date. Reinstall?"; then
-      info "Cancelled."
-      exit 0
-    fi
-    target_release="$latest_release"
+  local target_release option_label option_target default_choice=1
+  if [ "$(version_cmp "$current_version" "$latest_release")" -eq 2 ]; then
+    option_label="Update to ${latest_release} (latest)"
+    option_target="$latest_release"
   else
-    local option_label option_target
-    if [ "$(version_cmp "$current_version" "$latest_release")" -eq 1 ]; then
-      # Pre-release ahead of latest stable — never offer the older stable.
+    # Up to date, or a pre-release ahead of latest stable — never offer the
+    # older stable. Default to cancel so an Enter keypress never reinstalls.
+    if [ "$current_version" != "$latest_release" ]; then
       warn "Installed pre-release ${current_version} is newer than latest stable ${latest_release}."
-      option_label="Reinstall ${current_version}"
-      option_target="$current_version"
-    else
-      option_label="Update to ${latest_release} (latest)"
-      option_target="$latest_release"
     fi
-    echo "  Options:"
-    echo -e "    1) ${CYAN}${option_label}${NC}"
-    echo "    2) Enter a specific version"
-    echo ""
-    local choice
-    echo -ne "  ${CYAN}Choose [1]:${NC} "
-    _tty_read choice
-    case "${choice:-1}" in
-      2)
-        prompt "Enter version (e.g. v0.1.2, v0.2.0-beta.1)" target_release ""
-        target_release=$(normalize_release_tag "$target_release")
-        [ -z "$target_release" ] && die "Version is required"
-        # Verify release exists on GitHub
-        verify_release_exists "$target_release"
-        ;;
-      *)
-        target_release="$option_target"
-        ;;
-    esac
+    option_label="Reinstall ${current_version}"
+    option_target="$current_version"
+    default_choice=3
   fi
-
-  # Confirm
+  echo "  Options:"
+  echo -e "    1) ${CYAN}${option_label}${NC}"
+  echo "    2) Enter a specific version"
+  echo "    3) Cancel"
   echo ""
-  if [ "$current_version" = "$target_release" ]; then
-    if ! prompt_yes "Reinstall ${current_version}?"; then
+  local choice
+  echo -ne "  ${CYAN}Choose [${default_choice}]:${NC} "
+  _tty_read choice
+  case "${choice:-$default_choice}" in
+    2)
+      prompt "Enter version (e.g. v0.1.2, v0.2.0-beta.1)" target_release ""
+      target_release=$(normalize_release_tag "$target_release")
+      [ -z "$target_release" ] && die "Version is required"
+      # Verify release exists on GitHub
+      verify_release_exists "$target_release"
+      ;;
+    3)
       info "Cancelled."
       exit 0
-    fi
-  elif ! prompt_yes "Update agent from ${current_version} to ${target_release}?"; then
+      ;;
+    *)
+      target_release="$option_target"
+      ;;
+  esac
+
+  # Confirm updates only — a reinstall picked from the menu is already explicit.
+  if [ "$current_version" != "$target_release" ] && ! prompt_yes "Update agent from ${current_version} to ${target_release}?"; then
     info "Cancelled."
     exit 0
   fi
