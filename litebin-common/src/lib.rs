@@ -4,6 +4,7 @@ pub mod caddy;
 pub mod capabilities;
 pub mod cloudflare;
 pub mod compose_run;
+pub mod dns_server;
 pub mod docker;
 pub mod heartbeat;
 pub mod net;

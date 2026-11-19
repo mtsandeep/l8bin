@@ -305,6 +305,34 @@ export async function fetchGlobalSettings(): Promise<GlobalSettings> {
   return res.json();
 }
 
+export interface SplitDnsStatus {
+  enabled: boolean;
+  healthy: boolean;
+  bind_ip: string;
+  zone_sha256?: string | null;
+  error?: string | null;
+}
+
+export async function fetchSplitDns(): Promise<SplitDnsStatus> {
+  const res = await fetch(`${API_BASE}/settings/split-dns`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch split DNS status');
+  return res.json();
+}
+
+export async function updateSplitDns(enabled: boolean): Promise<SplitDnsStatus> {
+  const res = await fetch(`${API_BASE}/settings/split-dns`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text, 'Failed to update split DNS'));
+  }
+  return res.json();
+}
+
 export async function updateGlobalSettings(patch: Partial<GlobalSettings>): Promise<GlobalSettings> {
   const res = await fetch(`${API_BASE}/settings`, {
     method: 'PATCH',

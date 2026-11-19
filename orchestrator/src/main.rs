@@ -11,6 +11,7 @@ use utoipa::OpenApi;
 mod db;
 mod demo;
 mod dns_ledger;
+mod dns_sidecar;
 mod github;
 mod nodes;
 mod openapi;
@@ -77,6 +78,9 @@ pub struct AppState {
     pub usage_cache: Arc<DashMap<String, routes::stats::UsageEntry>>,
     /// Live s3/r2 destination health (probe- and sidecar-error-driven).
     pub destination_health: Arc<std::sync::RwLock<Option<backup::DestinationHealth>>>,
+    /// Live split-horizon DNS state (Dashboard status) + toggle wake-up.
+    pub split_dns_status: Arc<std::sync::RwLock<dns_sidecar::SplitDnsStatus>>,
+    pub split_dns_notify: Arc<tokio::sync::Notify>,
 }
 
 #[tokio::main]
@@ -119,9 +123,11 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        // Long-running: the split-horizon DNS sidecar (its own tracing init).
+        Some("dns") => return litebin_common::dns_server::run().await,
         Some(other) if !other.starts_with('-') => {
             eprintln!("unknown subcommand: {other}");
-            eprintln!("available subcommands: reset-password, set-domain, set-dashboard-subdomain");
+            eprintln!("available subcommands: reset-password, set-domain, set-dashboard-subdomain, dns");
             eprintln!("run with no arguments to start the orchestrator server");
             std::process::exit(2);
         }
@@ -250,6 +256,9 @@ async fn main() -> anyhow::Result<()> {
     let mut docker =
         DockerManager::new(config.docker_network.clone(), default_mem_mb * 1024 * 1024, default_cpu_limit)?;
     docker.detect_host_projects_dir().await;
+    // Same-host reachability: alias host.docker.internal + every platform host
+    // to the host gateway inside created project containers (NAT hairpin fix).
+    docker.set_host_aliases(platform::host_alias_list(&platform.snapshot()));
 
     // Registry credentials for local pulls (kept fresh by the /registries endpoints)
     if let Err(e) = routes::registries::refresh_registry_state(&db, &docker).await {
@@ -376,6 +385,14 @@ async fn main() -> anyhow::Result<()> {
         )?),
         usage_cache: Arc::new(DashMap::new()),
         destination_health: Arc::new(std::sync::RwLock::new(None)),
+        split_dns_status: Arc::new(std::sync::RwLock::new(dns_sidecar::SplitDnsStatus {
+            enabled: false,
+            healthy: false,
+            bind_ip: String::new(),
+            zone_sha256: None,
+            error: None,
+        })),
+        split_dns_notify: Arc::new(tokio::sync::Notify::new()),
     };
 
     backup::spawn_daily_snapshots(state.db.clone(), state.config.clone(), state.docker.clone());
@@ -414,6 +431,15 @@ async fn main() -> anyhow::Result<()> {
                 gc_store.gc();
             }
         });
+    }
+
+    // Split-horizon DNS (docs/topics/domains.md): Dashboard-
+    // toggled via the `split_dns_enabled` setting. The reconcile task
+    // ensures/removes the litebin-dns sidecar, pushes zones, and health-gates
+    // per-container DNS injection; it no-ops while disabled.
+    {
+        let reconcile_state = std::sync::Arc::new(state.clone());
+        tokio::spawn(dns_sidecar::run_sidecar_reconcile(reconcile_state));
     }
 
     // Route sync runs in the background — a dead node must never block the bind;

@@ -99,18 +99,34 @@ impl PlatformHandle {
 
     /// Platform hosts (current + previous + staged) that bypass the waker.
     pub fn platform_hosts(&self) -> Vec<String> {
-        let snap = self.snapshot();
-        let mut hosts = Vec::new();
-        for domain in [&snap.domain, &snap.previous_domain, &snap.staged_domain] {
-            if domain.is_empty() {
-                continue;
-            }
-            hosts.push(domain.clone());
-            hosts.push(format!("{}.{}", snap.dashboard_subdomain, domain));
-            hosts.push(format!("{}.{}", snap.poke_subdomain, domain));
-        }
-        hosts
+        platform_hosts_for(&self.snapshot())
     }
+}
+
+/// `PlatformHandle::platform_hosts` for a snapshot.
+pub fn platform_hosts_for(snap: &PlatformSettings) -> Vec<String> {
+    let mut hosts = Vec::new();
+    for domain in [&snap.domain, &snap.previous_domain, &snap.staged_domain] {
+        if domain.is_empty() {
+            continue;
+        }
+        hosts.push(domain.clone());
+        hosts.push(format!("{}.{}", snap.dashboard_subdomain, domain));
+        hosts.push(format!("{}.{}", snap.poke_subdomain, domain));
+    }
+    hosts
+}
+
+/// extra_hosts aliases injected into every project container on the master:
+/// `host.docker.internal` plus every platform host (they all terminate on
+/// this host's Caddy). Empty when `L8B_DISABLE_HOST_ALIASES=1`.
+pub fn host_alias_list(snap: &PlatformSettings) -> Vec<String> {
+    if std::env::var("L8B_DISABLE_HOST_ALIASES").is_ok_and(|v| v == "1") {
+        return Vec::new();
+    }
+    let mut aliases = vec!["host.docker.internal".to_string()];
+    aliases.extend(platform_hosts_for(snap));
+    aliases
 }
 
 /// Seed missing platform keys from env config, then load into memory.
@@ -329,8 +345,35 @@ impl DomainJob {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn sslip_domain_dashes_the_ip() {
         assert_eq!(super::sslip_domain("203.0.113.5"), "203-0-113-5.sslip.io");
+    }
+
+    #[test]
+    fn host_alias_list_covers_current_previous_and_staged() {
+        let snap = PlatformSettings {
+            domain: "litebin.dev".into(),
+            dashboard_subdomain: "dash".into(),
+            poke_subdomain: "poke".into(),
+            dns_target: String::new(),
+            previous_domain: "old.dev".into(),
+            staged_domain: "new.dev".into(),
+        };
+        let aliases = host_alias_list(&snap);
+        assert_eq!(aliases.first(), Some(&"host.docker.internal".to_string()));
+        for host in [
+            "litebin.dev",
+            "dash.litebin.dev",
+            "poke.litebin.dev",
+            "old.dev",
+            "dash.old.dev",
+            "new.dev",
+            "dash.new.dev",
+        ] {
+            assert!(aliases.contains(&host.to_string()), "missing alias {host}");
+        }
     }
 }

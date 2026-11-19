@@ -293,6 +293,12 @@ impl AgentClient {
         Self::decode(resp).await
     }
 
+    /// Push this node's split-horizon DNS zone (relayed by the agent to its
+    /// local litebin-agent-dns sidecar). See docs/topics/domains.md.
+    pub async fn push_dns_zone(&self, zone: &litebin_common::dns_server::ZoneSpec) -> Result<(), AgentClientError> {
+        self.post_status("/internal/dns-zone", zone, std::time::Duration::from_secs(10)).await
+    }
+
     async fn post_status(
         &self,
         path: &str,

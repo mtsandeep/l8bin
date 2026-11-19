@@ -64,6 +64,17 @@ Settings → Routing & DNS offers two removal actions:
 - **Remove** — clears credentials and switches to master proxy; DNS records stay in Cloudflare untouched
 - **Remove + delete records** — also deletes the LiteBin-managed A records first (records you created yourself are never touched)
 
+## Reaching same-host services from inside a deployment
+
+A deployed app that calls a service hosted on the **same server** through its public URL (e.g. the master API at `https://dash.example.com`) hits Docker's NAT hairpin: the URL resolves to the host's own public IP, and bridge-sourced packets to published ports are dropped. LiteBin fixes this at the platform level so apps work with no changes:
+
+- **Every project container** gets `extra_hosts` mapping `host.docker.internal` (plus every platform host on the master) to the host gateway. Host/SNI stay on the real name, so vhost routing and certificates keep working. Applied at deploy/recreate time — user-declared `extra_hosts` in your compose always win. Opt out with `L8B_DISABLE_HOST_ALIASES=1`.
+- **Split-horizon DNS sidecar** (`litebin-dns`, toggled in Settings → General → Routing & DNS): containers resolve platform names and this host's custom domains to the host gateway instead of the public IP — fixing app→app calls too (`https://api.example.com` from another app on the same server). Custom domains routed through an external CDN/WAF (Cloudflare proxy) resolve to their real edge IPs and are never remapped, so the CDN stays in the path. Falls back to normal upstream resolvers, so nothing breaks if the sidecar is down. The sidecar is orchestrator-managed (like the backup sidecar, under the `litebin-sidecars` compose project) — no `.env` or installer involvement.
+
+Notes: adoption is lazy (containers pick entries up on their next deploy/recreate), the DNS port 53 is reserved (apps can't publish it), and on agent nodes the sidecar is opt-out via `L8B_DISABLE_SPLIT_DNS=1` (on `master_proxy` agents it only forwards — the records point at the master, a different host, so there is no hairpin to fix there).
+
+Zone behavior by routing mode: `master_proxy` wildcards the whole platform domain on the master; `cloudflare_dns` gives each node an exact-name zone covering only the projects it hosts (a cross-node name must keep resolving to its real IP, or the local Caddy would black-hole it). Per-node zones are pushed from the master over the agent API and persist locally — agent resolution keeps working when the master is down. Split DNS requires a rootful Linux Docker host (Docker Desktop cannot host the bridge-IP publish; the toggle shows the bind error there).
+
 ## CLI
 
 ```bash

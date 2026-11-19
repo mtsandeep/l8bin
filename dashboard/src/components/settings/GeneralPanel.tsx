@@ -21,13 +21,16 @@ import {
   fetchActiveDomainJob,
   fetchDomainJob,
   fetchGlobalSettings,
+  fetchSplitDns,
   type GlobalSettings,
   RoutingMode,
   retirePreviousDomain,
   retryDomainJob,
+  type SplitDnsStatus,
   sslipDomainPreview,
   syncDnsRecords,
   updateGlobalSettings,
+  updateSplitDns,
   validateCloudflare,
 } from '../../api';
 import { useToast } from '../ToastContext';
@@ -106,6 +109,8 @@ export default function GeneralPanel() {
   const [forcingSync, setForcingSync] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeAction, setRemoveAction] = useState<'disconnect' | 'delete' | null>(null);
+  const [splitDns, setSplitDns] = useState<SplitDnsStatus | null>(null);
+  const [splitDnsSaving, setSplitDnsSaving] = useState(false);
   const [showDomainConfirm, setShowDomainConfirm] = useState(false);
   const [domainDraft, setDomainDraft] = useState('');
   const [domainConfirmTyped, setDomainConfirmTyped] = useState('');
@@ -140,7 +145,32 @@ export default function GeneralPanel() {
         setDashboardSubdomain(s.dashboard_subdomain || 'l8bin');
       })
       .catch(() => setError('Failed to load settings'));
+    fetchSplitDns()
+      .then(setSplitDns)
+      .catch(() => {
+        /* non-fatal */
+      });
   }, []);
+
+  const toggleSplitDns = (enabled: boolean) => {
+    setSplitDnsSaving(true);
+    updateSplitDns(enabled)
+      .then((status) => {
+        setSplitDns(status);
+        // The immediate reconcile may not have finished yet — poll once.
+        setTimeout(
+          () =>
+            fetchSplitDns()
+              .then(setSplitDns)
+              .catch(() => {
+                /* keep */
+              }),
+          1500,
+        );
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to update split DNS'))
+      .finally(() => setSplitDnsSaving(false));
+  };
 
   useEffect(() => {
     if (!domainJob || domainJob.status === 'completed' || domainJob.status === 'failed') return;
@@ -669,6 +699,54 @@ export default function GeneralPanel() {
                   </p>
                 </div>
               )}
+
+              {/* Same-host reachability (split DNS) */}
+              <div className="space-y-2 border-t border-slate-700/40 pt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-slate-300">Same-host reachability (split DNS)</p>
+                    <p className="text-[11px] text-slate-600">
+                      Deployed apps resolve this server's names (dashboard, apps, custom domains) to the host gateway
+                      instead of hairpinning to its public IP.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleSplitDns(!(splitDns?.enabled ?? false))}
+                    disabled={splitDnsSaving || !splitDns}
+                    className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                      splitDns?.enabled ? 'bg-violet-600' : 'bg-slate-700'
+                    }`}
+                    aria-pressed={splitDns?.enabled ?? false}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                        splitDns?.enabled ? 'translate-x-5' : ''
+                      }`}
+                    />
+                  </button>
+                </div>
+                {splitDns?.enabled && (
+                  <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                    {splitDns.healthy ? (
+                      <>
+                        <CheckCircle2 size={11} className="text-emerald-400" />
+                        Resolver healthy on {splitDns.bind_ip}
+                      </>
+                    ) : splitDns.error ? (
+                      <>
+                        <AlertTriangle size={11} className="text-amber-400" />
+                        {splitDns.error}
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 size={11} className="animate-spin text-slate-500" />
+                        Starting resolver…
+                      </>
+                    )}
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>

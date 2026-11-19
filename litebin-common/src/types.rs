@@ -106,7 +106,8 @@ pub const DEFAULT_AGENT_PORT: &str = "8443";
 pub const DEFAULT_AGENT_HOST_PORT: &str = "5083";
 
 /// Host ports reserved by LiteBin's own services — never bound by app containers,
-/// even with `allow_raw_ports` enabled.
+/// even with `allow_raw_ports` enabled. 53 protects the split-horizon DNS
+/// sidecar's bridge-IP publish (a 0.0.0.0:53 app publish would shadow it).
 pub fn litebin_reserved_host_ports() -> Vec<String> {
     vec![
         CADDY_HTTP_PORT.into(),
@@ -115,6 +116,7 @@ pub fn litebin_reserved_host_ports() -> Vec<String> {
         std::env::var("PORT").unwrap_or_else(|_| DEFAULT_ORCHESTRATOR_PORT.into()),
         std::env::var("AGENT_PORT").unwrap_or_else(|_| DEFAULT_AGENT_PORT.into()),
         DEFAULT_AGENT_HOST_PORT.into(),
+        "53".into(),
     ]
 }
 use serde::{Deserialize, Serialize};

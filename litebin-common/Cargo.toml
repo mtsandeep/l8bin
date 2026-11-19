@@ -30,7 +30,11 @@ async-stream = "0.3"
 urlencoding = "2"
 shlex = "1"
 sysinfo = "0.33"
+hickory-proto = "0.26"
+axum = { version = "0.8", features = ["macros"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 compose-bollard = { path = "../compose-bollard" }
 
 [dev-dependencies]
 proptest = "1"
+tower = { version = "0.5", features = ["util"] }

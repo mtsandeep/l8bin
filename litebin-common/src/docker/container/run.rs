@@ -34,6 +34,25 @@ pub(crate) fn pinned_host_ports(port_bindings: &HashMap<String, Option<Vec<PortB
     ports
 }
 
+/// Merge LiteBin's `alias:host-gateway` entries into a container's extra_hosts.
+/// Existing (user/compose-declared) entries win and keep their order; LiteBin
+/// entries are appended only for hostnames not already declared (case-insensitive).
+pub(crate) fn merge_extra_hosts(existing: Option<Vec<String>>, lb_entries: Vec<String>) -> Option<Vec<String>> {
+    let mut merged = existing.unwrap_or_default();
+    if lb_entries.is_empty() {
+        return (!merged.is_empty()).then_some(merged);
+    }
+    let mut declared: std::collections::HashSet<String> =
+        merged.iter().filter_map(|entry| entry.split(':').next()).map(|host| host.to_ascii_lowercase()).collect();
+    for entry in lb_entries {
+        let Some(host) = entry.split(':').next() else { continue };
+        if declared.insert(host.to_ascii_lowercase()) {
+            merged.push(entry);
+        }
+    }
+    Some(merged)
+}
+
 /// Publish an explicit compose HOST:CONTAINER remap. A container port already
 /// carrying the public proxy's loopback binding keeps it — the raw host port
 /// is bound alongside so the proxy and the host publication both work.
@@ -193,6 +212,20 @@ impl DockerManager {
             ]);
             host.security_opt = Some(vec!["no-new-privileges".to_string()]);
             host.pids_limit = Some(4096);
+            // Same-host reachability (NAT hairpin workaround): map LiteBin's
+            // aliases to the host gateway so containers can reach same-host
+            // services through names that publicly resolve to this host.
+            // User-declared entries for the same hostname win. Meaningless in
+            // the host netns, so host-network services are skipped.
+            if !config.host_network {
+                let lb_entries: Vec<String> =
+                    self.host_aliases().into_iter().map(|alias| format!("{alias}:host-gateway")).collect();
+                host.extra_hosts = merge_extra_hosts(host.extra_hosts.take(), lb_entries);
+                if let Some(servers) = self.effective_dns_servers() {
+                    host.dns = Some(servers);
+                    host.dns_options = Some(vec!["timeout:1".to_string(), "attempts:1".to_string()]);
+                }
+            }
             host.log_config = Some(HostConfigLogConfig {
                 config: Some({
                     let mut log_opts = HashMap::new();
@@ -313,6 +346,7 @@ impl DockerManager {
                 } else {
                     Some(self.network.clone())
                 },
+                extra_hosts: config.extra_hosts.clone(),
                 ..Default::default()
             };
             lb_host_overrides(&mut host_config);
@@ -556,6 +590,116 @@ impl DockerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_extra_hosts_user_entries_win() {
+        let merged = merge_extra_hosts(
+            Some(vec!["app.example.com:10.0.0.5".into()]),
+            vec!["app.example.com:host-gateway".into()],
+        )
+        .unwrap();
+        assert_eq!(merged, vec!["app.example.com:10.0.0.5".to_string()]);
+    }
+
+    #[test]
+    fn merge_extra_hosts_appends_and_dedups_case_insensitively() {
+        let merged = merge_extra_hosts(
+            Some(vec!["Host.Docker.Internal:1.2.3.4".into()]),
+            vec![
+                "host.docker.internal:host-gateway".into(),
+                "dash.example.com:host-gateway".into(),
+                "dash.example.com:host-gateway".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            merged,
+            vec!["Host.Docker.Internal:1.2.3.4".to_string(), "dash.example.com:host-gateway".to_string(),]
+        );
+    }
+
+    #[test]
+    fn merge_extra_hosts_none_and_empty_is_none() {
+        assert_eq!(merge_extra_hosts(None, vec![]), None);
+        assert_eq!(merge_extra_hosts(Some(vec![]), vec![]), None);
+    }
+
+    #[test]
+    fn merge_extra_hosts_appends_to_empty() {
+        let merged = merge_extra_hosts(None, vec!["host.docker.internal:host-gateway".into()]).unwrap();
+        assert_eq!(merged, vec!["host.docker.internal:host-gateway".to_string()]);
+    }
+
+    #[test]
+    fn effective_dns_servers_requires_config_and_health() {
+        let docker = DockerManager::new_for_tests();
+        assert_eq!(docker.effective_dns_servers(), None);
+        docker.set_dns_servers(Some(vec!["172.17.0.1".into(), "1.1.1.1".into()]));
+        assert_eq!(docker.effective_dns_servers(), Some(vec!["172.17.0.1".to_string(), "1.1.1.1".to_string()]));
+        docker.set_split_dns_healthy(false);
+        assert_eq!(docker.effective_dns_servers(), None);
+        docker.set_split_dns_healthy(true);
+        docker.set_dns_servers(None);
+        assert_eq!(docker.effective_dns_servers(), None);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a local Docker daemon and pulls alpine"]
+    async fn live_host_aliases_bake_into_etc_hosts() {
+        let project_id = format!("hosts-inject-{}", std::process::id());
+        let project = crate::types::Project {
+            id: project_id.clone(),
+            user_id: "test".into(),
+            name: None,
+            description: None,
+            is_background: false,
+            image: Some("alpine:3.20".into()),
+            internal_port: None,
+            mapped_port: None,
+            container_id: None,
+            node_id: None,
+            status: crate::types::ProjectStatus::Stopped,
+            cmd: Some("sleep 30".into()),
+            memory_limit_mb: None,
+            cpu_limit: None,
+            custom_domain: None,
+            volumes: None,
+            auto_stop_enabled: false,
+            auto_stop_timeout_mins: 0,
+            auto_start_enabled: false,
+            allow_raw_ports: false,
+            allow_docker_access: false,
+            last_active_at: None,
+            service_count: None,
+            service_summary: None,
+            deploy_type: Some(crate::types::DeployType::Image),
+            demo_parent_id: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let config = crate::types::RunServiceConfig::from_project(&project, Vec::new());
+        let mut docker = DockerManager::new("bridge".into(), 128 * 1024 * 1024, 0.25).expect("docker manager");
+        docker.detect_host_projects_dir().await;
+        docker.set_host_aliases(vec!["host.docker.internal".into(), "alias-test.invalid".into()]);
+        docker.pull_image_with_opts("alpine:3.20", false).await.expect("pull alpine");
+        let (container_id, _) = docker.run_service_container(&config).await.expect("container started");
+
+        let result: anyhow::Result<String> = async {
+            let hosts = docker.exec_container(&container_id, &["cat", "/etc/hosts"]).await?;
+            anyhow::Ok(hosts.output)
+        }
+        .await;
+
+        let _ = docker.stop_container(&container_id).await;
+        let _ = docker.remove_container(&container_id).await;
+        let _ = docker.remove_project_network(&project_id, None).await;
+
+        let hosts = result.expect("exec /etc/hosts");
+        assert!(hosts.contains("host.docker.internal"), "host.docker.internal missing:\n{hosts}");
+        assert!(hosts.contains("alias-test.invalid"), "platform alias missing:\n{hosts}");
+        // host-gateway must be daemon-resolved to a real IP, not left literal.
+        assert!(!hosts.contains("host-gateway"), "host-gateway not resolved by daemon:\n{hosts}");
+    }
 
     #[test]
     fn pinned_host_ports_skips_ephemeral() {

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Apps can reach same-host services from inside deployments** — LiteBin injects `extra_hosts` (`host.docker.internal:host-gateway` plus every platform host on the master) into every project container it creates, so URLs like `https://app.<domain>` resolve to the host gateway instead of hairpinning to the host's own public IP (applies on redeploy/recreate; user-declared `extra_hosts` entries win). Escape hatch: `L8B_DISABLE_HOST_ALIASES=1`.
+- **Split-horizon DNS sidecar** — `litebin-dns` (orchestrator-managed, same image, toggled in Settings → General) resolves platform names and this host's custom domains to the host gateway inside project containers, fixing app→app and custom-domain calls; CDN/WAF-fronted domains stay external automatically. Master zones are wildcards in `master_proxy`, per-node exact names in `cloudflare_dns` (pushed over the agent API, persisted locally); per-container `dns:` is health-gated. Agent opt-out: `L8B_DISABLE_SPLIT_DNS=1`. Docs: [domains](docs/topics/domains.md#reaching-same-host-services-from-inside-a-deployment).
+- **Sidecar lifecycle hardened** — LiteBin-managed sidecars (backup, dns) run under the `litebin-sidecars` compose project, so `docker compose down` / `--remove-orphans` never removes them; sidecars are recreated on drift (image, cmd, env, ports, labels, memory) and pulled from a registry only when absent locally.
+- Host port 53 is reserved (rejected for app `ports:` remaps even with raw ports enabled) — it backs the split-DNS sidecar's bridge-IP publish.
+
 ### Fixed
 - Custom-domain input now normalizes pasted URLs (strips scheme, path, port, trailing dots) before saving and in the DNS-hint preview, instead of showing them raw and failing validation.
 

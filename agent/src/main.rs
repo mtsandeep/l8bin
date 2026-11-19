@@ -29,6 +29,12 @@ async fn main() -> Result<()> {
     // Load .env if present
     let _ = dotenvy::dotenv();
 
+    // Subcommand dispatch before anything else: the only long-running
+    // subcommand is the split-horizon DNS sidecar (own tracing init).
+    if std::env::args().nth(1).as_deref() == Some("dns") {
+        return litebin_common::dns_server::run().await;
+    }
+
     // Init tracing
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
@@ -64,6 +70,12 @@ async fn main() -> Result<()> {
     let cpu_limit: f64 = std::env::var("DEFAULT_CPU_LIMIT").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5);
     let mut docker = DockerManager::new(docker_network, memory_limit, cpu_limit)?;
     docker.detect_host_projects_dir().await;
+    // Same-host reachability (NAT hairpin fix): containers get
+    // host.docker.internal → host gateway. Never the master hostname here —
+    // on an agent the master is a different host.
+    if !std::env::var("L8B_DISABLE_HOST_ALIASES").is_ok_and(|v| v == "1") {
+        docker.set_host_aliases(vec!["host.docker.internal".into()]);
+    }
     let removed_unsafe = docker.cleanup_unsafe_docker_socket_containers().await?;
     if removed_unsafe > 0 {
         tracing::warn!(count = removed_unsafe, "removed unsafe legacy Docker socket containers");

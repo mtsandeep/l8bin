@@ -8,6 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use litebin_common::routing::{ProjectRoute, RoutingProvider};
+use litebin_common::types::RoutingMode;
 use sqlx::SqlitePool;
 
 use litebin_common::caddy::CaddyClient;
@@ -41,6 +42,10 @@ impl CloudflareDnsRouter {
 
 #[async_trait]
 impl RoutingProvider for CloudflareDnsRouter {
+    fn routing_mode(&self) -> RoutingMode {
+        RoutingMode::CloudflareDns
+    }
+
     async fn sync_dns_only(
         &self,
         projects: &[ProjectRoute],
