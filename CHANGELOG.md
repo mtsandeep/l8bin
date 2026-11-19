@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Custom-domain input now normalizes pasted URLs (strips scheme, path, port, trailing dots) before saving and in the DNS-hint preview, instead of showing them raw and failing validation.
+
 ## [0.4.28] - 2026-11-15
 
 ### Changed

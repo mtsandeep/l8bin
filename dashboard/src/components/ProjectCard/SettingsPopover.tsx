@@ -273,13 +273,28 @@ export default function SettingsPopover({
     }
   };
 
+  // Lenient paste cleanup: extract the bare host (strips scheme, userinfo,
+  // path, port, trailing dots). Backend re-validates strictly.
+  const normalizeCustomDomain = (raw: string): string => {
+    const host = raw
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+      .split('/')[0]
+      .split('?')[0]
+      .split('#')[0];
+    const noUserinfo = host.split('@').pop() ?? '';
+    return noUserinfo.split(':')[0].replace(/\.+$/, '');
+  };
+
   const handleSetCustomDomain = async () => {
-    const d = customDomainInput.trim();
+    const d = normalizeCustomDomain(customDomainInput);
     if (!d) return;
     onCustomDomainSavingChange(true);
     onSettingsErrorChange(null);
     try {
       await updateProjectSettings(project.id, { custom_domain: d });
+      onCustomDomainChange(d);
       onRefresh();
     } catch (e) {
       onSettingsErrorChange(e instanceof Error ? e.message : 'Failed to set domain');
@@ -458,7 +473,7 @@ export default function SettingsPopover({
                   <button
                     type="button"
                     onClick={handleSetCustomDomain}
-                    disabled={customDomainSaving || !customDomainInput.trim()}
+                    disabled={customDomainSaving || !normalizeCustomDomain(customDomainInput)}
                     className="px-2.5 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors disabled:opacity-50 cursor-pointer"
                   >
                     {customDomainSaving ? <Loader2 size={12} className="animate-spin" /> : 'Set'}
@@ -472,7 +487,7 @@ export default function SettingsPopover({
                 )}
                 <div className="text-[10px] text-slate-600 space-y-0.5">
                   {(() => {
-                    const cd = customDomainInput.trim() || project.custom_domain;
+                    const cd = normalizeCustomDomain(customDomainInput) || project.custom_domain;
                     if (!cd) return null;
                     const target = `${project.id}.${domain}`;
                     // Both hosts of the www↔bare pair need records; the note marks
