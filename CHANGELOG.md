@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.29-beta.1] - 2026-11-19
+
 ### Added
 - **Apps can reach same-host services from inside deployments** — LiteBin injects `extra_hosts` (`host.docker.internal:host-gateway` plus every platform host on the master) into every project container it creates, so URLs like `https://app.<domain>` resolve to the host gateway instead of hairpinning to the host's own public IP (applies on redeploy/recreate; user-declared `extra_hosts` entries win). Escape hatch: `L8B_DISABLE_HOST_ALIASES=1`.
 - **Split-horizon DNS sidecar** — `litebin-dns` (orchestrator-managed, same image, toggled in Settings → General) resolves platform names and this host's custom domains to the host gateway inside project containers, fixing app→app and custom-domain calls; CDN/WAF-fronted domains stay external automatically. Master zones are wildcards in `master_proxy`, per-node exact names in `cloudflare_dns` (pushed over the agent API, persisted locally); per-container `dns:` is health-gated. Agent opt-out: `L8B_DISABLE_SPLIT_DNS=1`. Docs: [domains](docs/topics/domains.md#reaching-same-host-services-from-inside-a-deployment).
