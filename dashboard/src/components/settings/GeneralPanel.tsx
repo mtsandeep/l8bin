@@ -157,16 +157,22 @@ export default function GeneralPanel() {
     updateSplitDns(enabled)
       .then((status) => {
         setSplitDns(status);
-        // The immediate reconcile may not have finished yet — poll once.
-        setTimeout(
-          () =>
-            fetchSplitDns()
-              .then(setSplitDns)
-              .catch(() => {
-                /* keep */
-              }),
-          1500,
-        );
+        if (!enabled) return;
+        // Poll until the sidecar reports healthy or an error — the
+        // reconcile loop can take up to ~30s to bring it up.
+        let tries = 0;
+        const poll = setInterval(() => {
+          tries += 1;
+          if (tries > 20) clearInterval(poll);
+          fetchSplitDns()
+            .then((s) => {
+              setSplitDns(s);
+              if (s.healthy || s.error) clearInterval(poll);
+            })
+            .catch(() => {
+              /* keep last state */
+            });
+        }, 2000);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to update split DNS'))
       .finally(() => setSplitDnsSaving(false));
@@ -706,8 +712,7 @@ export default function GeneralPanel() {
                   <div>
                     <p className="text-xs text-slate-300">Same-host reachability (split DNS)</p>
                     <p className="text-[11px] text-slate-600">
-                      Deployed apps resolve this server's names (dashboard, apps, custom domains) to the host gateway
-                      instead of hairpinning to its public IP.
+                      Lets deployed apps call this server and each other through their public URLs.
                     </p>
                   </div>
                   <button
@@ -731,7 +736,7 @@ export default function GeneralPanel() {
                     {splitDns.healthy ? (
                       <>
                         <CheckCircle2 size={11} className="text-emerald-400" />
-                        Resolver healthy on {splitDns.bind_ip}
+                        litebin-dns running
                       </>
                     ) : splitDns.error ? (
                       <>
@@ -741,7 +746,7 @@ export default function GeneralPanel() {
                     ) : (
                       <>
                         <Loader2 size={11} className="animate-spin text-slate-500" />
-                        Starting resolver…
+                        litebin-dns starting…
                       </>
                     )}
                   </p>

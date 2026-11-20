@@ -326,22 +326,23 @@ configure_ufw() {
   local role="${1:-}"
   local agent_port="${2:-5083}"
   if ! command -v ufw &>/dev/null; then
-    case "$role" in
-      master)
-        warn "UFW not found. Open inbound 80/tcp and 443/tcp+udp on your firewall."
-        ;;
-      agent)
-        warn "UFW not found. Open inbound ${agent_port}/tcp on your firewall."
-        warn "If the master uses cloudflare_dns routing, also open 80/tcp and 443/tcp+udp."
-        ;;
-      *)
-        warn "UFW not found. Configure firewall ports manually for this role."
-        ;;
-    esac
+    if [ "$role" = "agent" ]; then
+      warn "UFW not found. Open 80/tcp + 443/tcp+udp + ${agent_port}/tcp on your"
+      warn "firewall, and allow RFC 1918 → 80/443 (Docker hairpin)."
+    else
+      warn "UFW not found. Open 80/tcp + 443/tcp+udp on your firewall, and"
+      warn "allow RFC 1918 → 80/443 (same-host app traffic; Docker hairpin)."
+    fi
     return
   fi
 
   info "Opening required ports..."
+  # Docker-hairpin: containers reach caddy/split-DNS via the host's published
+  # 80/443 — allow all RFC 1918 (covers every Docker address pool).
+  for cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do
+    ufw allow from "$cidr" to any port 80,443 proto tcp >/dev/null
+    ufw allow from "$cidr" to any port 443 proto udp >/dev/null
+  done
   case "$role" in
     master)
       ufw allow 80/tcp
@@ -350,9 +351,11 @@ configure_ufw() {
       info "Ports 80, 443 opened."
       ;;
     agent)
+      ufw allow 80/tcp
+      ufw allow 443/tcp
+      ufw allow 443/udp
       ufw allow "${agent_port}/tcp"
-      info "Port ${agent_port} opened."
-      warn "If the master uses cloudflare_dns routing, also open 80/tcp and 443/tcp+udp."
+      info "Ports 80, 443, ${agent_port} opened."
       ;;
     *)
       warn "Unknown firewall role '${role}'; skipping UFW rules."

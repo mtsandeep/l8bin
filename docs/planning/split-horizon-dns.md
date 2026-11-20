@@ -32,6 +32,8 @@ Rejected alternatives: attaching projects to `litebin-network` (isolation loss, 
 
 ## Accepted limitations (found live)
 
+- **R1 verified on vps-b558ec04 (2026-11-20) — with a ufw condition**: container → host-IP → published 443 is dropped when ufw is active (Docker excludes same-bridge traffic from the port DNAT, so the packet lands in host INPUT). Fix: ufw allows the RFC 1918 ranges (10/8, 172.16/12, 192.168/16) to host ports 80/443 — covering Docker's default pools (including the 192.168 spillover after ~15 networks) and any custom address pool — baked into `configure_ufw` in install.sh (all roles). With the rule in place, an app container resolved and reached `https://dash.litebin.dev/health` end-to-end.
+
 - **Docker Desktop dev boxes cannot host the sidecar** (confirmed 2026-11-19): Desktop binds published ports through the host-OS proxy, where the bridge IP `172.17.0.1` doesn't exist (it lives inside the VM) — the publish fails to bind and the toggle shows the bind error. Split DNS is effectively Linux-host-only; M1 hosts entries work fine on Desktop. The VPS runbook below is the real verification.
 - **Self-image sidecars must skip the registry pull** (found live): local-only image names 404 on pull — `ensure_sidecar_container` now pulls only when the image is absent locally (also saves rate limits on drift-recreates).
 - `docker compose down` takes the sidecar down with the stack (same window as caddy); the `litebin-sidecars` project only protects it from orphan removal.
