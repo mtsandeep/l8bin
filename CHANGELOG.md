@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The platform apex assigned to a project as a custom domain no longer serves the "up and running" landing page while that project is stopped (e.g. in the stop→route-sync window) — the waker now resolves the claim like any other custom domain (wake/auto-start or the offline page).
+
 ## [0.4.29-beta.3] - 2026-11-20
 
 ### Added

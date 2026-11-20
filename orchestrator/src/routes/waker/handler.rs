@@ -786,6 +786,21 @@ pub async fn wake_for_host(
     held_wake_response(&state, &project, client, guard, HeldRequest { method, uri, headers, body }).await
 }
 
+/// True when a non-background project has claimed `host` as its custom domain.
+async fn apex_claimed_by_project(db: &sqlx::SqlitePool, host: &str) -> bool {
+    match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE is_background = 0 AND custom_domain = ?")
+        .bind(host)
+        .fetch_one(db)
+        .await
+    {
+        Ok(n) => n > 0,
+        Err(e) => {
+            tracing::warn!(error = %e, host = %host, "wake: apex custom_domain claim check failed");
+            false
+        }
+    }
+}
+
 /// Catch-all for requests that match no API route. Dashboard-host and bare-domain
 /// traffic is proxied to the dashboard SPA — the orchestrator is the sole router
 /// for the dashboard host. Anything else falls through to the waker.
@@ -806,12 +821,16 @@ pub async fn wake(State(state): State<AppState>, req: axum::http::Request<axum::
     let snap = state.platform.snapshot();
     let host_without_port = host.split(':').next().unwrap_or("");
     let dashboard_hosts = state.platform.platform_hosts();
-    // The platform-domain apex serves the landing page.
-    if host_without_port == snap.domain || host_without_port == snap.previous_domain {
+    // The apex serves the landing page unless a project claims it as a custom
+    // domain — a claimed apex is app traffic and must also skip the SPA branch
+    // below (the platform domain is itself a dashboard host).
+    let apex_host = host_without_port == snap.domain || host_without_port == snap.previous_domain;
+    let apex_claimed = apex_host && apex_claimed_by_project(&state.db, host_without_port).await;
+    if apex_host && !apex_claimed {
         return ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], include_str!("../apex_page.html"))
             .into_response();
     }
-    if dashboard_hosts.iter().any(|h| h == host_without_port) {
+    if !apex_claimed && dashboard_hosts.iter().any(|h| h == host_without_port) {
         // The SPA serves GET/HEAD only — anything else here is a missed API call.
         if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
             return unknown_api_route(&method, uri.path());
