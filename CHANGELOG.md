@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.29-beta.3] - 2026-11-20
+
 ### Added
 - Installer's UFW step allows the RFC 1918 private ranges (covers every Docker address pool) to host ports 80/443 — without it, active firewalls drop same-host traffic from app containers (the NAT hairpin fix needs this path; found live on a ufw host). Agent installs open 80/443 automatically like the master.
 
