@@ -92,6 +92,14 @@ pub(crate) async fn build_test_state(config: Config) -> (AppState, SqlitePool) {
         domain_jobs: Arc::new(DashMap::new()),
         export_jobs: Arc::new(DashMap::new()),
         destination_health: Arc::new(std::sync::RwLock::new(None)),
+        split_dns_status: Arc::new(std::sync::RwLock::new(crate::dns_sidecar::SplitDnsStatus {
+            enabled: false,
+            healthy: false,
+            bind_ip: String::new(),
+            zone_sha256: None,
+            error: None,
+        })),
+        split_dns_notify: Arc::new(tokio::sync::Notify::new()),
         usage_cache: Arc::new(DashMap::new()),
         upload_store: Arc::new(
             litebin_common::upload::UploadStore::new(

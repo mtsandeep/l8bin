@@ -101,3 +101,12 @@ docker stats --no-stream
 ```
 
 For a whole-box baseline (empty page cache and swap), `reboot` the VPS instead and run the same sampler once it's back. Two caveats when quoting fresh-start numbers: Caddy reads low right after a restart and floats to its steady state over the following hours on ≥2GB hosts, and the orchestrator's post-boot plateau is its idle number — the first deploy adds a one-time high-water (see the 8GB table).
+
+## litebin-dns sidecar (split-horizon resolver, Dashboard-toggled)
+
+The `dns` subcommand shares the orchestrator binary (jemalloc included). Idle
+RSS target is ≤10 MB (compose cap `64m`, reservation `12m`); measure with the
+same sampler: `awk '/VmRSS/{printf "%.1f MB\n", $2/1024}' /proc/$(pgrep -f litebin-orchest)/status`
+inside the `litebin-dns` container. Binary cost of the hickory-proto code:
+~+2 MB on disk per binary, no change to the orchestrator's runtime RSS (the
+resolver runs only in the sidecar process).

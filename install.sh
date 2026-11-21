@@ -9,6 +9,10 @@ L8B_IN="${L8B_IN:-https://l8b.in}"
 CHANGELOG_URL="${CHANGELOG_URL:-https://github.com/${REPO}/releases}"
 VPS_SETUP_URL="${VPS_SETUP_URL:-https://gist.github.com/mtsandeep/fbcfe30351d78b8ff9ec9d3c75354ec6}"
 
+# Digest-pinned third-party images (multi-arch lists). Bump tag AND digest together.
+DEBIAN_IMAGE="${DEBIAN_IMAGE:-debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2}"
+CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.11.2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d}"
+
 # -- Colors ------------------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -259,9 +263,28 @@ harden_daemons() {
     || systemctl set-property --no-ask-password sshd.service CPUWeight=1000 >/dev/null 2>&1 || true
 }
 
+# Best-effort public IP detection (empty string if all probes fail).
+detect_public_ip() {
+  local ip
+  ip=$(curl -sf --connect-timeout 3 --max-time 5 https://api.ipify.org 2>/dev/null \
+    || curl -sf --connect-timeout 3 --max-time 5 https://checkip.amazonaws.com 2>/dev/null \
+    || curl -sf --connect-timeout 3 --max-time 5 https://ipv4.icanhazip.com 2>/dev/null \
+    || echo "")
+  echo "$ip" | tr -d '[:space:]'
+}
+
 get_latest_release() {
   if [ -n "${L8B_RELEASE_DIR:-}" ]; then
     echo "local"
+    return
+  fi
+  # Version pin: L8B_VERSION=v0.x.x selects that release instead of "latest" (any mode).
+  if [ -n "${L8B_VERSION:-}" ]; then
+    local tag
+    tag=$(normalize_release_tag "$L8B_VERSION")
+    [ -z "$tag" ] && die "L8B_VERSION is set but empty"
+    verify_release_exists "$tag"
+    echo "$tag"
     return
   fi
   local response
@@ -288,6 +311,29 @@ normalize_release_tag() {
   echo "v${tag#[vV]}"
 }
 
+# Semver-ish compare: 0 equal, 1 a newer, 2 b newer (pre-release < release).
+version_cmp() {
+  local a="${1#v}" b="${2#v}"
+  local acore="${a%%-*}" bcore="${b%%-*}"
+  local apre="${a#*-}" bpre="${b#*-}"
+  local IFS='.'
+  read -r -a A <<< "$acore"
+  read -r -a B <<< "$bcore"
+  unset IFS
+  local i d
+  for i in 0 1 2 3; do
+    d=$(( ${A[i]:-0} - ${B[i]:-0} ))
+    if [ "$d" -ne 0 ]; then
+      [ "$d" -gt 0 ] && echo 1 || echo 2
+      return
+    fi
+  done
+  [ "$apre" = "$a" ] && [ "$bpre" = "$b" ] && { echo 0; return; }
+  [ "$apre" = "$a" ] && { echo 1; return; }
+  [ "$bpre" = "$b" ] && { echo 2; return; }
+  echo 0
+}
+
 verify_release_exists() {
   local tag="$1"
   [ -n "${L8B_RELEASE_DIR:-}" ] && return 0
@@ -298,6 +344,7 @@ verify_release_exists() {
   fi
 }
 
+# Download a release asset, verify its SHA-256, then replace the destination.
 download_and_verify() {
   local url="$1" dest="$2" name="$3"
 
@@ -309,26 +356,42 @@ download_and_verify() {
     return
   fi
 
+  local tmp="${dest}.download.$$"
+
   info "Downloading ${name}..."
-  curl -sfL "$url" -o "$dest"
-
-  local checksum_cmd="sha256sum"
-  command -v sha256sum &>/dev/null || checksum_cmd="shasum -a 256"
-
-  if command -v $checksum_cmd &>/dev/null; then
-    local checksums
-    checksums=$(curl -sfL "${url%/*}/checksums.txt")
-    local expected
-    expected=$(echo "$checksums" | grep "$(basename "$url")" | cut -d' ' -f1)
-    if [ -n "$expected" ]; then
-      local actual
-      actual=$($checksum_cmd "$dest" | cut -d' ' -f1)
-      if [ "$expected" != "$actual" ]; then
-        die "Checksum mismatch for ${name}! Expected: ${expected}, Got: ${actual}"
-      fi
-      info "Checksum verified."
-    fi
+  if ! curl -sfL "$url" -o "$tmp"; then
+    rm -f "$tmp"
+    die "Download failed: ${url}"
   fi
+
+  local checksum_cmd=""
+  if command -v sha256sum &>/dev/null; then
+    checksum_cmd="sha256sum"
+  elif command -v shasum &>/dev/null; then
+    checksum_cmd="shasum -a 256"
+  else
+    rm -f "$tmp"
+    die "Neither sha256sum nor shasum is available — cannot verify ${name}. Install coreutils (or perl) and re-run."
+  fi
+
+  local checksums expected
+  checksums=$(curl -sfL "${url%/*}/checksums.txt" || true)
+  # checksums.txt lines are "<hash>  <platform>/<file>" (sometimes bare "<file>").
+  expected=$(echo "$checksums" | grep "[/[:space:]*]$(basename "$url")\$" | cut -d' ' -f1 || true)
+  if [ -z "$expected" ]; then
+    rm -f "$tmp"
+    die "No checksum for $(basename "$url") in ${url%/*}/ — refusing to install ${name} unverified."
+  fi
+
+  local actual
+  actual=$($checksum_cmd "$tmp" | cut -d' ' -f1)
+  if [ "$expected" != "$actual" ]; then
+    rm -f "$tmp"
+    die "Checksum mismatch for ${name}! Expected: ${expected}, Got: ${actual}"
+  fi
+  info "Checksum verified."
+
+  mv -f "$tmp" "$dest"
 }
 
 base64_encode() {
@@ -348,27 +411,47 @@ unpack_cert_bundle() {
   '
 }
 
+# Unpack a base64+gzip cert bundle from stdin into $1 and sanity-check it.
+apply_cert_bundle() {
+  local certs_dir="$1"
+  base64_decode | gunzip | unpack_cert_bundle "$certs_dir"
+  chmod 600 "${certs_dir}/agent-key.pem"
+  [ -f "${certs_dir}/ca.pem" ] || die "ca.pem not found in cert bundle"
+  [ -f "${certs_dir}/agent.pem" ] || die "agent.pem not found in cert bundle"
+  [ -f "${certs_dir}/agent-key.pem" ] || die "agent-key.pem not found in cert bundle"
+}
+
+# Print a cert bundle plus the agent-side command that consumes it.
+print_cert_bundle() {
+  echo -e "    ${CYAN}${1}${NC}"
+  echo ""
+  echo -e "  Run this on your agent server:"
+  echo ""
+  echo -e "    ${DIM}${2}${NC}"
+  echo ""
+}
+
 # Configure OS firewall for a role: master | agent [agent_port]
 configure_ufw() {
   local role="${1:-}"
   local agent_port="${2:-5083}"
   if ! command -v ufw &>/dev/null; then
-    case "$role" in
-      master)
-        warn "UFW not found. Open inbound 80/tcp and 443/tcp+udp on your firewall."
-        ;;
-      agent)
-        warn "UFW not found. Open inbound ${agent_port}/tcp on your firewall."
-        warn "If the master uses cloudflare_dns routing, also open 80/tcp and 443/tcp+udp."
-        ;;
-      *)
-        warn "UFW not found. Configure firewall ports manually for this role."
-        ;;
-    esac
+    if [ "$role" = "agent" ]; then
+      warn "UFW not found. Open 80/tcp + 443/tcp+udp + ${agent_port}/tcp on your"
+      warn "firewall, and allow RFC 1918 → 80/443 (Docker hairpin)."
+    else
+      warn "UFW not found. Open 80/tcp + 443/tcp+udp on your firewall, and"
+      warn "allow RFC 1918 → 80/443 (same-host app traffic; Docker hairpin)."
+    fi
     return
   fi
 
   info "Opening required ports..."
+  # Docker hairpin: containers reach caddy via the host's 80/443 — allow all RFC 1918.
+  for cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do
+    ufw allow from "$cidr" to any port 80,443 proto tcp >/dev/null
+    ufw allow from "$cidr" to any port 443 proto udp >/dev/null
+  done
   case "$role" in
     master)
       ufw allow 80/tcp
@@ -377,9 +460,11 @@ configure_ufw() {
       info "Ports 80, 443 opened."
       ;;
     agent)
+      ufw allow 80/tcp
+      ufw allow 443/tcp
+      ufw allow 443/udp
       ufw allow "${agent_port}/tcp"
-      info "Port ${agent_port} opened."
-      warn "If the master uses cloudflare_dns routing, also open 80/tcp and 443/tcp+udp."
+      info "Ports 80, 443, ${agent_port} opened."
       ;;
     *)
       warn "Unknown firewall role '${role}'; skipping UFW rules."
@@ -388,39 +473,52 @@ configure_ufw() {
 }
 
 # -- Path helpers -----------------------------------------------------------
-find_install_dir() {
-  local not_found_msg="${1:-LiteBin installation not found. Run the setup first.}"
-
-  if [ -d "/opt/litebin" ]; then
-    echo "/opt/litebin"
-    return
+# Home dir of the user who invoked sudo, if any (empty + rc 1 otherwise).
+sudo_user_home() {
+  [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] || return 1
+  if command -v getent &>/dev/null; then
+    getent passwd "$SUDO_USER" | cut -d: -f6
+  elif [ -d "/home/${SUDO_USER}" ]; then
+    echo "/home/${SUDO_USER}"
+  else
+    return 1
   fi
-  if [ -d "${HOME}/litebin" ]; then
-    echo "${HOME}/litebin"
-    return
-  fi
-  # sudo without /opt: check the invoking user's home (e.g. install was non-root)
-  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
-    local sudo_home=""
-    if command -v getent &>/dev/null; then
-      sudo_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    elif [ -d "/home/${SUDO_USER}" ]; then
-      sudo_home="/home/${SUDO_USER}"
-    fi
-    if [ -n "$sudo_home" ] && [ -d "${sudo_home}/litebin" ]; then
-      echo "${sudo_home}/litebin"
-      return
-    fi
-  fi
-
-  error "$not_found_msg"
-  error "Looked in /opt/litebin and ${HOME}/litebin."
-  die "Run the installer as the same user that installed LiteBin (avoid sudo if you installed as a normal user)."
 }
 
-# Bail out clearly when an existing install dir isn't writable by the current
-# user (e.g. a root-owned /opt/litebin being touched by a non-root sudoer).
-# $1 = dir, $2 = action phrase (default "the update"), $3 = rerun subcommand.
+# Find a LiteBin install dir (/opt/litebin, ~/litebin, sudo user's ~/litebin).
+# $1 = marker inside the dir ("" = the dir itself); echoes dir or rc 1.
+find_l8b_dir() {
+  local marker="${1:-}" dir sudo_home
+  for dir in "/opt/litebin" "${HOME}/litebin"; do
+    if [ -z "$marker" ] && [ -d "$dir" ] || [ -n "$marker" ] && [ -e "${dir}/${marker}" ]; then
+      echo "$dir"
+      return 0
+    fi
+  done
+  # sudo without /opt: check the invoking user's home (e.g. install was non-root)
+  if sudo_home=$(sudo_user_home); then
+    dir="${sudo_home}/litebin"
+    if [ -z "$marker" ] && [ -d "$dir" ] || [ -n "$marker" ] && [ -e "${dir}/${marker}" ]; then
+      echo "$dir"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+find_install_dir() {
+  local not_found_msg="${1:-LiteBin installation not found. Run the setup first.}"
+  local dir
+  if ! dir=$(find_l8b_dir ""); then
+    error "$not_found_msg"
+    error "Looked in /opt/litebin and ${HOME}/litebin."
+    die "Run the installer as the same user that installed LiteBin (avoid sudo if you installed as a normal user)."
+  fi
+  echo "$dir"
+}
+
+# Die clearly when the install dir isn't writable by the current user.
+# $1=dir $2=action phrase $3=rerun subcommand.
 require_writable() {
   local dir="$1" action="${2:-the update}" rerun="${3:-update}"
   if [ -w "$dir" ]; then
@@ -444,26 +542,7 @@ find_certs_dir() {
 
 # Resolve master install dir (docker-compose.yml present). Empty if none.
 detect_master_dir() {
-  if [ -f "/opt/litebin/docker-compose.yml" ]; then
-    echo "/opt/litebin"
-    return
-  fi
-  if [ -f "${HOME}/litebin/docker-compose.yml" ]; then
-    echo "${HOME}/litebin"
-    return
-  fi
-  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
-    local sudo_home=""
-    if command -v getent &>/dev/null; then
-      sudo_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    elif [ -d "/home/${SUDO_USER}" ]; then
-      sudo_home="/home/${SUDO_USER}"
-    fi
-    if [ -n "$sudo_home" ] && [ -f "${sudo_home}/litebin/docker-compose.yml" ]; then
-      echo "${sudo_home}/litebin"
-      return
-    fi
-  fi
+  find_l8b_dir "docker-compose.yml"
 }
 
 is_agent_installed() {
@@ -478,26 +557,7 @@ is_agent_running() {
 
 # Parent install dir for an agent (contains agent/ and usually .version).
 detect_agent_dir() {
-  if [ -d "/opt/litebin/agent" ]; then
-    echo "/opt/litebin"
-    return
-  fi
-  if [ -d "${HOME}/litebin/agent" ]; then
-    echo "${HOME}/litebin"
-    return
-  fi
-  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
-    local sudo_home=""
-    if command -v getent &>/dev/null; then
-      sudo_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    elif [ -d "/home/${SUDO_USER}" ]; then
-      sudo_home="/home/${SUDO_USER}"
-    fi
-    if [ -n "$sudo_home" ] && [ -d "${sudo_home}/litebin/agent" ]; then
-      echo "${sudo_home}/litebin"
-      return
-    fi
-  fi
+  find_l8b_dir "agent"
 }
 
 read_install_version() {
@@ -520,6 +580,20 @@ require_master_for_certs() {
   On the master: curl -fsSL ${L8B_IN} | bash -s certs"
   fi
   die "LiteBin master not found. Run master setup first, then: curl -fsSL ${L8B_IN} | bash -s certs"
+}
+
+# Stop and remove a container if it exists (idempotent).
+remove_container() {
+  docker stop "$1" 2>/dev/null || true
+  docker rm "$1" 2>/dev/null || true
+}
+
+# Host port the agent publishes; last colon-field of the first mapping survives
+# IPv6 lines ("[::]:5099"). 5083 default on first run.
+agent_published_port() {
+  local port
+  port=$(docker port litebin-agent 2>/dev/null | head -1 | awk -F: '{print $NF}' || true)
+  echo "${port:-5083}"
 }
 
 ensure_agent_network() {
@@ -559,8 +633,7 @@ run_agent_caddy() {
     -v litebin-agent-caddy-root:/root/.local/share/caddy
   )
   [ -n "$install_dir" ] && [ -f "${install_dir}/agent/Caddyfile" ] && mounts+=(-v "${install_dir}/agent/Caddyfile:/etc/caddy/Caddyfile:ro")
-  docker stop litebin-agent-caddy 2>/dev/null || true
-  docker rm litebin-agent-caddy 2>/dev/null || true
+  remove_container litebin-agent-caddy
   docker run -d \
     --name litebin-agent-caddy \
     --restart unless-stopped \
@@ -575,11 +648,11 @@ run_agent_caddy() {
     -p 443:443 \
     -p 443:443/udp \
     "${mounts[@]}" \
-    caddy:2.11.2-alpine
+    "${CADDY_IMAGE}"
 }
 
-# Write the bootstrap Caddyfile. Read by caddy only at container boot — the
-# orchestrator replaces the running config via its admin API on startup.
+# Bootstrap Caddyfile — read only at container boot; the orchestrator replaces
+# the live config via its admin API on startup.
 generate_caddyfile() {
   cat > "$1" <<'CADDYFILE'
 {
@@ -594,9 +667,8 @@ generate_caddyfile() {
 CADDYFILE
 }
 
-# Regenerate the bootstrap Caddyfile if this version's template changed.
-# Never restarts caddy here — a restart would drop the orchestrator-pushed
-# routes until the next sync; caddy reads the file on its next boot anyway.
+# Refresh the bootstrap Caddyfile if the template changed. Never restarts
+# caddy here — that would drop orchestrator-pushed routes until the next sync.
 refresh_caddyfile_if_changed() {
   local install_dir="$1" tmp
   tmp=$(mktemp)
@@ -609,6 +681,27 @@ refresh_caddyfile_if_changed() {
     info "Caddyfile refreshed — caddy picks it up on its next restart"
   fi
   rm -f "$tmp"
+}
+
+# Diff an installed file vs a fresh one, offer to apply (no-op if identical).
+# $1=tmp $2=installed $3=label $4/$5=skip fn (warn/info) + message.
+offer_generated_file() {
+  local tmp="$1" installed="$2" label="$3" skip_fn="${4:-warn}" skip_msg="${5:-Skipped.}"
+  diff -q "$tmp" "$installed" >/dev/null 2>&1 && return 0
+  echo ""
+  warn "${label} needs to be updated in this version:"
+  echo ""
+  echo -e "  ${DIM}+ added, - removed:${NC}"
+  diff -u --label "installed" --label "new" "$installed" "$tmp" || true
+  echo ""
+  echo -e "  Review the changelog for details: ${DIM}${CHANGELOG_URL}${NC}"
+  echo ""
+  if prompt_yes "Apply these changes?"; then
+    cp "$tmp" "$installed"
+    info "${label} updated"
+  else
+    "$skip_fn" "$skip_msg"
+  fi
 }
 
 # Run compose up in the install dir; die loudly if it fails.
@@ -644,8 +737,8 @@ pull_release_images() {
 
 write_orchestrator_dockerfile() {
   local install_dir="$1"
-  cat > "${install_dir}/orchestrator/Dockerfile" <<'ORCH_DOCKERFILE'
-FROM debian:trixie-slim
+  cat > "${install_dir}/orchestrator/Dockerfile" <<ORCH_DOCKERFILE
+FROM ${DEBIAN_IMAGE}
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV _RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2
 COPY litebin-orchestrator /app/litebin-orchestrator
@@ -673,8 +766,8 @@ build_or_pull_agent_image() {
 
 write_agent_dockerfile() {
   local install_dir="$1"
-  cat > "${install_dir}/agent/Dockerfile" <<'AGENT_DOCKERFILE'
-FROM debian:trixie-slim
+  cat > "${install_dir}/agent/Dockerfile" <<AGENT_DOCKERFILE
+FROM ${DEBIAN_IMAGE}
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV _RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2
 COPY litebin-agent /usr/local/bin/litebin-agent
@@ -694,8 +787,14 @@ container_created_since() {
   [ "$(date -d "$created" +%s 2>/dev/null || echo 0)" -ge "$epoch" ]
 }
 
-# True when the installed binary is newer than the running container —
-# an update was downloaded but is not running yet.
+# True if running AND created at/after epoch — a stale, never-recreated container doesn't count.
+container_running_since() {
+  local name="$1" epoch="$2"
+  [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = "true" ] || return 1
+  container_created_since "$name" "$epoch"
+}
+
+# True when the installed binary is newer than the running container (update downloaded, not applied).
 update_pending() {
   local bin="$1" name="$2" bin_ts created
   bin_ts=$(stat -c %Y "$bin" 2>/dev/null) || return 1
@@ -710,8 +809,7 @@ apply_pending_update() {
   restart_epoch=$(date +%s)
   compose_up "$install_dir" --force-recreate
   sleep 3
-  if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = "true" ] \
-    && container_created_since "$name" "$restart_epoch"; then
+  if container_running_since "$name" "$restart_epoch"; then
     info "Applied — ${name} is now running the installed version."
   else
     die "Restart failed — update still not applied. Check: docker compose logs ${name}"
@@ -787,7 +885,7 @@ ${orch_volumes}
       - litebin-network
 
   caddy:
-    image: caddy:2.11.2-alpine
+    image: ${CADDY_IMAGE}
     container_name: litebin-caddy
     restart: unless-stopped
     logging:
@@ -989,11 +1087,7 @@ install_master() {
   echo ""
 
   # Auto-detect public IP early (needed for tryout sslip domain and DNS hints)
-  PUBLIC_IP=$(curl -sf --connect-timeout 3 --max-time 5 https://api.ipify.org 2>/dev/null \
-    || curl -sf --connect-timeout 3 --max-time 5 https://checkip.amazonaws.com 2>/dev/null \
-    || curl -sf --connect-timeout 3 --max-time 5 https://ipv4.icanhazip.com 2>/dev/null \
-    || echo "")
-  PUBLIC_IP=$(echo "$PUBLIC_IP" | tr -d '[:space:]')
+  PUBLIC_IP=$(detect_public_ip)
   [ -z "$PUBLIC_IP" ] && warn "Could not detect public IP automatically — update it via Dashboard > Settings after setup"
 
   local tryout=0
@@ -1126,8 +1220,7 @@ EOF
   start_epoch=$(date +%s)
   compose_up "$install_dir" --force-recreate
   sleep 3
-  if [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" != "true" ] \
-    || ! container_created_since litebin-orchestrator "$start_epoch"; then
+  if ! container_running_since litebin-orchestrator "$start_epoch"; then
     die "Orchestrator did not start. Check: cd ${install_dir} && docker compose logs orchestrator"
   fi
   echo ""
@@ -1208,12 +1301,7 @@ show_cert_bundle() {
   echo ""
   echo -e "  ${GREEN}${BOLD}Agent cert bundle:${NC}"
   echo ""
-  echo -e "    ${CYAN}${cert_bundle}${NC}"
-  echo ""
-  echo -e "  Run this on your agent server:"
-  echo ""
-  echo -e "    ${DIM}curl -fsSL ${L8B_IN} | bash -s agent --update-certs${NC}"
-  echo ""
+  print_cert_bundle "$cert_bundle" "curl -fsSL ${L8B_IN} | bash -s agent --update-certs"
 }
 
 manage_certs() {
@@ -1244,6 +1332,28 @@ manage_certs() {
     _tty_read choice
     regenerate_certs
   fi
+}
+
+# Issue an ECDSA P-256 leaf cert. $1=ca_dir $2=out_dir $3=prefix $4=CN $5=O $6=SAN dns.
+issue_cert() {
+  local ca_dir="$1" out_dir="$2" prefix="$3" cn="$4" org="$5" san="$6"
+  openssl ecparam -genkey -name prime256v1 -noout -out "${out_dir}/${prefix}-key.pem" 2>/dev/null \
+    || die "Failed to generate ${prefix} key"
+  chmod 600 "${out_dir}/${prefix}-key.pem" 2>/dev/null || true
+  openssl req -new \
+    -key "${out_dir}/${prefix}-key.pem" \
+    -out "${out_dir}/${prefix}.csr" \
+    -subj "/CN=${cn}/O=${org}" 2>/dev/null \
+    || die "Failed to generate ${prefix} CSR"
+  printf "subjectAltName=DNS:%s" "$san" > "${out_dir}/${prefix}-san.ext"
+  openssl x509 -req -days 3650 \
+    -in "${out_dir}/${prefix}.csr" \
+    -CA "${ca_dir}/ca.pem" \
+    -CAkey "${ca_dir}/ca-key.pem" \
+    -CAcreateserial \
+    -out "${out_dir}/${prefix}.pem" \
+    -extfile "${out_dir}/${prefix}-san.ext" 2>/dev/null \
+    || die "Failed to sign ${prefix} certificate"
 }
 
 regenerate_certs() {
@@ -1294,24 +1404,7 @@ regenerate_certs() {
     || die "Failed to generate CA certificate"
 
   # Generate master cert (ECDSA P-256)
-  openssl ecparam -genkey -name prime256v1 -noout -out "${certs_tmp}/server-key.pem" 2>/dev/null \
-    || die "Failed to generate server key"
-  chmod 600 "${certs_tmp}/server-key.pem" 2>/dev/null || true
-  openssl req -new \
-    -key "${certs_tmp}/server-key.pem" \
-    -out "${certs_tmp}/server.csr" \
-    -subj "/CN=${domain}/O=LiteBin Master" 2>/dev/null \
-    || die "Failed to generate server CSR"
-
-  printf "subjectAltName=DNS:%s" "$domain" > "${certs_tmp}/san.ext"
-  openssl x509 -req -days 3650 \
-    -in "${certs_tmp}/server.csr" \
-    -CA "${certs_tmp}/ca.pem" \
-    -CAkey "${certs_tmp}/ca-key.pem" \
-    -CAcreateserial \
-    -out "${certs_tmp}/server.pem" \
-    -extfile "${certs_tmp}/san.ext" 2>/dev/null \
-    || die "Failed to sign server certificate"
+  issue_cert "$certs_tmp" "$certs_tmp" server "$domain" "LiteBin Master" "$domain"
 
   # Copy master certs
   cp "${certs_tmp}/ca.pem" "${certs_dir}/ca.pem"
@@ -1320,23 +1413,7 @@ regenerate_certs() {
   chmod 600 "${certs_dir}/server-key.pem" 2>/dev/null || true
 
   # Generate node/agent cert (ECDSA P-256)
-  openssl ecparam -genkey -name prime256v1 -noout -out "${certs_tmp}/node-key.pem" 2>/dev/null \
-    || die "Failed to generate node key"
-  chmod 600 "${certs_tmp}/node-key.pem" 2>/dev/null || true
-  openssl req -new \
-    -key "${certs_tmp}/node-key.pem" \
-    -out "${certs_tmp}/node.csr" \
-    -subj "/CN=agent/O=LiteBin Agent" 2>/dev/null \
-    || die "Failed to generate node CSR"
-  printf "subjectAltName=DNS:agent" > "${certs_tmp}/node-san.ext"
-  openssl x509 -req -days 3650 \
-    -in "${certs_tmp}/node.csr" \
-    -CA "${certs_tmp}/ca.pem" \
-    -CAkey "${certs_tmp}/ca-key.pem" \
-    -CAcreateserial \
-    -extfile "${certs_tmp}/node-san.ext" \
-    -out "${certs_tmp}/node.pem" 2>/dev/null \
-    || die "Failed to sign node certificate"
+  issue_cert "$certs_tmp" "$certs_tmp" node agent "LiteBin Agent" agent
 
   # Copy agent certs (so show_cert_bundle can re-read them later)
   cp "${certs_tmp}/node.pem" "${certs_dir}/agent.pem"
@@ -1362,8 +1439,7 @@ EOF
     info "Added mTLS config to .env"
   fi
 
-  # Add certs mount to docker-compose.yml if missing
-  # Matches both ./projects and absolute/relative projects bind mounts under orchestrator.
+  # Add certs mount if missing (matches any projects bind under orchestrator).
   local certs_mount_added=false
   if ! grep -q "/certs:ro" "${install_dir}/docker-compose.yml" 2>/dev/null; then
     if grep -qE '[[:space:]]+- .*:/app/projects' "${install_dir}/docker-compose.yml"; then
@@ -1434,24 +1510,15 @@ install_agent() {
     [ -z "$cert_bundle" ] && die "Cert bundle is required"
 
     info "Updating certificates..."
-    echo "$cert_bundle" | base64_decode | gunzip | unpack_cert_bundle "$certs_dir"
-    chmod 600 "${certs_dir}/agent-key.pem"
-
-    # Verify
-    [ -f "${certs_dir}/ca.pem" ] || die "ca.pem not found in cert bundle"
-    [ -f "${certs_dir}/agent.pem" ] || die "agent.pem not found in cert bundle"
-    [ -f "${certs_dir}/agent-key.pem" ] || die "agent-key.pem not found in cert bundle"
+    echo "$cert_bundle" | apply_cert_bundle "$certs_dir"
 
     # Restart agent container
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "litebin-agent"; then
-      local agent_port="5083"
-      local prev_port
-      prev_port=$(docker port litebin-agent 2>/dev/null | head -1 | cut -d: -f2 || true)
-      [ -n "$prev_port" ] && agent_port="$prev_port"
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^litebin-agent"; then
+      local agent_port
+      agent_port=$(agent_published_port)
 
       info "Restarting agent with new certificates..."
-      docker stop litebin-agent 2>/dev/null || true
-      docker rm litebin-agent 2>/dev/null || true
+      remove_container litebin-agent
 
       build_or_pull_agent_image "$install_dir" >/dev/null 2>&1
       run_agent_container "$install_dir" "$certs_dir" "$agent_port" >/dev/null
@@ -1555,13 +1622,7 @@ AGENT_CADDYFILE
   [ -z "$cert_bundle" ] && die "Cert bundle is required"
 
   info "Decoding certificates..."
-  echo "$cert_bundle" | base64_decode | gunzip | unpack_cert_bundle "$certs_dir"
-  chmod 600 "${certs_dir}/agent-key.pem"
-
-  # Verify certs exist
-  [ -f "${certs_dir}/ca.pem" ] || die "ca.pem not found in cert bundle"
-  [ -f "${certs_dir}/agent.pem" ] || die "agent.pem not found in cert bundle"
-  [ -f "${certs_dir}/agent-key.pem" ] || die "agent-key.pem not found in cert bundle"
+  echo "$cert_bundle" | apply_cert_bundle "$certs_dir"
 
   # -- Generate .env ---------------------------------------------------
   cat > "${install_dir}/agent/.env" <<EOF
@@ -1589,11 +1650,8 @@ EOF
   info "Building agent image..."
   build_or_pull_agent_image "$install_dir"
 
-  # Stop existing containers if present
-  docker stop litebin-agent-caddy 2>/dev/null || true
-  docker rm litebin-agent-caddy 2>/dev/null || true
-  docker stop litebin-agent 2>/dev/null || true
-  docker rm litebin-agent 2>/dev/null || true
+  # Stop existing containers if present (agent caddy is replaced by run_agent_caddy below)
+  remove_container litebin-agent
 
   # Start Caddy sidecar for agent local proxying
   info "Starting agent Caddy sidecar..."
@@ -1621,6 +1679,73 @@ EOF
 }
 
 # -- Master Update -----------------------------------------------------------
+# Header for update flows: installed vs latest/pinned version + changelog.
+show_update_header() {
+  local title="$1" current="$2" latest="$3" pending="${4:-}"
+  echo ""
+  echo -e "${BOLD}${title}${NC}"
+  echo ""
+  echo -e "  Installed version: ${CYAN}${current}${pending}${NC}"
+  if [ -n "${L8B_VERSION:-}" ]; then
+    echo -e "  Pinned version:    ${CYAN}${latest}${NC} ${DIM}(L8B_VERSION)${NC}"
+  else
+    echo -e "  Latest version:    ${CYAN}${latest}${NC}"
+  fi
+  echo ""
+  echo -e "  Changelog: ${DIM}${CHANGELOG_URL}${NC}"
+  echo ""
+}
+
+# Ask which version to update to; sets TARGET_RELEASE or exits on cancel.
+# Top level only — it prompts via _tty_read, which breaks inside a subshell.
+select_target_release() {
+  local current_version="$1" latest_release="$2" noun="${3:-}"
+  local target_release option_label option_target default_choice=1
+  if [ "$(version_cmp "$current_version" "$latest_release")" -eq 2 ]; then
+    option_label="Update to ${latest_release}${L8B_VERSION:+ (pinned)}"
+    option_target="$latest_release"
+  else
+    # Never offer an older stable; default to cancel so Enter never reinstalls.
+    if [ "$current_version" != "$latest_release" ]; then
+      warn "Installed pre-release ${current_version} is newer than latest stable ${latest_release}."
+    fi
+    option_label="Reinstall ${current_version}"
+    option_target="$current_version"
+    default_choice=3
+  fi
+  echo "  Options:"
+  echo -e "    1) ${CYAN}${option_label}${NC}"
+  echo -e "    2) Enter a specific version"
+  echo -e "    3) Cancel"
+  echo ""
+  local choice
+  echo -ne "  ${CYAN}Choose [${default_choice}]:${NC} "
+  _tty_read choice
+  case "${choice:-$default_choice}" in
+    2)
+      prompt "Enter version (e.g. v0.1.2, v0.2.0-beta.1)" target_release ""
+      target_release=$(normalize_release_tag "$target_release")
+      [ -z "$target_release" ] && die "Version is required"
+      # Verify release exists on GitHub
+      verify_release_exists "$target_release"
+      ;;
+    3)
+      info "Cancelled."
+      exit 0
+      ;;
+    *)
+      target_release="$option_target"
+      ;;
+  esac
+
+  # Confirm updates only — a reinstall picked from the menu is already explicit.
+  if [ "$current_version" != "$target_release" ] && ! prompt_yes "Update${noun:+ $noun} from ${current_version} to ${target_release}?"; then
+    info "Cancelled."
+    exit 0
+  fi
+  TARGET_RELEASE="$target_release"
+}
+
 update_master() {
   local platform arch
 
@@ -1636,8 +1761,8 @@ update_master() {
   ensure_docker_compose
   harden_daemons
 
-  # Get current version
-  local current_version="unknown"
+  # Get current version ("v0.0.0" when .version is missing — version_cmp can't parse "unknown")
+  local current_version="v0.0.0"
   if [ -f "${install_dir}/.version" ]; then
     current_version=$(cat "${install_dir}/.version")
   fi
@@ -1650,14 +1775,7 @@ update_master() {
   local pending_restart=""
   update_pending "${install_dir}/orchestrator/litebin-orchestrator" litebin-orchestrator && pending_restart=" (pending restart)"
 
-  echo ""
-  echo -e "${BOLD}LiteBin Update${NC}"
-  echo ""
-  echo -e "  Installed version: ${CYAN}${current_version}${pending_restart}${NC}"
-  echo -e "  Latest version:    ${CYAN}${latest_release}${NC}"
-  echo ""
-  echo -e "  Changelog: ${DIM}${CHANGELOG_URL}${NC}"
-  echo ""
+  show_update_header "LiteBin Update" "$current_version" "$latest_release" "$pending_restart"
 
   if [ -n "$pending_restart" ]; then
     warn "A downloaded update is not running yet."
@@ -1670,49 +1788,10 @@ update_master() {
   fi
 
   local target_release
+  select_target_release "$current_version" "$latest_release" ""
+  target_release="$TARGET_RELEASE"
 
-  if [ "$current_version" = "$latest_release" ]; then
-    if ! prompt_yes "Already up to date. Reinstall?"; then
-      info "Cancelled."
-      exit 0
-    fi
-    target_release="$latest_release"
-  else
-    echo "  Options:"
-    echo -e "    1) Update to ${CYAN}${latest_release}${NC} (latest)"
-    echo "    2) Enter a specific version"
-    echo ""
-    local choice
-    echo -ne "  ${CYAN}Choose [1]:${NC} "
-    _tty_read choice
-    case "${choice:-1}" in
-      2)
-        prompt "Enter version (e.g. v0.1.2)" target_release ""
-        target_release=$(normalize_release_tag "$target_release")
-        [ -z "$target_release" ] && die "Version is required"
-        # Verify release exists on GitHub
-        verify_release_exists "$target_release"
-        ;;
-      *)
-        target_release="$latest_release"
-        ;;
-    esac
-  fi
-
-  # Confirm
-  echo ""
-  if [ "$current_version" = "$target_release" ]; then
-    if ! prompt_yes "Reinstall ${current_version}?"; then
-      info "Cancelled."
-      exit 0
-    fi
-  elif ! prompt_yes "Update from ${current_version} to ${target_release}?"; then
-    info "Cancelled."
-    exit 0
-  fi
-
-  # Early check: docker-compose.yml changes (before downloading anything)
-  # If compose changed, user can review and decide whether to apply it
+  # Early check: compose changes, reviewable before anything downloads.
   local tmp_compose
   tmp_compose=$(mktemp)
 
@@ -1722,43 +1801,17 @@ update_master() {
   fi
   generate_compose "$tmp_compose" "$certs_dir"
 
-  if ! diff -q "$tmp_compose" "${install_dir}/docker-compose.yml" >/dev/null 2>&1; then
-    echo ""
-    warn "docker-compose.yml needs to be updated in this version:"
-    echo ""
-    echo -e "  ${DIM}+ added, - removed:${NC}"
-    diff -u --label "installed" --label "new" "${install_dir}/docker-compose.yml" "$tmp_compose" || true
-    echo ""
-    echo -e "  Review the changelog for details: ${DIM}${CHANGELOG_URL}${NC}"
-    echo ""
-    if prompt_yes "Apply these changes?"; then
-      cp "$tmp_compose" "${install_dir}/docker-compose.yml"
-      info "docker-compose.yml updated"
-    else
-      warn "Skipped — continuing with the current docker-compose.yml. Features needing the change above may not work until it is applied (re-run the update to retry)."
-    fi
-  fi
+  offer_generated_file "$tmp_compose" "${install_dir}/docker-compose.yml" "docker-compose.yml" \
+    warn "Skipped — continuing with the current docker-compose.yml. Features needing the change above may not work until it is applied (re-run the update to retry)."
   rm -f "$tmp_compose"
 
-  # Export/import bundle folders (host-visible for scp) — created regardless
-  # of whether the compose diff was applied, so binds never point at nothing.
+  # Export/import bundle folders (host-visible for scp) — created regardless so binds never dangle.
   mkdir -p "${install_dir}/exports" "${install_dir}/imports"
 
   tmp_compose=$(mktemp)
   generate_compose_override "$tmp_compose"
-  if ! diff -q "$tmp_compose" "${install_dir}/docker-compose.override.yml" >/dev/null 2>&1; then
-    echo ""
-    warn "docker-compose.override.yml needs to be updated in this version:"
-    echo ""
-    diff -u --label "installed" --label "new" "${install_dir}/docker-compose.override.yml" "$tmp_compose" || true
-    echo ""
-    if prompt_yes "Apply these changes?"; then
-      cp "$tmp_compose" "${install_dir}/docker-compose.override.yml"
-      info "docker-compose.override.yml updated"
-    else
-      info "Skipped — resource protections unchanged until this file is updated."
-    fi
-  fi
+  offer_generated_file "$tmp_compose" "${install_dir}/docker-compose.override.yml" "docker-compose.override.yml" \
+    info "Skipped — resource protections unchanged until this file is updated."
   rm -f "$tmp_compose"
 
   refresh_caddyfile_if_changed "$install_dir"
@@ -1817,8 +1870,7 @@ update_master() {
   info "Waiting for services to start..."
   sleep 3
 
-  if [ "$(docker inspect -f '{{.State.Running}}' litebin-orchestrator 2>/dev/null)" = "true" ] \
-    && container_created_since litebin-orchestrator "$restart_epoch"; then
+  if container_running_since litebin-orchestrator "$restart_epoch"; then
     echo "$target_release" > "${install_dir}/.version"
     echo ""
     echo -e "${GREEN}${BOLD}  LiteBin ${target_release} is running!${NC}"
@@ -1887,8 +1939,8 @@ update_agent() {
   ensure_docker
   harden_daemons
 
-  # Get current version
-  local current_version="unknown"
+  # Get current version ("v0.0.0" when .version is missing — version_cmp can't parse "unknown")
+  local current_version="v0.0.0"
   if [ -f "${install_dir}/.version" ]; then
     current_version=$(cat "${install_dir}/.version")
   fi
@@ -1900,62 +1952,15 @@ update_agent() {
   local pending_restart=""
   update_pending "${install_dir}/agent/litebin-agent" litebin-agent && pending_restart=" (pending restart)"
 
-  echo ""
-  echo -e "${BOLD}LiteBin Agent Update${NC}"
-  echo ""
-  echo -e "  Installed version: ${CYAN}${current_version}${pending_restart}${NC}"
-  echo -e "  Latest version:    ${CYAN}${latest_release}${NC}"
-  echo ""
-  echo -e "  Changelog: ${DIM}${CHANGELOG_URL}${NC}"
-  echo ""
+  show_update_header "LiteBin Agent Update" "$current_version" "$latest_release" "$pending_restart"
 
   local target_release
-
-  if [ "$current_version" = "$latest_release" ]; then
-    if ! prompt_yes "Already up to date. Reinstall?"; then
-      info "Cancelled."
-      exit 0
-    fi
-    target_release="$latest_release"
-  else
-    echo "  Options:"
-    echo -e "    1) Update to ${CYAN}${latest_release}${NC} (latest)"
-    echo "    2) Enter a specific version"
-    echo ""
-    local choice
-    echo -ne "  ${CYAN}Choose [1]:${NC} "
-    _tty_read choice
-    case "${choice:-1}" in
-      2)
-        prompt "Enter version (e.g. v0.1.2)" target_release ""
-        target_release=$(normalize_release_tag "$target_release")
-        [ -z "$target_release" ] && die "Version is required"
-        # Verify release exists on GitHub
-        verify_release_exists "$target_release"
-        ;;
-      *)
-        target_release="$latest_release"
-        ;;
-    esac
-  fi
-
-  # Confirm
-  echo ""
-  if [ "$current_version" = "$target_release" ]; then
-    if ! prompt_yes "Reinstall ${current_version}?"; then
-      info "Cancelled."
-      exit 0
-    fi
-  elif ! prompt_yes "Update agent from ${current_version} to ${target_release}?"; then
-    info "Cancelled."
-    exit 0
-  fi
+  select_target_release "$current_version" "$latest_release" "agent"
+  target_release="$TARGET_RELEASE"
 
   # Detect port from previous container, fallback to 5083
-  local agent_port="5083"
-  local prev_port
-  prev_port=$(docker port litebin-agent 2>/dev/null | head -1 | cut -d: -f2 || true)
-  [ -n "$prev_port" ] && agent_port="$prev_port"
+  local agent_port
+  agent_port=$(agent_published_port)
 
   # Download new agent binary
   download_and_verify \
@@ -1993,9 +1998,10 @@ update_agent() {
   info "Restarting agent Caddy sidecar..."
   run_agent_caddy "$install_dir"
 
+  local restart_epoch
+  restart_epoch=$(date +%s)
   info "Restarting agent..."
-  docker stop litebin-agent 2>/dev/null || true
-  docker rm litebin-agent 2>/dev/null || true
+  remove_container litebin-agent
   run_agent_container "$install_dir" "$certs_dir" "$agent_port"
 
   # Verify
@@ -2003,7 +2009,7 @@ update_agent() {
   info "Waiting for agent to start..."
   sleep 3
 
-  if [ "$(docker inspect -f '{{.State.Running}}' litebin-agent 2>/dev/null)" = "true" ]; then
+  if container_running_since litebin-agent "$restart_epoch"; then
     echo "$target_release" > "${install_dir}/.version"
     echo ""
     echo -e "${GREEN}${BOLD}  Agent ${target_release} is running!${NC}"
@@ -2015,27 +2021,35 @@ update_agent() {
 }
 
 # -- Interactive Menu --------------------------------------------------------
+# Usage text (shown for --help and when run non-interactively without a mode).
+print_usage() {
+  local latest
+  latest=$(get_latest_release 2>/dev/null) || true
+  echo -e "${BOLD}LiteBin Installer${NC}"
+  [ -n "$latest" ] && echo -e "Latest LiteBin Version: ${latest}" || true
+  echo ""
+  echo "Usage:  curl -fsSL ${L8B_IN} | bash -s <mode>"
+  echo ""
+  echo "Modes:"
+  echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
+  echo "  agent     Set up an agent server (Linux only)"
+  echo "  cli       Install the l8b CLI tool"
+  echo "  update    Update LiteBin (auto-detects master or agent)"
+  echo "  certs     Manage mTLS certs (interactive, or use --show-bundle / --regenerate)"
+  echo "  set-domain <domain|sslip>  Change the platform domain on-server (sslip auto-detects the IP)"
+  echo ""
+  echo "Examples:"
+  echo "  curl -fsSL ${L8B_IN} | bash -s master"
+  echo "  curl -fsSL ${L8B_IN} | bash -s agent"
+  echo "  curl -fsSL ${L8B_IN} | bash -s cli"
+  echo "  curl -fsSL ${L8B_IN} | bash -s update"
+  echo "  curl -fsSL ${L8B_IN} | L8B_VERSION=v0.4.2 bash -s master   # pinned version"
+}
+
 show_menu() {
   # If no terminal at all (piped in CI/script), print usage and exit
   if ! [ -t 0 ] && ! [ -t 1 ]; then
-    local latest
-    latest=$(get_latest_release 2>/dev/null) || true
-    echo -e "${BOLD}LiteBin Installer${NC}"
-    [ -n "$latest" ] && echo -e "Latest LiteBin Version: ${latest}" || true
-    echo ""
-    echo "Usage:  curl -fsSL ${L8B_IN} | bash -s <mode>"
-    echo ""
-    echo "Modes:"
-    echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
-    echo "  agent     Set up an agent server (Linux only)"
-    echo "  cli       Install the l8b CLI tool"
-    echo "  update    Update LiteBin (auto-detects master or agent)"
-    echo ""
-    echo "Examples:"
-    echo "  curl -fsSL ${L8B_IN} | bash -s master"
-    echo "  curl -fsSL ${L8B_IN} | bash -s agent"
-    echo "  curl -fsSL ${L8B_IN} | bash -s cli"
-    echo "  curl -fsSL ${L8B_IN} | bash -s update"
+    print_usage
     exit 1
   fi
 
@@ -2113,16 +2127,14 @@ certs_cmd() {
 }
 
 # -- Domain recovery ----------------------------------------------------------
-# Change the platform domain on-server via the orchestrator's offline
-# set-domain subcommand, then restart it (boot sync rebuilds routing).
+# Change the platform domain via the orchestrator's set-domain, then restart it (boot sync rebuilds routing).
 set_domain_cmd() {
   local domain="${1:-}"
   [ -n "$domain" ] || die "Usage: curl -fsSL ${L8B_IN} | sudo bash -s set-domain <domain|sslip>"
 
   if [ "$domain" = "sslip" ]; then
     local ip
-    ip=$(curl -sf --connect-timeout 3 --max-time 5 https://api.ipify.org 2>/dev/null       || curl -sf --connect-timeout 3 --max-time 5 https://checkip.amazonaws.com 2>/dev/null       || curl -sf --connect-timeout 3 --max-time 5 https://ipv4.icanhazip.com 2>/dev/null       || echo "")
-    ip=$(echo "$ip" | tr -d '[:space:]')
+    ip=$(detect_public_ip)
     [ -n "$ip" ] || die "Could not detect the public IP — pass the domain explicitly: set-domain <ip-dashed>.sslip.io"
     domain="${ip//./-}.sslip.io"
   fi
@@ -2171,19 +2183,7 @@ case "${1:-}" in
   update)  update_litebin ;;
   set-domain) set_domain_cmd "${2:-}" ;;
   -h|--help|"help")
-    latest=$(get_latest_release 2>/dev/null) || true
-    echo -e "${BOLD}LiteBin Installer${NC}"
-    [ -n "$latest" ] && echo -e "Latest LiteBin Version: ${latest}" || true
-    echo ""
-    echo "Usage:  curl -fsSL ${L8B_IN} | bash -s <mode>"
-    echo ""
-    echo "Modes:"
-    echo "  master    Set up the master server (orchestrator + dashboard + Caddy)"
-    echo "  agent     Set up an agent server (Linux only)"
-    echo "  cli       Install the l8b CLI tool"
-    echo "  update    Update LiteBin (auto-detects master or agent)"
-    echo "  certs     Manage mTLS certs (interactive, or use --show-bundle / --regenerate)"
-    echo "  set-domain <domain|sslip>  Change the platform domain on-server (sslip auto-detects the IP)"
+    print_usage
     ;;
   "")       show_menu ;;
   *)        die "Unknown mode: $1. Run with --help for usage." ;;

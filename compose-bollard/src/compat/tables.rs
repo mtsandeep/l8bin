@@ -65,7 +65,11 @@ pub(super) const IGNORED_SERVICE_FIELDS: &[(&str, FindingDisposition, &str)] = &
     ),
     ("profiles", FindingDisposition::Overridden, "Compose profiles are ignored; all services in the file are deployed"),
     ("security_opt", FindingDisposition::Overridden, "security_opt is overridden by LiteBin (no-new-privileges)"),
-    ("dns", FindingDisposition::Overridden, "custom DNS is ignored"),
+    (
+        "dns",
+        FindingDisposition::Overridden,
+        "custom DNS is overridden by LiteBin's split-horizon resolver when enabled; otherwise ignored",
+    ),
     ("hostname", FindingDisposition::Overridden, "hostname is ignored"),
     ("domainname", FindingDisposition::Overridden, "domainname is ignored"),
     (

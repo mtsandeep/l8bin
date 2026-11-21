@@ -11,7 +11,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   addNode,
@@ -20,6 +20,7 @@ import {
   fetchNodeImageStats,
   fetchNodes,
   fetchProjects,
+  fetchVersion,
   formatBytes,
   type Node,
   type NodeImageStats,
@@ -68,8 +69,16 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
   const [connecting, setConnecting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [createdNodeId, setCreatedNodeId] = useState<string | null>(null);
+  const [masterVersion, setMasterVersion] = useState('');
 
-  const installCommand = `curl -fsSL https://l8b.in | bash -s agent`;
+  useEffect(() => {
+    fetchVersion().then(setMasterVersion);
+  }, []);
+
+  // Pin the agent to this master's version so a fresh install can't race ahead of it.
+  const installCommand = masterVersion
+    ? `curl -fsSL https://l8b.in | L8B_VERSION=v${masterVersion} bash -s agent`
+    : 'curl -fsSL https://l8b.in | bash -s agent';
 
   function copyCommand() {
     navigator.clipboard.writeText(installCommand);
@@ -258,6 +267,12 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
                   {copied ? <CheckCircle size={14} className="text-emerald-400" /> : <Copy size={14} />}
                 </button>
               </div>
+              {masterVersion && (
+                <p className="text-xs text-slate-500">
+                  Pinned to this master's version (<span className="text-slate-300 font-mono">v{masterVersion}</span>)
+                  so the agent installs in sync.
+                </p>
+              )}
               <p className="text-xs text-slate-500">
                 The script installs Docker, configures the firewall, and starts the agent on port{' '}
                 <span className="text-slate-300">{port}</span>. Once it's running, click{' '}

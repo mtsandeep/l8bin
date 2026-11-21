@@ -150,6 +150,7 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/internal/register", post(routes::register::register))
         .route("/internal/mint-upload-token", post(routes::upload::mint_upload_token))
         .route("/internal/project-meta", post(routes::project_meta::update_project_meta))
+        .route("/internal/dns-zone", post(routes::dns_zone::push_dns_zone))
         .route("/containers/run", post(routes::containers::run_container))
         .route("/containers/recreate", post(routes::containers::recreate_container))
         .route("/containers/start", post(routes::containers::start_container))

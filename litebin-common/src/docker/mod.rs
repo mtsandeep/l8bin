@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -94,6 +94,15 @@ pub struct DockerManager {
     /// Container creation consults this so containers use the reference the
     /// image actually exists under locally.
     pub(crate) resolved_refs: Arc<std::sync::RwLock<HashMap<String, String>>>,
+    /// Hostnames mapped to the host gateway in every created project container
+    /// (`<alias>:host-gateway` extra_hosts entries). Empty = no injection.
+    pub(crate) host_aliases: Arc<std::sync::RwLock<Vec<String>>>,
+    /// When set (and the resolver is healthy), set HostConfig.dns on every
+    /// created project container — first entry = split-DNS resolver, rest = fallbacks.
+    pub(crate) dns_servers: Arc<std::sync::RwLock<Option<Vec<String>>>>,
+    /// Health gate for `dns_servers` — flipped by the owning binary's monitor;
+    /// a dead resolver is never baked into new containers.
+    pub(crate) split_dns_healthy: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +179,9 @@ impl Clone for DockerManager {
             cpu_samples: Arc::clone(&self.cpu_samples),
             registry_state: Arc::clone(&self.registry_state),
             resolved_refs: Arc::clone(&self.resolved_refs),
+            host_aliases: Arc::clone(&self.host_aliases),
+            dns_servers: Arc::clone(&self.dns_servers),
+            split_dns_healthy: Arc::clone(&self.split_dns_healthy),
         }
     }
 }
@@ -210,6 +222,9 @@ impl DockerManager {
             cpu_samples: Arc::new(Mutex::new(HashMap::new())),
             registry_state: Arc::new(std::sync::RwLock::new(crate::registry::RegistryState::default())),
             resolved_refs: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            host_aliases: Arc::new(std::sync::RwLock::new(Vec::new())),
+            dns_servers: Arc::new(std::sync::RwLock::new(None)),
+            split_dns_healthy: Arc::new(AtomicBool::new(true)),
         })
     }
 
@@ -250,7 +265,40 @@ impl DockerManager {
             cpu_samples: Arc::new(Mutex::new(HashMap::new())),
             registry_state: Arc::new(std::sync::RwLock::new(crate::registry::RegistryState::default())),
             resolved_refs: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            host_aliases: Arc::new(std::sync::RwLock::new(Vec::new())),
+            dns_servers: Arc::new(std::sync::RwLock::new(None)),
+            split_dns_healthy: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Set the hostnames mapped to the host gateway in created project containers.
+    /// Refreshable at runtime (e.g. after a platform domain change).
+    pub fn set_host_aliases(&self, aliases: Vec<String>) {
+        *self.host_aliases.write().unwrap() = aliases;
+    }
+
+    pub fn host_aliases(&self) -> Vec<String> {
+        self.host_aliases.read().unwrap().clone()
+    }
+
+    /// Configure the per-container DNS server list (split-DNS resolver first,
+    /// fallbacks after). `None` disables injection.
+    pub fn set_dns_servers(&self, servers: Option<Vec<String>>) {
+        *self.dns_servers.write().unwrap() = servers;
+    }
+
+    /// Servers to inject right now: `Some` only when configured and the
+    /// resolver health gate is open.
+    pub fn effective_dns_servers(&self) -> Option<Vec<String>> {
+        let servers = self.dns_servers.read().unwrap().clone()?;
+        self.split_dns_healthy.load(Ordering::Relaxed).then_some(servers)
+    }
+
+    /// Health gate for the split-DNS resolver — closed by the owning binary's
+    /// monitor while the resolver is unreachable, so no new container bakes a
+    /// dead nameserver.
+    pub fn set_split_dns_healthy(&self, healthy: bool) {
+        self.split_dns_healthy.store(healthy, Ordering::Relaxed);
     }
 
     /// Detect the host-side path for the projects directory by inspecting this

@@ -11,6 +11,43 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - **Installs and updates pull prebuilt images from GHCR** — releases publish orchestrator/dashboard/agent images (amd64 + arm64); the installer pulls them instead of assembling images locally. Releases published before these images existed still install by local assembly, as they always did (`L8B_NO_PULL=1` forces it).
 
+## [0.4.29-beta.4] - 2026-11-21
+
+### Added
+- **Version-pinned installs** — `L8B_VERSION=v0.x.x` (env var) installs that exact release instead of `latest` in any mode (master/agent/cli/update, bash and PowerShell): rollbacks, reproducible installs, version-matching a new agent to an existing master. The update menu labels the pinned target and skips the "latest" wording.
+- The dashboard's Add Agent wizard pins the install command to the master's own version (`curl … | L8B_VERSION=v0.4.x bash -s agent`), so a new agent can't race ahead of the master it connects to (falls back to the plain command if the version can't be read).
+
+### Changed
+- **Installer downloads fail closed** — every release asset (binaries, dashboard bundle) downloads to a temp file, gets SHA-256 verified against the release's `checksums.txt`, and only then moves into place: a failed or tampered download can no longer clobber the working binary, and a missing checksum file or entry aborts the install instead of silently continuing unverified. The Windows installer's local-fallback downloads (orchestrator, dashboard) are verified the same way.
+- **Base images digest-pinned** — the generated Dockerfiles and compose pin `debian:trixie-slim` and `caddy:2.11.2-alpine` by `@sha256:` digest, so a re-pointed upstream tag can no longer inject code into builds (override with `DEBIAN_IMAGE`/`CADDY_IMAGE`; bump tag and digest together when refreshing bases). Existing installs see this as a one-line compose diff on their next update.
+
+### Fixed
+- The platform apex assigned to a project as a custom domain no longer serves the "up and running" landing page while that project is stopped (e.g. in the stop→route-sync window) — the waker now resolves the claim like any other custom domain (wake/auto-start or the offline page).
+- **Agent updates verify a real restart** — the post-update check now also confirms the container was recreated, not merely running, so a stale pre-update container can no longer pass as "updated".
+- **Agent port re-detection** — on hosts where `docker port` lists the IPv6 mapping first, the published-port parse came up empty and the agent was silently republished on the default 5083 after a cert or version update; any ordering now parses.
+- Updates no longer crash on installs missing a `.version` file — `unknown` couldn't be version-compared; it now reads as `v0.0.0`.
+
+## [0.4.29-beta.3] - 2026-11-20
+
+### Added
+- Installer's UFW step allows the RFC 1918 private ranges (covers every Docker address pool) to host ports 80/443 — without it, active firewalls drop same-host traffic from app containers (the NAT hairpin fix needs this path; found live on a ufw host). Agent installs open 80/443 automatically like the master.
+
+## [0.4.29-beta.2] - 2026-11-19
+
+### Added
+- **Beta releases** — `cargo release beta` tags pre-releases (`v0.4.29-beta.1`) that publish as GitHub pre-releases, so stable installs never see them; the installer's update menu can install any specific version (option 2) and knows a pre-release outranks the older stable (never offers a downgrade); the dashboard's About panel shows a *pre-release* chip.
+
+## [0.4.29-beta.1] - 2026-11-19
+
+### Added
+- **Apps can reach same-host services from inside deployments** — LiteBin injects `extra_hosts` (`host.docker.internal:host-gateway` plus every platform host on the master) into every project container it creates, so URLs like `https://app.<domain>` resolve to the host gateway instead of hairpinning to the host's own public IP (applies on redeploy/recreate; user-declared `extra_hosts` entries win). Escape hatch: `L8B_DISABLE_HOST_ALIASES=1`.
+- **Split-horizon DNS sidecar** — `litebin-dns` (orchestrator-managed, same image, toggled in Settings → General) resolves platform names and this host's custom domains to the host gateway inside project containers, fixing app→app and custom-domain calls; CDN/WAF-fronted domains stay external automatically. Master zones are wildcards in `master_proxy`, per-node exact names in `cloudflare_dns` (pushed over the agent API, persisted locally); per-container `dns:` is health-gated. Agent opt-out: `L8B_DISABLE_SPLIT_DNS=1`. Docs: [domains](docs/topics/domains.md#reaching-same-host-services-from-inside-a-deployment).
+- **Sidecar lifecycle hardened** — LiteBin-managed sidecars (backup, dns) run under the `litebin-sidecars` compose project, so `docker compose down` / `--remove-orphans` never removes them; sidecars are recreated on drift (image, cmd, env, ports, labels, memory) and pulled from a registry only when absent locally.
+- Host port 53 is reserved (rejected for app `ports:` remaps even with raw ports enabled) — it backs the split-DNS sidecar's bridge-IP publish.
+
+### Fixed
+- Custom-domain input now normalizes pasted URLs (strips scheme, path, port, trailing dots) before saving and in the DNS-hint preview, instead of showing them raw and failing validation.
+
 ## [0.4.28] - 2026-11-15
 
 ### Changed

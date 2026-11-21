@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::caddy::{CaddyClient, http_to_https_redirect};
+use crate::types::RoutingMode;
 
 /// Longest-match path-route resolver: route paths may be exact ("/api") or
 /// glob ("/api/*"); both match the path itself and everything under it.
@@ -110,6 +111,9 @@ pub struct DnsConflict {
 
 #[async_trait]
 pub trait RoutingProvider: Send + Sync {
+    /// Which routing mode this provider implements (e.g. zone building).
+    fn routing_mode(&self) -> RoutingMode;
+
     #[allow(clippy::too_many_arguments)] // route-push shape; a struct would obscure it
     async fn sync_routes(
         &self,
@@ -476,6 +480,10 @@ impl MasterProxyRouter {
 
 #[async_trait]
 impl RoutingProvider for MasterProxyRouter {
+    fn routing_mode(&self) -> RoutingMode {
+        RoutingMode::MasterProxy
+    }
+
     async fn sync_routes(
         &self,
         projects: &[ProjectRoute],

@@ -155,6 +155,41 @@ async fn bare_host_serves_landing_page_and_loopback_is_not_dashboard() {
     assert!(!resp.headers().contains_key("x-stub"));
 }
 
+/// A custom-domain claim on the apex must reach the waker, not the landing page.
+#[tokio::test]
+async fn bare_host_claimed_as_custom_domain_skips_landing_page() {
+    let stub = spawn_stub_dashboard().await;
+    let (server, db) = test_server_with_db_config(config_with_upstream(&stub.addr)).await;
+
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query(
+        "INSERT OR IGNORE INTO users (id, username, password_hash, is_admin, created_at, updated_at)
+         VALUES ('test-user', 'testuser', 'hash', 0, ?, ?)",
+    )
+    .bind(now)
+    .bind(now)
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO projects
+           (id, user_id, image, internal_port, status, custom_domain, auto_start_enabled, last_active_at, created_at, updated_at)
+           VALUES ('home', 'test-user', 'test-image:latest', 8080, 'stopped', 'localhost', 0, ?, ?, ?)"#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(&db)
+    .await
+    .unwrap();
+
+    // Stopped + auto-start disabled → the waker's 503 offline page, never the
+    // "up and running" landing page.
+    let resp = server.get("/").add_header(HOST, "localhost").await;
+    resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!resp.text().contains("L8Bin"), "claimed apex must not serve the landing page");
+}
+
 /// A stopped project on an app subdomain must keep hitting the waker, not the dashboard proxy.
 #[tokio::test]
 async fn app_subdomain_still_wakes() {

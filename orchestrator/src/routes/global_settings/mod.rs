@@ -1,5 +1,6 @@
 mod dns_ops;
 mod domain_job;
+mod split_dns;
 
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ use litebin_common::types::RoutingMode;
 
 pub use dns_ops::*;
 pub use domain_job::*;
+pub use split_dns::*;
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct GlobalSettings {

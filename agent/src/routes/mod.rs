@@ -1,5 +1,6 @@
 pub mod caddy;
 pub mod containers;
+pub mod dns_zone;
 pub mod env;
 pub mod health;
 pub mod images;

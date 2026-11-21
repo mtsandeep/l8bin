@@ -21,6 +21,8 @@ All configuration is done via environment variables in `.env` after install.
 | `HEARTBEAT_INTERVAL_SECS` | `30` | Node health check interval |
 | `PUBLIC_IP` | *(auto-detected)* | Override if auto-detection fails (e.g. behind NAT) |
 | `ROUTING_MODE` | `master_proxy` | `master_proxy` or `cloudflare_dns` |
+| `L8B_DISABLE_HOST_ALIASES` | *(unset)* | `1` disables the `extra_hosts` injection that maps `host.docker.internal` + platform hosts to the host gateway in project containers (NAT hairpin fix) |
+| `UPSTREAM_DNS` | *(host resolver)* | Optional override of the split-DNS sidecar's fallback resolvers (comma-separated); the toggle itself lives in Settings → General (see [Domains](domains.md)) |
 
 ## Multi-node mTLS (Master side)
 
@@ -69,6 +71,8 @@ All agent variables use the `AGENT_` prefix. Not needed on the master.
 | `AGENT_PUBLIC_IP` | *(auto-detected)* | Override if behind NAT |
 | `AGENT_CADDY_ADMIN_URL` | `http://localhost:2019` | Local Caddy admin API URL |
 | `AGENT_UPLOAD_PORT` | `8445` | Loopback listener for direct chunked uploads (reached by the agent Caddy on `:443` via `/__l8b_upload/*`; not exposed on the host) |
+| `L8B_DISABLE_SPLIT_DNS` | *(unset)* | Agent-only opt-out of the split-horizon DNS sidecar (`1` = off; useful on `master_proxy` nodes where it only forwards). The master is toggled from the dashboard. |
+| `L8B_DISABLE_HOST_ALIASES` | *(unset)* | Same as the master's kill-switch for the extra_hosts injection |
 
 ## CLI
 

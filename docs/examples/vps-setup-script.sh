@@ -665,10 +665,19 @@ if $INSTALL_DOCKER; then
   > /etc/apt/sources.list.d/docker.list
 
   apt update -y
-  apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  # Postinst starts docker.service; if the service can't start (old kernel,
+  # container env), apt exits non-zero — warn, don't abort the script.
+  if ! apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+    echo "WARNING: docker package setup reported an error (service likely failed to start)."
+  fi
 
-  systemctl enable docker
-  systemctl start docker
+  systemctl enable docker || echo "Warning: could not enable docker.service."
+  if ! systemctl start docker; then
+    echo "WARNING: docker.service failed to start. Continuing with the rest of setup."
+    echo "Diagnose with:"
+    echo "  systemctl status docker.service --no-pager"
+    echo "  journalctl -xeu docker.service --no-pager"
+  fi
 fi
 
 # DOCKER GROUP

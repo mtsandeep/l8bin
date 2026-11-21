@@ -108,6 +108,15 @@ cargo release minor
 cargo release major
 ```
 
+### Beta release — `0.4.28` -> `0.4.29-beta.1`
+
+```bash
+cargo release beta          # iterate: beta.2, beta.3 … each gets its own changelog section
+cargo release release       # finalize: strips the pre-release -> v0.4.29 becomes latest
+```
+
+Betas are GitHub **pre-releases** (release.yml sets the flag for tags containing `-`), so `releases/latest` and every installed system stay on stable. Test a beta with the installer's update flow: option 2 → "Enter version" → e.g. `v0.4.29-beta.1`. The installer knows a pre-release outranks the older stable and never offers a downgrade; the dashboard's About panel shows an amber *pre-release* chip. Changelog handling is identical to stable — `## [Unreleased]` content is cut into `## [0.4.29-beta.1] - <date>` automatically (config lives in `cli/Cargo.toml`, see below).
+
 ### Dry run (preview without changing anything)
 
 ```bash
@@ -142,7 +151,8 @@ All use `env!("CARGO_PKG_VERSION")` which is set at compile time from the worksp
 2. Add changelog entries under ## [Unreleased] in CHANGELOG.md
 3. Ensure everything builds: cargo build --workspace
 4. Run tests: cargo test --workspace
-5. Release: cargo release patch  (or minor/major)
+5. Release: cargo release patch  (or minor/major/beta — add --execute to skip the confirmation)
 6. CI builds and publishes to GitHub Releases automatically
+   (beta tags publish as pre-releases; stable installs never see them)
 7. The npm shim (l8bin-mcp) publishes automatically with the same version
 ```

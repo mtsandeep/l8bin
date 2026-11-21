@@ -144,6 +144,10 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/settings/domain/retire-previous", post(crate::routes::global_settings::retire_previous))
         .route("/settings/domain/sslip", get(crate::routes::global_settings::sslip_domain_preview))
         .route("/settings/cloudflare/validate", post(crate::routes::global_settings::validate_cloudflare))
+        .route(
+            "/settings/split-dns",
+            get(crate::routes::global_settings::get_split_dns).put(crate::routes::global_settings::put_split_dns),
+        )
         .route("/backup/status", get(crate::routes::backup::backup_status))
         .route("/backup/enable", post(crate::routes::backup::backup_enable))
         .route("/backup/disable", post(crate::routes::backup::backup_disable))

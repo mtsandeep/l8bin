@@ -13,6 +13,8 @@
 #   -InstallDir <path>       Install directory (default: ~/litebin)
 #   -Clean                   Remove installed containers and files
 #
+#   L8B_VERSION=v0.x.x (env var) pins the release instead of latest (any mode).
+#
 # agent and certs are Linux-only (see install.sh).
 
 param(
@@ -42,6 +44,10 @@ $ErrorActionPreference = "Stop"
 $Repo = "mtsandeep/l8bin"
 $L8B_IN = "https://l8b.in"
 
+# Digest-pinned third-party images (multi-arch lists). Bump tag AND digest together.
+$DebianImage = if ($env:DEBIAN_IMAGE) { $env:DEBIAN_IMAGE } else { "debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2" }
+$CaddyImage  = if ($env:CADDY_IMAGE)  { $env:CADDY_IMAGE }  else { "caddy:2.11.2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d" }
+
 # -- Detect if -Domain was explicitly passed (not default) ----------------------
 $DomainWasExplicit = $PSBoundParameters.ContainsKey("Domain")
 
@@ -66,6 +72,14 @@ function Get-LatestRelease {
     if ($ReleaseDir) {
         $global:Tag = "local"
         $global:ReleaseBase = $ReleaseDir
+    } elseif ($env:L8B_VERSION) {
+        # Version pin: L8B_VERSION=v0.x.x selects that release instead of "latest" (any mode).
+        $tag = Normalize-ReleaseTag $env:L8B_VERSION
+        if (-not $tag) { Write-Err "L8B_VERSION is set but empty"; exit 1 }
+        Confirm-ReleaseExists $tag
+        $global:Tag = $tag
+        $global:ReleaseBase = "https://github.com/$Repo/releases/download/$tag"
+        Write-Info "Pinned release: $Tag (L8B_VERSION)"
     } else {
         Write-Step "Fetching latest release from GitHub"
         try {
@@ -98,6 +112,48 @@ function Confirm-ReleaseExists([string]$Tag) {
     }
 }
 
+# Download + SHA-256 verify a release asset, then replace the destination.
+function Save-RemoteVerified([string]$Url, [string]$Dest, [string]$Name) {
+    $tmp = "$Dest.download"
+
+    Write-Step "Downloading $Name"
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $tmp -UseBasicParsing
+    } catch {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        Write-Err "Download failed: $Url"
+        exit 1
+    }
+
+    try {
+        $resp = Invoke-WebRequest -Uri (($Url -replace '/[^/]+$', '/checksums.txt')) -UseBasicParsing
+        $checksums = if ($resp.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($resp.Content) } else { [string]$resp.Content }
+    } catch {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        Write-Err "Could not fetch checksums.txt - refusing to install $Name unverified."
+        exit 1
+    }
+
+    $asset = Split-Path $Url -Leaf
+    # checksums.txt lines are "<hash>  <platform>/<file>" (sometimes bare "<file>")
+    $line = ($checksums -split "`n" | Where-Object { $_ -match ('[/\s]' + [regex]::Escape($asset) + '\s*$') } | Select-Object -First 1)
+    $expected = if ($line) { ($line -split '\s+')[0] } else { $null }
+    if (-not $expected) {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        Write-Err "No checksum for $asset in checksums.txt - refusing to install $Name unverified."
+        exit 1
+    }
+
+    $actual = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash
+    if ($actual -ne $expected) {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        Write-Err "Checksum mismatch for $Name! Expected: $expected, Got: $actual"
+        exit 1
+    }
+    Write-Info "Checksum verified."
+    Move-Item -Path $tmp -Destination $Dest -Force
+}
+
 function Save-VerifiedDownload([string]$Url, [string]$Dest, [string]$Name) {
     if ($global:Tag -eq "local") {
         $src = Join-Path $global:ReleaseBase (Split-Path $Url -Leaf)
@@ -106,28 +162,7 @@ function Save-VerifiedDownload([string]$Url, [string]$Dest, [string]$Name) {
         Copy-Item $src $Dest -Force
         return
     }
-
-    Write-Step "Downloading $Name"
-    Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing
-
-    try {
-        $resp = Invoke-WebRequest -Uri (($Url -replace '/[^/]+$', '/checksums.txt')) -UseBasicParsing
-        $checksums = if ($resp.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($resp.Content) } else { [string]$resp.Content }
-        $asset = Split-Path $Url -Leaf
-        # checksums.txt keys assets with a platform dir prefix (e.g. "windows/l8b.exe")
-        $line = ($checksums -split "`n" | Where-Object { $_ -match ('[/\s]' + [regex]::Escape($asset) + '\s*$') } | Select-Object -First 1)
-        if ($line) {
-            $expected = ($line -split '\s+')[0]
-            $actual = (Get-FileHash -Path $Dest -Algorithm SHA256).Hash
-            if ($expected -and ($actual -ne $expected)) {
-                Write-Err "Checksum mismatch for $Name! Expected: $expected, Got: $actual"
-                exit 1
-            }
-            Write-Info "Checksum verified."
-        }
-    } catch {
-        # checksums unavailable
-    }
+    Save-RemoteVerified $Url $Dest $Name
 }
 
 function Read-InstallEnv([string]$Path) {
@@ -171,8 +206,8 @@ function Invoke-ComposeUp([string]$Dir) {
 
 # -- Generated files -----------------------------------------------------------
 function Write-OrchestratorDockerfile([string]$OrchDir) {
-    Set-Content -Path (Join-Path $OrchDir "Dockerfile") -Value @'
-FROM debian:trixie-slim
+    Set-Content -Path (Join-Path $OrchDir "Dockerfile") -Value @"
+FROM $DebianImage
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV _RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2
 COPY litebin-orchestrator /app/litebin-orchestrator
@@ -180,7 +215,7 @@ RUN chmod +x /app/litebin-orchestrator
 WORKDIR /app
 RUN mkdir -p /app/data
 CMD ["/app/litebin-orchestrator"]
-'@
+"@
 }
 
 function New-ComposeContent([bool]$IsLocal) {
@@ -223,7 +258,7 @@ $orchPorts    volumes:
       - litebin-network
 
   caddy:
-    image: caddy:2.11.2-alpine
+    image: $CaddyImage
     container_name: litebin-caddy
     restart: unless-stopped
     logging:
@@ -402,8 +437,8 @@ function Install-Master {
             Write-Step "Using local orchestrator ($Arch)"
             Copy-Item $orchSrc $orchFile
         } else {
-            Write-Step "No local Linux orchestrator found. Downloading ($Arch)"
-            Invoke-WebRequest -Uri "https://github.com/mtsandeep/l8bin/releases/latest/download/litebin-orchestrator-$Arch-linux" -OutFile $orchFile -UseBasicParsing
+            Write-Step "No local Linux orchestrator found. Downloading latest ($Arch)"
+            Save-RemoteVerified -Url "https://github.com/$Repo/releases/latest/download/litebin-orchestrator-$Arch-linux" -Dest $orchFile -Name "orchestrator ($Arch)"
         }
     } else {
         Save-VerifiedDownload -Url "$ReleaseBase/litebin-orchestrator-$Arch-linux" -Dest $orchFile -Name "orchestrator ($Arch)"
@@ -422,7 +457,7 @@ function Install-Master {
         } else {
             Write-Step "No local dashboard zip found. Downloading latest"
             $dashZipTmp = Join-Path $TargetDir "l8b-dashboard.zip"
-            Invoke-WebRequest -Uri "https://github.com/mtsandeep/l8bin/releases/latest/download/l8b-dashboard.zip" -OutFile $dashZipTmp -UseBasicParsing
+            Save-RemoteVerified -Url "https://github.com/$Repo/releases/latest/download/l8b-dashboard.zip" -Dest $dashZipTmp -Name "dashboard"
             Expand-Archive -Path $dashZipTmp -DestinationPath $DashDir -Force
             Remove-Item $dashZipTmp -ErrorAction SilentlyContinue
         }
@@ -550,16 +585,21 @@ function Update-Master {
 
     Write-Host ""
     Write-Host "  Installed version: $CurrentVersion" -ForegroundColor Cyan
-    Write-Host "  Latest version:    $Tag" -ForegroundColor Cyan
+    if ($env:L8B_VERSION) {
+        Write-Host "  Pinned version:    $Tag (L8B_VERSION)" -ForegroundColor Cyan
+    } else {
+        Write-Host "  Latest version:    $Tag" -ForegroundColor Cyan
+    }
     Write-Host ""
 
+    $latestNote = if ($env:L8B_VERSION) { " (pinned)" } else { " (latest)" }
     $TargetTag = $Tag
     if ($CurrentVersion -eq $Tag) {
         $reply = Read-Host "  Already up to date. Reinstall? [y/N]"
         if ($reply -notmatch '^[Yy]') { Write-Info "Cancelled."; return }
     } else {
         Write-Host "  Options:"
-        Write-Host "    1) Update to $Tag (latest)"
+        Write-Host "    1) Update to $Tag$latestNote"
         Write-Host "    2) Enter a specific version"
         Write-Host ""
         $choice = Read-Host "  Choose [1]"

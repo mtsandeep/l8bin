@@ -21,13 +21,16 @@ import {
   fetchActiveDomainJob,
   fetchDomainJob,
   fetchGlobalSettings,
+  fetchSplitDns,
   type GlobalSettings,
   RoutingMode,
   retirePreviousDomain,
   retryDomainJob,
+  type SplitDnsStatus,
   sslipDomainPreview,
   syncDnsRecords,
   updateGlobalSettings,
+  updateSplitDns,
   validateCloudflare,
 } from '../../api';
 import { useToast } from '../ToastContext';
@@ -106,6 +109,8 @@ export default function GeneralPanel() {
   const [forcingSync, setForcingSync] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeAction, setRemoveAction] = useState<'disconnect' | 'delete' | null>(null);
+  const [splitDns, setSplitDns] = useState<SplitDnsStatus | null>(null);
+  const [splitDnsSaving, setSplitDnsSaving] = useState(false);
   const [showDomainConfirm, setShowDomainConfirm] = useState(false);
   const [domainDraft, setDomainDraft] = useState('');
   const [domainConfirmTyped, setDomainConfirmTyped] = useState('');
@@ -140,7 +145,38 @@ export default function GeneralPanel() {
         setDashboardSubdomain(s.dashboard_subdomain || 'l8bin');
       })
       .catch(() => setError('Failed to load settings'));
+    fetchSplitDns()
+      .then(setSplitDns)
+      .catch(() => {
+        /* non-fatal */
+      });
   }, []);
+
+  const toggleSplitDns = (enabled: boolean) => {
+    setSplitDnsSaving(true);
+    updateSplitDns(enabled)
+      .then((status) => {
+        setSplitDns(status);
+        if (!enabled) return;
+        // Poll until the sidecar reports healthy or an error — the
+        // reconcile loop can take up to ~30s to bring it up.
+        let tries = 0;
+        const poll = setInterval(() => {
+          tries += 1;
+          if (tries > 20) clearInterval(poll);
+          fetchSplitDns()
+            .then((s) => {
+              setSplitDns(s);
+              if (s.healthy || s.error) clearInterval(poll);
+            })
+            .catch(() => {
+              /* keep last state */
+            });
+        }, 2000);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to update split DNS'))
+      .finally(() => setSplitDnsSaving(false));
+  };
 
   useEffect(() => {
     if (!domainJob || domainJob.status === 'completed' || domainJob.status === 'failed') return;
@@ -163,7 +199,7 @@ export default function GeneralPanel() {
         .catch(() => {});
     }, 800);
     return () => clearInterval(timer);
-  }, [domainJob, showToast]);
+  }, [domainJob]);
 
   // Reveal completed steps one by one before the summary.
   useEffect(() => {
@@ -243,7 +279,7 @@ export default function GeneralPanel() {
     }
   };
 
-  const cfSaved = !!(settings && settings.cloudflare_api_token && settings.cloudflare_zone_id);
+  const cfSaved = !!(settings?.cloudflare_api_token && settings.cloudflare_zone_id);
   const cfDirty =
     !!settings &&
     (cfToken !== (settings.cloudflare_api_token || '') || cfZoneId !== (settings.cloudflare_zone_id || ''));
@@ -669,6 +705,53 @@ export default function GeneralPanel() {
                   </p>
                 </div>
               )}
+
+              {/* Same-host reachability (split DNS) */}
+              <div className="space-y-2 border-t border-slate-700/40 pt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-slate-300">Same-host reachability (split DNS)</p>
+                    <p className="text-[11px] text-slate-600">
+                      Lets deployed apps call this server and each other through their public URLs.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleSplitDns(!(splitDns?.enabled ?? false))}
+                    disabled={splitDnsSaving || !splitDns}
+                    className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                      splitDns?.enabled ? 'bg-violet-600' : 'bg-slate-700'
+                    }`}
+                    aria-pressed={splitDns?.enabled ?? false}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                        splitDns?.enabled ? 'translate-x-5' : ''
+                      }`}
+                    />
+                  </button>
+                </div>
+                {splitDns?.enabled && (
+                  <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                    {splitDns.healthy ? (
+                      <>
+                        <CheckCircle2 size={11} className="text-emerald-400" />
+                        litebin-dns running
+                      </>
+                    ) : splitDns.error ? (
+                      <>
+                        <AlertTriangle size={11} className="text-amber-400" />
+                        {splitDns.error}
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 size={11} className="animate-spin text-slate-500" />
+                        litebin-dns starting…
+                      </>
+                    )}
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1145,7 +1228,7 @@ export default function GeneralPanel() {
                     >
                       {domainBusy ? 'Starting…' : 'Apply'}
                     </button>
-                  ) : domainPreflightResult && domainPreflightResult.ok ? (
+                  ) : domainPreflightResult?.ok ? (
                     <>
                       <button
                         type="button"

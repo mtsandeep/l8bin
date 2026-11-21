@@ -78,6 +78,8 @@ async fn run_domain_job(state: &AppState, job_id: &str, start_from: usize) {
             return;
         }
         state.platform.set_domain(new_domain.clone());
+        // Platform hosts changed — refresh the aliases injected into new containers.
+        state.docker.set_host_aliases(crate::platform::host_alias_list(&state.platform.snapshot()));
         update_job_step(state, job_id, 2, DomainStepStatus::Done, None);
     }
 
@@ -239,6 +241,7 @@ pub(crate) async fn retire_previous_domain(state: &AppState) -> bool {
     let _ = super::delete_setting(&state.db, "previous_domain").await;
     let _ = super::delete_setting(&state.db, "previous_domain_retire_at").await;
     state.platform.set_previous_domain(String::new());
+    state.docker.set_host_aliases(crate::platform::host_alias_list(&state.platform.snapshot()));
     let _ = state.route_sync_tx.send(());
     tracing::info!(previous_domain = %prev, "previous domain retired");
     true

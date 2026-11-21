@@ -70,11 +70,16 @@ pub fn sidecar_spec(network: &str, bind: &str) -> litebin_common::docker::Sideca
     litebin_common::docker::SidecarSpec {
         name: SIDECAR_CONTAINER_NAME.to_string(),
         image: LITESTREAM_IMAGE.to_string(),
+        image_id: None,
         binds: vec![format!("{bind}:/data")],
         cmd: vec!["replicate".into(), "-config".into(), SIDECAR_CONFIG_PATH.into()],
+        env: vec![],
         network: network.to_string(),
         label: "backup".into(),
         service: "backup".into(),
+        ports: vec![],
+        memory_limit: None,
+        memory_reservation: None,
     }
 }
 
