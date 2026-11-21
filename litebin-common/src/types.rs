@@ -131,6 +131,8 @@ pub enum ProjectStatus {
     Pending,
     Stopped,
     Running,
+    /// A start is in flight; reaped by reconciliation if it dies.
+    Starting,
     Deploying,
     Importing,
     Stopping,
@@ -150,6 +152,7 @@ impl ProjectStatus {
         matches!(
             self,
             ProjectStatus::Pending
+                | ProjectStatus::Starting
                 | ProjectStatus::Deploying
                 | ProjectStatus::Importing
                 | ProjectStatus::Stopping
@@ -172,6 +175,7 @@ impl fmt::Display for ProjectStatus {
             ProjectStatus::Pending => write!(f, "pending"),
             ProjectStatus::Stopped => write!(f, "stopped"),
             ProjectStatus::Running => write!(f, "running"),
+            ProjectStatus::Starting => write!(f, "starting"),
             ProjectStatus::Deploying => write!(f, "deploying"),
             ProjectStatus::Importing => write!(f, "importing"),
             ProjectStatus::Stopping => write!(f, "stopping"),

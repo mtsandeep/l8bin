@@ -23,6 +23,12 @@ const statusConfig: Record<string, { bg: string; text: string; dot: string; labe
     dot: 'bg-slate-400',
     label: 'Stopped',
   },
+  [ProjectStatus.Starting]: {
+    bg: 'bg-sky-500/10',
+    text: 'text-sky-400',
+    dot: 'bg-sky-400 animate-pulse',
+    label: 'Starting',
+  },
   [ProjectStatus.Deploying]: {
     bg: 'bg-amber-500/10',
     text: 'text-amber-400',

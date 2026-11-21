@@ -149,6 +149,30 @@ pub async fn stop_project(
     Ok(Json(MessageResponse { message: format!("project '{}' stopping", project_id), ..Default::default() }))
 }
 
+/// Do all tracked service containers still exist in Docker? No tracked
+/// containers counts as existing (let the start path decide).
+async fn containers_exist(state: &AppState, project_id: &str) -> bool {
+    let ids: Vec<String> = match sqlx::query_scalar(
+        "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL AND container_id != ''",
+    )
+    .bind(project_id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(project_id, error = %e, "start: container existence check failed — assuming present");
+            return true;
+        }
+    };
+    for id in &ids {
+        if state.docker.inspect_container(id).await.is_err() {
+            return false;
+        }
+    }
+    true
+}
+
 #[utoipa::path(
     post,
     path = "/projects/{id}/start",
@@ -169,6 +193,15 @@ pub async fn start_project(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
 ) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+    // Serialize starts per project: concurrent callers wait here, re-read
+    // the row, and hit the "already running" fast-path.
+    let semaphore =
+        state.project_locks.entry(project_id.clone()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
+    let _permit = match semaphore.acquire().await {
+        Ok(permit) => permit,
+        Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("project lock closed for '{project_id}'"))),
+    };
+
     let project = sqlx::query_as::<_, crate::db::models::Project>("SELECT * FROM projects WHERE id = ?")
         .bind(&project_id)
         .fetch_optional(&state.db)
@@ -181,10 +214,16 @@ pub async fn start_project(
     }
 
     if project.status == ProjectStatus::Running {
-        return Ok(Json(MessageResponse {
-            message: format!("project '{}' is already running", project_id),
-            ..Default::default()
-        }));
+        // A 'running' row can lie (container removed out-of-band); without
+        // this check recovery waits for the 60s periodic sync.
+        let node_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
+        if !node_local || containers_exist(&state, &project_id).await {
+            return Ok(Json(MessageResponse {
+                message: format!("project '{}' is already running", project_id),
+                ..Default::default()
+            }));
+        }
+        tracing::info!(project = %project_id, "start: 'running' row has no live container — starting");
     }
 
     if project.status == ProjectStatus::Pending {
@@ -201,6 +240,11 @@ pub async fn start_project(
         status::transition(&state.db, &project_id, ProjectStatus::Deploying, &ProjectUpdateFields::default(), None)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+    } else {
+        // Surface the in-flight start; reaped by reconcile if it dies.
+        status::transition(&state.db, &project_id, ProjectStatus::Starting, &ProjectUpdateFields::default(), None)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
     }
 
     let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
@@ -209,7 +253,7 @@ pub async fn start_project(
 
     if is_local {
         // Fast-path (docker start existing) with fallback (recreate) built in.
-        start_services(
+        if let Err(e) = start_services(
             &state,
             &project,
             StartServicesOpts {
@@ -222,7 +266,12 @@ pub async fn start_project(
                 skip_dns_wait: false,
             },
         )
-        .await?;
+        .await
+        {
+            // Never strand 'starting' — reconcile from what Docker actually has.
+            let _ = status::derive_and_set_project_status(&state.db, &project_id).await;
+            return Err(e);
+        }
 
         // Single-image projects staged before the service row was seeded at
         // stage time have no project_services row, so the UPDATE inside

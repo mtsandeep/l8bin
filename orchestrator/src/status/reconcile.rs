@@ -150,6 +150,18 @@ pub async fn sync_project_from_docker(db: &SqlitePool, docker: &DockerManager, p
 /// Batch-sync all **local** projects from Docker state.
 /// Skips transient states, remote-node projects, and projects with no container_ids.
 pub async fn sync_all_local_from_docker(db: &SqlitePool, docker: &DockerManager) -> Vec<SyncResult> {
+    // Reap stranded 'starting' rows (transient statuses are never synced) —
+    // past the grace window the row becomes syncable and the sync below
+    // derives the truth from Docker.
+    let stale_cutoff = chrono::Utc::now().timestamp() - 120;
+    if let Err(e) = sqlx::query("UPDATE projects SET status = 'stopped' WHERE status = 'starting' AND updated_at < ?")
+        .bind(stale_cutoff)
+        .execute(db)
+        .await
+    {
+        tracing::warn!(error = %e, "status: failed to reap stale 'starting' rows");
+    }
+
     let project_ids: Vec<String> = match sqlx::query_scalar(
         "SELECT DISTINCT ps.project_id
          FROM project_services ps

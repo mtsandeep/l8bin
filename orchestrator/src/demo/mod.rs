@@ -8,6 +8,7 @@ pub mod clone;
 pub mod gatekeeper;
 pub mod janitor;
 pub mod reset;
+pub mod telemetry;
 
 use sqlx::FromRow;
 
@@ -121,7 +122,7 @@ pub async fn ensure_instances(
 /// Whether the project is in a state a reset/clone must not interrupt.
 pub fn mid_operation(status: &litebin_common::types::ProjectStatus) -> bool {
     use litebin_common::types::ProjectStatus as S;
-    matches!(status, S::Deploying | S::Migrating | S::Exporting | S::Stopping | S::Importing)
+    matches!(status, S::Deploying | S::Starting | S::Migrating | S::Exporting | S::Stopping | S::Importing)
 }
 
 /// Delete via the normal project path. Boxed: delete_project, teardown_all

@@ -371,9 +371,13 @@ pub async fn wake_for_host(
         return (StatusCode::SERVICE_UNAVAILABLE, not_ready_page_html()).into_response();
     }
 
-    // Deploy/stop in progress — show loading, do not spawn another wake.
-    if matches!(project.status, ProjectStatus::Deploying | ProjectStatus::Stopping) {
-        let action = if project.status == ProjectStatus::Stopping { "Stopping" } else { "Deploying" };
+    // Deploy/start/stop in progress — show loading, do not spawn another wake.
+    if matches!(project.status, ProjectStatus::Deploying | ProjectStatus::Starting | ProjectStatus::Stopping) {
+        let action = match project.status {
+            ProjectStatus::Stopping => "Stopping",
+            ProjectStatus::Starting => "Starting",
+            _ => "Deploying",
+        };
         return match client {
             WakeClient::Document => loading_page_html(&project_id, action),
             _ => starting_json_response(),

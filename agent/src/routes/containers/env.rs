@@ -98,6 +98,8 @@ fn snapshot_content_hash(path: &std::path::Path) -> u64 {
 
 /// Check if the project .env has changed since the last container creation.
 /// Compares .env hash against .env.l8bin snapshot hash (header stripped).
+/// A missing snapshot hashes as 0 — "unknown", not "changed": recreating a
+/// container (which removes the running one) must require a proven diff.
 pub fn env_has_changed(project_id: &str) -> bool {
     let env_path = projects_dir().join(project_id).join(".env");
     let snapshot_path = projects_dir().join(project_id).join(".env.l8bin");
@@ -106,7 +108,7 @@ pub fn env_has_changed(project_id: &str) -> bool {
     // .env.l8bin has a 5-line header (4 comments + blank line) — strip it before hashing
     let snapshot_hash = snapshot_content_hash(&snapshot_path);
 
-    let changed = env_hash != snapshot_hash;
+    let changed = snapshot_hash != 0 && env_hash != snapshot_hash;
     tracing::info!(
         project = project_id,
         env_hash = env_hash,

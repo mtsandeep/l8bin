@@ -313,7 +313,7 @@ pub async fn delete_baseline(
     security(("session_auth" = []))
 )]
 pub async fn list_sessions(State(state): State<AppState>, Path(project_id): Path<String>) -> axum::response::Response {
-    #[derive(sqlx::FromRow, serde::Serialize)]
+    #[derive(sqlx::FromRow)]
     struct SessionRow {
         id: String,
         instance_project_id: String,
@@ -334,9 +334,47 @@ pub async fn list_sessions(State(state): State<AppState>, Path(project_id): Path
     .await
     .unwrap_or_default();
 
+    // Visitor details are in-memory only — absent after a restart.
+    let sessions: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| {
+            let detail = demo::telemetry::session_detail(&r.id);
+            let mut pages: Vec<serde_json::Value> = detail
+                .as_ref()
+                .map(|d| {
+                    let mut p: Vec<serde_json::Value> =
+                        d.pages.iter().map(|p| json!({ "path": p.path, "hits": p.hits })).collect();
+                    p.sort_by(|a, b| b["hits"].as_i64().cmp(&a["hits"].as_i64()));
+                    p
+                })
+                .unwrap_or_default();
+            pages.truncate(10);
+            json!({
+                "id": r.id,
+                "instance_project_id": r.instance_project_id,
+                "created_at": r.created_at,
+                "expires_at": r.expires_at,
+                "last_seen_at": r.last_seen_at,
+                "status": r.status,
+                "instance_status": r.instance_status,
+                "ip": detail.as_ref().map(|d| d.ip.clone()),
+                "user_agent": detail.as_ref().map(|d| d.user_agent.clone()),
+                "browser": detail.as_ref().map(|d| d.browser.clone()),
+                "os": detail.as_ref().map(|d| d.os.clone()),
+                "device": detail.as_ref().map(|d| d.device.clone()),
+                "bot": detail.as_ref().map(|d| d.bot),
+                "referer": detail.as_ref().map(|d| d.referer.clone()),
+                "landing": detail.as_ref().map(|d| d.landing.clone()),
+                "hits": detail.as_ref().map(|d| d.hits),
+                "pages": pages,
+            })
+        })
+        .collect();
+
     // Long-lived instances (edit + shared) — visible and stoppable, never deleted here.
     let mut long_lived: Vec<serde_json::Value> = Vec::new();
-    if let Ok(Some(config)) = demo::get_config(&state.db, &project_id).await {
+    let config = demo::get_config(&state.db, &project_id).await.ok().flatten();
+    if let Some(config) = &config {
         for (kind, id) in
             [("edit", config.edit_instance_id.as_deref()), ("shared", config.shared_instance_id.as_deref())]
                 .into_iter()
@@ -352,7 +390,58 @@ pub async fn list_sessions(State(state): State<AppState>, Path(project_id): Path
         }
     }
 
-    (StatusCode::OK, Json(json!({ "sessions": rows, "long_lived": long_lived }))).into_response()
+    // Session mode: unclaimed pool instances. Tied to any session row =
+    // pending teardown, not prewarm (same rule as the claim picker).
+    let mut pool: Vec<serde_json::Value> = Vec::new();
+    if config.as_ref().is_some_and(|c| c.mode == "session") {
+        #[derive(sqlx::FromRow)]
+        struct PoolRow {
+            id: String,
+            status: String,
+            created_at: i64,
+        }
+        let rows: Vec<PoolRow> = sqlx::query_as(
+            "SELECT p.id, p.status, p.created_at FROM projects p \
+             WHERE p.demo_parent_id = ? AND p.status IN ('running', 'stopped', 'importing') \
+             AND p.id NOT IN (SELECT edit_instance_id FROM demo_config WHERE project_id = ? AND edit_instance_id IS NOT NULL \
+                               UNION SELECT shared_instance_id FROM demo_config WHERE project_id = ? AND shared_instance_id IS NOT NULL) \
+             AND NOT EXISTS (SELECT 1 FROM demo_sessions s WHERE s.instance_project_id = p.id) \
+             ORDER BY p.created_at",
+        )
+        .bind(&project_id)
+        .bind(&project_id)
+        .bind(&project_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        pool =
+            rows.into_iter().map(|r| json!({ "id": r.id, "status": r.status, "created_at": r.created_at })).collect();
+    }
+
+    // Shared mode: in-memory per-IP traffic (heaviest first).
+    let mut traffic = serde_json::Value::Null;
+    if config.as_ref().is_some_and(|c| c.mode == "shared") {
+        let ips = demo::telemetry::shared_traffic(&project_id);
+        let total_hits: i64 = ips.iter().map(|(_, h)| h.hits).sum();
+        traffic = json!({
+            "unique_ips": ips.len(),
+            "total_hits": total_hits,
+            "ips": ips.into_iter().map(|(ip, h)| json!({
+                "ip": ip, "hits": h.hits, "first_seen": h.first_seen, "last_seen": h.last_seen,
+            })).collect::<Vec<_>>(),
+        });
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "sessions": sessions,
+            "long_lived": long_lived,
+            "pool": pool,
+            "traffic": traffic,
+        })),
+    )
+        .into_response()
 }
 
 /// DELETE /projects/:id/demo/sessions/:sid — kill one session + its instance.

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Demo start storms behind endless "Preparing your demo…" screens** — status polls and proxy 502s could kick overlapping starts that killed each other's containers (env-snapshot mismatches triggered recreates that remove the running container, feeding more 502s and kicks). Starts are now serialized per project, kicks share the waker's 60s failure cooldown, all kick sites respect the mid-operation/auto-start guards, a missing `.env.l8bin` snapshot no longer counts as "changed", and a `running` row whose container vanished recovers immediately instead of waiting for the 60s periodic sync.
+- **Demo sessions: one per visitor, not per request** — a browser's first visit fires parallel cookie-less requests that each claimed an instance (one visitor could hold 4-6 capacity slots for the full session TTL). Same-IP requests within 10s of a claim now rejoin its session.
+
+### Added
+- **Demo visitor insights** — the instances view shows each session's visitor behind an info icon (IP, browser/OS/device chips parsed from the UA with bot detection, referrer, request count, first/last activity, pages visited with the landing page tagged), unclaimed pool instances with a `prewarm` tag (draining instances excluded), and a per-IP *Traffic* section for shared demos. All visitor data is in-memory only — capped (200 sessions / 100 IPs / 30 pages), never written to the database, wiped by a restart.
+- **`starting` project status** — an in-flight start is visible while containers boot instead of showing `stopped`; reaped by periodic reconciliation if a start dies.
+
 ## [0.4.29] - 2026-11-21
 
 ### Added

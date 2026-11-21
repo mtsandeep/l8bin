@@ -99,7 +99,9 @@ pub fn read_local_project_env(project_id: &str) -> Vec<String> {
 }
 
 /// Check if the project .env has changed since the last container creation.
-/// Compares current .env hash against the .env.l8bin snapshot.
+/// Compares current .env hash against the .env.l8bin snapshot. A missing
+/// snapshot hashes as 0 — "unknown", not "changed": recreating a container
+/// (which removes the running one) must require a *proven* difference.
 pub fn local_env_has_changed(project_id: &str) -> bool {
     let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
     let snapshot_path = std::path::PathBuf::from("projects").join(project_id).join(".env.l8bin");
@@ -108,7 +110,7 @@ pub fn local_env_has_changed(project_id: &str) -> bool {
     // .env.l8bin has a 5-line header (4 comments + blank line) — strip it before hashing
     let snapshot_hash = snapshot_content_hash(&snapshot_path);
 
-    let changed = env_hash != snapshot_hash;
+    let changed = snapshot_hash != 0 && env_hash != snapshot_hash;
     if changed {
         tracing::info!(
             project = project_id,

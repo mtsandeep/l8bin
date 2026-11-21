@@ -6,6 +6,7 @@ export const ProjectStatus = {
   Pending: 'pending',
   Running: 'running',
   Stopped: 'stopped',
+  Starting: 'starting',
   Deploying: 'deploying',
   Importing: 'importing',
   Stopping: 'stopping',
@@ -646,6 +647,17 @@ export interface DemoSession {
   last_seen_at: number;
   status: string;
   instance_status: string | null;
+  /** In-memory visitor details — null after an orchestrator restart. */
+  ip: string | null;
+  user_agent: string | null;
+  browser: string | null;
+  os: string | null;
+  device: string | null;
+  bot: boolean | null;
+  referer: string | null;
+  landing: string | null;
+  hits: number | null;
+  pages: { path: string; hits: number }[] | null;
 }
 
 export interface DemoLongLived {
@@ -654,9 +666,30 @@ export interface DemoLongLived {
   status: string | null;
 }
 
+export interface DemoPoolInstance {
+  id: string;
+  status: string;
+  created_at: number;
+}
+
+export interface DemoSharedIp {
+  ip: string;
+  hits: number;
+  first_seen: number;
+  last_seen: number;
+}
+
+export interface DemoSharedTraffic {
+  unique_ips: number;
+  total_hits: number;
+  ips: DemoSharedIp[];
+}
+
 export interface DemoSessionsResponse {
   sessions: DemoSession[];
   long_lived: DemoLongLived[];
+  pool?: DemoPoolInstance[];
+  traffic?: DemoSharedTraffic | null;
 }
 
 export async function getDemoSessions(projectId: string): Promise<DemoSessionsResponse> {

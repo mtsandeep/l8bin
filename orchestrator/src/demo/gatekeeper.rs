@@ -31,6 +31,63 @@ async fn claim_lock(parent_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     CLAIM_LOCKS.entry(parent_id.to_string()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).clone()
 }
 
+/// Same-IP requests within this window of a claim rejoin its session — a
+/// browser's first load fires parallel cookie-less requests that would each
+/// claim an instance. Brief NAT sharing is acceptable for demos.
+const CLAIM_DEDUP_SECS: i64 = 10;
+
+static RECENT_CLAIMS: LazyLock<DashMap<String, (String, String, i64)>> = LazyLock::new(DashMap::new);
+
+/// First X-Forwarded-For hop (Caddy sets it); spoofing only affects dedup.
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// Rejoin a recent same-IP claim: cookie re-attached, proxied to its
+/// instance. Runs under the per-parent claim lock.
+async fn rejoin_recent_claim(
+    state: &AppState,
+    config: &DemoConfig,
+    parent: &Project,
+    method: &Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    body: &axum::body::Bytes,
+) -> Option<Response> {
+    let ip = client_ip(headers);
+    let (token, session_id, ts) = RECENT_CLAIMS.get(&ip).map(|e| e.value().clone())?;
+    if chrono::Utc::now().timestamp() - ts > CLAIM_DEDUP_SECS {
+        return None;
+    }
+    let instance: Option<String> = sqlx::query_scalar(
+        "SELECT instance_project_id FROM demo_sessions WHERE id = ? AND status = 'active' AND expires_at > ?",
+    )
+    .bind(&session_id)
+    .bind(chrono::Utc::now().timestamp())
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let instance = instance?;
+    tracing::debug!(project = %parent.id, ip = %ip, "demo: request rejoined a recent claim");
+    demo::telemetry::record_hit(&session_id, uri.path());
+    let mut resp = inject_bar(proxy_session(state, &instance, method, uri, headers, body.clone()).await, config).await;
+    if let Ok(value) = header::HeaderValue::from_str(&format!(
+        "{DEMO_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        config.session_ttl_minutes * 60
+    )) {
+        resp.headers_mut().append(header::SET_COOKIE, value);
+    }
+    Some(resp)
+}
+
 /// Entry point from the waker. `None` = not demo traffic, caller continues
 /// its normal flow. Takes the body by reference — non-demo requests (the
 /// common case) never pay for a clone.
@@ -86,11 +143,12 @@ pub async fn handle_wake(
             .flatten();
         let shared = shared?;
         if !matches!(shared.status, ProjectStatus::Running | ProjectStatus::Degraded) {
-            if !demo::mid_operation(&shared.status) && shared.auto_start_enabled {
+            if should_kick(&shared) {
                 spawn_start(state, &shared.id);
             }
             return Some(page(PENDING_TITLE, PENDING_MSG, None, true, true));
         }
+        demo::telemetry::record_shared(&project.id, &client_ip(headers));
         return Some(
             inject_bar(proxy_session(state, &shared_id, method, uri, headers, body.clone()).await, &config).await,
         );
@@ -124,6 +182,7 @@ pub async fn handle_wake(
             .bind(&session.id)
             .execute(&state.db)
             .await;
+        demo::telemetry::record_hit(&session.id, uri.path());
         return Some(
             inject_bar(proxy_session(state, &session.instance, method, uri, headers, body.clone()).await, &config)
                 .await,
@@ -181,6 +240,11 @@ async fn claim(
 ) -> Option<Response> {
     let lock = claim_lock(&parent.id).await;
     let _guard = lock.lock().await;
+
+    // Same-IP sibling of a just-claimed batch rejoins it.
+    if let Some(resp) = rejoin_recent_claim(state, config, parent, method, uri, headers, &body).await {
+        return Some(resp);
+    }
 
     let active: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM demo_sessions WHERE parent_project_id = ? AND status = 'active'")
@@ -253,13 +317,14 @@ async fn claim(
     };
 
     let token = uuid::Uuid::new_v4().simple().to_string();
+    let session_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     let expires = now + config.session_ttl_minutes * 60;
     if let Err(e) = sqlx::query(
         "INSERT INTO demo_sessions (id, parent_project_id, instance_project_id, token_hash, created_at, expires_at, last_seen_at, status) \
          VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
     )
-    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&session_id)
     .bind(&parent.id)
     .bind(&instance)
     .bind(hex::encode(Sha256::digest(token.as_bytes())))
@@ -272,6 +337,17 @@ async fn claim(
         tracing::error!(project = %parent.id, error = %e, "demo: session insert failed");
         return Some(page("Demo unavailable", "Could not start a demo session — try again.", Some(10), false, false));
     }
+
+    // The raw token lives only here — the DB stores the hash.
+    if RECENT_CLAIMS.len() > 4096 {
+        let cutoff = chrono::Utc::now().timestamp() - CLAIM_DEDUP_SECS;
+        RECENT_CLAIMS.retain(|_, &mut (_, _, ts)| ts > cutoff);
+    }
+    let ip = client_ip(headers);
+    let ua = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("unknown");
+    let referer = headers.get(header::REFERER).and_then(|v| v.to_str().ok()).unwrap_or("");
+    demo::telemetry::record_claim(&session_id, &ip, ua, referer, uri.path());
+    RECENT_CLAIMS.insert(ip, (token.clone(), session_id, now));
 
     // Proxy and attach the session cookie to whatever comes back (page or
     // proxied app response alike).
@@ -411,7 +487,7 @@ async fn proxy_session(
 
     // Stopped (janitor or fresh boot) → start; the pending page polls until ready.
     if !matches!(instance.status, ProjectStatus::Running | ProjectStatus::Degraded) {
-        if !demo::mid_operation(&instance.status) && instance.auto_start_enabled {
+        if should_kick(&instance) {
             spawn_start(state, &instance.id);
         }
         return page(PENDING_TITLE, PENDING_MSG, None, true, true);
@@ -449,7 +525,9 @@ async fn proxy_session(
             if resp.status() != StatusCode::BAD_GATEWAY {
                 return resp;
             }
-            spawn_start(state, &instance.id);
+            if should_kick(&instance) {
+                spawn_start(state, &instance.id);
+            }
             return page(PENDING_TITLE, PENDING_MSG, None, true, true);
         }
         return page(PENDING_TITLE, PENDING_MSG, None, true, true);
@@ -470,18 +548,40 @@ async fn proxy_session(
     )
     .await;
     if resp.status() == StatusCode::BAD_GATEWAY {
-        spawn_start(state, &instance.id);
+        if should_kick(&instance) {
+            spawn_start(state, &instance.id);
+        }
         return page(PENDING_TITLE, PENDING_MSG, None, true, true);
     }
     resp
 }
 
+/// Kick preconditions: not mid-operation, auto-start enabled.
+fn should_kick(project: &Project) -> bool {
+    !demo::mid_operation(&project.status) && project.auto_start_enabled
+}
+
+/// Kick a background start, debounced by the waker's failure window —
+/// poll-driven kicks can't storm a broken instance. Overlap is prevented
+/// by the per-project lock inside `start_project`.
 fn spawn_start(state: &AppState, project_id: &str) {
+    if let Some(failed_at) = state.wake_failures.get(project_id)
+        && failed_at.elapsed() < litebin_common::wake_wait::WAKE_FAILURE_WINDOW
+    {
+        return;
+    }
     let state = state.clone();
     let id = project_id.to_string();
     tokio::spawn(async move {
-        let _ =
-            crate::routes::manage::handlers::start_project(axum::extract::State(state), axum::extract::Path(id)).await;
+        let result = crate::routes::manage::handlers::start_project(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.clone()),
+        )
+        .await;
+        if result.is_err() {
+            tracing::warn!(project = %id, "demo: background start failed — cooling down");
+            state.wake_failures.insert(id, std::time::Instant::now());
+        }
     });
 }
 
@@ -537,7 +637,7 @@ async fn status_endpoint(state: &AppState, headers: &HeaderMap, config: &DemoCon
             Some(p) => {
                 let up = matches!(p.status, ProjectStatus::Running | ProjectStatus::Degraded)
                     && instance_answers(state, p).await;
-                if !up && !demo::mid_operation(&p.status) && p.auto_start_enabled {
+                if !up && should_kick(p) {
                     spawn_start(state, &p.id);
                 }
                 up
@@ -568,7 +668,9 @@ async fn status_endpoint(state: &AppState, headers: &HeaderMap, config: &DemoCon
                     serde_json::json!({ "state": if ready { "ready" } else { "pending" }, "expires_at": session.expires_at })
                 }
                 Some(ProjectStatus::Stopped) => {
-                    spawn_start(state, &session.instance);
+                    if instance.as_ref().is_some_and(should_kick) {
+                        spawn_start(state, &session.instance);
+                    }
                     serde_json::json!({ "state": "pending", "expires_at": session.expires_at })
                 }
                 Some(_) => serde_json::json!({ "state": "pending", "expires_at": session.expires_at }),
