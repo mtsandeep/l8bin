@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.30] - 2026-11-21
+
 ### Added
 - **Stable-only installer at l8b.in, with per-tag URLs** — `l8b.in` now serves the installers from the latest stable release instead of `main`, so pushes to main can't ship an unreleased installer to everyone; releases attach `install.sh`/`install-windows.ps1` as assets, and any tag's installer is available at `l8b.in/<tag>` (Windows: `/<tag>/windows.ps1`).
 
