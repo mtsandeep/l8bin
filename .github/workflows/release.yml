@@ -255,6 +255,14 @@ jobs:
             ' CHANGELOG.md
           }
           extract "$VERSION" > release_body.md
+          # Pre-releases never cut a changelog section (entries keep accumulating
+          # under [Unreleased] until the stable release cuts the whole cycle) —
+          # use the cumulative [Unreleased] section as the pre-release notes.
+          if [ ! -s release_body.md ]; then
+            case "$TAG" in
+              *-*) extract "Unreleased" > release_body.md ;;
+            esac
+          fi
           if [ ! -s release_body.md ]; then
             echo "::error::No '## [$VERSION]' section found in CHANGELOG.md — cannot build release notes"
             exit 1

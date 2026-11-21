@@ -37,7 +37,10 @@ rustls = { version = "0.23", features = ["ring"] }
 rustls-pemfile = "2"
 
 [package.metadata.release]
+# The changelog cut runs on stable releases only (prerelease defaults to false):
+# betas keep accumulating under [Unreleased], and the stable release cuts the
+# whole cycle into one section. release.yml uses [Unreleased] for beta notes.
 pre-release-replacements = [
-  { file = "../CHANGELOG.md", search = "## \\[Unreleased\\]", replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}", prerelease = true },
+  { file = "../CHANGELOG.md", search = "## \\[Unreleased\\]", replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}" },
   { file = "../npm/package.json", search = "\"version\": \".*\"", replace = "\"version\": \"{{version}}\"", prerelease = true },
 ]

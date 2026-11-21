@@ -111,11 +111,11 @@ cargo release major
 ### Beta release — `0.4.28` -> `0.4.29-beta.1`
 
 ```bash
-cargo release beta          # iterate: beta.2, beta.3 … each gets its own changelog section
-cargo release release       # finalize: strips the pre-release -> v0.4.29 becomes latest
+cargo release beta          # iterate: beta.2, beta.3 … betas never touch the changelog
+cargo release patch         # finalize (or `release`): strips the pre-release and cuts the whole cycle into one `## [0.4.29]` section
 ```
 
-Betas are GitHub **pre-releases** (release.yml sets the flag for tags containing `-`), so `releases/latest` and every installed system stay on stable. Test a beta with the installer's update flow: option 2 → "Enter version" → e.g. `v0.4.29-beta.1`. The installer knows a pre-release outranks the older stable and never offers a downgrade; the dashboard's About panel shows an amber *pre-release* chip. Changelog handling is identical to stable — `## [Unreleased]` content is cut into `## [0.4.29-beta.1] - <date>` automatically (config lives in `cli/Cargo.toml`, see below).
+Betas are GitHub **pre-releases** (release.yml sets the flag for tags containing `-`), so `releases/latest` and every installed system stay on stable. Test a beta with the installer's update flow: option 2 → "Enter version" → e.g. `v0.4.29-beta.1`. The installer knows a pre-release outranks the older stable and never offers a downgrade; the dashboard's About panel shows an amber *pre-release* chip. The changelog cut runs on stable releases only (the replacement omits `prerelease = true`) — entries accumulate under `## [Unreleased]` for the whole cycle, the stable release cuts them all into the single `## [X.Y.Z]` section, and pre-release GitHub notes fall back to the cumulative `[Unreleased]` section (config lives in `cli/Cargo.toml`, see below).
 
 ### Dry run (preview without changing anything)
 
