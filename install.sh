@@ -492,7 +492,7 @@ find_certs_dir() {
 
 # Resolve master install dir (docker-compose.yml present). Empty if none.
 detect_master_dir() {
-  find_l8b_dir "docker-compose.yml"
+  find_l8b_dir "docker-compose.yml" || true
 }
 
 is_agent_installed() {
@@ -507,7 +507,7 @@ is_agent_running() {
 
 # Parent install dir for an agent (contains agent/ and usually .version).
 detect_agent_dir() {
-  find_l8b_dir "agent"
+  find_l8b_dir "agent" || true
 }
 
 read_install_version() {

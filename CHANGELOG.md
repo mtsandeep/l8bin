@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 - **Base images digest-pinned** — the generated Dockerfiles and compose pin `debian:trixie-slim` and `caddy:2.11.2-alpine` by `@sha256:` digest, so a re-pointed upstream tag can no longer inject code into builds (override with `DEBIAN_IMAGE`/`CADDY_IMAGE`; bump tag and digest together when refreshing bases). Existing installs see this as a one-line compose diff on their next update.
 
 ### Fixed
+- Regression from the installer cleanup: fresh hosts exited silently — the install-dir detectors returned non-zero when nothing was found, tripping `set -e` before the menu printed; they now return empty.
 - The platform apex assigned to a project as a custom domain no longer serves the "up and running" landing page while that project is stopped (e.g. in the stop→route-sync window) — the waker now resolves the claim like any other custom domain (wake/auto-start or the offline page).
 - **Agent updates verify a real restart** — the post-update check now also confirms the container was recreated, not merely running, so a stale pre-update container can no longer pass as "updated".
 - **Agent port re-detection** — on hosts where `docker port` lists the IPv6 mapping first, the published-port parse came up empty and the agent was silently republished on the default 5083 after a cert or version update; any ordering now parses.
