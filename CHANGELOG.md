@@ -4,8 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Version-pinned installs** — `L8B_VERSION=v0.x.x` (env var) installs that exact release instead of `latest` in any mode (master/agent/cli/update, bash and PowerShell): rollbacks, reproducible installs, version-matching a new agent to an existing master. The update menu labels the pinned target and skips the "latest" wording.
+- The dashboard's Add Agent wizard pins the install command to the master's own version (`curl … | L8B_VERSION=v0.4.x bash -s agent`), so a new agent can't race ahead of the master it connects to (falls back to the plain command if the version can't be read).
+
+### Changed
+- **Installer downloads fail closed** — every release asset (binaries, dashboard bundle) downloads to a temp file, gets SHA-256 verified against the release's `checksums.txt`, and only then moves into place: a failed or tampered download can no longer clobber the working binary, and a missing checksum file or entry aborts the install instead of silently continuing unverified. The Windows installer's local-fallback downloads (orchestrator, dashboard) are verified the same way.
+- **Base images digest-pinned** — the generated Dockerfiles and compose pin `debian:trixie-slim` and `caddy:2.11.2-alpine` by `@sha256:` digest, so a re-pointed upstream tag can no longer inject code into builds (override with `DEBIAN_IMAGE`/`CADDY_IMAGE`; bump tag and digest together when refreshing bases). Existing installs see this as a one-line compose diff on their next update.
+
 ### Fixed
 - The platform apex assigned to a project as a custom domain no longer serves the "up and running" landing page while that project is stopped (e.g. in the stop→route-sync window) — the waker now resolves the claim like any other custom domain (wake/auto-start or the offline page).
+- **Agent updates verify a real restart** — the post-update check now also confirms the container was recreated, not merely running, so a stale pre-update container can no longer pass as "updated".
+- **Agent port re-detection** — on hosts where `docker port` lists the IPv6 mapping first, the published-port parse came up empty and the agent was silently republished on the default 5083 after a cert or version update; any ordering now parses.
+- Updates no longer crash on installs missing a `.version` file — `unknown` couldn't be version-compared; it now reads as `v0.0.0`.
 
 ## [0.4.29-beta.3] - 2026-11-20
 

@@ -58,6 +58,12 @@ curl -fsSL https://l8b.in | bash -s agent
 curl -fsSL https://l8b.in | bash -s cli
 ```
 
+All downloads are SHA-256 verified against the release's `checksums.txt`. To pin a specific version instead of installing `latest` (reproducible installs, rollbacks, version-matching a new agent to an existing master):
+
+```bash
+curl -fsSL https://l8b.in | L8B_VERSION=v0.4.2 bash -s master
+```
+
 Run the master on a Linux VPS as root — the installer sets up Docker if it's missing. The guided walkthrough (prompts, DNS, admin account, first deploy) lives at **[l8bin.com/quickstart](https://l8bin.com/quickstart)**.
 
 ## Deploying Apps
