@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.29-beta.4] - 2026-11-21
+
 ### Added
 - **Version-pinned installs** — `L8B_VERSION=v0.x.x` (env var) installs that exact release instead of `latest` in any mode (master/agent/cli/update, bash and PowerShell): rollbacks, reproducible installs, version-matching a new agent to an existing master. The update menu labels the pinned target and skips the "latest" wording.
 - The dashboard's Add Agent wizard pins the install command to the master's own version (`curl … | L8B_VERSION=v0.4.x bash -s agent`), so a new agent can't race ahead of the master it connects to (falls back to the plain command if the version can't be read).
