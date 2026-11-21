@@ -9,7 +9,7 @@ use crate::status::{self, ProjectUpdateFields};
 use litebin_common::types::ProjectStatus;
 
 use crate::routes::manage::helpers::{
-    local_env_has_changed, read_local_project_env, sync_caddy, write_local_env_snapshot,
+    local_env_recreate_needed, read_local_project_env, sync_caddy, write_local_env_snapshot,
 };
 
 use super::helpers::{cancellation_cleanup_services, mark_replacement_failure, should_abort_siblings};
@@ -413,7 +413,7 @@ pub async fn start_services(
                     // Smart path: try to reuse existing containers
                     if let Some((ref existing_cid, existing_port)) = existing {
                         // Skip reuse if env changed — need recreate to pick up new vars
-                        let env_changed = local_env_has_changed(&run_config.project_id);
+                        let env_changed = local_env_recreate_needed(&run_config.project_id);
                         if env_changed {
                             tracing::info!(service = %svc, "env changed, recreating container");
                             if docker.remove_container(existing_cid).await.is_ok()

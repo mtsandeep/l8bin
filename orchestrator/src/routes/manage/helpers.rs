@@ -100,8 +100,7 @@ pub fn read_local_project_env(project_id: &str) -> Vec<String> {
 
 /// Check if the project .env has changed since the last container creation.
 /// Compares current .env hash against the .env.l8bin snapshot. A missing
-/// snapshot hashes as 0 — "unknown", not "changed": recreating a container
-/// (which removes the running one) must require a *proven* difference.
+/// snapshot (never started) counts as changed — nothing applied it yet.
 pub fn local_env_has_changed(project_id: &str) -> bool {
     let env_path = std::path::PathBuf::from("projects").join(project_id).join(".env");
     let snapshot_path = std::path::PathBuf::from("projects").join(project_id).join(".env.l8bin");
@@ -110,7 +109,7 @@ pub fn local_env_has_changed(project_id: &str) -> bool {
     // .env.l8bin has a 5-line header (4 comments + blank line) — strip it before hashing
     let snapshot_hash = snapshot_content_hash(&snapshot_path);
 
-    let changed = snapshot_hash != 0 && env_hash != snapshot_hash;
+    let changed = env_hash != snapshot_hash;
     if changed {
         tracing::info!(
             project = project_id,
@@ -120,6 +119,14 @@ pub fn local_env_has_changed(project_id: &str) -> bool {
         );
     }
     changed
+}
+
+/// Recreation guard for an existing container: unlike
+/// [local_env_has_changed], a missing snapshot means "unknown", not
+/// "changed" — removing a running container requires a proven diff.
+pub fn local_env_recreate_needed(project_id: &str) -> bool {
+    let snapshot_path = std::path::PathBuf::from("projects").join(project_id).join(".env.l8bin");
+    snapshot_content_hash(&snapshot_path) != 0 && local_env_has_changed(project_id)
 }
 
 /// Line-normalized: a trailing newline must not count as a change.

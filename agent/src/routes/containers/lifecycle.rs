@@ -3,7 +3,7 @@ use litebin_common::types::ProjectStatus;
 
 use crate::AgentState;
 
-use super::env::{ensure_project_dir_and_env, env_has_changed, read_project_env, write_env_snapshot};
+use super::env::{ensure_project_dir_and_env, env_recreate_needed, read_project_env, write_env_snapshot};
 use super::metadata::write_project_metadata;
 use super::types::{
     CleanupRequest, ErrorResponse, RemoveRequest, RunRequest, RunResponse, StartRequest, StartResponse,
@@ -322,7 +322,7 @@ pub async fn start_container(State(state): State<AgentState>, Json(req): Json<St
 
     // Check if .env changed — if so, recreate to pick up new vars
     if let Some(ref project_id) = req.project_id
-        && env_has_changed(project_id)
+        && env_recreate_needed(project_id)
     {
         tracing::info!(project = project_id, "env changed since last start, recreating container");
 

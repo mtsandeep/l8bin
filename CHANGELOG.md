@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Stable-only installer at l8b.in, with per-tag URLs** — `l8b.in` now serves the installers from the latest stable release instead of `main`, so pushes to main can't ship an unreleased installer to everyone; releases attach `install.sh`/`install-windows.ps1` as assets, and any tag's installer is available at `l8b.in/<tag>` (Windows: `/<tag>/windows.ps1`).
+
 ### Fixed
 - **Demo start storms behind endless "Preparing your demo…" screens** — status polls and proxy 502s could kick overlapping starts that killed each other's containers (env-snapshot mismatches triggered recreates that remove the running container, feeding more 502s and kicks). Starts are now serialized per project, kicks share the waker's 60s failure cooldown, all kick sites respect the mid-operation/auto-start guards, a missing `.env.l8bin` snapshot no longer counts as "changed", and a `running` row whose container vanished recovers immediately instead of waiting for the 60s periodic sync.
 - **Demo sessions: one per visitor, not per request** — a browser's first visit fires parallel cookie-less requests that each claimed an instance (one visitor could hold 4-6 capacity slots for the full session TTL). Same-IP requests within 10s of a claim now rejoin its session.

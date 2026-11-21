@@ -64,6 +64,12 @@ All downloads are SHA-256 verified against the release's `checksums.txt`. To pin
 curl -fsSL https://l8b.in | L8B_VERSION=v0.4.2 bash -s master
 ```
 
+`l8b.in` always serves the installer from the latest **stable** release. To run the installer from a specific tag (e.g. while soak-testing a beta), append the tag:
+
+```bash
+curl -fsSL https://l8b.in/v0.4.30-beta.1 | bash -s master
+```
+
 Run the master on a Linux VPS as root — the installer sets up Docker if it's missing. The guided walkthrough (prompts, DNS, admin account, first deploy) lives at **[l8bin.com/quickstart](https://l8bin.com/quickstart)**.
 
 ## Deploying Apps

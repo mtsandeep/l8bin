@@ -292,4 +292,6 @@ jobs:
             artifacts/docs/openapi.json
             artifacts/docs/cli-reference.md
             artifacts/docs/llms-full.txt
+            install.sh
+            install-windows.ps1
           body_path: release_body.md
