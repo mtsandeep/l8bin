@@ -112,6 +112,14 @@ enum Commands {
         #[arg(long = "grant-capability")]
         grant_capability: Vec<String>,
 
+        /// Defer a required capability: the deploy stages, and starting stays blocked until it is granted (repeatable: docker-observe, host-network, raw-ports)
+        #[arg(long = "defer-capability")]
+        defer_capability: Vec<String>,
+
+        /// Remove host port bindings from the compose (HOST:CONTAINER becomes container-only) so it no longer requires the raw-ports capability
+        #[arg(long = "strip-host-ports")]
+        strip_host_ports: bool,
+
         /// How to upload the image to the node: auto (default, direct when the node
         /// supports it), direct (client → agent, skipping the master relay), or relay
         /// (client → master → agent).
@@ -523,6 +531,8 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             compose,
             service,
             grant_capability,
+            defer_capability,
+            strip_host_ports,
             upload,
         } => {
             let defaults = project_config::load(&path);
@@ -546,6 +556,8 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     compose,
                     service,
                     grant_capability,
+                    defer_capability,
+                    strip_host_ports,
                     upload,
                 },
                 cli.server.as_deref(),

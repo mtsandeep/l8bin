@@ -39,7 +39,7 @@ pub(super) async fn remote_deploy_path(
         &state.db,
         crate::routes::manage::multi_service::BatchRunInputs {
             project_id: project_id.clone(),
-            compose_yaml: form.compose_yaml.clone(),
+            compose_yaml: v.compose_yaml.clone(),
             service_order: v.start_order.clone(),
             target_services: v.target_services.clone(),
             allow_raw_ports: Some(p.project.allow_raw_ports),

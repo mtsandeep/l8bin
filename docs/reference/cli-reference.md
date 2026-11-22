@@ -110,6 +110,8 @@ Deploy the current directory to LiteBin
 * `--compose` — Force compose mode (auto-detected if a compose file exists)
 * `--service <SERVICE>` — Deploy only specific services (repeatable, compose mode only)
 * `--grant-capability <GRANT_CAPABILITY>` — Grant a project capability for this deploy (repeatable: docker-observe, host-network, raw-ports)
+* `--defer-capability <DEFER_CAPABILITY>` — Defer a required capability instead of granting it: the deploy is staged, and starting stays blocked until it is granted (repeatable: docker-observe, host-network, raw-ports)
+* `--strip-host-ports` — Remove host port bindings from the compose (HOST:CONTAINER becomes container-only) so it no longer requires the raw-ports capability
 * `--upload <UPLOAD>` — How to upload the image to the node: auto (default, direct when the node supports it), direct (client → agent, skipping the master relay), or relay (client → master → agent)
 
   Default value: `auto`

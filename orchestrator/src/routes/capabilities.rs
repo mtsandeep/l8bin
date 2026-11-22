@@ -148,23 +148,15 @@ pub async fn grant_project_capabilities(
     }
     let granted_by = auth_session.user.map(|u| u.id);
     capabilities::grant_many(&state.db, &id, &caps, granted_by.as_deref()).await.map_err(capabilities::db_err)?;
-    if caps.iter().any(|cap| matches!(cap, ProjectCapability::DockerObserve | ProjectCapability::HostNetwork)) {
-        let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
-            .bind(&id)
-            .fetch_one(&state.db)
-            .await
-            .map_err(capabilities::db_err)?;
-        if let Some(node_id) = node_id
-            && node_id != "local"
-        {
-            crate::cloudflare_router::push_project_meta_to_agent(
-                &node_id,
-                &state.db,
-                &state.node_clients,
-                &state.config,
-            )
+    // Any capability change affects pushed agent meta — always refresh it.
+    let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(capabilities::db_err)?;
+    if let Some(node_id) = node_id.filter(|n| n != "local") {
+        crate::cloudflare_router::push_project_meta_to_agent(&node_id, &state.db, &state.node_clients, &state.config)
             .await;
-        }
     }
     let list = capabilities::status_list_for_project(&state.db, &id).await.map_err(capabilities::db_err)?;
     Ok(Json(list))
@@ -188,15 +180,12 @@ pub async fn revoke_project_capability(
     ensure_project(&state, &id).await?;
     let cap = ProjectCapability::parse(&capability)
         .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("unknown capability '{capability}'")))?;
-    let mut docker_observe_node_id: Option<String> = None;
-    let mut host_network_node_id: Option<String> = None;
     if cap == ProjectCapability::HostNetwork {
         let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
             .bind(&id)
             .fetch_one(&state.db)
             .await
             .map_err(capabilities::db_err)?;
-        host_network_node_id = node_id.clone();
         let container_ids: Vec<String> = sqlx::query_scalar(
             "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
         )
@@ -252,7 +241,6 @@ pub async fn revoke_project_capability(
             .fetch_one(&state.db)
             .await
             .map_err(capabilities::db_err)?;
-        docker_observe_node_id = node_id.clone();
         let proxy_name = litebin_common::types::container_name(&id, litebin_common::types::DOCKER_PROXY_SERVICE, None);
         if node_id.as_deref().unwrap_or("local") == "local" {
             state.docker.remove_by_service_name(&id, litebin_common::types::DOCKER_PROXY_SERVICE, None).await.map_err(
@@ -274,18 +262,49 @@ pub async fn revoke_project_capability(
         }
     }
     capabilities::revoke(&state.db, &id, cap).await.map_err(capabilities::db_err)?;
-    if let Some(node_id) = docker_observe_node_id
-        && node_id != "local"
-    {
+    // Any capability change affects pushed agent meta — always refresh it.
+    let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM projects WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(capabilities::db_err)?;
+    if let Some(node_id) = node_id.filter(|n| n != "local") {
         crate::cloudflare_router::push_project_meta_to_agent(&node_id, &state.db, &state.node_clients, &state.config)
             .await;
     }
-    if let Some(node_id) = host_network_node_id
-        && node_id != "local"
-    {
-        crate::cloudflare_router::push_project_meta_to_agent(&node_id, &state.db, &state.node_clients, &state.config)
-            .await;
+    let list = capabilities::status_list_for_project(&state.db, &id).await.map_err(capabilities::db_err)?;
+    Ok(Json(list))
+}
+
+#[utoipa::path(
+    post,
+    path = "/projects/{id}/capabilities/strip-host-ports",
+    params(("id" = String, Path)),
+    responses((status = 200, body = Vec<ProjectCapabilityStatus>), (status = 400), (status = 404)),
+    tag = "capabilities",
+    security(("session_auth" = []))
+)]
+/// Rewrite the stored compose's explicit `HOST:CONTAINER` mappings to
+/// container-only so the project stops requiring raw-ports.
+pub async fn strip_project_host_ports(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<ProjectCapabilityStatus>>, (StatusCode, String)> {
+    ensure_project(&state, &id).await?;
+    if !capabilities::requested_reasons_from_compose(&id).contains_key("raw-ports") {
+        return Err((StatusCode::BAD_REQUEST, "this compose does not request raw-ports".into()));
     }
+    let compose_path = std::path::PathBuf::from("projects").join(&id).join("compose.yaml");
+    let yaml = std::fs::read_to_string(&compose_path)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to read compose: {e}")))?;
+    let strip = compose_bollard::strip_host_port_bindings(&yaml)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("failed to rewrite compose: {e}")))?;
+    if strip.removed.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "no host port bindings found".into()));
+    }
+    std::fs::write(&compose_path, &strip.yaml)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to write compose: {e}")))?;
+    tracing::info!(project_id = %id, removed = strip.removed.len(), "capabilities: host ports stripped from stored compose");
     let list = capabilities::status_list_for_project(&state.db, &id).await.map_err(capabilities::db_err)?;
     Ok(Json(list))
 }

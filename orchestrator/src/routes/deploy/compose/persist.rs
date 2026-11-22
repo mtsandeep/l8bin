@@ -92,7 +92,7 @@ pub(super) async fn persist_compose_deploy(
     crate::routes::manage::ensure_project_dir_and_env(project_id);
 
     let compose_path = std::path::PathBuf::from("projects").join(project_id).join("compose.yaml");
-    if let Err(e) = std::fs::write(&compose_path, &form.compose_yaml) {
+    if let Err(e) = std::fs::write(&compose_path, &v.compose_yaml) {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("failed to write compose.yaml: {e}")})),

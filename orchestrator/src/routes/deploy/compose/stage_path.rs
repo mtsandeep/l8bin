@@ -8,7 +8,7 @@ use litebin_common::types::ProjectStatus;
 
 use super::form::ComposeForm;
 use super::persist::PersistedCompose;
-use super::validate::ValidatedCompose;
+use super::validate::{ValidatedCompose, strip_summary};
 
 /// First-deploy staging: prepare compose + runtime .env (via remote agent
 /// batch-run with `stage_only` when not local), do not start containers.
@@ -48,7 +48,7 @@ pub(super) async fn stage_only_path(
             &state.db,
             crate::routes::manage::multi_service::BatchRunInputs {
                 project_id: project_id.clone(),
-                compose_yaml: form.compose_yaml.clone(),
+                compose_yaml: v.compose_yaml.clone(),
                 service_order: v.start_order.clone(),
                 target_services: None,
                 allow_raw_ports: None,
@@ -128,6 +128,24 @@ pub(super) async fn stage_only_path(
         "compose deployment staged; awaiting runtime configuration"
     );
 
+    let deferred_ids: Vec<&str> = v.deferred_capabilities.iter().map(|c| c.id()).collect();
+    let mut warnings: Vec<String> = if deferred_ids.is_empty() {
+        Vec::new()
+    } else {
+        vec![format!(
+            "Capabilities deferred: {}. The project cannot start until they are granted in Settings → Capabilities.",
+            deferred_ids.join(", ")
+        )]
+    };
+    if !v.stripped_ports.is_empty() {
+        warnings.push(format!("Host port bindings removed (container-only): {}.", strip_summary(&v.stripped_ports)));
+    }
+    let message = if deferred_ids.is_empty() {
+        "Deployment staged. Configure runtime secrets, then start the project.".to_string()
+    } else {
+        "Deployment staged. Grant the required capabilities (Settings → Capabilities), configure runtime secrets, then start the project.".to_string()
+    };
+
     (
         StatusCode::OK,
         Json(json!({
@@ -136,7 +154,9 @@ pub(super) async fn stage_only_path(
             "node_id": target_node_id,
             "url": if v.is_background { serde_json::Value::Null } else { json!(crate::routes::deploy::resolved_project_url(project_id, p.project.custom_domain.as_deref(), &state.platform.domain())) },
             "custom_domain": p.project.custom_domain,
-            "message": "Deployment staged. Configure runtime secrets, then start the project.",
+            "deferred_capabilities": deferred_ids,
+            "warnings": warnings,
+            "message": message,
         })),
     )
         .into_response()

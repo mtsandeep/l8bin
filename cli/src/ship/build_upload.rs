@@ -165,6 +165,8 @@ pub(super) async fn submit_compose(
     stage_only: bool,
     is_background: bool,
     grant_capabilities: &[String],
+    defer_capabilities: &[String],
+    strip_host_ports: bool,
 ) -> Result<serde_json::Value> {
     let mut form = reqwest::multipart::Form::new()
         .text("project_id", project_id.to_string())
@@ -187,6 +189,12 @@ pub(super) async fn submit_compose(
     }
     if !grant_capabilities.is_empty() {
         form = form.text("grant_capabilities", grant_capabilities.join(","));
+    }
+    if !defer_capabilities.is_empty() {
+        form = form.text("defer_capabilities", defer_capabilities.join(","));
+    }
+    if strip_host_ports {
+        form = form.text("strip_host_ports", "true");
     }
 
     auth::api_post_multipart(client, server, "/deploy/compose", form).await

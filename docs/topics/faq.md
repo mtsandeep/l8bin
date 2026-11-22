@@ -377,6 +377,19 @@ l8b deploy --project myapp
 l8b deploy --project myapp --service api --service worker
 ```
 
+### Why is my deploy asking for raw-ports (host ports)?
+
+Compose files shared by projects are written for local `docker compose up`, where `ports: - "8080:8080"` is how you reach the app on localhost. On LiteBin that mapping means "publish host port 8080 on the node" — which needs the **raw-ports** capability and a free port on the host. In most stacks nothing outside the project needs it: services reach each other over the managed Docker network by service name, and the public service gets a managed URL automatically.
+
+**You usually don't need host ports at all.** Your options, in order of preference:
+
+1. **Remove them** — delete the `ports:` entry or shorten it to container-only syntax (`"8080:8080"` → `"8080"`). Nothing else changes: the service still listens on 8080, other services still reach it, healthchecks still work.
+2. **Let LiteBin remove them** — the deploy prompt and dashboard offer *Remove host ports*: the stored compose is rewritten to container-only for you, so the project no longer requires raw-ports. Equivalent to option 1, done by the platform (CI: `--strip-host-ports`).
+3. **Grant raw-ports** — only when something *outside* the stack must reach a port on the node: non-HTTP protocols like a MySQL server for external clients (`"3306:3306"`) or game servers (`"25565:25565/udp"`). LiteBin binds exactly the host port you declared; see [LiteBin-reserved ports](#litebin-reserved-ports-even-with-allow-raw-ports).
+4. **Defer** — deploy without deciding: the project and images are stored on the server, and starting stays blocked until you grant the capability in Settings → Capabilities (CI: `--defer-capability`).
+
+To reach another *HTTP* service externally, prefer a route over a host port — see [Only one port is accessible for my service](#only-one-port-is-accessible-for-my-service). Full capability semantics are in the [capability reference](capabilities.md).
+
 ### Only one port is accessible for my service
 
 LiteBin routes traffic to one port per project (the public service's port). Other ports are exposed on the container and accessible for inter-service communication via the Docker network — container-only `ports:` entries (`"3000"`) are never published on the host. To expose another port externally, either create a route for that internal port, or declare an explicit `HOST:CONTAINER` mapping (`"25565:25565/udp"`) and grant the **raw-ports** capability — LiteBin then binds exactly that host port, including non-HTTP protocols like UDP. See [Non-HTTP ports and auto-wake](#non-http-ports-and-auto-wake) for caveats.

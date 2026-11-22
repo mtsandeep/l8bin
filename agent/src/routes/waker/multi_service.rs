@@ -33,9 +33,31 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
 
     let mut plan =
         litebin_common::compose_run::build_compose_run_plan(&compose_yaml, project_id, &extra_env, None, true)?;
+
+    // Capability gate: waking degraded would silently drop host ports or strip
+    // sockets — refuse instead.
+    let meta = state.project_meta.read().unwrap().get(project_id).cloned();
+    let is_background = meta.as_ref().map(|e| e.is_background).unwrap_or(false);
+    let required = match compose_bollard::analyze_compose_yaml_for_workload(
+        &compose_yaml,
+        None,
+        Some(project_id),
+        is_background,
+    ) {
+        Ok((_, report)) => report.required_capabilities,
+        Err(_) => Vec::new(), // analysis failures surface via build_compose_run_plan above
+    };
+    let conflicts = wake_capability_conflicts(&required, meta.as_ref());
+    if !conflicts.is_empty() {
+        anyhow::bail!(
+            "project '{}' requires capabilities that are not granted: {}. Grant them (Settings → Capabilities), then start again",
+            project_id,
+            conflicts.join(", ")
+        );
+    }
+
     let requests_host_network = plan.configs.iter().any(|config| config.host_network);
     if requests_host_network {
-        let meta = state.project_meta.read().unwrap().get(project_id).cloned();
         if !meta.as_ref().is_some_and(|entry| entry.host_network && entry.is_background) {
             anyhow::bail!("host-network workload is not authorized as a background project");
         }
@@ -44,13 +66,13 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     }
 
     // Apply allow_raw_ports flag from agent state
-    let allow_raw = state.project_meta.read().unwrap().get(project_id).map(|e| e.allow_raw_ports).unwrap_or(false);
+    let allow_raw = meta.as_ref().map(|e| e.allow_raw_ports).unwrap_or(false);
     for config in plan.configs.iter_mut() {
         config.allow_raw_ports = allow_raw;
     }
 
     // Inject read-only Docker observation only when explicitly granted.
-    let docker_observe = state.project_meta.read().unwrap().get(project_id).map(|e| e.docker_observe).unwrap_or(false);
+    let docker_observe = meta.as_ref().map(|e| e.docker_observe).unwrap_or(false);
     let proxy_injected = if docker_observe { plan.inject_docker_observe_proxy(project_id)? } else { false };
     let host_observers = plan.host_docker_observer_names();
     let current_proxy =
@@ -76,7 +98,7 @@ pub(super) async fn wake_multi_service(state: &AgentState, project_id: &str) -> 
     }
 
     // Apply global defaults for services without explicit limits
-    if let Some(entry) = state.project_meta.read().unwrap().get(project_id) {
+    if let Some(entry) = meta.as_ref() {
         for config in plan.configs.iter_mut() {
             if config.memory_limit_mb.is_none() {
                 config.memory_limit_mb = entry.default_memory_limit_mb;
@@ -385,5 +407,72 @@ pub(super) async fn report_wake_to_master(state: &AgentState, project_id: &str, 
                 "wake report failed (orchestrator may be down)"
             );
         }
+    }
+}
+
+/// Required capabilities the pushed project meta does not grant; unknown ids
+/// fail closed.
+fn wake_capability_conflicts(required: &[String], meta: Option<&crate::ProjectMetaEntry>) -> Vec<String> {
+    required
+        .iter()
+        .filter(|cap| match cap.as_str() {
+            "raw-ports" => !meta.map(|e| e.allow_raw_ports).unwrap_or(false),
+            "docker-observe" => !meta.map(|e| e.docker_observe).unwrap_or(false),
+            "host-network" => !meta.map(|e| e.host_network).unwrap_or(false),
+            _ => true,
+        })
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wake_capability_conflicts;
+    use crate::ProjectMetaEntry;
+
+    fn entry(allow_raw_ports: bool, docker_observe: bool, host_network: bool) -> ProjectMetaEntry {
+        ProjectMetaEntry {
+            path_routes: None,
+            auto_start_enabled: true,
+            is_background: host_network,
+            allow_raw_ports,
+            docker_observe,
+            host_network,
+            default_memory_limit_mb: None,
+            default_cpu_limit: None,
+        }
+    }
+
+    #[test]
+    fn no_requirements_means_no_conflicts() {
+        assert!(wake_capability_conflicts(&[], None).is_empty());
+        assert!(wake_capability_conflicts(&[], Some(&entry(false, false, false))).is_empty());
+    }
+
+    #[test]
+    fn missing_meta_conflicts_with_any_requirement() {
+        let required = vec!["raw-ports".to_string()];
+        assert_eq!(wake_capability_conflicts(&required, None), required);
+    }
+
+    #[test]
+    fn granted_capabilities_do_not_conflict() {
+        let required = vec!["raw-ports".to_string(), "docker-observe".to_string()];
+        let meta = entry(true, true, false);
+        assert!(wake_capability_conflicts(&required, Some(&meta)).is_empty());
+    }
+
+    #[test]
+    fn ungranted_requirements_are_reported_verbatim() {
+        let required = vec!["raw-ports".to_string(), "host-network".to_string()];
+        let meta = entry(false, false, false);
+        assert_eq!(wake_capability_conflicts(&required, Some(&meta)), required);
+    }
+
+    #[test]
+    fn unknown_capability_fails_closed() {
+        let required = vec!["time-travel".to_string()];
+        let meta = entry(true, true, true);
+        assert_eq!(wake_capability_conflicts(&required, Some(&meta)), required);
     }
 }

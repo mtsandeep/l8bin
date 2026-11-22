@@ -134,13 +134,9 @@ pub async fn status_list(
         .collect())
 }
 
-/// Analyze the project's stored compose.yaml for capability request reasons.
-pub fn requested_reasons_from_compose(project_id: &str) -> HashMap<String, String> {
-    let path = PathBuf::from("projects").join(project_id).join("compose.yaml");
-    let Ok(yaml) = std::fs::read_to_string(&path) else {
-        return HashMap::new();
-    };
-    let Ok((_, report)) = analyze_compose_yaml_for_workload(&yaml, None, Some(project_id), true) else {
+/// Analyze compose YAML text for capability request reasons.
+fn requested_reasons_from_compose_yaml(yaml: &str, project_id: Option<&str>) -> HashMap<String, String> {
+    let Ok((_, report)) = analyze_compose_yaml_for_workload(yaml, None, project_id, true) else {
         return HashMap::new();
     };
 
@@ -165,6 +161,15 @@ pub fn requested_reasons_from_compose(project_id: &str) -> HashMap<String, Strin
     reasons
 }
 
+/// Analyze the project's stored compose.yaml for capability request reasons.
+pub fn requested_reasons_from_compose(project_id: &str) -> HashMap<String, String> {
+    let path = PathBuf::from("projects").join(project_id).join("compose.yaml");
+    let Ok(yaml) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    requested_reasons_from_compose_yaml(&yaml, Some(project_id))
+}
+
 /// Status list with compose-derived request reasons filled in.
 pub async fn status_list_for_project(
     db: &SqlitePool,
@@ -174,7 +179,75 @@ pub async fn status_list_for_project(
     status_list(db, project_id, &reasons).await
 }
 
+/// Capabilities the stored compose requires that are not granted — the start
+/// gate. Empty for single-service projects (no stored compose) or when all
+/// requirements are granted.
+pub async fn missing_for_start(db: &SqlitePool, project_id: &str) -> Result<Vec<ProjectCapabilityStatus>, sqlx::Error> {
+    Ok(status_list_for_project(db, project_id)
+        .await?
+        .into_iter()
+        .filter(|s| !s.granted && s.requested_reason.is_some())
+        .collect())
+}
+
 /// Map a capability helper error into an HTTP response pair.
 pub fn db_err(e: sqlx::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, format!("capability store error: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compose_reasons_flag_required_capabilities_only() {
+        let yaml = r#"
+services:
+  db:
+    image: postgres
+    ports:
+      - "5432:5432"
+  web:
+    image: nginx
+"#;
+        let reasons = requested_reasons_from_compose_yaml(yaml, Some("proj"));
+        assert!(reasons.contains_key("raw-ports"), "expected raw-ports request, got {reasons:?}");
+        assert!(!reasons.contains_key("host-network"));
+    }
+
+    #[test]
+    fn compose_reasons_empty_without_requests() {
+        let yaml = "services:\n  web:\n    image: nginx\n";
+        assert!(requested_reasons_from_compose_yaml(yaml, Some("proj")).is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_for_start_lists_requested_but_ungranted() -> anyhow::Result<()> {
+        let db = sqlx::SqlitePool::connect(":memory:").await?;
+        sqlx::query(
+            "CREATE TABLE project_capabilities (project_id TEXT, capability TEXT, granted_at INTEGER, granted_by TEXT, PRIMARY KEY (project_id, capability))",
+        )
+        .execute(&db)
+        .await?;
+        // `grant` syncs the legacy allow_* columns on the projects row.
+        sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, updated_at INTEGER, allow_docker_access INTEGER, allow_raw_ports INTEGER)")
+            .execute(&db)
+            .await?;
+
+        let yaml = "services:\n  db:\n    image: postgres\n    ports:\n      - \"5432:5432\"\n";
+        let reasons = requested_reasons_from_compose_yaml(yaml, Some("proj"));
+
+        // Nothing granted yet — the request is the blocker.
+        let ungranted = status_list(&db, "proj", &reasons).await?;
+        let missing: Vec<String> =
+            ungranted.into_iter().filter(|s| !s.granted && s.requested_reason.is_some()).map(|s| s.info.id).collect();
+        assert_eq!(missing, vec!["raw-ports".to_string()]);
+
+        // Once granted, nothing is missing.
+        grant(&db, "proj", litebin_common::capabilities::ProjectCapability::RawPorts, None).await?;
+        let granted = status_list(&db, "proj", &reasons).await?;
+        assert!(granted.into_iter().all(|s| s.granted || s.requested_reason.is_none()));
+
+        Ok(())
+    }
 }

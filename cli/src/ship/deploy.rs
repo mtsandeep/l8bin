@@ -307,7 +307,7 @@ async fn deploy_compose(
     let deploy_spinner = spinner("  🚢 {spinner} {msg}");
     deploy_spinner.set_message(if is_new_project { "Staging compose deployment..." } else { "Deploying compose..." });
 
-    let grants = validate_compose_for_deploy(
+    let capability_choice = validate_compose_for_deploy(
         client,
         server,
         project_id,
@@ -315,6 +315,8 @@ async fn deploy_compose(
         is_background,
         true,
         &[],
+        &[],
+        false,
         Some(&deploy_spinner),
     )
     .await?;
@@ -333,7 +335,9 @@ async fn deploy_compose(
         // (user updates the node .env, then starts) — for both first deploy and redeploy.
         true,
         is_background,
-        &grants,
+        &capability_choice.grants,
+        &capability_choice.deferred,
+        capability_choice.strip_host_ports,
     )
     .await?;
 
@@ -343,26 +347,64 @@ async fn deploy_compose(
         .unwrap_or(ProjectStatus::Stopped);
     let resp_node = resp["node_id"].as_str().or(node_id);
 
-    let url = finish_deploy_response(
-        client,
-        server,
-        project_id,
-        resp_node,
-        resp_status,
-        resp_node,
-        resp["url"].as_str(),
-        resp["custom_domain"].as_str(),
-        is_background,
-        &deploy_spinner,
-        "Compose deployment staged",
-        "Compose deploy successful!",
-        &format!("Compose deploy failed for project '{}'", project_id),
-        None,
-    )
-    .await?;
+    let url = if capability_choice.deferred.is_empty() {
+        finish_deploy_response(
+            client,
+            server,
+            project_id,
+            resp_node,
+            resp_status,
+            resp_node,
+            resp["url"].as_str(),
+            resp["custom_domain"].as_str(),
+            is_background,
+            &deploy_spinner,
+            "Compose deployment staged",
+            "Compose deploy successful!",
+            &format!("Compose deploy failed for project '{}'", project_id),
+            None,
+        )
+        .await?
+    } else {
+        // The env-edit checkpoint's "Start containers now" would only hit the
+        // capability start gate — print the grant path instead.
+        deploy_spinner.finish_and_clear();
+        print_deferred_staged(project_id, &capability_choice.deferred);
+        resp["url"].as_str().map(|s| s.to_string())
+    };
+
+    if capability_choice.strip_host_ports {
+        println!(
+            "  {} Host port bindings were removed from the stored compose — change HOST:CONTAINER mappings \
+             (e.g. \"8080:8080\" → \"8080\") locally to skip this prompt next time.",
+            "::".dimmed()
+        );
+    }
 
     record_ship_deploy(project_dir, project_id, resp_node, server);
     Ok(url)
+}
+
+/// What to print after a deferred staging: the project is on the server but
+/// cannot start until the grants exist.
+fn print_deferred_staged(project_id: &str, deferred: &[String]) {
+    println!("  {} Staged '{}' — images and compose are on the server", "::".dimmed(), project_id);
+    println!(
+        "  {} Starts are blocked until {} {} granted:",
+        "!".yellow(),
+        deferred.join(", "),
+        if deferred.len() == 1 { "is" } else { "are" }
+    );
+    println!(
+        "     Dashboard → project → Settings → Capabilities → Grant, or re-run ship and choose \"Grant and deploy\""
+    );
+    println!("    Then start with: l8b start {project_id}   (push runtime env first with `l8b env push` if needed)");
+}
+
+/// Capabilities that were deferred (staged without granting) by a
+/// non-interactive compose deploy.
+pub struct ComposeDeployOutcome {
+    pub deferred_capabilities: Vec<String>,
 }
 
 /// Non-interactive compose deploy for CI/`deploy` command usage.
@@ -376,7 +418,7 @@ pub async fn deploy_compose_noninteractive(
     _is_new_project: bool,
     opts: ComposeDeployOpts,
     platform: Option<&str>,
-) -> Result<String> {
+) -> Result<ComposeDeployOutcome> {
     let compose = load_compose(project_dir, compose_name)?;
     let selected_public = if opts.is_background { None } else { auto_pick_public_service(&compose) };
     let mut build_infos = collect_build_infos(&compose);
@@ -412,7 +454,7 @@ pub async fn deploy_compose_noninteractive(
     .await?;
 
     println!("  {} Deploying compose...", "🚢".dimmed());
-    let grants = validate_compose_for_deploy(
+    let capability_choice = validate_compose_for_deploy(
         client,
         server,
         project_id,
@@ -420,10 +462,12 @@ pub async fn deploy_compose_noninteractive(
         opts.is_background,
         false,
         &opts.grant_capabilities,
+        &opts.defer_capabilities,
+        opts.strip_host_ports,
         None,
     )
     .await?;
-    let _resp = submit_compose(
+    let resp = submit_compose(
         client,
         server,
         project_id,
@@ -435,11 +479,19 @@ pub async fn deploy_compose_noninteractive(
         uploaded_node.as_deref().or(opts.node_id.as_deref()),
         false,
         opts.is_background,
-        &grants,
+        &capability_choice.grants,
+        &capability_choice.deferred,
+        capability_choice.strip_host_ports,
     )
     .await?;
 
+    if let Some(warnings) = resp["warnings"].as_array() {
+        for w in warnings.iter().filter_map(|w| w.as_str()) {
+            println!("  {} {}", "!".yellow(), w);
+        }
+    }
+
     println!("  {} Compose deploy submitted.", "🚢".dimmed());
     stop_buildkit();
-    Ok(project_id.to_string())
+    Ok(ComposeDeployOutcome { deferred_capabilities: capability_choice.deferred })
 }

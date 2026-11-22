@@ -82,7 +82,10 @@ services:
 "#,
     );
     assert!(!r.ok);
-    assert!(r.unsupported().any(|f| f.path.ends_with("network_mode")));
+    assert!(
+        r.unsupported()
+            .any(|f| { f.path.ends_with("network_mode") && f.message.contains("requires a background project") })
+    );
 }
 
 #[test]

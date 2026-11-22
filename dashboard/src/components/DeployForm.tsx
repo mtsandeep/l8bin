@@ -187,6 +187,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [validateResult, setValidateResult] = useState<ValidateComposeResponse | null>(null);
   const [validating, setValidating] = useState(false);
   const [approvedCapabilityIds, setApprovedCapabilityIds] = useState<string[]>([]);
+  const [deferCapabilities, setDeferCapabilities] = useState(false);
+  const [stripHostPorts, setStripHostPorts] = useState(false);
 
   // Settings step fields — pre-populated with defaults
   const [autoStop, setAutoStop] = useState(true);
@@ -244,8 +246,15 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
 
   const missingCaps = validateResult?.missing_capabilities ?? [];
   const hasUnsupported = (findingGroups?.unsupported.length ?? 0) > 0;
-  const allMissingApproved = missingCaps.length === 0 || missingCaps.every((id) => approvedCapabilityIds.includes(id));
-  const canProceedFromValidate = !!validateResult && validateResult.report.ok && !hasUnsupported && allMissingApproved;
+  const stripAvailable = missingCaps.includes('raw-ports');
+  const allMissingApproved =
+    missingCaps.length === 0 ||
+    missingCaps.every((id) => approvedCapabilityIds.includes(id) || (stripHostPorts && id === 'raw-ports'));
+  const canProceedFromValidate =
+    !!validateResult && validateResult.report.ok && !hasUnsupported && (allMissingApproved || deferCapabilities);
+  const deferredCapabilityIds = deferCapabilities
+    ? missingCaps.filter((id) => !approvedCapabilityIds.includes(id) && !(stripHostPorts && id === 'raw-ports'))
+    : [];
 
   const runValidate = async () => {
     setError(null);
@@ -258,6 +267,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
       setValidateResult(result);
       // Keep approvals that are still missing; drop ones no longer required
       setApprovedCapabilityIds((prev) => prev.filter((id) => result.missing_capabilities.includes(id)));
+      setDeferCapabilities(false);
+      setStripHostPorts(false);
       setStep('validate');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Compose validation failed');
@@ -299,6 +310,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           auto_stop_timeout_mins: timeoutMins,
           auto_start_enabled: isBackground ? false : autoStart,
           grant_capabilities: approvedCapabilityIds.length > 0 ? approvedCapabilityIds : undefined,
+          defer_capabilities: deferredCapabilityIds.length > 0 ? deferredCapabilityIds : undefined,
+          strip_host_ports: stripHostPorts || undefined,
         });
         for (const w of warnings) showToast(w, 'warning');
       } else {
@@ -334,7 +347,12 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
               .replace(/^["']|["']$/g, '');
         }
         await updateProjectEnv(projectId.trim(), { env: vars, mode: 'merge' });
-        await recreateProject(projectId.trim());
+        // A deferred deploy can't run yet; the stored env applies on first start.
+        if (deferredCapabilityIds.length === 0) {
+          await recreateProject(projectId.trim());
+        } else {
+          showToast('Runtime env stored — it applies when the project first starts', 'info');
+        }
       }
 
       onDeploy();
@@ -378,6 +396,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
         projectId={deployProjectId}
         domain={domain}
         isBackground={isBackground}
+        deferredCapabilities={deferredCapabilityIds}
         onClose={() => {
           setShowProgress(false);
           onClose();
@@ -673,7 +692,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                     <span className="text-xs font-medium">Capabilities requested</span>
                   </div>
                   <p className="text-[11px] text-amber-300/80">
-                    Approve each capability below to continue. These will be granted on deploy.
+                    Approve each capability below — they are granted on deploy. Or deploy without granting: the project
+                    is created, and starting stays blocked until you grant them (Settings → Capabilities).
                   </p>
                   <div className="space-y-2">
                     {missingCaps.map((id) => {
@@ -720,7 +740,7 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                             {info?.risk && (
                               <p className="text-[10px] text-amber-400/80 mt-1 flex items-center gap-1">
                                 <AlertTriangle size={10} />
-                                {info.risk}
+                                <span>Risk: {info.risk}</span>
                               </p>
                             )}
                           </div>
@@ -728,6 +748,42 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                       );
                     })}
                   </div>
+                  {stripAvailable && (
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-md bg-slate-900/40 border border-slate-700/40 px-2.5 py-2">
+                      <input
+                        type="checkbox"
+                        checked={stripHostPorts}
+                        onChange={() => {
+                          const next = !stripHostPorts;
+                          setStripHostPorts(next);
+                          if (next) setApprovedCapabilityIds((prev) => prev.filter((id) => id !== 'raw-ports'));
+                        }}
+                        className="mt-0.5 rounded border-slate-600 bg-slate-800 text-violet-500 focus:ring-violet-500/40"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-xs text-slate-200 font-medium">Remove host ports instead</div>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Rewrites HOST:CONTAINER mappings to container-only — services stay reachable within the stack,
+                          no raw-ports capability needed.
+                        </p>
+                      </div>
+                    </label>
+                  )}
+                  <label className="flex items-start gap-2.5 cursor-pointer rounded-md bg-slate-900/40 border border-slate-700/40 px-2.5 py-2">
+                    <input
+                      type="checkbox"
+                      checked={deferCapabilities}
+                      onChange={() => setDeferCapabilities(!deferCapabilities)}
+                      className="mt-0.5 rounded border-slate-600 bg-slate-800 text-violet-500 focus:ring-violet-500/40"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-xs text-slate-200 font-medium">Deploy without granting</div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        The project will be created but cannot start until the unapproved capabilities are granted
+                        (Settings → Capabilities).
+                      </p>
+                    </div>
+                  </label>
                 </div>
               )}
 

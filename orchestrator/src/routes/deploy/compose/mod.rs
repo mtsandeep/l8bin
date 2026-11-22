@@ -22,7 +22,7 @@ use crate::auth::backend::PasswordBackend;
 use form::ComposeForm;
 use persist::persist_compose_deploy;
 use stage_path::stage_only_path;
-use validate::validate_compose_request;
+use validate::{strip_summary, validate_compose_request};
 
 #[utoipa::path(
     post,
@@ -56,6 +56,8 @@ pub async fn deploy_compose(
     let mut custom_domain = None;
     let mut allow_raw_ports = None;
     let mut grant_capabilities_raw = None;
+    let mut defer_capabilities_raw = None;
+    let mut strip_host_ports = false;
     let mut compose_content = None;
     let mut target_services_raw = None;
     let mut stage_only_requested = false;
@@ -99,6 +101,12 @@ pub async fn deploy_compose(
             }
             "grant_capabilities" => {
                 grant_capabilities_raw = field.text().await.ok();
+            }
+            "defer_capabilities" => {
+                defer_capabilities_raw = field.text().await.ok();
+            }
+            "strip_host_ports" => {
+                strip_host_ports = field.text().await.ok().and_then(|v| v.parse::<bool>().ok()).unwrap_or(false);
             }
             "compose" => {
                 compose_content = field.bytes().await.ok();
@@ -160,6 +168,8 @@ pub async fn deploy_compose(
         custom_domain,
         allow_raw_ports,
         grant_capabilities_raw,
+        defer_capabilities_raw,
+        strip_host_ports,
         compose_yaml,
         target_services_raw,
         stage_only_requested,
@@ -226,11 +236,15 @@ pub async fn deploy_compose(
     });
 
     // Explain the fail-closed translation when observation was not granted.
-    let sock_warnings: Vec<String> = if !p.docker_observe && form.compose_yaml.contains("/docker.sock") {
+    let mut sock_warnings: Vec<String> = if !p.docker_observe && form.compose_yaml.contains("/docker.sock") {
         vec!["Docker socket declaration found without docker-observe — the raw socket was removed".into()]
     } else {
         vec![]
     };
+    if !v.stripped_ports.is_empty() {
+        sock_warnings
+            .push(format!("Host port bindings removed (container-only): {}.", strip_summary(&v.stripped_ports)));
+    }
 
     (
         StatusCode::OK,

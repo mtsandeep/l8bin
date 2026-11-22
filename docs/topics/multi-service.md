@@ -261,7 +261,7 @@ Denormalized fields on `projects` for the fast health-check path (no JOINs neede
 | `image` / `build` | String or object form |
 | `command` / `entrypoint` | String or list form |
 | `environment` | Map or list form (compose env takes precedence over LiteBin env overrides) |
-| `ports` | List of strings (`"8080"`, `"80:3000"`, `"9090/udp"`). Container-only entries are never published on the host — services reach each other over the managed network. An explicit `HOST:CONTAINER` mapping publishes that host port (requires the `raw-ports` capability; reserved ports are refused). See [FAQ: LiteBin-reserved ports](faq.md#litebin-reserved-ports-even-with-allow-raw-ports). |
+| `ports` | List of strings (`"8080"`, `"80:3000"`, `"9090/udp"`). Container-only entries are never published on the host — services reach each other over the managed network. An explicit `HOST:CONTAINER` mapping publishes that host port (requires the `raw-ports` capability; reserved ports are refused) — the deploy prompt can rewrite such mappings to container-only for you. See the [capability reference](capabilities.md). See [FAQ: LiteBin-reserved ports](faq.md#litebin-reserved-ports-even-with-allow-raw-ports). |
 | `depends_on` | List form or map form with conditions |
 | `volumes` | Supported |
 | `healthcheck` | List form and string form (`CMD`/`CMD-SHELL`) |

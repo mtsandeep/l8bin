@@ -37,7 +37,7 @@ pub(super) fn analyze_service(
             if is_background {
                 "host networking runs the service in the host network namespace and exposes listeners directly"
             } else {
-                "host networking is available only to background projects without managed HTTP ingress"
+                "network_mode: host requires a background project (no public URL). Enable background mode for this project, or remove network_mode: host"
             },
             if is_background { Some("host-network") } else { None },
         ));

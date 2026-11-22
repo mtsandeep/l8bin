@@ -1,11 +1,19 @@
 use anyhow::Result;
 use colored::Colorize;
-use dialoguer::Confirm;
+use dialoguer::Select;
 use indicatif::ProgressBar;
 
 use crate::auth;
 
-/// Validate compose YAML via orchestrator and return approved capability grants.
+/// Grants, required capabilities the user chose to defer (start stays blocked
+/// until they are granted), and whether to strip host port bindings.
+pub(super) struct CapabilityChoice {
+    pub grants: Vec<String>,
+    pub deferred: Vec<String>,
+    pub strip_host_ports: bool,
+}
+
+/// Validate compose YAML via orchestrator and return the capability decision.
 /// Prints only what needs attention: the public-service route, capability
 /// requests, and unsupported-field errors.
 #[allow(clippy::too_many_arguments)]
@@ -17,8 +25,10 @@ pub(super) async fn validate_compose_for_deploy(
     is_background: bool,
     interactive: bool,
     pregranted: &[String],
+    predeferred: &[String],
+    strip_host_ports: bool,
     spinner: Option<&ProgressBar>,
-) -> Result<Vec<String>> {
+) -> Result<CapabilityChoice> {
     let body = serde_json::json!({
         "compose": yaml,
         "project_id": project_id,
@@ -56,34 +66,66 @@ pub(super) async fn validate_compose_for_deploy(
     }
 
     let mut grants: Vec<String> = pregranted.to_vec();
-    let still_missing: Vec<String> = missing.into_iter().filter(|c| !grants.iter().any(|g| g == c)).collect();
+    let mut deferred: Vec<String> = predeferred.to_vec();
+    let mut strip = strip_host_ports;
+    let mut unresolved: Vec<String> = missing
+        .into_iter()
+        .filter(|c| !(grants.iter().any(|g| g == c) || deferred.iter().any(|d| d == c) || (strip && c == "raw-ports")))
+        .collect();
 
-    if still_missing.is_empty() {
-        return Ok(grants);
+    if unresolved.is_empty() {
+        return Ok(CapabilityChoice { grants, deferred, strip_host_ports: strip });
     }
 
     if !interactive {
         anyhow::bail!(
-            "missing required capabilities: {}. Pass --grant-capability for each (for example, --grant-capability host-network)",
-            still_missing.join(", ")
+            "missing required capabilities: {}. Pass --grant-capability for each to grant them, \
+             --strip-host-ports to drop host port bindings (raw-ports only), or --defer-capability \
+             to stage without granting (start stays blocked until granted)",
+            unresolved.join(", ")
         );
     }
 
-    // The interactive prompt and the "requires" line must not be clobbered by a
+    // The prompt and the "requires" lines must not be clobbered by a
     // running spinner (which redraws the current line). Suspend it for the duration.
-    let ask = || -> Result<bool> {
-        println!("  {} This compose file requires: {}", "!".yellow(), still_missing.join(", "));
-        let approve =
-            Confirm::new().with_prompt("Grant these capabilities for this project?").default(false).interact()?;
-        Ok(approve)
+    let mut ask = || -> Result<()> {
+        while !unresolved.is_empty() {
+            println!("  {} This compose file requires: {}", "!".yellow(), unresolved.join(", "));
+            for f in findings.iter().filter(|f| f["disposition"] == "permission_required") {
+                let Some(cap) = f["capability"].as_str() else { continue };
+                if !unresolved.iter().any(|c| c == cap) {
+                    continue;
+                }
+                let path = f["path"].as_str().unwrap_or("?");
+                let message = f["message"].as_str().unwrap_or("");
+                println!("    {} — {}", path.yellow(), message);
+            }
+            let fixable = unresolved.iter().any(|c| c == "raw-ports");
+            let mut choices = vec!["Grant and deploy"];
+            if fixable {
+                choices.push("Remove host ports — run on the managed network only");
+            }
+            let defer_idx = choices.len();
+            choices.push("Stage without granting — start blocked until granted");
+            choices.push("Abort");
+            let choice =
+                Select::new().with_prompt("How should the deploy proceed?").items(&choices).default(0).interact()?;
+            if choice == 0 {
+                grants.append(&mut unresolved);
+            } else if fixable && choice == 1 {
+                strip = true;
+                unresolved.retain(|c| c != "raw-ports");
+            } else if choice == defer_idx {
+                deferred.append(&mut unresolved);
+            } else {
+                anyhow::bail!("capabilities not granted — aborting deploy");
+            }
+        }
+        Ok(())
     };
-    let approve = match spinner {
+    match spinner {
         Some(s) => s.suspend(ask)?,
         None => ask()?,
-    };
-    if !approve {
-        anyhow::bail!("capabilities not granted — aborting deploy");
     }
-    grants.extend(still_missing);
-    Ok(grants)
+    Ok(CapabilityChoice { grants, deferred, strip_host_ports: strip })
 }

@@ -48,6 +48,7 @@ fn finish_deploy(
         }
         Some(ProjectStatus::Running | ProjectStatus::Completed) => "running",
         Some(ProjectStatus::Stopped) => "stopped",
+        Some(ProjectStatus::Unconfigured) => "staged",
         _ => "deploying",
     };
 
@@ -90,6 +91,8 @@ pub(crate) struct DeployArgs {
     pub compose: bool,
     pub service: Vec<String>,
     pub grant_capability: Vec<String>,
+    pub defer_capability: Vec<String>,
+    pub strip_host_ports: bool,
     pub upload: upload::UploadMode,
 }
 
@@ -118,6 +121,8 @@ pub(crate) async fn run(
         compose,
         service,
         grant_capability,
+        defer_capability,
+        strip_host_ports,
         upload,
     } = args;
 
@@ -168,7 +173,7 @@ pub(crate) async fn run(
         let nodes = auth::fetch_online_nodes(&client, &server).await;
         let platform = ship::resolve_platform(&nodes, effective_node.as_deref());
 
-        ship::deploy_compose_noninteractive(
+        let outcome = ship::deploy_compose_noninteractive(
             &client,
             &server,
             &project,
@@ -179,6 +184,8 @@ pub(crate) async fn run(
                 target_services,
                 node_id: effective_node.clone(),
                 grant_capabilities: grant_capability,
+                defer_capabilities: defer_capability,
+                strip_host_ports,
                 is_background: effective_background,
                 upload,
                 env_source,
@@ -192,11 +199,23 @@ pub(crate) async fn run(
             out.note("Wrote l8b.toml — future deploys reuse this project automatically.");
         }
 
-        // Poll for completion (2 min timeout, non-interactive)
-        let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
-        let url =
-            if effective_background { None } else { Some(auth::project_public_url(&client, &server, &project).await) };
-        finish_deploy(out, &project, final_status, url, effective_background, started)?;
+        if outcome.deferred_capabilities.is_empty() {
+            // Poll for completion (2 min timeout, non-interactive)
+            let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
+            let url = if effective_background {
+                None
+            } else {
+                Some(auth::project_public_url(&client, &server, &project).await)
+            };
+            finish_deploy(out, &project, final_status, url, effective_background, started)?;
+        } else {
+            // Deferred: the deploy staged synchronously — nothing to poll.
+            out.note(&format!(
+                "Staged without granting: {}. Grant them (Settings → Capabilities), then start the project.",
+                outcome.deferred_capabilities.join(", ")
+            ));
+            finish_deploy(out, &project, Some(ProjectStatus::Unconfigured), None, effective_background, started)?;
+        }
         apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
     } else {
         // Port is first-deploy only; redeploys keep the stored one. No flag and

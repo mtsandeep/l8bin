@@ -1292,6 +1292,20 @@ export async function revokeProjectCapability(
   return res.json();
 }
 
+/** Rewrite the stored compose's HOST:CONTAINER mappings to container-only so
+ *  the project stops requiring raw-ports. */
+export async function stripProjectHostPorts(projectId: string): Promise<ProjectCapabilityStatus[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/capabilities/strip-host-ports`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to remove host ports');
+  }
+  return res.json();
+}
+
 // --- Compose Deploy ---
 
 export interface ComposeDeployPayload {
@@ -1307,6 +1321,11 @@ export interface ComposeDeployPayload {
   /** @deprecated prefer grant_capabilities */
   allow_raw_ports?: boolean;
   grant_capabilities?: string[];
+  /** Required capabilities to defer: stage without granting; start stays blocked until granted. */
+  defer_capabilities?: string[];
+  /** Rewrite HOST:CONTAINER mappings to container-only so the compose stops
+   *  requiring the raw-ports capability. */
+  strip_host_ports?: boolean;
 }
 
 export async function deployComposeProject(payload: ComposeDeployPayload): Promise<string[]> {
@@ -1324,6 +1343,12 @@ export async function deployComposeProject(payload: ComposeDeployPayload): Promi
   if (payload.allow_raw_ports !== undefined) form.append('allow_raw_ports', String(payload.allow_raw_ports));
   if (payload.grant_capabilities && payload.grant_capabilities.length > 0) {
     form.append('grant_capabilities', payload.grant_capabilities.join(','));
+  }
+  if (payload.defer_capabilities && payload.defer_capabilities.length > 0) {
+    form.append('defer_capabilities', payload.defer_capabilities.join(','));
+  }
+  if (payload.strip_host_ports) {
+    form.append('strip_host_ports', 'true');
   }
 
   const res = await fetch(`${API_BASE}/deploy/compose`, {

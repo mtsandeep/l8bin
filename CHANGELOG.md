@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Deferred capabilities** — a deploy requiring un-granted capabilities can stage instead of aborting after the build/upload work is done: the project, images, and compose are stored on the server, and starting stays blocked until the capability is granted (Settings → Capabilities). CLI prompt option and `--defer-capability`; dashboard "Deploy without granting" toggle.
+- **Remove host ports** — explicit `HOST:CONTAINER` mappings can be rewritten to container-only so the compose stops requiring raw-ports (services stay reachable inside the stack): offered at the deploy prompt (CLI `--strip-host-ports`, dashboard deploy form) and as a button on the raw-ports card in Settings → Capabilities for already-deployed projects.
+- **Consistent capability enforcement** — start and auto-wake now refuse with a clear error instead of silently running without host ports or the Docker socket, and any capability grant/revoke syncs to agents immediately.
+- Capability reference page ([docs/topics/capabilities.md](docs/topics/capabilities.md)) and FAQ entry "Why is my deploy asking for raw-ports?".
+
+### Changed
+- Dashboard capability cards simplified — one line with Grant/Revoke, details (what it does / why it's needed / risk) collapsed behind a labeled disclosure, plain-language descriptions throughout.
+- The `network_mode: host` rejection now says what to do: it requires a background project (no public URL) — enable background mode or remove the field.
+
 ## [0.4.30] - 2026-11-21
 
 ### Added

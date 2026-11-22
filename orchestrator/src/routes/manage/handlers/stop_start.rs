@@ -230,6 +230,31 @@ pub async fn start_project(
         return Err((StatusCode::BAD_REQUEST, format!("project '{}' has not been staged yet", project_id)));
     }
 
+    // Capability start gate: a missing grant (deferred or revoked) must block
+    // the start, not silently degrade it.
+    if uses_compose_lifecycle(project.deploy_type.as_ref()) {
+        let missing = crate::capabilities::missing_for_start(&state.db, &project_id)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("capability store error: {e}")))?;
+        if !missing.is_empty() {
+            let detail: Vec<String> = missing
+                .iter()
+                .map(|m| match &m.requested_reason {
+                    Some(reason) => format!("{} — {}", m.info.id, reason),
+                    None => m.info.id.clone(),
+                })
+                .collect();
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!(
+                    "cannot start '{}': compose requires {}. Grant it in Settings → Capabilities, then start again",
+                    project_id,
+                    detail.join("; ")
+                ),
+            ));
+        }
+    }
+
     if project.status == ProjectStatus::Unconfigured {
         if !project_is_staged(&project) {
             return Err((

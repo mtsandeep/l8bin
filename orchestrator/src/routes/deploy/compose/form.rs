@@ -11,6 +11,8 @@ pub(super) struct ComposeForm {
     pub custom_domain: Option<String>,
     pub allow_raw_ports: Option<bool>,
     pub grant_capabilities_raw: Option<String>,
+    pub defer_capabilities_raw: Option<String>,
+    pub strip_host_ports: bool,
     pub compose_yaml: String,
     pub target_services_raw: Option<String>,
     pub stage_only_requested: bool,

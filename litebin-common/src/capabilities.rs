@@ -43,31 +43,23 @@ impl ProjectCapability {
     pub fn description(self) -> &'static str {
         match self {
             ProjectCapability::DockerObserve => {
-                "Allows selected services to read host-wide container information through LiteBin's \
-                 endpoint-allowlisted proxy. The raw Docker socket is never mounted into the workload."
+                "Lets a service read Docker container info on this node through LiteBin's read-only proxy."
             }
             ProjectCapability::HostNetwork => {
-                "Runs approved background services in the host network namespace. \
-                 The service can access host-bound listeners and exposes its own listeners directly."
+                "Runs a background service directly on the host's network, without isolation."
             }
             ProjectCapability::RawPorts => {
-                "Publishes Compose-declared container ports directly on the host (0.0.0.0). \
-                 Required for non-HTTP services (databases, games, UDP) that need host bindings."
+                "Opens ports from your compose directly on the host — for things outside clients \
+                 connect to, like databases or game servers."
             }
         }
     }
 
     pub fn risk(self) -> &'static str {
         match self {
-            ProjectCapability::DockerObserve => {
-                "High — responses may expose host-wide container metadata, environment values, and logs."
-            }
-            ProjectCapability::HostNetwork => {
-                "High — removes network namespace isolation and may expose host services or create listener conflicts."
-            }
-            ProjectCapability::RawPorts => {
-                "Medium — opens host ports and can conflict with other services; LiteBin-reserved ports are still blocked."
-            }
+            ProjectCapability::DockerObserve => "High — can expose info about every container on this node.",
+            ProjectCapability::HostNetwork => "High — no network isolation; the service can reach host services.",
+            ProjectCapability::RawPorts => "Medium — open host ports can conflict with other services.",
         }
     }
 

@@ -26,6 +26,7 @@ import {
   RouteType,
   revokeProjectCapability,
   type ServiceInfo,
+  stripProjectHostPorts,
   updateProjectSettings,
 } from '../../api';
 import GithubMark from '../GithubMark';
@@ -208,7 +209,7 @@ export default function SettingsPopover({
   };
 
   const handleGrantCapability = async (cap: ProjectCapabilityStatus) => {
-    const recreateNote = cap.requires_recreate ? ' A recreate will be required for this to take effect.' : '';
+    const recreateNote = cap.requires_recreate ? ' It applies after the next restart.' : '';
     if (!confirm(`Grant "${cap.label}" to this project?${recreateNote}`)) return;
     setCapabilityActionId(cap.id);
     try {
@@ -224,8 +225,7 @@ export default function SettingsPopover({
   };
 
   const handleRevokeCapability = async (cap: ProjectCapabilityStatus) => {
-    const recreateNote = cap.requires_recreate ? ' A recreate will be required for this to take effect.' : '';
-    if (!confirm(`Revoke "${cap.label}" from this project?${recreateNote}`)) return;
+    if (!confirm(`Revoke "${cap.label}" from this project?`)) return;
     setCapabilityActionId(cap.id);
     try {
       const updated = await revokeProjectCapability(project.id, cap.id);
@@ -234,6 +234,26 @@ export default function SettingsPopover({
       onRefresh();
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Failed to revoke capability');
+    } finally {
+      setCapabilityActionId(null);
+    }
+  };
+
+  const handleStripHostPorts = async () => {
+    if (
+      !confirm(
+        'Remove all host port bindings from this compose? Services stay reachable inside the project — nothing outside the stack connects to those ports anyway.',
+      )
+    )
+      return;
+    setCapabilityActionId('raw-ports');
+    try {
+      const updated = await stripProjectHostPorts(project.id);
+      setCapabilities(updated);
+      showToast('Host port bindings removed', 'success');
+      onRefresh();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to remove host ports');
     } finally {
       setCapabilityActionId(null);
     }
@@ -809,30 +829,23 @@ export default function SettingsPopover({
                     )
                   : catalog;
 
+                // Staged projects say "grant, then start"; running ones "applies after restart".
+                const notStarted = project.status === 'unconfigured' || project.status === 'pending';
+
                 const renderCap = (cap: ProjectCapabilityStatus, opts?: { showReason?: boolean }) => (
                   <div key={cap.id} className="bg-slate-900/50 rounded px-2.5 py-2 space-y-1.5">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs text-slate-200 font-medium">{cap.label}</span>
-                          {cap.granted ? (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/15 text-emerald-400">
-                              Granted
-                            </span>
-                          ) : cap.requested_reason ? (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-amber-500/15 text-amber-400">
-                              Needed
-                            </span>
-                          ) : null}
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-0.5">{cap.description}</p>
-                        {opts?.showReason && cap.requested_reason && (
-                          <p className="text-[10px] text-amber-300/80 mt-1">{cap.requested_reason}</p>
-                        )}
-                        {cap.risk && <p className="text-[10px] text-amber-400/80 mt-1">{cap.risk}</p>}
-                        {cap.requires_recreate && (
-                          <p className="text-[10px] text-slate-500 mt-1">Requires recreate to apply</p>
-                        )}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs text-slate-200 font-medium">{cap.label}</span>
+                        {cap.granted ? (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/15 text-emerald-400">
+                            Granted
+                          </span>
+                        ) : cap.requested_reason ? (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-amber-500/15 text-amber-400">
+                            Needed
+                          </span>
+                        ) : null}
                       </div>
                       {cap.granted ? (
                         <button
@@ -854,6 +867,45 @@ export default function SettingsPopover({
                         </button>
                       )}
                     </div>
+                    <details className="w-full">
+                      <summary className="text-[10px] text-slate-500 cursor-pointer select-none hover:text-slate-400">
+                        Details
+                      </summary>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        <span className="text-slate-500">What it does:</span> {cap.description}
+                      </p>
+                      {opts?.showReason && cap.requested_reason && (
+                        <p className="text-[10px] text-amber-300/80 mt-1">
+                          <span className="text-slate-500">Why it's needed:</span> {cap.requested_reason}
+                        </p>
+                      )}
+                      {cap.risk && (
+                        <p className="text-[10px] text-amber-400/80 mt-1">
+                          <span className="text-slate-500">Risk:</span> {cap.risk}
+                        </p>
+                      )}
+                      {cap.requires_recreate && (
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          {notStarted && !cap.granted
+                            ? 'Grant, then start the project'
+                            : 'Applies after the next restart'}
+                        </p>
+                      )}
+                    </details>
+                    {cap.id === 'raw-ports' && cap.requested_reason && (
+                      <button
+                        type="button"
+                        onClick={handleStripHostPorts}
+                        disabled={capabilityActionId === 'raw-ports'}
+                        className="w-full px-2 py-1 rounded text-[10px] font-medium bg-slate-700/70 text-amber-200 hover:bg-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {capabilityActionId === 'raw-ports' ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          'Remove host ports instead'
+                        )}
+                      </button>
+                    )}
                   </div>
                 );
 
@@ -861,11 +913,11 @@ export default function SettingsPopover({
                   <div className="space-y-3">
                     <div className="space-y-2">
                       <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
-                        Needed by Compose
+                        Needed by your compose
                       </p>
                       {requested.length === 0 ? (
                         <p className="text-[11px] text-slate-500 px-0.5">
-                          This project does not currently request any capabilities.
+                          Nothing needed — this project runs with the default settings.
                         </p>
                       ) : (
                         requested.map((cap) => renderCap(cap, { showReason: true }))
@@ -875,7 +927,7 @@ export default function SettingsPopover({
                     {grantedExtra.length > 0 && (
                       <div className="space-y-2">
                         <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
-                          Granted (not requested by current compose)
+                          Granted (not needed right now)
                         </p>
                         {grantedExtra.map((cap) => renderCap(cap))}
                       </div>

@@ -7,9 +7,17 @@ interface DeployProgressModalProps {
   domain: string;
   isBackground: boolean;
   onClose: () => void;
+  /** Capabilities deferred at deploy time; the project stays staged until granted. */
+  deferredCapabilities?: string[];
 }
 
-export default function DeployProgressModal({ projectId, domain, isBackground, onClose }: DeployProgressModalProps) {
+export default function DeployProgressModal({
+  projectId,
+  domain,
+  isBackground,
+  onClose,
+  deferredCapabilities = [],
+}: DeployProgressModalProps) {
   const [deployLines, setDeployLines] = useState<string[]>([]);
   const hadLogs = useRef(false);
   const [status, setStatus] = useState<ProjectStatus>(ProjectStatus.Deploying);
@@ -77,7 +85,10 @@ export default function DeployProgressModal({ projectId, domain, isBackground, o
     }
   }, []);
 
-  const isSuccess = status === ProjectStatus.Running || (isBackground && status === ProjectStatus.Completed);
+  const isDeferred =
+    deferredCapabilities.length > 0 && (status === ProjectStatus.Unconfigured || status === ProjectStatus.Pending);
+  const isSuccess =
+    status === ProjectStatus.Running || (isBackground && status === ProjectStatus.Completed) || isDeferred;
   const isError = status === ProjectStatus.Error;
   const isDone = isSuccess || isError;
 
@@ -153,7 +164,14 @@ export default function DeployProgressModal({ projectId, domain, isBackground, o
           )}
           {isDone && isSuccess && (
             <div className="mb-2 px-3 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400">
-              {isBackground ? (
+              {isDeferred ? (
+                <>
+                  Staged — the project cannot start until {deferredCapabilities.join(', ')}{' '}
+                  {deferredCapabilities.length === 1 ? 'is' : 'are'} granted. Grant{' '}
+                  {deferredCapabilities.length === 1 ? 'it' : 'them'} in Settings → Capabilities, then start the
+                  project.
+                </>
+              ) : isBackground ? (
                 'Deployment complete.'
               ) : (
                 <>

@@ -19,6 +19,12 @@ pub struct ComposeDeployOpts {
     pub node_id: Option<String>,
     /// Capability ids to grant (e.g. docker-observe, raw-ports).
     pub grant_capabilities: Vec<String>,
+    /// Capability ids to defer: stage without granting; start stays blocked
+    /// until granted.
+    pub defer_capabilities: Vec<String>,
+    /// Rewrite explicit HOST:CONTAINER mappings to container-only so the
+    /// compose stops requiring raw-ports.
+    pub strip_host_ports: bool,
     /// Deploy the whole project without managed HTTP ingress.
     pub is_background: bool,
     /// How to upload images (auto/direct/relay). Mirrors the `--upload` flag.

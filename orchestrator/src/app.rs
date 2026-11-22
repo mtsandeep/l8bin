@@ -111,6 +111,10 @@ pub(crate) fn build_app(state: AppState) -> Router {
             "/projects/{id}/capabilities/{capability}",
             delete(crate::routes::capabilities::revoke_project_capability),
         )
+        .route(
+            "/projects/{id}/capabilities/strip-host-ports",
+            post(crate::routes::capabilities::strip_project_host_ports),
+        )
         .route("/github/repos", get(crate::routes::github::repos::list_repos))
         .route("/github/repos/{owner}/{repo}", get(crate::routes::github::repos::repo_detail))
         .route("/github/repos/{owner}/{repo}/branches", get(crate::routes::github::repos::list_branches))

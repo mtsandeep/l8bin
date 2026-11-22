@@ -4,6 +4,7 @@ pub mod interpolate;
 pub mod mapping;
 pub mod naming;
 pub mod parse;
+pub mod strip;
 pub mod validate;
 
 pub use compat::{
@@ -14,6 +15,7 @@ pub use error::{ComposeError, Result};
 pub use mapping::{BollardMappingOptions, ComposeBollardConfig};
 pub use naming::{bind_source_exposes_docker_socket, container_name, is_docker_socket_source, project_network_name};
 pub use parse::{ComposeFile, ComposeService};
+pub use strip::{HostPortStrip, strip_host_port_bindings};
 
 /// Parse a docker-compose.yaml string into a ComposeFile.
 pub struct ComposeParser;
