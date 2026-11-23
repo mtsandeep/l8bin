@@ -344,6 +344,8 @@ async fn choose_action(
             deploy_existing(client, server, project_dir, port_override, env_source, project).await?
         }
         "Recreate" => {
+            // Recreate restarts from the node's .env — offer a push first.
+            maybe_update_runtime_env(client, server, project_id).await?;
             println!("  :: Recreating {}...", project_id.cyan());
             auth::api_post_json(client, server, &format!("/projects/{}/recreate", project_id), &json!({})).await?;
             println!("  {} Recreated", "✔".green());

@@ -86,9 +86,8 @@ pub(super) async fn build_and_deploy(
     let env_files = super::env::resolve_env_files(project_dir, &env_source, true, false)?;
 
     // Runtime-env checkpoint for single-image redeploys, after build-env selection
-    // (same order as the first-deploy flow). Compose redeploys stage and hit the
-    // full checkpoint on their own.
-    if !is_new_project && detect_compose_file(project_dir).is_none() {
+    // (same order as the first-deploy flow). Compose asks in `deploy_compose`.
+    if !is_new_project {
         super::flow::maybe_update_runtime_env(client, server, project_id).await?;
     }
 
@@ -284,6 +283,12 @@ async fn deploy_compose(
             }
         }
     }
+    // Runtime env must be pushed before submit — the deploy auto-starts on the
+    // server. First deploys stage and ask after submit instead.
+    if !is_new_project {
+        super::flow::maybe_update_runtime_env(client, server, project_id).await?;
+    }
+
     print_building_services(&build_infos);
 
     let upload_mode = resolve_upload_mode(&auth::fetch_online_nodes(client, server).await, node_id, false, upload_flag);

@@ -14,6 +14,9 @@ All notable changes to this project will be documented in this file.
 - Dashboard capability cards simplified — one line with Grant/Revoke, details (what it does / why it's needed / risk) collapsed behind a labeled disclosure, plain-language descriptions throughout.
 - The `network_mode: host` rejection now says what to do: it requires a background project (no public URL) — enable background mode or remove the field.
 
+### Fixed
+- **`ship` now asks for runtime env on redeploys** — compose redeploys and the *Recreate* action offer to push a local `.env` before the deploy auto-starts on the server (single-image redeploys already asked); previously an app whose required runtime variables were skipped at first deploy failed every subsequent redeploy/recreate with a raw interpolation error and no prompt to supply them.
+
 ## [0.4.30] - 2026-11-21
 
 ### Added
