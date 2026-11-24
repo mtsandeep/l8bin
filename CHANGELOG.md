@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - The `network_mode: host` rejection now says what to do: it requires a background project (no public URL) — enable background mode or remove the field.
 
 ### Fixed
+- **Auto-wake brings stacks up in order** — services restarted on wake wait for network and health readiness before dependents start, like full starts.
 - **`ship` now asks for runtime env on redeploys** — compose redeploys and the *Recreate* action offer to push a local `.env` before the deploy auto-starts on the server (single-image redeploys already asked); previously an app whose required runtime variables were skipped at first deploy failed every subsequent redeploy/recreate with a raw interpolation error and no prompt to supply them.
 - **Redeploys with `--env-file` apply the env before the containers start** — fresh projects stage, push, then start.
 

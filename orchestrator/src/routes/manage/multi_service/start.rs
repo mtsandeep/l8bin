@@ -461,6 +461,19 @@ pub async fn start_services(
                                         tracing::warn!(project_id = %run_config.project_id, service = %svc, error = %e, "start: failed to set service running (docker start)");
                                     }
                                     tracing::info!(service = %svc, container_id = %existing_cid, "started existing stopped container");
+
+                                    // Same readiness gates as the create path: `docker start` returns before the
+                                    // container is network-attached or healthy, so dependents must wait.
+                                    if !run_config.host_network
+                                        && docker.is_container_running(existing_cid).await.unwrap_or(false)
+                                        && let Err(e) = docker.wait_for_network_ready(existing_cid).await {
+                                            tracing::warn!(service = %svc, error = %e, "network readiness timeout, continuing");
+                                        }
+                                    if needs_healthy
+                                        && let Err(e) = docker.wait_for_healthy(existing_cid, true).await {
+                                            tracing::warn!(service = %svc, error = %e, "healthcheck failed, continuing");
+                                        }
+
                                     return Ok(StartedService {
                                         service_name: svc.clone(),
                                         container_id: existing_cid.clone(),
