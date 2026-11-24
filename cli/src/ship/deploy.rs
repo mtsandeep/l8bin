@@ -283,8 +283,11 @@ async fn deploy_compose(
             }
         }
     }
-    // Runtime env must be pushed before submit — the deploy auto-starts on the
-    // server. First deploys stage and ask after submit instead.
+    // Build-time env selection first, then the runtime-env checkpoint — same
+    // order as the single-image flow. Runtime env must be pushed before submit:
+    // the deploy auto-starts on the server, while first deploys stage and ask
+    // after submit instead.
+    let root_env_paths = super::env::resolve_env_files(project_dir, &env_source, true, false)?;
     if !is_new_project {
         super::flow::maybe_update_runtime_env(client, server, project_id).await?;
     }
@@ -301,7 +304,7 @@ async fn deploy_compose(
         &compose,
         &build_infos,
         selected_public.as_deref(),
-        env_source,
+        &root_env_paths,
         node_id,
         platform,
         upload_mode,
@@ -442,6 +445,7 @@ pub async fn deploy_compose_noninteractive(
     print_compose_build_summary(&compose, &build_infos);
     print_building_services(&build_infos);
 
+    let root_env_paths = super::env::resolve_env_files(project_dir, &opts.env_source, false, true)?;
     let (resolved_yaml, uploaded_node) = prepare_compose_deployment(
         client,
         server,
@@ -450,7 +454,7 @@ pub async fn deploy_compose_noninteractive(
         &compose,
         &build_infos,
         selected_public.as_deref(),
-        opts.env_source,
+        &root_env_paths,
         opts.node_id.as_deref(),
         platform,
         opts.upload,
@@ -482,7 +486,7 @@ pub async fn deploy_compose_noninteractive(
         &build_infos,
         // Pin to the node the images landed on — "auto" would re-roll the scheduler.
         uploaded_node.as_deref().or(opts.node_id.as_deref()),
-        false,
+        opts.stage_only,
         opts.is_background,
         &capability_choice.grants,
         &capability_choice.deferred,

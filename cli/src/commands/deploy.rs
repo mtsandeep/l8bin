@@ -169,6 +169,21 @@ pub(crate) async fn run(
 
         let target_services = if service.is_empty() { None } else { Some(service) };
 
+        // Runtime env must land before the deploy's auto-start. An existing
+        // project gets the push up front; a fresh one has no project row to
+        // receive it yet, so the deploy stages (no start) and the env push
+        // and start happen after — same for every credential type.
+        let mut env_pushed_early = false;
+        let mut stage_for_env = false;
+        if let Some(ref env_path) = env_file {
+            if existing_project.is_some() {
+                apply_env_file(&client, &server, &project, Some(env_path), out).await?;
+                env_pushed_early = true;
+            } else {
+                stage_for_env = true;
+            }
+        }
+
         // Resolve target platform from node architecture
         let nodes = auth::fetch_online_nodes(&client, &server).await;
         let platform = ship::resolve_platform(&nodes, effective_node.as_deref());
@@ -189,6 +204,7 @@ pub(crate) async fn run(
                 is_background: effective_background,
                 upload,
                 env_source,
+                stage_only: stage_for_env,
             },
             platform.as_deref(),
         )
@@ -200,6 +216,12 @@ pub(crate) async fn run(
         }
 
         if outcome.deferred_capabilities.is_empty() {
+            // Staged above: push env, then start.
+            if stage_for_env {
+                apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
+                auth::api_post_json(&client, &server, &format!("/projects/{project}/start"), &serde_json::json!({}))
+                    .await?;
+            }
             // Poll for completion (2 min timeout, non-interactive)
             let final_status = status::poll_project_status(&client, &server, &project, 120, out.json).await?;
             let url = if effective_background {
@@ -215,8 +237,12 @@ pub(crate) async fn run(
                 outcome.deferred_capabilities.join(", ")
             ));
             finish_deploy(out, &project, Some(ProjectStatus::Unconfigured), None, effective_background, started)?;
+            // Staged without granting: the start stays blocked, but the env
+            // can land now so the grant-then-start flow sees it.
+            if !env_pushed_early {
+                apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
+            }
         }
-        apply_env_file(&client, &server, &project, env_file.as_ref(), out).await?;
     } else {
         // Port is first-deploy only; redeploys keep the stored one. No flag and
         // no stored port: detect from the Dockerfile EXPOSE, never assume 3000.

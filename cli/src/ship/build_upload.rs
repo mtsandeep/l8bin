@@ -7,7 +7,7 @@ use indicatif::HumanBytes;
 
 use crate::auth;
 
-use super::env::{EnvSource, resolve_env_files, service_env_files};
+use super::env::service_env_files;
 use super::public_service::inject_public_label;
 
 #[derive(Clone)]
@@ -209,20 +209,19 @@ pub(super) async fn prepare_compose_deployment(
     compose: &serde_yaml::Value,
     build_infos: &[BuildInfo],
     selected_public: Option<&str>,
-    env_source: EnvSource,
+    root_env_paths: &[PathBuf],
     node_id: Option<&str>,
     platform: Option<&str>,
     mode: crate::upload::UploadMode,
     ci_mode: bool,
 ) -> Result<(String, Option<String>)> {
-    let root_env_paths = resolve_env_files(project_dir, &env_source, !ci_mode, ci_mode)?;
     let (resolved_images, resolved_node) = build_and_upload_services(
         client,
         server,
         project_id,
         project_dir,
         build_infos,
-        &root_env_paths,
+        root_env_paths,
         node_id,
         platform,
         mode,

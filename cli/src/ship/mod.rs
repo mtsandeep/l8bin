@@ -31,4 +31,6 @@ pub struct ComposeDeployOpts {
     pub upload: crate::upload::UploadMode,
     /// Build-time env selection (`--secret` / `--no-env` / auto-discovery).
     pub env_source: EnvSource,
+    /// Stage only: store images + compose without starting.
+    pub stage_only: bool,
 }
