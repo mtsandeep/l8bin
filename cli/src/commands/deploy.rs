@@ -89,6 +89,7 @@ pub(crate) struct DeployArgs {
     pub no_env: bool,
     pub env_file: Option<PathBuf>,
     pub compose: bool,
+    pub compose_file: Vec<String>,
     pub service: Vec<String>,
     pub grant_capability: Vec<String>,
     pub defer_capability: Vec<String>,
@@ -119,6 +120,7 @@ pub(crate) async fn run(
         no_env,
         env_file,
         compose,
+        compose_file,
         service,
         grant_capability,
         defer_capability,
@@ -160,11 +162,17 @@ pub(crate) async fn run(
             .unwrap_or(false);
 
     // Check for compose file (auto-detect or forced via --compose)
-    let compose_file = ship::detect_compose_file(&path);
-    if compose || compose_file.is_some() {
+    for name in compose_file.iter().filter(|s| !s.is_empty()) {
+        if !path.join(name).exists() {
+            bail!("compose file '{name}' not found in {}", path.display());
+        }
+    }
+    let detected_compose =
+        ship::resolve_compose_files(&path, (!compose_file.is_empty()).then_some(compose_file.as_slice()));
+    if compose || detected_compose.is_some() {
         // Reached only when --compose was passed and no compose file was
         // found; with compose == false the outer condition guarantees Some.
-        let Some(compose_name) = compose_file else {
+        let Some(compose_name) = detected_compose else {
             bail!("--compose flag specified but no compose file found in {}", path.display());
         };
 
@@ -194,7 +202,7 @@ pub(crate) async fn run(
             &server,
             &project,
             &path,
-            compose_name,
+            &compose_name,
             true,
             ship::ComposeDeployOpts {
                 target_services,

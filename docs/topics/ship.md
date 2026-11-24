@@ -61,6 +61,30 @@ Destination name: [staging-example-com]
 
 Manage the list with `l8b dest list | add | use | rm` — `list` shows each destination's origin (shared or local) and which is active.
 
+## Variant stacks: picking the compose file
+
+A repo may carry more than one stack — `docker-compose.yml` and `docker-compose.staging.yml` (a smaller variant), say. When `ship` finds several compose files it asks which to deploy and remembers the choice (`compose` key in `l8b.local.toml`):
+
+```
+? Compose file: › docker-compose.yml
+                 docker-compose.staging.yml
+```
+
+The resolution order everywhere: `--compose <file>` flag > the remembered choice > the first well-known name (`compose.yaml`, `docker-compose.yml`, …). Override files (`docker-compose.override.*`) never appear in the picker — but they can be *used* explicitly: several files merge in docker's order (mappings deep-merge, later files win on scalars and replace lists):
+
+```bash
+l8b deploy --compose docker-compose.yml --compose docker-compose.override.yml
+```
+
+```toml
+# l8b.toml / l8b.local.toml — single file or a merged list
+compose = ["docker-compose.yml", "docker-compose.prod.yml"]
+```
+
+> **Note — merge coverage.** LiteBin merges files itself (the Docker daemon has no compose knowledge): mappings deep-merge, later files win on scalars and **replace** lists. This covers the common override patterns, but is not the full `docker compose` spec — key-based list merges (`environment`/`labels` in list form, `volumes` merged by target, `ports` unions) and the `!reset`/`!override` tags or `include:` directive are not supported yet. Redeclare such fields fully in the later file.
+
+Switching a project between stacks is a topology change: delete the project and deploy fresh with the other file.
+
 ## The flow, stage by stage
 
 After the target is known, ship walks the same stages every time.

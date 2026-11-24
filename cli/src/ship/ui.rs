@@ -125,14 +125,6 @@ pub(super) fn resolve_app_port(project_dir: &Path, port_override: Option<u16>) -
     }
 }
 
-pub(super) fn load_compose(project_dir: &Path, compose_name: &str) -> Result<serde_yaml::Value> {
-    println!("  {} Found {} — deploying as multi-service", "🐳".dimmed(), compose_name.cyan());
-
-    let compose_yaml = std::fs::read_to_string(project_dir.join(compose_name))
-        .with_context(|| format!("failed to read {}", compose_name))?;
-    serde_yaml::from_str(&compose_yaml).with_context(|| "failed to parse compose YAML")
-}
-
 pub(super) fn print_compose_build_summary(compose: &serde_yaml::Value, build_infos: &[super::build_upload::BuildInfo]) {
     if build_infos.is_empty() {
         return;
@@ -159,6 +151,83 @@ pub fn detect_compose_file(project_dir: &Path) -> Option<&'static str> {
     litebin_common::types::find_compose_file(project_dir)
 }
 
+/// All compose file candidates: the well-known names first (preference
+/// order), then `docker-compose.*` / `compose.*` variants (override files
+/// excluded — they merge, they are not standalone stacks).
+pub fn detect_compose_files(project_dir: &Path) -> Vec<String> {
+    let mut files: Vec<String> = litebin_common::types::COMPOSE_FILE_NAMES
+        .iter()
+        .filter(|p| project_dir.join(p).exists())
+        .map(|s| s.to_string())
+        .collect();
+    if let Ok(entries) = std::fs::read_dir(project_dir) {
+        let mut variants: Vec<String> = entries
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| {
+                (n.starts_with("docker-compose.") || n.starts_with("compose."))
+                    && (n.ends_with(".yml") || n.ends_with(".yaml"))
+                    && !n.starts_with("docker-compose.override.")
+                    && !files.contains(n)
+            })
+            .collect();
+        variants.sort();
+        files.extend(variants);
+    }
+    files
+}
+
+/// Which compose file a deploy uses: an explicit override, else the stored
+/// `compose` choice, else the first well-known name.
+pub fn resolve_compose_files(project_dir: &Path, compose_override: Option<&[String]>) -> Option<Vec<String>> {
+    let overrides: Vec<String> =
+        compose_override.map(|v| v.iter().filter(|s| !s.is_empty()).cloned().collect()).unwrap_or_default();
+    if !overrides.is_empty() {
+        return Some(overrides);
+    }
+    if let Some(stored) = crate::project_config::load_merged(project_dir).compose {
+        let existing: Vec<String> = stored.into_iter().filter(|f| project_dir.join(f).exists()).collect();
+        if !existing.is_empty() {
+            return Some(existing);
+        }
+    }
+    detect_compose_file(project_dir).map(|f| vec![f.to_string()])
+}
+
+/// Compose merge rules: mappings merge recursively, anything else in the
+/// later file replaces the earlier value (ports, lists, scalars).
+fn merge_compose_value(base: &mut serde_yaml::Value, over: &serde_yaml::Value) {
+    match (base.as_mapping_mut(), over.as_mapping()) {
+        (Some(b), Some(o)) => {
+            for (k, v) in o {
+                match b.get_mut(k) {
+                    Some(existing) => merge_compose_value(existing, v),
+                    None => {
+                        b.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        _ => *base = over.clone(),
+    }
+}
+
+/// Read and merge compose files in order into one document.
+pub(super) fn load_compose_files(project_dir: &Path, names: &[String]) -> Result<serde_yaml::Value> {
+    let label = if names.len() == 1 { names[0].clone() } else { format!("{} (merged in order)", names.join(" + ")) };
+    println!("  {} Found {} — deploying as multi-service", "🐳".dimmed(), label.cyan());
+    let mut merged: Option<serde_yaml::Value> = None;
+    for name in names {
+        let raw = std::fs::read_to_string(project_dir.join(name)).with_context(|| format!("failed to read {name}"))?;
+        let value: serde_yaml::Value = serde_yaml::from_str(&raw).with_context(|| format!("failed to parse {name}"))?;
+        match &mut merged {
+            None => merged = Some(value),
+            Some(m) => merge_compose_value(m, &value),
+        }
+    }
+    merged.ok_or_else(|| anyhow::anyhow!("no compose files given"))
+}
+
 /// Resolve the target Docker platform string from a list of nodes.
 pub fn resolve_platform(nodes: &[crate::auth::NodeInfo], node_id: Option<&str>) -> Option<String> {
     let arch = match node_id {
@@ -180,6 +249,64 @@ mod tests {
     use super::*;
     use crate::auth::NodeInfo;
     use litebin_common::types::NodeStatus;
+
+    #[test]
+    fn compose_candidates_and_resolution() {
+        let dir = std::env::temp_dir().join(format!("l8b-compose-{}-{}", "detect", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["docker-compose.yml", "docker-compose.staging.yml", "docker-compose.override.yml", "README.md"] {
+            std::fs::write(dir.join(f), "x").unwrap();
+        }
+
+        let candidates = detect_compose_files(&dir);
+        assert_eq!(candidates, vec!["docker-compose.yml", "docker-compose.staging.yml"]);
+
+        // Default: the well-known name. Override: the flag(s), then the stored choice.
+        let well_known = vec!["docker-compose.yml".to_string()];
+        assert_eq!(resolve_compose_files(&dir, None), Some(well_known));
+        let pick = vec!["docker-compose.staging.yml".to_string()];
+        assert_eq!(resolve_compose_files(&dir, Some(&pick)), Some(pick.clone()));
+        crate::project_config::set_compose(&dir, "docker-compose.staging.yml").unwrap();
+        assert_eq!(resolve_compose_files(&dir, None), Some(pick));
+
+        // Merged files: mappings deep-merge, later lists/scalars replace.
+        std::fs::write(
+            dir.join("docker-compose.base.yml"),
+            "services:
+  api:
+    image: old
+    environment:
+      A: 1
+      B: 2
+    ports: [\"3000\"]
+  worker:
+    image: w
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("docker-compose.over.yml"),
+            "services:
+  api:
+    image: new
+    environment:
+      B: 9
+    ports: [\"3000:3000\"]
+",
+        )
+        .unwrap();
+        let merged =
+            load_compose_files(&dir, &["docker-compose.base.yml".into(), "docker-compose.over.yml".into()]).unwrap();
+        let api = &merged["services"]["api"];
+        assert_eq!(api["image"].as_str(), Some("new"));
+        assert_eq!(api["environment"]["A"].as_i64(), Some(1));
+        assert_eq!(api["environment"]["B"].as_i64(), Some(9));
+        assert_eq!(api["ports"].as_sequence().unwrap().len(), 1);
+        assert_eq!(merged["services"]["worker"]["image"].as_str(), Some("w"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn node(id: &str, arch: Option<&str>, recommended: bool) -> NodeInfo {
         NodeInfo {

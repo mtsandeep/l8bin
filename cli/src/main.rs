@@ -104,6 +104,10 @@ enum Commands {
         #[arg(long)]
         compose: bool,
 
+        /// Deploy these compose file(s) instead of the auto-detected one, merged in order (repeatable)
+        #[arg(long)]
+        compose_file: Vec<String>,
+
         /// Deploy only specific services (repeatable, compose mode only)
         #[arg(long)]
         service: Vec<String>,
@@ -131,6 +135,10 @@ enum Commands {
         /// Path to project directory (default: current dir)
         #[arg(long, default_value = ".")]
         path: std::path::PathBuf,
+
+        /// Compose file(s) to deploy, merged in order (default: picked when several exist)
+        #[arg(long)]
+        compose: Vec<String>,
 
         /// App port (detected from Dockerfile EXPOSE; prompted otherwise)
         #[arg(long)]
@@ -558,6 +566,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             background,
             path,
             node,
+            compose_file,
             dockerfile,
             cmd,
             memory,
@@ -592,6 +601,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     no_env,
                     env_file,
                     compose,
+                    compose_file,
                     service,
                     grant_capability,
                     defer_capability,
@@ -605,7 +615,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             )
             .await?;
         }
-        Commands::Ship { path, port, secret, no_env } => {
+        Commands::Ship { path, compose, port, secret, no_env } => {
             if ci_mode.enabled {
                 bail!(crate::out::fail(
                     "'ship' is interactive and cannot run in CI/JSON mode",
@@ -725,6 +735,33 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     auth::resolve_target(&cfg, dir)?
                 }
             };
+            // Variant stacks: explicit --compose flags win (merged in order);
+            // several candidates and no remembered choice get a picker.
+            let compose_choice: Option<Vec<String>> = if !compose.is_empty() {
+                for name in &compose {
+                    if !dir.join(name).exists() {
+                        bail!("compose file '{name}' not found in {}", dir.display());
+                    }
+                }
+                Some(compose.clone())
+            } else if project_config::load_merged(dir).compose.is_none() {
+                let candidates = ship::detect_compose_files(dir);
+                if candidates.len() > 1 {
+                    let pick = dialoguer::Select::new()
+                        .with_prompt("Compose file")
+                        .items(&candidates)
+                        .default(0)
+                        .interact()?;
+                    let chosen = candidates[pick].clone();
+                    let _ = project_config::set_compose(dir, &chosen);
+                    Some(vec![chosen])
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let has_session =
                 config::CredentialStore::load().get(&target.server).and_then(|c| c.cookie.clone()).is_some();
             ship::run(
@@ -732,6 +769,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 &target.server,
                 Some(path.to_str().unwrap_or(".")),
                 port,
+                compose_choice.as_deref(),
                 secret,
                 no_env,
                 !has_session,

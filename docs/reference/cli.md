@@ -150,7 +150,7 @@ New projects explicitly choose **Web app / HTTP API** (the default) or **Backgro
 
 When the directory's `l8b.toml` names a project, it is offered (and preselected) as the first choice. With [named destinations](../topics/ship.md#where-it-deploys-anchor-and-destinations) configured, ship lists them first; every deploy records the target back into `l8b.toml` (anchor) or the matching destination in `l8b.local.toml`.
 
-Full walkthrough — destinations, build-time vs runtime env, staging and the resume flow, credential repair: [the `l8b ship` flow](../topics/ship.md).
+Variant stacks (`docker-compose.*.yml`) get a picker — or `--compose <file>` — remembered as the repo's choice. Full walkthrough — destinations, build-time vs runtime env, staging and the resume flow, credential repair: [the `l8b ship` flow](../topics/ship.md).
 
 ```bash
 l8b ship [options]

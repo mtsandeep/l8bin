@@ -9,8 +9,7 @@ use serde_json::json;
 use crate::auth;
 
 use super::ui::{
-    detect_compose_file, print_live_url, print_no_managed_url, project_is_staged, resolve_app_port, short_image,
-    show_env_path, spinner,
+    print_live_url, print_no_managed_url, project_is_staged, resolve_app_port, short_image, show_env_path, spinner,
 };
 
 /// True when an API error is an auth rejection (expired token / 401).
@@ -73,11 +72,13 @@ pub(super) struct ProjectInfo {
     pub public_stats: Option<litebin_common::types::ServiceInfo>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     client: &reqwest::Client,
     server: &str,
     path_override: Option<&str>,
     port_override: Option<u16>,
+    compose_file: Option<&[String]>,
     secret_override: Vec<PathBuf>,
     no_env: bool,
     token_auth: bool,
@@ -87,7 +88,8 @@ pub async fn run(
 
     // Project-bound token: one destination, no New/Existing menu.
     if let Some((project_id, scope)) = bound_token(client, server).await {
-        return scoped_flow(client, server, project_dir, port_override, &env_source, scope, &project_id).await;
+        return scoped_flow(client, server, project_dir, port_override, compose_file, &env_source, scope, &project_id)
+            .await;
     }
 
     let mut server = server.to_string();
@@ -134,11 +136,12 @@ pub async fn run(
     if selection == stored_idx.unwrap_or(usize::MAX) {
         let project = &projects
             [projects.iter().position(|p| stored.as_deref() == Some(p.id.as_str())).expect("offered only when found")];
-        choose_action(&client, &server, project_dir, port_override, &env_source, project, Access::Full).await
+        choose_action(&client, &server, project_dir, port_override, compose_file, &env_source, project, Access::Full)
+            .await
     } else if selection == new_idx {
-        new_project_flow(&client, &server, project_dir, port_override, &env_source, token_auth).await
+        new_project_flow(&client, &server, project_dir, port_override, compose_file, &env_source, token_auth).await
     } else {
-        existing_project_flow(&client, &server, project_dir, &projects, port_override, &env_source).await
+        existing_project_flow(&client, &server, project_dir, &projects, port_override, compose_file, &env_source).await
     }
 }
 
@@ -156,11 +159,13 @@ async fn bound_token(client: &reqwest::Client, server: &str) -> Option<(String, 
 }
 
 /// Project-bound token: show the project, then the actions its scope allows.
+#[allow(clippy::too_many_arguments)]
 async fn scoped_flow(
     client: &reqwest::Client,
     server: &str,
     project_dir: &Path,
     port_override: Option<u16>,
+    compose_file: Option<&[String]>,
     env_source: &super::env::EnvSource,
     scope: TokenScope,
     project_id: &str,
@@ -173,7 +178,17 @@ async fn scoped_flow(
 
     println!("  {} Token is scoped to project {}:", "::".dimmed(), project_id.cyan());
     println!("{}", project_row(&project));
-    choose_action(client, server, project_dir, port_override, env_source, &project, Access::Token { scope }).await
+    choose_action(
+        client,
+        server,
+        project_dir,
+        port_override,
+        compose_file,
+        env_source,
+        &project,
+        Access::Token { scope },
+    )
+    .await
 }
 
 /// The Deploy/Redeploy action: build and deploy the project's image.
@@ -182,12 +197,13 @@ async fn deploy_existing(
     server: &str,
     project_dir: &Path,
     port_override: Option<u16>,
+    compose_file: Option<&[String]>,
     env_source: &super::env::EnvSource,
     project: &ProjectInfo,
 ) -> Result<()> {
     let existing_node = project.node_id.as_deref();
     let is_first = matches!(project.status, ProjectStatus::Pending | ProjectStatus::Unconfigured);
-    let port = if project.is_background || detect_compose_file(project_dir).is_some() {
+    let port = if project.is_background || super::ui::resolve_compose_files(project_dir, compose_file).is_some() {
         None
     } else {
         Some(resolve_app_port(project_dir, port_override)?)
@@ -198,6 +214,7 @@ async fn deploy_existing(
         &project.id,
         project_dir,
         port,
+        compose_file,
         project.is_background,
         env_source.clone(),
         is_first,
@@ -234,6 +251,7 @@ async fn new_project_flow(
     server: &str,
     project_dir: &Path,
     port_override: Option<u16>,
+    compose_file: Option<&[String]>,
     env_source: &super::env::EnvSource,
     token_auth: bool,
 ) -> Result<()> {
@@ -294,6 +312,7 @@ async fn new_project_flow(
         &name,
         project_dir,
         port,
+        compose_file,
         is_background,
         env_source.clone(),
         true,
@@ -321,6 +340,7 @@ async fn existing_project_flow(
     project_dir: &Path,
     projects: &[ProjectInfo],
     port_override: Option<u16>,
+    compose_file: Option<&[String]>,
     env_source: &super::env::EnvSource,
 ) -> Result<()> {
     if projects.is_empty() {
@@ -334,7 +354,8 @@ async fn existing_project_flow(
 
     let idx = Select::new().with_prompt("Select project").items(&items).interact()?;
 
-    choose_action(client, server, project_dir, port_override, env_source, projects[idx], Access::Full).await
+    choose_action(client, server, project_dir, port_override, compose_file, env_source, projects[idx], Access::Full)
+        .await
 }
 
 /// One project row as shown in the select list.
@@ -365,11 +386,13 @@ enum Access {
 }
 
 /// Action menu for a chosen project; `access` decides which actions are offered.
+#[allow(clippy::too_many_arguments)]
 async fn choose_action(
     client: &reqwest::Client,
     server: &str,
     project_dir: &Path,
     port_override: Option<u16>,
+    compose_file: Option<&[String]>,
     env_source: &super::env::EnvSource,
     project: &ProjectInfo,
     access: Access,
@@ -401,7 +424,7 @@ async fn choose_action(
     match actions[action_idx] {
         "Resume deployment" => resume_existing(client, server, project).await?,
         "Deploy" | "Redeploy" => {
-            deploy_existing(client, server, project_dir, port_override, env_source, project).await?
+            deploy_existing(client, server, project_dir, port_override, compose_file, env_source, project).await?
         }
         "Recreate" => {
             // Recreate restarts from the node's .env — offer a push first.

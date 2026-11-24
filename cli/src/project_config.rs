@@ -26,6 +26,10 @@ pub struct ProjectConfig {
     pub server: Option<String>,
     /// Named destination `ship`/`deploy` target; the pointer lives locally.
     pub active: Option<String>,
+    /// Which compose file(s) this repo deploys (a variant, or several merged
+    /// in order); local wins.
+    #[serde(default, deserialize_with = "deserialize_compose")]
+    pub compose: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub destinations: BTreeMap<String, Destination>,
 }
@@ -52,6 +56,7 @@ pub struct Merged {
     pub node: Option<String>,
     pub server: Option<String>,
     pub active: Option<String>,
+    pub compose: Option<Vec<String>>,
     pub destinations: BTreeMap<String, (Destination, Origin)>,
 }
 
@@ -71,6 +76,24 @@ pub fn load(dir: &Path) -> Option<ProjectConfig> {
 pub fn load_local(dir: &Path) -> Option<ProjectConfig> {
     let raw = std::fs::read_to_string(dir.join(LOCAL_FILE_NAME)).ok()?;
     parse(&raw, LOCAL_FILE_NAME)
+}
+
+/// `compose` accepts a single string or an array (merged in order).
+fn deserialize_compose<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Compose {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Option::<Compose>::deserialize(deserializer)? {
+        Some(Compose::One(f)) => Some(vec![f]),
+        Some(Compose::Many(v)) => Some(v),
+        None => None,
+    })
 }
 
 fn parse(raw: &str, file: &str) -> Option<ProjectConfig> {
@@ -99,6 +122,7 @@ pub fn load_merged(dir: &Path) -> Merged {
         node: local.node.or(base.node),
         server: local.server.or(base.server),
         active: local.active.or(base.active),
+        compose: local.compose.or(base.compose),
         destinations,
     }
 }
@@ -227,6 +251,21 @@ pub fn set_active(dir: &Path, name: &str) -> Result<bool> {
 }
 
 /// Remove a destination; clears `active` when it pointed there.
+/// Remember the compose file choice in the local file.
+pub fn set_compose(dir: &Path, name: &str) -> Result<bool> {
+    set_compose_list(dir, vec![name.to_string()])
+}
+
+/// Remember a multi-file (merged) compose choice in the local file.
+pub fn set_compose_list(dir: &Path, names: Vec<String>) -> Result<bool> {
+    let mut cfg = read_or_default(dir, LOCAL_FILE_NAME);
+    if cfg.compose.as_deref() == Some(names.as_slice()) {
+        return Ok(false);
+    }
+    cfg.compose = Some(names);
+    write_file(dir, LOCAL_FILE_NAME, &cfg)
+}
+
 pub fn remove_destination(dir: &Path, name: &str) -> Result<()> {
     let merged = load_merged(dir);
     let Some((_, origin)) = merged.destinations.get(name) else {
@@ -275,6 +314,21 @@ pub(crate) fn render(file: &str, cfg: &ProjectConfig) -> String {
     }
     if let Some(a) = &cfg.active {
         out.push_str(&format!("active = \"{a}\"\n"));
+    }
+    if let Some(files) = &cfg.compose {
+        match files.len() {
+            0 => {}
+            1 => out.push_str(&format!(
+                "compose = \"{}\"
+",
+                files[0]
+            )),
+            _ => out.push_str(&format!(
+                "compose = [{}]
+",
+                files.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", ")
+            )),
+        }
     }
     for (name, dest) in &cfg.destinations {
         out.push_str(&format!("\n[destinations.{name}]\nserver = \"{}\"\n", dest.server));
@@ -417,6 +471,29 @@ mod tests {
         // A deploy to a different server never repoints the anchor.
         assert!(!record_deploy(&dir, "oneoff", None, Some("https://other.io")).unwrap());
         assert_eq!(load(&dir).unwrap().server.as_deref(), Some("https://s.example"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compose_choice_merges_and_persists() {
+        let dir = temp_dir("compose");
+        std::fs::write(
+            dir.join(FILE_NAME),
+            "project = \"myapp\"
+compose = \"docker-compose.prod.yml\"
+",
+        )
+        .unwrap();
+
+        // Committed choice is the default; a local choice overrides it.
+        let prod = vec!["docker-compose.prod.yml".to_string()];
+        let lite = vec!["docker-compose.staging.yml".to_string()];
+        assert_eq!(load_merged(&dir).compose, Some(prod.clone()));
+        set_compose(&dir, "docker-compose.staging.yml").unwrap();
+        assert_eq!(load_merged(&dir).compose, Some(lite.clone()));
+        assert_eq!(load(&dir).unwrap().compose, Some(prod));
+        assert!(!set_compose(&dir, "docker-compose.staging.yml").unwrap());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

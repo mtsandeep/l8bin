@@ -14,8 +14,8 @@ use super::env::EnvSource;
 use super::flow::{await_runtime_config_and_start, poll_deploy_status, resolve_upload_mode, select_target_node};
 use super::public_service::{auto_pick_public_service, pick_public_service};
 use super::ui::{
-    detect_compose_file, load_compose, print_building_services, print_compose_build_summary, resolve_live_url,
-    resolve_platform, show_env_path, spinner, stop_buildkit,
+    print_building_services, print_compose_build_summary, resolve_live_url, resolve_platform, show_env_path, spinner,
+    stop_buildkit,
 };
 use super::validate::validate_compose_for_deploy;
 
@@ -92,6 +92,7 @@ pub(super) async fn build_and_deploy(
     project_id: &str,
     project_dir: &Path,
     port: Option<u16>,
+    compose_file: Option<&[String]>,
     is_background: bool,
     env_source: EnvSource,
     is_new_project: bool,
@@ -105,14 +106,14 @@ pub(super) async fn build_and_deploy(
     let nodes = auth::fetch_online_nodes(client, server).await;
     let upload_mode = resolve_upload_mode(&nodes, selected_node.as_deref(), false, crate::upload::UploadMode::Auto);
 
-    if let Some(compose_name) = detect_compose_file(project_dir) {
+    if let Some(compose_files) = super::ui::resolve_compose_files(project_dir, compose_file) {
         let platform = resolve_platform(&nodes, selected_node.as_deref());
         return deploy_compose(
             client,
             server,
             project_id,
             project_dir,
-            compose_name,
+            &compose_files,
             is_new_project,
             is_background,
             env_source,
@@ -291,7 +292,7 @@ async fn deploy_compose(
     server: &str,
     project_id: &str,
     project_dir: &Path,
-    compose_name: &str,
+    compose_files: &[String],
     is_new_project: bool,
     is_background: bool,
     env_source: EnvSource,
@@ -299,7 +300,7 @@ async fn deploy_compose(
     platform: Option<&str>,
     upload_flag: crate::upload::UploadMode,
 ) -> Result<Option<String>> {
-    let compose = load_compose(project_dir, compose_name)?;
+    let compose = super::ui::load_compose_files(project_dir, compose_files)?;
     let selected_public = if is_background { None } else { pick_public_service(&compose)? };
     let mut build_infos = collect_build_infos(&compose);
     print_compose_build_summary(&compose, &build_infos);
@@ -383,11 +384,12 @@ async fn deploy_compose(
     )
     .await?;
 
+    let compose_label = if compose_files.len() == 1 { compose_files[0].clone() } else { compose_files.join("+") };
     let resp = submit_compose(
         client,
         server,
         project_id,
-        compose_name,
+        &compose_label,
         resolved_yaml,
         is_partial_build,
         &build_infos,
@@ -476,12 +478,12 @@ pub async fn deploy_compose_noninteractive(
     server: &str,
     project_id: &str,
     project_dir: &Path,
-    compose_name: &str,
+    compose_files: &[String],
     _is_new_project: bool,
     opts: ComposeDeployOpts,
     platform: Option<&str>,
 ) -> Result<ComposeDeployOutcome> {
-    let compose = load_compose(project_dir, compose_name)?;
+    let compose = super::ui::load_compose_files(project_dir, compose_files)?;
     let selected_public = if opts.is_background { None } else { auto_pick_public_service(&compose) };
     let mut build_infos = collect_build_infos(&compose);
 
@@ -530,11 +532,12 @@ pub async fn deploy_compose_noninteractive(
         None,
     )
     .await?;
+    let compose_label = if compose_files.len() == 1 { compose_files[0].clone() } else { compose_files.join("+") };
     let resp = submit_compose(
         client,
         server,
         project_id,
-        compose_name,
+        &compose_label,
         resolved_yaml,
         is_partial_build,
         &build_infos,
