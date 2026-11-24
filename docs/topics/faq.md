@@ -401,6 +401,35 @@ The public service is detected automatically — no labels or config needed:
 3. Otherwise, if only one service exposes any port, that one is picked
 4. Otherwise, the project has no public service (internal-only — useful for databases, workers, etc.)
 
+### How do I run one-time jobs (migrations, seeding, admin setup)?
+
+Add them as services. When something waits on the job with `depends_on: { condition: service_completed_successfully }`, LiteBin treats it as a one-shot — it runs to exit 0 before dependents start, no label needed:
+
+```yaml
+services:
+  migrate:
+    image: app
+    command: ["migrate"]
+  api:
+    image: app
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+```
+
+For a fire-and-forget task that nothing waits on — e.g. a seeder that runs *after* the app is healthy — add the `litebin.oneshot` label so LiteBin knows the exit is expected:
+
+```yaml
+services:
+  seed:
+    image: app
+    labels:
+      litebin.oneshot: "true"
+    depends_on:
+      api: { condition: service_healthy }
+```
+
+One-shot jobs show `completed` instead of `stopped` and run again only when their container is removed (redeploy / force recreate) — a still-present exit-0 container is left alone. Full semantics: [multi-service → dependency conditions](multi-service.md#dependency-conditions).
+
 ### LiteBin-reserved ports (even with Allow raw ports)
 
 With **Allow raw ports** enabled, an explicit `HOST:CONTAINER` mapping binds the host port you chose (e.g., `ports: - "25565:25565/udp"` for a Minecraft server; `"8080:25565/udp"` would bind host 8080). If that host port is already in use on the node, the deploy fails with a clear message — change the mapping or expose the service via a route instead.
