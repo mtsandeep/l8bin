@@ -47,12 +47,24 @@ pub fn client_for(auth: String) -> Result<reqwest::Client> {
 }
 
 /// Resolve which server this command targets and build a client with that
-/// server's credential. Resolution order: `--server`/L8B_SERVER > `l8b.toml`
-/// `server` > the single stored login. Ambiguity is a refusal that lists the
-/// choices — never a silent default.
+/// server's credential. Resolution order: `--server`/L8B_SERVER > the active
+/// destination's server > `l8b.toml` `server` > the single stored login.
+/// Ambiguity is a refusal that lists the choices — never a silent default.
 pub fn resolve_target(cfg: &CliConfig, dir: &std::path::Path) -> Result<Target> {
     let store = CredentialStore::load();
-    let toml_server = crate::project_config::load(dir).and_then(|c| c.server);
+    // Several destinations, nothing selecting one: refuse (ship prompts).
+    if cfg.server.is_none() {
+        let merged = crate::project_config::load_merged(dir);
+        if merged.destinations.len() > 1 && merged.active_destination().is_none() && merged.server.is_none() {
+            let names = merged.destinations.keys().cloned().collect::<Vec<_>>().join(", ");
+            return Err(anyhow::anyhow!(
+                "multiple destinations configured ({names}) with none active — pick one with `l8b dest use <name>`, \
+                 or set `active` in {}",
+                crate::project_config::LOCAL_FILE_NAME
+            ));
+        }
+    }
+    let toml_server = crate::project_config::resolve_server(dir);
     let (server, auth) = pick_server(cfg.server.as_deref(), toml_server.as_deref(), cfg.token.as_deref(), &store)?;
     Ok(Target { server, client: client_for(auth)? })
 }

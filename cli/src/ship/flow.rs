@@ -13,6 +13,51 @@ use super::ui::{
     show_env_path, spinner,
 };
 
+/// True when an API error is an auth rejection (expired token / 401).
+fn is_auth_rejected(e: &anyhow::Error) -> bool {
+    let msg = format!("{e:#}").to_lowercase();
+    msg.contains("401") || msg.contains("unauthorized") || msg.contains("expired")
+}
+
+/// Offer to fix rejected credentials inline: re-pair, switch to another stored
+/// server, or add a new one. Replaces `client`/`server` and returns true when
+/// the caller should retry; false on cancel.
+async fn repair_credentials(client: &mut reqwest::Client, server: &mut String) -> Result<bool> {
+    let mut items = vec![format!("Re-pair with {server}")];
+    let others: Vec<String> = crate::config::CredentialStore::load()
+        .logged_in_servers()
+        .into_iter()
+        .filter(|s| **s != crate::config::normalize_server(server))
+        .cloned()
+        .collect();
+    items.extend(others.iter().cloned());
+    let add_idx = items.len();
+    items.push("Add a new server…".to_string());
+    let cancel_idx = items.len();
+    items.push("Cancel".to_string());
+    let pick = Select::new().with_prompt("Credentials rejected").items(&items).default(0).interact()?;
+
+    let re_pair = pick == 0;
+    if pick == cancel_idx {
+        return Ok(false);
+    }
+    if pick == add_idx {
+        let url: String = dialoguer::Input::new().with_prompt("Server URL").interact_text()?;
+        *server = crate::config::normalize_server(&url);
+    } else if !re_pair {
+        *server = others[pick - 1].clone();
+    }
+
+    let store = crate::config::CredentialStore::load();
+    let paired = store.get(server).is_some_and(|c| c.auth_header().is_some());
+    if re_pair || !paired {
+        auth::login_interactive(server, "manage").await?;
+    }
+    let auth = crate::config::CredentialStore::load().get(server).and_then(|c| c.auth_header()).unwrap_or_default();
+    *client = auth::client_for(auth)?;
+    Ok(true)
+}
+
 #[derive(serde::Deserialize)]
 pub(super) struct ProjectInfo {
     pub id: String,
@@ -45,14 +90,29 @@ pub async fn run(
         return scoped_flow(client, server, project_dir, port_override, &env_source, scope, &project_id).await;
     }
 
-    let projects_json = auth::api_get(client, server, "/projects").await.unwrap_or_else(|e| {
-        println!("  {} Could not list projects: {}", "!".yellow(), e);
-        serde_json::json!([])
-    });
+    let mut server = server.to_string();
+    let mut client = client.clone();
+    let projects_json = loop {
+        match auth::api_get(&client, &server, "/projects").await {
+            Ok(json) => break json,
+            Err(e) if is_auth_rejected(&e) => {
+                if !repair_credentials(&mut client, &mut server).await? {
+                    anyhow::bail!(
+                        "credentials for {server} were rejected — pair again with `l8b setup --server {server}`"
+                    );
+                }
+            }
+            Err(e) => {
+                println!("  {} Could not list projects: {}", "!".yellow(), e);
+                break serde_json::json!([]);
+            }
+        }
+    };
     let projects: Vec<ProjectInfo> = serde_json::from_value(projects_json).unwrap_or_default();
 
-    // A repo already bound by l8b.toml ships to that project by default.
-    let stored = crate::project_config::load(project_dir).and_then(|c| c.project);
+    // A repo already bound by l8b.toml (or the active destination) ships to
+    // that project by default.
+    let stored = crate::project_config::resolve_stored_project(project_dir);
     let mut choices: Vec<String> = Vec::new();
     let mut stored_idx: Option<usize> = None;
     if let Some(id) = stored.as_deref().filter(|id| projects.iter().any(|p| p.id == *id)) {
@@ -74,11 +134,11 @@ pub async fn run(
     if selection == stored_idx.unwrap_or(usize::MAX) {
         let project = &projects
             [projects.iter().position(|p| stored.as_deref() == Some(p.id.as_str())).expect("offered only when found")];
-        choose_action(client, server, project_dir, port_override, &env_source, project, Access::Full).await
+        choose_action(&client, &server, project_dir, port_override, &env_source, project, Access::Full).await
     } else if selection == new_idx {
-        new_project_flow(client, server, project_dir, port_override, &env_source, token_auth).await
+        new_project_flow(&client, &server, project_dir, port_override, &env_source, token_auth).await
     } else {
-        existing_project_flow(client, server, project_dir, &projects, port_override, &env_source).await
+        existing_project_flow(&client, &server, project_dir, &projects, port_override, &env_source).await
     }
 }
 

@@ -126,7 +126,7 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = upload::UploadMode::Auto)]
         upload: upload::UploadMode,
     },
-    /// Interactive deploy — guided flow for new or existing projects
+    /// Interactive deploy — the one command that runs everything: projects, destinations, env, capabilities, lifecycle
     Ship {
         /// Path to project directory (default: current dir)
         #[arg(long, default_value = ".")]
@@ -300,6 +300,11 @@ enum Commands {
         #[command(subcommand)]
         action: EnvAction,
     },
+    /// Manage named deploy destinations (server + project per name)
+    Dest {
+        #[command(subcommand)]
+        action: DestAction,
+    },
     /// Manage CLI configuration
     Config {
         #[command(subcommand)]
@@ -472,6 +477,39 @@ enum EnvAction {
     },
 }
 
+#[derive(Subcommand)]
+enum DestAction {
+    /// List destinations and which is active
+    List,
+    /// Add a destination (saved to l8b.local.toml, or l8b.toml with --commit)
+    Add {
+        /// Destination name (lowercase letters, digits, hyphens)
+        name: Option<String>,
+        /// Server URL
+        #[arg(long)]
+        server: Option<String>,
+        /// Project ID on that server (optional — created on first deploy)
+        #[arg(long)]
+        project: Option<String>,
+        /// Node ID (optional)
+        #[arg(long)]
+        node: Option<String>,
+        /// Write to l8b.toml (shared) instead of the local file
+        #[arg(long)]
+        commit: bool,
+    },
+    /// Point `active` at a destination
+    Use {
+        /// Destination name
+        name: String,
+    },
+    /// Remove a destination
+    Rm {
+        /// Destination name
+        name: String,
+    },
+}
+
 #[tokio::main]
 async fn main() {
     // --generate-markdown: print CLI docs and exit (for docs generation)
@@ -574,9 +612,70 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     "use `l8b deploy --project <id>`"
                 ));
             }
-            let cfg = config::CliConfig::load(cli.server.as_deref(), None);
             let dir = std::path::Path::new(&path);
-            let toml_server = project_config::load(dir).and_then(|c| c.server);
+
+            // One destination is used silently, several are offered (default
+            // = active); picking moves the pointer.
+            let mut cfg = config::CliConfig::load(cli.server.as_deref(), None);
+            if cli.server.is_none() {
+                let merged = project_config::load_merged(dir);
+                let names: Vec<String> = merged.destinations.keys().cloned().collect();
+                let chosen: Option<String> = match names.len() {
+                    0 => None,
+                    1 => Some(names[0].clone()),
+                    _ => {
+                        let mut items: Vec<String> = names
+                            .iter()
+                            .map(|n| {
+                                let (d, _) = &merged.destinations[n];
+                                let project = d.project.as_deref().unwrap_or("(created on first deploy)");
+                                format!("{n}  {}  {project}", d.server)
+                            })
+                            .collect();
+                        let add_idx = items.len();
+                        items.push("Add a destination…".to_string());
+                        let other_idx = items.len();
+                        items.push("Other server (not saved)…".to_string());
+                        let default_idx =
+                            merged.active.as_deref().and_then(|a| names.iter().position(|n| n == a)).unwrap_or(0);
+                        let pick = dialoguer::Select::new()
+                            .with_prompt("Deploy to")
+                            .items(&items)
+                            .default(default_idx)
+                            .interact()?;
+                        if pick == add_idx {
+                            let (name, dest) = commands::dest::add(
+                                commands::dest::AddArgs {
+                                    name: None,
+                                    server: None,
+                                    project: None,
+                                    node: None,
+                                    commit: false,
+                                },
+                                dir,
+                            )?;
+                            cfg = config::CliConfig::load(Some(&dest.server), None);
+                            Some(name)
+                        } else if pick == other_idx {
+                            let server: String = dialoguer::Input::new()
+                                .with_prompt("Server URL")
+                                .default(cfg.server.clone().unwrap_or_default())
+                                .interact_text()?;
+                            cfg = config::CliConfig::load(Some(&server), None);
+                            None
+                        } else {
+                            let name = names[pick].clone();
+                            let (dest, _) = &merged.destinations[&name];
+                            cfg = config::CliConfig::load(Some(&dest.server), None);
+                            Some(name)
+                        }
+                    }
+                };
+                if let Some(name) = &chosen {
+                    let _ = project_config::set_active(dir, name);
+                }
+            }
+            let toml_server = project_config::resolve_server(dir);
             let target = match auth::resolve_target(&cfg, dir) {
                 Ok(t) => t,
                 Err(e) => {
@@ -638,6 +737,17 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                 !has_session,
             )
             .await?;
+        }
+        Commands::Dest { action } => {
+            let dir = std::path::Path::new(".");
+            match action {
+                DestAction::List => commands::dest::list(dir)?,
+                DestAction::Add { name, server, project, node, commit } => {
+                    commands::dest::add(commands::dest::AddArgs { name, server, project, node, commit }, dir)?;
+                }
+                DestAction::Use { name } => commands::dest::use_destination(&name, dir)?,
+                DestAction::Rm { name } => commands::dest::remove(&name, dir)?,
+            }
         }
         Commands::Init { project, node, server, mcp, agents, force, path } => {
             commands::init::run(

@@ -6,6 +6,7 @@ const DOC_MAP = {
   // External pages — open in a new tab (marked with an arrow in the sidebar)
   'quickstart': '/quickstart.html',
   'agents': '/agents.html',
+  'ship': '/docs/guides/ship.md',
   'multi-service': '/docs/guides/multi-service.md',
   'multi-server': '/docs/guides/multi-server.md',
   'import-containers': '/docs/guides/import-containers.md',

@@ -47,8 +47,13 @@ pub(crate) async fn run(args: InitArgs, ci_mode: &CiMode, out: &Out) -> Result<(
 
     let server = pick_init_server(args.server.as_deref(), ci_mode)?;
 
-    let toml = crate::project_config::render(Some(&project), args.node.as_deref(), server.as_deref());
-    std::fs::write(&toml_path, toml)?;
+    let cfg = crate::project_config::ProjectConfig {
+        project: Some(project),
+        node: args.node.clone(),
+        server: server.clone(),
+        ..Default::default()
+    };
+    std::fs::write(&toml_path, crate::project_config::render(crate::project_config::FILE_NAME, &cfg))?;
     out.note(&format!("Wrote {}", toml_path.display()));
 
     if args.mcp {

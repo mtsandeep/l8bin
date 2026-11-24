@@ -139,6 +139,7 @@ pub(crate) async fn run(
 
     // Resolve effective node: project's sticky node_id takes precedence over --node flag
     let existing_project = auth::api_get(&client, &server, &format!("/projects/{}", project)).await.ok();
+    let dest_node = project_config::load_merged(&path).active_destination().and_then(|(_, d)| d.node.clone());
     let effective_node = if let Some(proj_json) = existing_project.as_ref() {
         let existing_node = proj_json.get("node_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
         if let Some(pinned) = existing_node
@@ -147,9 +148,9 @@ pub(crate) async fn run(
         {
             eprintln!("  Note: --node ignored, project is pinned to node '{}'", pinned);
         }
-        existing_node.or(node.as_deref()).map(|s| s.to_string())
+        existing_node.or(node.as_deref()).or(dest_node.as_deref()).map(|s| s.to_string())
     } else {
-        node.clone()
+        node.clone().or(dest_node)
     };
     let effective_background = background
         || existing_project

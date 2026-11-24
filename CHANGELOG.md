@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Multiple deploy destinations** — `l8b dest` manages named targets (server + project) in `l8b.toml` and the gitignored `l8b.local.toml`; `ship` offers the list when several exist, every command follows the active one, and a deploy to an unsaved server offers to save it as a destination.
 - **Deferred capabilities** — a deploy requiring un-granted capabilities can stage instead of aborting after the build/upload work is done: the project, images, and compose are stored on the server, and starting stays blocked until the capability is granted (Settings → Capabilities). CLI prompt option and `--defer-capability`; dashboard "Deploy without granting" toggle.
 - **Remove host ports** — explicit `HOST:CONTAINER` mappings can be rewritten to container-only so the compose stops requiring raw-ports (services stay reachable inside the stack): offered at the deploy prompt (CLI `--strip-host-ports`, dashboard deploy form) and as a button on the raw-ports card in Settings → Capabilities for already-deployed projects.
 - **Consistent capability enforcement** — start and auto-wake now refuse with a clear error instead of silently running without host ports or the Docker socket, and any capability grant/revoke syncs to agents immediately.

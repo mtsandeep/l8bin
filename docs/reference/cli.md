@@ -144,11 +144,13 @@ l8b deploy --project myapp --compose
 
 ### `l8b ship`
 
-Interactive deploy — guided flow for deploying a new or existing project. Requires a prior `l8b login` session.
+The one command that runs everything — deploy new or existing projects, switch destinations, push env, grant capabilities, manage lifecycle, all interactively. Requires a prior `l8b login` session.
 
 New projects explicitly choose **Web app / HTTP API** (the default) or **Background project**. Background projects skip public service and port prompts and have no managed URL.
 
-When the directory's `l8b.toml` names a project, it is offered (and preselected) as the first choice; every successful ship writes the deployed project back into `l8b.toml`, so a repo ships to the same project from the second run on.
+When the directory's `l8b.toml` names a project, it is offered (and preselected) as the first choice. With [named destinations](../topics/ship.md#where-it-deploys-anchor-and-destinations) configured, ship lists them first; every deploy records the target back into `l8b.toml` (anchor) or the matching destination in `l8b.local.toml`.
+
+Full walkthrough — destinations, build-time vs runtime env, staging and the resume flow, credential repair: [the `l8b ship` flow](../topics/ship.md).
 
 ```bash
 l8b ship [options]
@@ -256,6 +258,20 @@ l8b backup status | enable | disable
 l8b backup add-s3 | remove-s3
 l8b backup restore | revert
 ```
+
+### `l8b dest`
+
+Manage named deploy destinations — server + project pairs stored in `l8b.toml` (shared, with `--commit`) and the gitignored `l8b.local.toml`. Every command follows the `active` destination; `ship` offers the list when several exist.
+
+```bash
+l8b dest list                                  # name, server, project, origin, active
+l8b dest add sandbox --server http://localhost:5080 --project myapp
+l8b dest add prod --server https://dash.example.com --commit   # shared via l8b.toml
+l8b dest use sandbox                           # move the active pointer
+l8b dest rm old-staging
+```
+
+Details and the full flow: [the `l8b ship` flow](../topics/ship.md).
 
 ### `l8b config set`
 

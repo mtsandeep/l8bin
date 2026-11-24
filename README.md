@@ -129,6 +129,7 @@ Full documentation lives at **[l8bin.com/docs](https://l8bin.com/docs)** and is 
 | Quick start | [l8bin.com/quickstart](https://l8bin.com/quickstart) |
 | Architecture | [docs/architecture/architecture.md](docs/architecture/architecture.md) |
 | Design decisions | [docs/architecture/decisions.md](docs/architecture/decisions.md) |
+| The `ship` flow (interactive deploy) | [docs/topics/ship.md](docs/topics/ship.md) |
 | FAQ / troubleshooting | [docs/topics/faq.md](docs/topics/faq.md) |
 | CLI reference | [docs/reference/cli.md](docs/reference/cli.md) |
 | REST API | [API docs](https://l8bin.com/docs) · [openapi.json](https://l8bin.com/docs/openapi.json) |

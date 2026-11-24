@@ -33,6 +33,56 @@ fn record_ship_deploy(project_dir: &Path, project_id: &str, node: Option<&str>, 
         Ok(false) => {}
         Err(e) => println!("  {} Could not write {}: {}", "!".yellow(), crate::project_config::FILE_NAME, e),
     }
+    offer_save_destination(project_dir, project_id, node, server);
+}
+
+/// Offer to save a server no destination or anchor claims as a destination.
+fn offer_save_destination(project_dir: &Path, project_id: &str, node: Option<&str>, server: &str) {
+    let merged = crate::project_config::load_merged(project_dir);
+    let known = merged.destinations.values().any(|(d, _)| d.server == server)
+        || (merged.destinations.is_empty() && merged.server.as_deref() == Some(server));
+    if known {
+        return;
+    }
+
+    let confirmed = dialoguer::Confirm::new()
+        .with_prompt(format!("Save '{}' as a destination for this repo?", server))
+        .default(true)
+        .interact()
+        .unwrap_or(false);
+    if !confirmed {
+        println!("  {} Not saved — rerun ship to target it again", "::".dimmed());
+        return;
+    }
+
+    let default_name = crate::project_config::destination_name_from_url(server);
+    let name: String = dialoguer::Input::new()
+        .with_prompt("Destination name")
+        .default(default_name)
+        .validate_with(|s: &String| {
+            let ok = !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            if ok { Ok(()) } else { Err("lowercase letters, digits, hyphens only") }
+        })
+        .interact_text()
+        .unwrap_or_default();
+    if name.is_empty() {
+        return;
+    }
+
+    let dest = crate::project_config::Destination {
+        server: server.to_string(),
+        project: Some(project_id.to_string()),
+        node: node.map(str::to_string),
+    };
+    match crate::project_config::save_destination(project_dir, &name, dest) {
+        Ok(_) => println!(
+            "  {} Saved destination '{}' → {} (local, not committed) — future ships can pick it from the list",
+            "✓".green(),
+            name,
+            crate::project_config::LOCAL_FILE_NAME
+        ),
+        Err(e) => println!("  {} Could not save destination: {}", "!".yellow(), e),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -47,7 +97,11 @@ pub(super) async fn build_and_deploy(
     is_new_project: bool,
     node_id: Option<&str>,
 ) -> Result<Option<String>> {
-    let selected_node = select_target_node(client, server, node_id).await?;
+    // The active destination may pin a node; an existing project's sticky node
+    // (node_id) still wins, matching `deploy --node` precedence.
+    let dest_node =
+        crate::project_config::load_merged(project_dir).active_destination().and_then(|(_, d)| d.node.clone());
+    let selected_node = select_target_node(client, server, dest_node.as_deref().or(node_id)).await?;
     let nodes = auth::fetch_online_nodes(client, server).await;
     let upload_mode = resolve_upload_mode(&nodes, selected_node.as_deref(), false, crate::upload::UploadMode::Auto);
 
