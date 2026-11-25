@@ -197,9 +197,9 @@ async fn run_export(
     tokio::fs::create_dir_all(&tmp).await?;
     tokio::fs::create_dir_all(copy_engine::exports_dir()).await?;
 
-    // 1. Stop for a consistent snapshot.
+    // 1. Stop for a consistent snapshot; the hold lasts through step 3.
     logs(state, project_id, "stopping for export snapshot");
-    copy_engine::stop_on_source(state, project_id, &source).await?;
+    let source_hold = copy_engine::stop_on_source(state, project_id, &source).await?;
 
     // 2. Manifest.
     let export_source = manifest::ExportSource {
@@ -267,9 +267,12 @@ async fn run_export(
         }
     };
     bundle::write_bundle(&out, manifest_json, next).await?;
+    let stopped_any = source_hold.stopped_any;
+    // Before the restart: `start_project` takes the same operation lock.
+    drop(source_hold);
 
     // 4. Restart the source if it was running.
-    if was_running {
+    if was_running || stopped_any {
         logs(state, project_id, "restarting source");
         let _ = start_project(axum::extract::State(state.clone()), axum::extract::Path(project_id.to_string()))
             .await

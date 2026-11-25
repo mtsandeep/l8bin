@@ -37,7 +37,24 @@ impl DockerManager {
 
     /// Wait until a one-shot container exits successfully (exit code 0).
     /// Polls inspect every 500ms with a 10-minute timeout (migrations can be slow).
+    /// On a non-zero exit it is restarted once: a dependency can pass its
+    /// healthcheck a moment before it is fully ready.
     pub async fn wait_for_completed_successfully(&self, container_id: &str) -> anyhow::Result<()> {
+        if let Err(first) = self.wait_for_exit_zero(container_id).await {
+            tracing::warn!(container = %container_id, error = %first, "one-shot failed, restarting once");
+            use bollard::query_parameters::StartContainerOptions;
+            self.docker
+                .start_container(container_id, None::<StartContainerOptions>)
+                .await
+                .map_err(|e| anyhow::anyhow!("one-shot restart failed: {e} (first failure: {first})"))?;
+            self.wait_for_exit_zero(container_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e} (restarted once after: {first})"))?;
+        }
+        Ok(())
+    }
+
+    async fn wait_for_exit_zero(&self, container_id: &str) -> anyhow::Result<()> {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(600);
         loop {
             let info = self.docker.inspect_container(container_id, None).await?;

@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-
-use bollard::query_parameters::{
-    ListContainersOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
-};
+use bollard::query_parameters::{RemoveContainerOptions, StartContainerOptions, StopContainerOptions};
 
 use super::super::DockerErrorKind;
 use super::super::DockerManager;
@@ -96,9 +92,16 @@ impl DockerManager {
     }
 
     pub async fn stop_container(&self, container_id: &str) -> anyhow::Result<()> {
-        tracing::info!(container_id = %container_id, "stopping container");
-        if let Err(error) =
-            self.docker.stop_container(container_id, Some(StopContainerOptions { t: Some(2), signal: None })).await
+        self.stop_container_with_grace(container_id, 2).await
+    }
+
+    /// Stop a container, allowing `grace_secs` for a clean exit before SIGKILL.
+    pub async fn stop_container_with_grace(&self, container_id: &str, grace_secs: i32) -> anyhow::Result<()> {
+        tracing::info!(container_id = %container_id, grace_secs, "stopping container");
+        if let Err(error) = self
+            .docker
+            .stop_container(container_id, Some(StopContainerOptions { t: Some(grace_secs), signal: None }))
+            .await
         {
             if is_idempotent_container_stop_error(&error) {
                 tracing::debug!(container_id = %container_id, "container already stopped or absent");
@@ -129,22 +132,13 @@ impl DockerManager {
         Ok(())
     }
 
-    /// Remove container by project name (litebin-<project_id>)
+    /// Remove the single-service container named `litebin-<project_id>`
+    /// (idempotent — no error if not found).
     pub async fn remove_by_name(&self, project_id: &str) -> anyhow::Result<()> {
-        let name = format!("litebin-{}", project_id);
-
-        let mut filters = HashMap::new();
-        filters.insert("name".to_string(), vec![name]);
-        let options = ListContainersOptions { all: true, filters: Some(filters), ..Default::default() };
-
-        let containers = self.docker.list_containers(Some(options)).await?;
-        for container in containers {
-            if let Some(id) = container.id {
-                self.remove_container(&id).await?;
-            }
+        match self.find_container_by_name(&format!("litebin-{project_id}")).await? {
+            Some(id) => self.remove_container(&id).await,
+            None => Ok(()),
         }
-
-        Ok(())
     }
 
     /// Remove container by service name using the centralized naming convention.
@@ -160,25 +154,17 @@ impl DockerManager {
 
     /// Remove a container by its exact Docker name (idempotent — no error if not found).
     async fn remove_by_exact_name(&self, name: &str) -> anyhow::Result<()> {
-        let mut filters = HashMap::new();
-        filters.insert("name".to_string(), vec![name.to_string()]);
-        let options = ListContainersOptions { all: true, filters: Some(filters), ..Default::default() };
-
-        let containers = self.docker.list_containers(Some(options)).await?;
-        for container in containers {
-            if let Some(id) = container.id {
-                self.remove_container(&id).await?;
-            }
+        match self.find_container_by_name(name).await? {
+            Some(id) => self.remove_container(&id).await,
+            None => Ok(()),
         }
-
-        Ok(())
     }
 
     /// Clean up all resources for a project: containers, volumes, network, and project directory.
     /// Used by both orchestrator (local delete) and agent (remote delete).
     pub async fn cleanup_project_resources(&self, project_id: &str, volumes: &[String]) -> anyhow::Result<()> {
         let mut cleanup_errors = Vec::new();
-        // 1. Stop + remove all containers matching the project prefix
+        // 1. Stop + remove this project's service containers (`litebin-<id>.<service>`)
         let [prefix, single_name] = project_cleanup_container_prefixes(project_id);
         match self.list_containers_by_prefix(&prefix).await {
             Ok(container_ids) => {
@@ -194,18 +180,17 @@ impl DockerManager {
             Err(e) => cleanup_errors.push(format!("list project containers: {e}")),
         }
 
-        // 2. Also try single-service container name
-        match self.list_containers_by_prefix(&single_name).await {
-            Ok(single_ids) => {
-                for cid in &single_ids {
-                    let _ = self.stop_container(cid).await;
-                    if let Err(e) = self.remove_container(cid).await
-                        && DockerErrorKind::from_anyhow(&e) != DockerErrorKind::NotFound
-                    {
-                        cleanup_errors.push(format!("remove container {cid}: {e}"));
-                    }
+        // 2. Also the single-service container (`litebin-<id>`, no service suffix)
+        match self.find_container_by_name(&single_name).await {
+            Ok(Some(cid)) => {
+                let _ = self.stop_container(&cid).await;
+                if let Err(e) = self.remove_container(&cid).await
+                    && DockerErrorKind::from_anyhow(&e) != DockerErrorKind::NotFound
+                {
+                    cleanup_errors.push(format!("remove container {cid}: {e}"));
                 }
             }
+            Ok(None) => {}
             Err(e) => cleanup_errors.push(format!("list single-service container: {e}")),
         }
 

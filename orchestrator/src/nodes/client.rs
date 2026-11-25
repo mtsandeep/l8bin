@@ -485,6 +485,18 @@ impl AgentClient {
         self.anonymous_volume_names_within(container_id, DEFAULT_AGENT_TIMEOUT).await
     }
 
+    /// POST /volumes/remove — delete a named volume on the agent.
+    pub async fn remove_volume(&self, volume: &str) -> Result<(), AgentClientError> {
+        let _ = self
+            .post_json::<serde::de::IgnoredAny>(
+                litebin_common::agent_api::VOLUME_REMOVE_PATH,
+                &litebin_common::agent_api::RemoveVolumeRequest { volume: volume.to_string() },
+                DEFAULT_AGENT_TIMEOUT,
+            )
+            .await?;
+        Ok(())
+    }
+
     /// [`AgentClient::anonymous_volume_names`] with a per-call timeout (stats poll path).
     pub async fn anonymous_volume_names_within(
         &self,

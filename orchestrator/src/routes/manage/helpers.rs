@@ -551,11 +551,11 @@ B=\"changed\"
         #[tokio::test]
         async fn shared_service_digest_is_referenced() {
             let db = setup_db().await;
-            insert_project(&db, "gophercrm", None, None).await;
-            insert_service(&db, "gophercrm", "bootstrap", "sha256:c2524aeb").await;
-            insert_service(&db, "gophercrm", "ui", "sha256:c2524aeb").await;
-            insert_project(&db, "gophercrm-edit-ad6b", None, None).await;
-            insert_service(&db, "gophercrm-edit-ad6b", "bootstrap", "sha256:c2524aeb").await;
+            insert_project(&db, "myapp", None, None).await;
+            insert_service(&db, "myapp", "bootstrap", "sha256:c2524aeb").await;
+            insert_service(&db, "myapp", "ui", "sha256:c2524aeb").await;
+            insert_project(&db, "myapp-edit-ad6b", None, None).await;
+            insert_service(&db, "myapp-edit-ad6b", "bootstrap", "sha256:c2524aeb").await;
 
             assert!(
                 image_referenced_by_other_projects(&db, "local", "sha256:c2524aeb").await.unwrap(),

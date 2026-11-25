@@ -6,6 +6,22 @@ use futures_util::StreamExt;
 use super::super::{DockerManager, RunningContainer};
 use crate::types::{container_name, parse_container_name};
 
+/// Whether a container's name (minus the leading `/`) passes `matches`. The
+/// daemon's `name` filter is an unanchored regex, so names are re-checked here.
+pub(crate) fn container_name_matches(names: &[String], matches: impl Fn(&str) -> bool) -> bool {
+    names.iter().any(|name| matches(name.trim_start_matches('/')))
+}
+
+/// Exact name match.
+pub(crate) fn container_name_is(names: &[String], exact: &str) -> bool {
+    container_name_matches(names, |name| name == exact)
+}
+
+/// Anchored prefix match.
+pub(crate) fn container_name_has_prefix(names: &[String], prefix: &str) -> bool {
+    container_name_matches(names, |name| name.starts_with(prefix))
+}
+
 pub(crate) fn is_project_workload_container(
     project_id: &str,
     names: &[String],
@@ -99,13 +115,8 @@ impl DockerManager {
         let containers = self.docker.list_containers(Some(options)).await?;
         // Docker name filter is a substring match, so verify exact match
         for c in containers {
-            if let Some(names) = &c.names {
-                for n in names {
-                    // Docker prefixes names with "/"
-                    if n.trim_start_matches('/') == name {
-                        return Ok(c.id.clone());
-                    }
-                }
+            if container_name_is(c.names.as_deref().unwrap_or_default(), name) {
+                return Ok(c.id.clone());
             }
         }
         Ok(None)
@@ -126,7 +137,11 @@ impl DockerManager {
             ..Default::default()
         };
         let containers = self.docker.list_containers(Some(options)).await?;
-        Ok(containers.into_iter().filter_map(|c| c.id).collect())
+        Ok(containers
+            .into_iter()
+            .filter(|c| container_name_has_prefix(c.names.as_deref().unwrap_or_default(), prefix))
+            .filter_map(|c| c.id)
+            .collect())
     }
 
     /// All `litebin-`-named containers with their labels, for the janitor's orphan reaper.

@@ -9,11 +9,13 @@
 
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use futures_util::Stream;
 use litebin_common::docker::TransferKind;
 use litebin_common::types::scope_volume_source;
+use tokio::sync::Semaphore;
 
 use crate::AppState;
 
@@ -39,24 +41,85 @@ pub async fn project_image_refs(db: &sqlx::SqlitePool, project: &litebin_common:
     }
 }
 
+/// Grace period for a snapshot stop — the interactive stop allows 2s, too short for a database shutdown.
+const SNAPSHOT_STOP_GRACE_SECS: i32 = 30;
+
+/// A source stopped for a snapshot. Holds the project's operation lock so the
+/// waker and starts cannot restart it while its volumes are read; drop it first.
+pub struct StoppedSource {
+    _operation_lock: tokio::sync::OwnedSemaphorePermit,
+    /// Whether a running container was stopped — restart the source when set,
+    /// whatever its recorded status.
+    pub stopped_any: bool,
+}
+
 /// Stop a project on its node so volume tars are consistent — used by export
-/// before snapshotting. Containers stop; files and volumes always stay.
-pub async fn stop_on_source(state: &AppState, project_id: &str, node: &NodeRef) -> anyhow::Result<()> {
-    match node {
-        NodeRef::Local => {
-            let _ = state.docker.remove_by_name(project_id).await;
-            crate::routes::manage::multi_service::stop_services(state, project_id, None).await.ok();
-            Ok(())
-        }
+/// and the demo baseline before snapshotting. Containers stop; files and
+/// volumes always stay.
+pub async fn stop_on_source(state: &AppState, project_id: &str, node: &NodeRef) -> anyhow::Result<StoppedSource> {
+    let semaphore =
+        state.project_locks.entry(project_id.to_string()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
+    let operation_lock =
+        semaphore.acquire_owned().await.map_err(|_| anyhow::anyhow!("project lock closed for '{project_id}'"))?;
+
+    let stopped_any = match node {
+        NodeRef::Local => stop_local_source(state, project_id).await?,
         NodeRef::Agent(node_id) => {
             let agent = crate::nodes::client::AgentClient::resolve(state, node_id).await?;
             agent
                 .stop_project(&litebin_common::agent_api::StopProjectRequest { project_id: project_id.to_string() })
                 .await
-                .map(|_| ())
-                .map_err(|e| anyhow::anyhow!("source stop failed: {e}"))
+                .map_err(|e| anyhow::anyhow!("source stop failed: {e}"))?;
+            false
+        }
+    };
+    Ok(StoppedSource { _operation_lock: operation_lock, stopped_any })
+}
+
+/// Graceful stop of this project's own containers, confirmed against the daemon.
+async fn stop_local_source(state: &AppState, project_id: &str) -> anyhow::Result<bool> {
+    let docker = &state.docker;
+
+    // Dependents before dependencies, as stop_services does; containers the rows miss follow.
+    let mut to_stop: Vec<String> = sqlx::query_scalar(
+        "SELECT container_id FROM project_services WHERE project_id = ? AND container_id IS NOT NULL",
+    )
+    .bind(project_id)
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .rev()
+    .collect();
+    for cid in docker.list_project_workload_containers(project_id).await? {
+        if !to_stop.contains(&cid) {
+            to_stop.push(cid);
         }
     }
+
+    let mut stopped_any = false;
+    for cid in &to_stop {
+        if docker.is_container_running(cid).await.unwrap_or(false) {
+            docker.stop_container_with_grace(cid, SNAPSHOT_STOP_GRACE_SECS).await?;
+            stopped_any = true;
+        }
+    }
+
+    // Sync rows and status through the normal stop path; its stops are no-ops now.
+    if let Err((code, message)) = crate::routes::manage::multi_service::stop_services(state, project_id, None).await {
+        tracing::warn!(project = project_id, code = %code, error = %message, "source stop: service status sync incomplete");
+    }
+
+    // Confirm against the daemon: the rows can be stale.
+    let mut still_running = Vec::new();
+    for cid in docker.list_project_workload_containers(project_id).await? {
+        if docker.is_container_running(&cid).await.unwrap_or(false) {
+            still_running.push(cid);
+        }
+    }
+    if !still_running.is_empty() {
+        anyhow::bail!("containers still running after stop: {}", still_running.join(", "));
+    }
+    Ok(stopped_any)
 }
 
 /// The exports folder (export bundles land here; host-bind mounted in prod).

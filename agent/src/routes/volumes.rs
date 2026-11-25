@@ -102,6 +102,21 @@ pub async fn anonymous_volumes(
     }
 }
 
+/// POST /volumes/remove — delete one named Docker volume (already gone is a success).
+pub async fn remove_volume(
+    State(state): State<AgentState>,
+    Json(req): Json<litebin_common::agent_api::RemoveVolumeRequest>,
+) -> impl IntoResponse {
+    use litebin_common::types::VolumeKind;
+    if litebin_common::types::classify_volume(&req.volume) != VolumeKind::DockerVolume {
+        return error_response(StatusCode::BAD_REQUEST, "not a named volume".to_string());
+    }
+    match state.docker.remove_volume(&req.volume).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "removed": req.volume }))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, format!("remove failed: {e}")),
+    }
+}
+
 /// GET /volumes/usage?name={volume|projects/…}
 pub async fn volume_usage(
     State(state): State<AgentState>,

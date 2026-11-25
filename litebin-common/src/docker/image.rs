@@ -373,8 +373,9 @@ impl DockerManager {
         }
     }
 
-    /// Remove a Docker named volume (ignores 404).
+    /// Remove a Docker named volume (ignores 404), clearing leftover transfer helpers that hold it.
     pub async fn remove_volume(&self, name: &str) -> anyhow::Result<()> {
+        self.unpin_volume(name).await;
         match self.docker.remove_volume(name, None::<RemoveVolumeOptions>).await {
             Ok(_) => {
                 tracing::info!(volume = %name, "removed docker volume");

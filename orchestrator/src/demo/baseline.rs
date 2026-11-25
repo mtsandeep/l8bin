@@ -15,6 +15,7 @@ use tokio::io::AsyncWriteExt;
 use crate::AppState;
 use crate::copy_engine::{self, NodeRef};
 use crate::demo::parent_node;
+use litebin_common::types::{Project, ProjectStatus};
 
 /// A baseline row set: seed volumes + the project-dir tar path (if captured).
 #[derive(Clone)]
@@ -38,21 +39,22 @@ pub async fn load(state: &AppState, parent_id: &str) -> anyhow::Result<Baseline>
             .fetch_all(&state.db)
             .await?;
     let tar = seeds_dir(state).join(parent_id).join("project.tar");
-    let project_tar = tokio::fs::metadata(&tar).await.is_ok().then_some(tar);
+    // An empty tar is a source with no project dir, not a seed to restore from.
+    let project_tar = tokio::fs::metadata(&tar).await.is_ok_and(|meta| meta.len() > 0).then_some(tar);
     Ok(Baseline { volumes, project_tar })
 }
 
 /// Capture the demo's starting data as the baseline: the first capture from
 /// the PARENT (the deployed, configured app — instances start volume-empty),
 /// recaptures from the operator's edit instance. Briefly stops the source
-/// for a consistent snapshot, then restarts it. Re-capture overwrites the
+/// for a consistent snapshot, then restarts it. Re-capture replaces the
 /// previous seed.
-pub async fn capture(state: &AppState, parent: &litebin_common::types::Project) -> anyhow::Result<()> {
+pub async fn capture(state: &AppState, parent: &Project) -> anyhow::Result<()> {
     let config = crate::demo::get_config(&state.db, &parent.id).await?;
     // Source: the edit instance (the operator's draft) whenever it exists;
     // the parent only before instances are provisioned (the enable flow
     // captures before creating them).
-    let source: litebin_common::types::Project = match config.as_ref().and_then(|c| c.edit_instance_id.clone()) {
+    let source: Project = match config.as_ref().and_then(|c| c.edit_instance_id.clone()) {
         Some(id) => sqlx::query_as("SELECT * FROM projects WHERE id = ?")
             .bind(&id)
             .fetch_optional(&state.db)
@@ -61,23 +63,28 @@ pub async fn capture(state: &AppState, parent: &litebin_common::types::Project) 
         None => parent.clone(),
     };
     let node = parent_node(&source);
-    let was_running = matches!(
-        source.status,
-        litebin_common::types::ProjectStatus::Running | litebin_common::types::ProjectStatus::Degraded
-    );
+    let was_running = matches!(source.status, ProjectStatus::Running | ProjectStatus::Degraded);
 
-    if was_running {
-        copy_engine::stop_on_source(state, &source.id, &node).await?;
-    }
+    // Not while a clone or reset is copying from the seed.
+    let seed_lock = crate::demo::seed_lock(&parent.id).await;
+    let _seed_guard = seed_lock.lock().await;
 
+    // Stopped whatever the status says: a stale row with live containers would give a hot snapshot.
+    let source_hold = copy_engine::stop_on_source(state, &source.id, &node).await?;
     let result = capture_locked(state, parent, &source, &node).await;
+    let stopped_any = source_hold.stopped_any;
+    // Before the restart: `start_project` takes the same operation lock.
+    drop(source_hold);
 
-    if was_running {
-        let _ = crate::routes::manage::handlers::start_project(
+    if was_running || stopped_any {
+        let restart = crate::routes::manage::handlers::start_project(
             axum::extract::State(state.clone()),
             axum::extract::Path(source.id.clone()),
         )
         .await;
+        if let Err((code, message)) = restart {
+            tracing::warn!(project = %source.id, status = %code, error = %message, "demo baseline: source restart failed");
+        }
     }
 
     result?;
@@ -93,23 +100,37 @@ pub async fn capture(state: &AppState, parent: &litebin_common::types::Project) 
     Ok(())
 }
 
-/// Snapshot while the source is stopped. Wipes the previous seed first so a
-/// failed capture never leaves a half-old half-new baseline. Volume names and
-/// the project-dir tar are stored PARENT-scoped so restores re-scope cleanly
-/// to any target.
-async fn capture_locked(
-    state: &AppState,
-    parent: &litebin_common::types::Project,
-    source: &litebin_common::types::Project,
-    node: &NodeRef,
-) -> anyhow::Result<()> {
-    remove_seed_volumes(state, &parent.id, node).await?;
+/// Snapshot while the source is stopped. The previous baseline is retired
+/// first and the new one published last, so a failed capture leaves no
+/// baseline at all. Volume names and the tar are stored PARENT-scoped.
+async fn capture_locked(state: &AppState, parent: &Project, source: &Project, node: &NodeRef) -> anyhow::Result<()> {
+    // 1. Retire the previous baseline.
+    let mut stale_seeds = seed_names(state, parent).await?;
     sqlx::query("DELETE FROM demo_baseline_volumes WHERE parent_project_id = ?")
         .bind(&parent.id)
         .execute(&state.db)
         .await?;
+    let dir = seeds_dir(state).join(&parent.id);
+    let _ = tokio::fs::remove_dir_all(&dir).await;
 
     let volumes = crate::routes::manage::handlers::volume_list(&state.db, source).await;
+    // One seed per distinct volume — a volume mounted by several services is listed once per service.
+    let mut seen = std::collections::HashSet::new();
+    let volumes: Vec<String> = volumes.into_iter().filter(|v| seen.insert(v.clone())).collect();
+    for i in 0..volumes.len() {
+        let seed = seed_name(&parent.id, i);
+        if !stale_seeds.contains(&seed) {
+            stale_seeds.push(seed);
+        }
+    }
+
+    // 2. Remove the old seeds outright: a tar import only adds files.
+    for seed in &stale_seeds {
+        remove_seed(state, node, seed).await?;
+    }
+
+    // 3. Each volume into a fresh seed.
+    let mut rows: Vec<(String, String)> = Vec::new(); // (parent-scoped source, seed)
     for (i, scoped) in volumes.iter().enumerate() {
         let seed = seed_name(&parent.id, i);
         copy_engine::transfer_volume(state, node, node, scoped, &seed).await?;
@@ -118,21 +139,12 @@ async fn capture_locked(
         } else {
             copy_engine::rescope_volume(scoped, &source.id, &parent.id)
         };
-        sqlx::query(
-            "INSERT INTO demo_baseline_volumes (parent_project_id, source_volume, seed_volume) VALUES (?, ?, ?)",
-        )
-        .bind(&parent.id)
-        .bind(&parent_scoped)
-        .bind(&seed)
-        .execute(&state.db)
-        .await?;
+        rows.push((parent_scoped, seed));
     }
 
-    // Project dir: compose.yaml/.env/relative binds, stored parent-rooted.
+    // 4. Project dir: compose.yaml/.env/relative binds, stored parent-rooted.
     // Absent for single-service image projects that never wrote files — a
     // missing export means no seed.
-    let dir = seeds_dir(state).join(&parent.id);
-    tokio::fs::create_dir_all(&dir).await?;
     let tar_path = dir.join("project.tar");
     match node.transfer_out(state, &litebin_common::docker::TransferKind::ProjectDir(source.id.clone())).await {
         Ok(stream) => {
@@ -143,25 +155,63 @@ async fn capture_locked(
                     let tmp = copy_engine::spool_dir(state);
                     Box::pin(copy_engine::reroot::reroot(stream, &source.id, &parent.id, true, &tmp).await?)
                 };
-            let mut file = tokio::fs::File::create(&tar_path).await?;
-            let mut tar_stream = tar_stream;
-            while let Some(chunk) = tar_stream.next().await {
-                file.write_all(&chunk).await?;
+            // Renamed into place so a failed write leaves no half-written tar.
+            tokio::fs::create_dir_all(&dir).await?;
+            let partial_path = dir.join("project.tar.part");
+            let written = async {
+                let mut file = tokio::fs::File::create(&partial_path).await?;
+                let mut tar_stream = tar_stream;
+                while let Some(chunk) = tar_stream.next().await {
+                    file.write_all(&chunk).await?;
+                }
+                file.flush().await?;
+                let len = tokio::fs::metadata(&partial_path).await?.len();
+                anyhow::Ok(len)
             }
-            file.flush().await?;
+            .await;
+            let len = match written {
+                Ok(len) => len,
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&partial_path).await;
+                    return Err(e);
+                }
+            };
+            // A local export of a missing dir is an empty stream, not an error.
+            if len == 0 {
+                let _ = tokio::fs::remove_file(&partial_path).await;
+                tracing::debug!(project = %parent.id, "demo baseline: no project dir captured");
+            } else {
+                tokio::fs::rename(&partial_path, &tar_path).await?;
+            }
         }
         Err(e) => {
-            // No project dir to seed — drop any stale tar and record volumes-only.
+            // No project dir to seed — record volumes-only.
             tracing::debug!(project = %parent.id, error = %e, "demo baseline: no project dir captured");
             let _ = tokio::fs::remove_file(&tar_path).await;
         }
     }
+
+    // 5. Publish, all rows at once.
+    let mut tx = state.db.begin().await?;
+    for (source_volume, seed) in rows {
+        sqlx::query(
+            "INSERT INTO demo_baseline_volumes (parent_project_id, source_volume, seed_volume) VALUES (?, ?, ?)",
+        )
+        .bind(&parent.id)
+        .bind(source_volume)
+        .bind(seed)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
 /// Remove the baseline: seed volumes, seed tar, and DB rows.
-pub async fn remove(state: &AppState, parent: &litebin_common::types::Project) -> anyhow::Result<()> {
-    remove_seed_volumes(state, &parent.id, &parent_node(parent)).await?;
+pub async fn remove(state: &AppState, parent: &Project) -> anyhow::Result<()> {
+    let seed_lock = crate::demo::seed_lock(&parent.id).await;
+    let _seed_guard = seed_lock.lock().await;
+    remove_seed_volumes(state, parent, &parent_node(parent)).await?;
     sqlx::query("DELETE FROM demo_baseline_volumes WHERE parent_project_id = ?")
         .bind(&parent.id)
         .execute(&state.db)
@@ -182,7 +232,7 @@ pub async fn remove(state: &AppState, parent: &litebin_common::types::Project) -
 /// Volumes copy seed → scoped target; the project-dir tar re-roots
 /// `{parent}/…` → `{new_id}/…` (binds inside ride along).
 pub async fn restore(state: &AppState, parent_id: &str, new_id: &str, baseline: &Baseline) -> anyhow::Result<()> {
-    let parent: litebin_common::types::Project =
+    let parent: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(parent_id).fetch_one(&state.db).await?;
     let node = parent_node(&parent);
 
@@ -212,24 +262,38 @@ fn seed_name(parent_id: &str, index: usize) -> String {
     format!("l8b_demo_seed_{parent_id}_{index}")
 }
 
-/// Delete the parent's seed volumes on its node. Local removes them outright;
-/// agents have no volume-delete endpoint, so their seeds are zeroed via an
-/// empty-tar import (an empty volume lingers until the node prunes it).
-async fn remove_seed_volumes(state: &AppState, parent_id: &str, node: &NodeRef) -> anyhow::Result<()> {
-    let seeds: Vec<String> =
+/// Every seed the parent may own: the recorded ones plus one per current
+/// volume (a capture that fails before publishing leaves those without a row).
+async fn seed_names(state: &AppState, parent: &Project) -> anyhow::Result<Vec<String>> {
+    let mut names: Vec<String> =
         sqlx::query_scalar("SELECT seed_volume FROM demo_baseline_volumes WHERE parent_project_id = ?")
-            .bind(parent_id)
+            .bind(&parent.id)
             .fetch_all(&state.db)
             .await?;
-    for seed in seeds {
-        match node {
-            NodeRef::Local => state.docker.remove_volume(&seed).await?,
-            NodeRef::Agent(_) => {
-                let empty: std::pin::Pin<Box<dyn futures_util::Stream<Item = bytes::Bytes> + Send>> =
-                    Box::pin(futures_util::stream::empty());
-                let _ = node.transfer_in(state, &litebin_common::docker::TransferKind::Volume(seed), empty).await;
-            }
+    for i in 0..crate::routes::manage::handlers::volume_list(&state.db, parent).await.len() {
+        let seed = seed_name(&parent.id, i);
+        if !names.contains(&seed) {
+            names.push(seed);
         }
     }
+    Ok(names)
+}
+
+/// Delete the parent's seed volumes on its node.
+async fn remove_seed_volumes(state: &AppState, parent: &Project, node: &NodeRef) -> anyhow::Result<()> {
+    for seed in seed_names(state, parent).await? {
+        remove_seed(state, node, &seed).await?;
+    }
     Ok(())
+}
+
+/// Remove one seed volume outright — the next transfer recreates it empty.
+async fn remove_seed(state: &AppState, node: &NodeRef, seed: &str) -> anyhow::Result<()> {
+    match node {
+        NodeRef::Local => state.docker.remove_volume(seed).await,
+        NodeRef::Agent(node_id) => {
+            let agent = crate::nodes::client::AgentClient::resolve(state, node_id).await?;
+            agent.remove_volume(seed).await.map_err(|e| anyhow::anyhow!("seed removal failed: {e}"))
+        }
+    }
 }

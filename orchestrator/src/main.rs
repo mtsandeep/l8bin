@@ -260,6 +260,8 @@ async fn main() -> anyhow::Result<()> {
     let mut docker =
         DockerManager::new(config.docker_network.clone(), default_mem_mb * 1024 * 1024, default_cpu_limit)?;
     docker.detect_host_projects_dir().await;
+    // Clear helpers left by a predecessor killed mid-transfer.
+    docker.reap_leaked_transfer_helpers().await;
     // Same-host reachability: alias host.docker.internal + every platform host
     // to the host gateway inside created project containers (NAT hairpin fix).
     docker.set_host_aliases(platform::host_alias_list(&platform.snapshot()));

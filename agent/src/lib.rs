@@ -163,6 +163,7 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/images/remove-unused", post(routes::images::remove_unused_image))
         .route("/images/prune", post(routes::images::prune_images))
         .route("/volumes/export", post(routes::volumes::export_volume))
+        .route("/volumes/remove", post(routes::volumes::remove_volume))
         .route("/volumes/usage", get(routes::volumes::volume_usage))
         .route(
             "/volumes/import",

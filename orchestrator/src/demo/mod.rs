@@ -48,6 +48,15 @@ pub fn parent_node(project: &litebin_common::types::Project) -> NodeRef {
     }
 }
 
+static SEED_LOCKS: std::sync::LazyLock<dashmap::DashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>> =
+    std::sync::LazyLock::new(dashmap::DashMap::new);
+
+/// One payload per parent at a time (concurrent local tar streams into the
+/// same daemon can deadlock), and never a clone or reset during a capture.
+pub async fn seed_lock(parent_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    SEED_LOCKS.entry(parent_id.to_string()).or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(()))).clone()
+}
+
 async fn instance_exists(state: &AppState, parent_id: &str, instance_id: &str) -> bool {
     sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ? AND demo_parent_id = ?")
         .bind(instance_id)

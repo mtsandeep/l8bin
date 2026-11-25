@@ -9,8 +9,59 @@ use crate::routes::manage::multi_service::delete_all_services;
 
 use super::shared::uses_compose_lifecycle;
 
+/// Remove a project's containers/volumes/network on its node (DB rows untouched).
+/// Remote cleanup is skipped when the node is offline (best-effort).
+pub(crate) async fn cleanup_project_containers(
+    state: &AppState,
+    project: &crate::db::models::Project,
+) -> Result<(), (StatusCode, String)> {
+    let project_id = &project.id;
+    let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
+
+    if is_local {
+        if uses_compose_lifecycle(project.deploy_type.as_ref()) {
+            delete_all_services(state, project_id).await;
+        } else {
+            let volumes: Vec<String> = build_volume_list(&state.db, project).await;
+            if let Err(e) = state.docker.cleanup_project_resources(project_id, &volumes).await {
+                tracing::warn!(project = %project_id, error = %e, "delete: cleanup incomplete (janitor reaps orphans)");
+            }
+        }
+    } else {
+        let node_id = project.node_id.as_deref().unwrap();
+        let volumes = build_volume_list(&state.db, project).await;
+
+        let reachable = match get_node_from_db(&state.db, node_id).await {
+            Ok(node) if node.status == NodeStatus::Online => {
+                nodes::client::get_node_client(&state.node_clients, node_id).is_ok()
+            }
+            _ => false,
+        };
+
+        if reachable {
+            let agent = nodes::client::AgentClient::resolve(state, node_id)
+                .await
+                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
+            if let Err(e) = agent
+                .cleanup(&litebin_common::agent_api::CleanupRequest { project_id: project_id.clone(), volumes })
+                .await
+            {
+                return Err(match e {
+                    nodes::client::AgentClientError::Status { code, body } => {
+                        (StatusCode::BAD_GATEWAY, format!("agent cleanup returned {code}: {body}"))
+                    }
+                    e => (StatusCode::SERVICE_UNAVAILABLE, format!("agent cleanup failed: {e}")),
+                });
+            }
+        } else {
+            tracing::warn!(project = %project_id, node_id = node_id, "node unavailable; skipping remote container cleanup and deleting project record");
+        }
+    }
+    Ok(())
+}
+
 /// Build a list of scoped volume names for a project (from DB for multi-service, from JSON for single-service).
-async fn build_volume_list(db: &sqlx::SqlitePool, project: &crate::db::models::Project) -> Vec<String> {
+pub(crate) async fn build_volume_list(db: &sqlx::SqlitePool, project: &crate::db::models::Project) -> Vec<String> {
     if uses_compose_lifecycle(project.deploy_type.as_ref()) {
         match sqlx::query_as::<_, (String,)>(
             "SELECT volume_name FROM project_volumes WHERE project_id = ? AND volume_name IS NOT NULL",
@@ -75,53 +126,7 @@ pub async fn delete_project(
         crate::demo::teardown_all(&state, &project).await;
     }
 
-    // Remove container(s) — branch on node location
-    let is_local = project.node_id.as_deref().map(|n| n == "local").unwrap_or(true);
-
-    if is_local {
-        if uses_compose_lifecycle(project.deploy_type.as_ref()) {
-            delete_all_services(&state, &project_id).await;
-        } else {
-            // Collect volumes for single-service local cleanup
-            let volumes: Vec<String> = build_volume_list(&state.db, &project).await;
-            if let Err(e) = state.docker.cleanup_project_resources(&project_id, &volumes).await {
-                tracing::warn!(project = %project_id, error = %e, "delete: cleanup incomplete (janitor reaps orphans)");
-            }
-        }
-    } else {
-        // Remote: best-effort container cleanup via the agent. When the node is
-        // offline/destroyed (no client, or status != online) there's nothing to
-        // clean up remotely — skip and proceed to DB deletion so the project
-        // isn't stuck on a node that no longer exists.
-        let node_id = project.node_id.as_deref().unwrap();
-        let volumes = build_volume_list(&state.db, &project).await;
-
-        let reachable = match get_node_from_db(&state.db, node_id).await {
-            Ok(node) if node.status == NodeStatus::Online => {
-                nodes::client::get_node_client(&state.node_clients, node_id).is_ok()
-            }
-            _ => false,
-        };
-
-        if reachable {
-            let agent = nodes::client::AgentClient::resolve(&state, node_id)
-                .await
-                .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
-            if let Err(e) = agent
-                .cleanup(&litebin_common::agent_api::CleanupRequest { project_id: project_id.clone(), volumes })
-                .await
-            {
-                return Err(match e {
-                    nodes::client::AgentClientError::Status { code, body } => {
-                        (StatusCode::BAD_GATEWAY, format!("agent cleanup returned {code}: {body}"))
-                    }
-                    e => (StatusCode::SERVICE_UNAVAILABLE, format!("agent cleanup failed: {e}")),
-                });
-            }
-        } else {
-            tracing::warn!(project = %project_id, node_id = node_id, "node unavailable; skipping remote container cleanup and deleting project record");
-        }
-    }
+    cleanup_project_containers(&state, &project).await?;
 
     // Capture image refs (single-service + per-service) before the rows go, delete
     // the rows, then reclaim — the reference check in cleanup_unused_image must see

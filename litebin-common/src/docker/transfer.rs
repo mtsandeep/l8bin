@@ -3,10 +3,13 @@
 //! busybox container's archive API (volume at `/volume`, projects dir at
 //! `/projects`).
 
+use std::collections::HashMap;
+
 use bollard::Docker;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{
-    CreateContainerOptions, DownloadFromContainerOptions, RemoveContainerOptions, UploadToContainerOptions,
+    CreateContainerOptions, DownloadFromContainerOptions, ListContainersOptions, RemoveContainerOptions,
+    UploadToContainerOptions,
 };
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -14,6 +17,9 @@ use futures_util::{Stream, StreamExt};
 use super::DockerManager;
 
 pub const TRANSFER_TOOL_IMAGE: &str = "busybox:1.36";
+
+/// Name prefix of the helper containers transfers read and write through.
+pub const TRANSFER_HELPER_PREFIX: &str = "l8b-transfer-";
 
 pub const TRANSFER_KIND_VOLUME: &str = "volume";
 pub const TRANSFER_KIND_PROJECT_DIR: &str = "project-dir";
@@ -73,7 +79,7 @@ impl DockerManager {
     /// A never-started busybox container carrying the binds the archive API needs.
     async fn create_transfer_container(&self, binds: Vec<String>) -> anyhow::Result<String> {
         self.pull_image_with_opts(TRANSFER_TOOL_IMAGE, false).await?;
-        let name = format!("l8b-transfer-{:x}", rand::random::<u64>());
+        let name = format!("{TRANSFER_HELPER_PREFIX}{:x}", rand::random::<u64>());
         let host_config = HostConfig {
             binds: Some(binds),
             cap_drop: Some(vec!["ALL".to_string()]),
@@ -138,34 +144,116 @@ impl DockerManager {
             }
             TransferKind::Volume(volume) => {
                 // The bind creates the volume if it does not exist yet.
-                let id = self.create_transfer_container(vec![format!("{volume}:/volume")]).await?;
-                let options = UploadToContainerOptions { path: "/".to_string(), ..Default::default() };
-                let result = self.docker.upload_to_container(&id, Some(options), bollard::body_stream(tar)).await;
-                self.remove_transfer_container(&id).await;
-                result.map_err(|e| anyhow::anyhow!("volume import failed: {e}"))
+                let helper = self.create_transfer_container(vec![format!("{volume}:/volume")]).await?;
+                self.import_with_helper(helper, "/", tar)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("volume import failed: {e}"))
             }
             TransferKind::ProjectDir(project_id) => {
                 let host =
                     projects_host_dir.ok_or_else(|| anyhow::anyhow!("projects host directory unknown on this node"))?;
-                let id = self.create_transfer_container(vec![format!("{host}:/projects")]).await?;
+                let helper = self.create_transfer_container(vec![format!("{host}:/projects")]).await?;
                 let _ = project_id; // archive's top-level dir carries the project id.
-                let options = UploadToContainerOptions { path: "/projects".to_string(), ..Default::default() };
-                let result = self.docker.upload_to_container(&id, Some(options), bollard::body_stream(tar)).await;
-                self.remove_transfer_container(&id).await;
-                result.map_err(|e| anyhow::anyhow!("project directory import failed: {e}"))
+                self.import_with_helper(helper, "/projects", tar)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("project directory import failed: {e}"))
             }
         }
     }
 
-    async fn remove_transfer_container(&self, id: &str) {
-        let options = RemoveContainerOptions { force: true, ..Default::default() };
-        if let Err(e) = self.docker.remove_container(id, Some(options)).await {
-            tracing::debug!(container = %id, error = %e, "transfer container cleanup failed");
+    /// Extract `tar` into a just-created helper, then remove the helper.
+    async fn import_with_helper<S>(&self, helper: String, path: &str, tar: S) -> Result<(), bollard::errors::Error>
+    where
+        S: Stream<Item = Bytes> + Send + 'static,
+    {
+        let mut cleanup = HelperCleanup::arm(self.docker.clone(), helper.clone());
+        let options = UploadToContainerOptions { path: path.to_string(), ..Default::default() };
+        let result = self.docker.upload_to_container(&helper, Some(options), bollard::body_stream(tar)).await;
+        if remove_helper(&self.docker, &helper).await {
+            cleanup.disarm();
+        }
+        result
+    }
+
+    /// Remove leftover helpers that still mount `volume` — they block its removal with "in use".
+    pub(crate) async fn unpin_volume(&self, volume: &str) {
+        let filters = HashMap::from([
+            ("name".to_string(), vec![TRANSFER_HELPER_PREFIX.to_string()]),
+            ("volume".to_string(), vec![volume.to_string()]),
+        ]);
+        let options = ListContainersOptions { all: true, filters: Some(filters), ..Default::default() };
+        let Ok(containers) = self.docker.list_containers(Some(options)).await else { return };
+        for id in containers.into_iter().filter_map(|container| container.id) {
+            if remove_helper(&self.docker, &id).await {
+                tracing::info!(volume, container = %id, "removed leftover transfer helper holding the volume");
+            }
+        }
+    }
+
+    /// Remove every transfer helper on the daemon. For process start only —
+    /// helpers are never started, so any that exist were left by a killed predecessor.
+    pub async fn reap_leaked_transfer_helpers(&self) {
+        let Ok(helpers) = self.list_containers_by_prefix(TRANSFER_HELPER_PREFIX).await else { return };
+        for id in helpers {
+            if remove_helper(&self.docker, &id).await {
+                tracing::info!(container = %id, "removed transfer helper left by a previous run");
+            }
         }
     }
 }
 
-/// End the stream, then remove the helper container.
+/// Force-remove a helper. `true` once it is gone (removed, or already absent).
+async fn remove_helper(docker: &Docker, id: &str) -> bool {
+    let options = RemoveContainerOptions { force: true, ..Default::default() };
+    match docker.remove_container(id, Some(options)).await {
+        Ok(()) => true,
+        Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => true,
+        Err(e) => {
+            tracing::debug!(container = %id, error = %e, "transfer container cleanup failed");
+            false
+        }
+    }
+}
+
+/// Removes a transfer helper on drop. Without it, a future dropped mid-transfer
+/// (timeout, abort, a failed import side) leaves the `Created` helper holding its volume.
+struct HelperCleanup {
+    docker: Docker,
+    id: String,
+    /// Cleared once the helper is known to be gone.
+    armed: bool,
+}
+
+impl HelperCleanup {
+    fn arm(docker: Docker, id: String) -> Self {
+        Self { docker, id, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for HelperCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                let (docker, id) = (self.docker.clone(), self.id.clone());
+                runtime.spawn(async move {
+                    remove_helper(&docker, &id).await;
+                });
+            }
+            Err(_) => {
+                tracing::warn!(container = %self.id, "transfer helper left behind — the startup sweep removes it")
+            }
+        }
+    }
+}
+
+/// End the stream, then remove the helper.
 fn with_container_cleanup<S>(
     docker: Docker,
     container_id: String,
@@ -174,17 +262,18 @@ fn with_container_cleanup<S>(
 where
     S: Stream<Item = Result<Bytes, bollard::errors::Error>> + Send + 'static,
 {
+    let cleanup = HelperCleanup::arm(docker, container_id);
     let stream = stream.fuse();
     let stream = Box::pin(stream);
-    futures_util::stream::unfold((stream, Some((docker, container_id))), |(mut stream, cleanup)| async move {
+    futures_util::stream::unfold((stream, Some(cleanup)), |(mut stream, mut cleanup)| async move {
         match stream.next().await {
             Some(item) => Some((item, (stream, cleanup))),
             None => {
-                if let Some((docker, container_id)) = cleanup {
-                    let options = RemoveContainerOptions { force: true, ..Default::default() };
-                    if let Err(e) = docker.remove_container(&container_id, Some(options)).await {
-                        tracing::debug!(container = %container_id, error = %e, "transfer container cleanup failed");
-                    }
+                // Awaited so the removal precedes whatever the caller does next.
+                if let Some(cleanup) = cleanup.as_mut()
+                    && remove_helper(&cleanup.docker, &cleanup.id).await
+                {
+                    cleanup.disarm();
                 }
                 None
             }

@@ -35,28 +35,24 @@ pub async fn create_instance(state: &AppState, parent: &Project, opts: CloneOpts
     let new_id = alloc.id.clone();
     let parent_id = parent.id.clone();
     let state_bg = state.clone();
-    let lock = clone_lock(&parent_id).await;
+    let lock = demo::seed_lock(&parent_id).await;
+    let long_lived = opts.requested_id.is_some();
     tokio::spawn(async move {
         let _guard = lock.lock().await;
-        let job = CloneJob { parent_id, new_id: new_id.clone(), start: opts.start, baseline: opts.baseline };
+        let job =
+            CloneJob { parent_id, new_id: new_id.clone(), start: opts.start, baseline: opts.baseline, long_lived };
         if let Err(e) = run_clone(&state_bg, &job).await {
             tracing::error!(project = %new_id, parent = %job.parent_id, error = %e, "demo clone failed");
             crate::routes::deploy::logs::push_deploy_log(&state_bg, &new_id, &format!("demo clone failed: {e}"));
-            // Clean the partial instance immediately — the visitor-facing error
-            // page only appears in session mode; either way nothing lingers.
-            demo::teardown_instance(&state_bg, &new_id).await;
+            if job.long_lived {
+                fail_instance(&state_bg, &new_id).await;
+            } else {
+                // Session instances vanish; the pool spawns a replacement.
+                demo::teardown_instance(&state_bg, &new_id).await;
+            }
         }
     });
     Ok(alloc.id)
-}
-
-/// One clone payload per parent at a time — concurrent local tar streams
-/// into the same daemon can deadlock.
-static CLONE_LOCKS: std::sync::LazyLock<dashmap::DashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>> =
-    std::sync::LazyLock::new(dashmap::DashMap::new);
-
-async fn clone_lock(parent_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
-    CLONE_LOCKS.entry(parent_id.to_string()).or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(()))).clone()
 }
 
 struct CloneJob {
@@ -64,6 +60,7 @@ struct CloneJob {
     new_id: String,
     start: bool,
     baseline: Option<Baseline>,
+    long_lived: bool,
 }
 
 async fn run_clone(state: &AppState, job: &CloneJob) -> anyhow::Result<()> {
@@ -90,6 +87,13 @@ async fn run_clone(state: &AppState, job: &CloneJob) -> anyhow::Result<()> {
                     Ok(Ok(())) => {
                         tracing::info!(project = %new_id, "demo clone: baseline restored");
                         logs(state, new_id, "baseline restored");
+                        // Baseline without a project dir: the instance still needs compose.yaml.
+                        if b.project_tar.is_none() {
+                            let tmp = copy_engine::spool_dir(state);
+                            copy_engine::transfer_project_dir(state, &node, &node, parent_id, new_id, true, &tmp)
+                                .await?;
+                            logs(state, new_id, "project files copied");
+                        }
                     }
                     Ok(Err(e)) => return Err(e),
                     Err(_) => anyhow::bail!("baseline restore timed out after 180s"),
@@ -118,6 +122,26 @@ async fn run_clone(state: &AppState, job: &CloneJob) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A failed long-lived clone (edit/shared) stays in `error`, project dir and
+/// volumes intact. The janitor only recreates missing instances, so this stops
+/// the create-fail-delete loop and leaves the failure visible.
+async fn fail_instance(state: &AppState, project_id: &str) {
+    let Ok(Some(project)) = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(project_id)
+        .fetch_optional(&state.db)
+        .await
+    else {
+        return;
+    };
+
+    if let Err(e) = copy_engine::stop_on_source(state, project_id, &demo::parent_node(&project)).await {
+        tracing::warn!(project = project_id, error = %e, "demo clone: stopping the failed instance");
+    }
+
+    let _ =
+        status::transition(&state.db, project_id, ProjectStatus::Error, &ProjectUpdateFields::default(), None).await;
+}
+
 /// The id allocator only checks the DB; a container from a torn-down instance
 /// can still hold the name. On a 409, clear stale containers and retry once.
 async fn start_with_name_conflict_retry(
@@ -133,7 +157,10 @@ async fn start_with_name_conflict_retry(
         Ok(_) => Ok(()),
         Err((_code, message)) if message.contains("already in use") => {
             tracing::warn!(project = %new_id, "demo clone: name held by a stale container, clearing and retrying");
-            let _ = state.docker.remove_by_name(new_id).await;
+            // This instance's own containers only — never a sibling like `demo-10` for `demo-1`.
+            for cid in state.docker.list_project_workload_containers(new_id).await.unwrap_or_default() {
+                let _ = state.docker.remove_container(&cid).await;
+            }
             crate::routes::manage::handlers::start_project(
                 axum::extract::State(state.clone()),
                 axum::extract::Path(new_id.to_string()),

@@ -70,6 +70,8 @@ async fn main() -> Result<()> {
     let cpu_limit: f64 = std::env::var("DEFAULT_CPU_LIMIT").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5);
     let mut docker = DockerManager::new(docker_network, memory_limit, cpu_limit)?;
     docker.detect_host_projects_dir().await;
+    // Clear helpers left by a predecessor killed mid-transfer.
+    docker.reap_leaked_transfer_helpers().await;
     // Same-host reachability (NAT hairpin fix): containers get
     // host.docker.internal → host gateway. Never the master hostname here —
     // on an agent the master is a different host.

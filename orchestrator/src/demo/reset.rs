@@ -18,12 +18,10 @@ pub async fn wipe_instance(state: &AppState, instance_id: &str) -> anyhow::Resul
         sqlx::query_as("SELECT * FROM projects WHERE id = ?").bind(instance_id).fetch_one(&state.db).await?;
     let node = demo::parent_node(&instance);
 
-    copy_engine::stop_on_source(state, instance_id, &node).await?;
-    let volumes = crate::routes::manage::handlers::volume_list(&state.db, &instance).await;
-    if let NodeRef::Local = &node {
-        for volume in &volumes {
-            let _ = state.docker.remove_volume(volume).await;
-        }
+    {
+        // Scoped: the hold must drop before `start_project` takes the same lock.
+        let _hold = copy_engine::stop_on_source(state, instance_id, &node).await?;
+        remove_volumes(state, &instance, instance_id, &node).await?;
     }
     match crate::routes::manage::handlers::start_project(
         axum::extract::State(state.clone()),
@@ -33,6 +31,35 @@ pub async fn wipe_instance(state: &AppState, instance_id: &str) -> anyhow::Resul
     {
         Ok(_) => Ok(()),
         Err((code, message)) => Err(anyhow::anyhow!("start after wipe failed ({code}): {message}")),
+    }
+}
+
+/// Remove a stopped instance's named volumes. One that cannot be removed fails
+/// the operation — restoring a baseline on top of it would mix two generations.
+async fn remove_volumes(state: &AppState, project: &Project, project_id: &str, node: &NodeRef) -> anyhow::Result<()> {
+    let volumes = crate::routes::manage::handlers::volume_list(&state.db, project).await;
+    match node {
+        NodeRef::Local => {
+            // Stopped containers still count as using the volume; start recreates them.
+            for cid in state.docker.list_project_workload_containers(project_id).await? {
+                let _ = state.docker.remove_container(&cid).await;
+            }
+            for volume in &volumes {
+                state
+                    .docker
+                    .remove_volume(volume)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("volume '{volume}' was not removed: {e}"))?;
+            }
+            Ok(())
+        }
+        NodeRef::Agent(node_id) => {
+            let agent = crate::nodes::client::AgentClient::resolve(state, node_id).await?;
+            agent
+                .cleanup(&litebin_common::agent_api::CleanupRequest { project_id: project_id.to_string(), volumes })
+                .await
+                .map_err(|e| anyhow::anyhow!("volume cleanup on the node failed: {e}"))
+        }
     }
 }
 
@@ -101,37 +128,24 @@ async fn run_reset(state: &AppState, parent_id: &str) -> anyhow::Result<()> {
         .await;
     }
 
-    // 1. Stop containers (files and volumes stay — stop_on_source semantics).
-    copy_engine::stop_on_source(state, &target_id, &node).await?;
+    // Not while a capture is replacing the seed.
+    let seed_lock = demo::seed_lock(parent_id).await;
+    let _seed_guard = seed_lock.lock().await;
 
-    // 2. Remove named volumes so stale files can't survive the reset.
-    let volumes = crate::routes::manage::handlers::volume_list(&state.db, &target).await;
-    match &node {
-        NodeRef::Local => {
-            for volume in &volumes {
-                if let Err(e) = state.docker.remove_volume(volume).await {
-                    tracing::warn!(project = %target_id, volume = %volume, error = %e, "reset: volume removal skipped");
-                }
-            }
-        }
-        NodeRef::Agent(_) => {
-            if let Ok(agent) = crate::nodes::client::AgentClient::resolve(state, node.node_id()).await {
-                let _ = agent
-                    .cleanup(&litebin_common::agent_api::CleanupRequest {
-                        project_id: target_id.clone(),
-                        volumes: volumes.clone(),
-                    })
-                    .await;
-            }
-        }
-    }
+    {
+        // 1. Stop containers (files and volumes stay); the hold is scoped to steps 1–3.
+        let _hold = copy_engine::stop_on_source(state, &target_id, &node).await?;
 
-    // 3. Restore the baseline if one is captured (seed volumes store
-    //    parent-scoped names; restore re-scopes them to the target);
-    //    without a baseline the volumes come back empty at start.
-    let baseline = demo::baseline::load(state, parent_id).await?;
-    if !baseline.volumes.is_empty() || baseline.project_tar.is_some() {
-        demo::baseline::restore(state, parent_id, &target_id, &baseline).await?;
+        // 2. Remove named volumes so stale files can't survive the reset.
+        remove_volumes(state, &target, &target_id, &node).await?;
+
+        // 3. Restore the baseline if one is captured (seed volumes store
+        //    parent-scoped names; restore re-scopes them to the target);
+        //    without a baseline the volumes come back empty at start.
+        let baseline = demo::baseline::load(state, parent_id).await?;
+        if !baseline.volumes.is_empty() || baseline.project_tar.is_some() {
+            demo::baseline::restore(state, parent_id, &target_id, &baseline).await?;
+        }
     }
 
     // 4. Restart — recreates containers from the stored spec.

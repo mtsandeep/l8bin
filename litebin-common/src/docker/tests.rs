@@ -153,6 +153,31 @@ fn full_project_cleanup_selects_workload_proxy_and_private_network() {
 }
 
 #[test]
+fn container_name_matching_is_exact_or_anchored() {
+    use super::container::{container_name_has_prefix, container_name_is};
+
+    let prefixes = super::container::project_cleanup_container_prefixes("app");
+    let service_prefix = prefixes[0].as_str();
+    let names = |name: &str| vec![format!("/{name}")];
+
+    // Own services and the managed proxy share the `litebin-<id>.` prefix.
+    assert!(container_name_has_prefix(&names("litebin-app.web"), service_prefix));
+    assert!(container_name_has_prefix(
+        &names(&crate::types::container_name("app", crate::types::DOCKER_PROXY_SERVICE, None)),
+        service_prefix
+    ));
+    // Demo instances and other ids that merely extend this one do not.
+    assert!(!container_name_has_prefix(&names("litebin-app-shared.db"), service_prefix));
+    assert!(!container_name_has_prefix(&names("litebin-app-2.web"), service_prefix));
+    // Session pool numbering: demo-1 must not select demo-10..19.
+    assert!(!container_name_has_prefix(&names("litebin-app-demo-10.web"), "litebin-app-demo-1."));
+
+    assert!(container_name_is(&names("litebin-app"), "litebin-app"));
+    assert!(!container_name_is(&names("litebin-app-shared"), "litebin-app"));
+    assert!(!container_name_is(&names("litebin-app.web"), "litebin-app"));
+}
+
+#[test]
 fn app_project_network_excludes_observation_and_defaults() {
     use super::image::is_app_project_network;
 

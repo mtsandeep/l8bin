@@ -4,7 +4,7 @@ pub(super) fn can_attempt_full_stop(status: &ProjectStatus) -> bool {
     matches!(status, ProjectStatus::Running | ProjectStatus::Degraded | ProjectStatus::Stopping | ProjectStatus::Error)
 }
 
-pub(super) fn uses_compose_lifecycle(deploy_type: Option<&DeployType>) -> bool {
+pub(in crate::routes::manage) fn uses_compose_lifecycle(deploy_type: Option<&DeployType>) -> bool {
     deploy_type == Some(&DeployType::Compose)
 }
 

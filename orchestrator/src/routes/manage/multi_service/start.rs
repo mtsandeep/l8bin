@@ -37,6 +37,13 @@ async fn build_run_plan(
     let extra_env = read_local_project_env(project_id);
     let compose_yaml = litebin_common::docker::DockerManager::read_compose(project_id);
     let is_single_image = compose_yaml.is_none();
+    // The single-service fallback would launch the public service's image alone and crash-loop it.
+    if is_single_image && crate::routes::manage::handlers::uses_compose_lifecycle(project.deploy_type.as_ref()) {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("compose.yaml not found for project '{project_id}' — re-deploy to restore it"),
+        ));
+    }
 
     let mut plan = if let Some(yaml) = compose_yaml {
         let compose = compose_bollard::ComposeParser::parse_with_interpolation(&yaml, &extra_env, true)

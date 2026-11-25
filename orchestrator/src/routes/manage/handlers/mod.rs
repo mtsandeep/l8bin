@@ -15,6 +15,8 @@ pub use recreate::*;
 pub use service_ops::*;
 pub use stop_start::*;
 
+pub(in crate::routes::manage) use shared::uses_compose_lifecycle;
+
 /// Docker volume names a transfer must move separately from the project dir.
 /// Binds are excluded — relative binds ride along in the project-dir tar,
 /// absolute binds are user-managed host paths.

@@ -23,7 +23,7 @@ active = "sandbox"
 
 [destinations.sandbox]
 server = "http://localhost:5080"
-project = "grophercm"
+project = "myapp-sandbox"
 
 [destinations.prod]
 server = "https://dash.example.com"
@@ -45,7 +45,7 @@ node = "eu-agent-1"
 - **Several** — ship lists them (cursor on `active`), plus *Add a destination…* and *Other server (not saved)…*:
 
 ```
-? Deploy to: › sandbox  http://localhost:5080  grophercm
+? Deploy to: › sandbox  http://localhost:5080  myapp-sandbox
               prod     https://dash.example.com  myapp
               Add a destination…
               Other server (not saved)…

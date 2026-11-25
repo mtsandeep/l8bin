@@ -62,18 +62,18 @@ async fn deleting_demo_child_keeps_parent_digest_referenced() {
     login(&server).await;
 
     // Sleeping parent with wake-time services; child rows are verbatim copies.
-    insert_project(&db, "gophercrm", "stopped", Some("compose")).await;
-    insert_service(&db, "gophercrm", "bootstrap", "sha256:c2524aeb").await;
-    insert_service(&db, "gophercrm", "ui", "sha256:c2524aeb").await;
-    insert_project(&db, "gophercrm-edit-ad6b", "stopped", Some("compose")).await;
-    insert_service(&db, "gophercrm-edit-ad6b", "bootstrap", "sha256:c2524aeb").await;
+    insert_project(&db, "myapp", "stopped", Some("compose")).await;
+    insert_service(&db, "myapp", "bootstrap", "sha256:c2524aeb").await;
+    insert_service(&db, "myapp", "ui", "sha256:c2524aeb").await;
+    insert_project(&db, "myapp-edit-ad6b", "stopped", Some("compose")).await;
+    insert_service(&db, "myapp-edit-ad6b", "bootstrap", "sha256:c2524aeb").await;
 
-    let res = server.delete("/projects/gophercrm-edit-ad6b").await;
+    let res = server.delete("/projects/myapp-edit-ad6b").await;
     assert_eq!(res.status_code(), StatusCode::OK);
 
     // Child rows are gone...
     let child_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM project_services WHERE project_id = 'gophercrm-edit-ad6b'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM project_services WHERE project_id = 'myapp-edit-ad6b'")
             .fetch_one(&db)
             .await
             .unwrap();
@@ -85,7 +85,7 @@ async fn deleting_demo_child_keeps_parent_digest_referenced() {
         "digest referenced by the surviving parent must still count as referenced"
     );
     let parent_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM project_services WHERE project_id = 'gophercrm' AND image = 'sha256:c2524aeb'",
+        "SELECT COUNT(*) FROM project_services WHERE project_id = 'myapp' AND image = 'sha256:c2524aeb'",
     )
     .fetch_one(&db)
     .await

@@ -45,6 +45,7 @@ pub const IMAGES_REMOVE_UNUSED_PATH: &str = "/images/remove-unused";
 pub const IMAGES_PRUNE_PATH: &str = "/images/prune";
 pub const VOLUME_EXPORT_PATH: &str = "/volumes/export";
 pub const VOLUME_IMPORT_PATH: &str = "/volumes/import";
+pub const VOLUME_REMOVE_PATH: &str = "/volumes/remove";
 pub const VOLUME_USAGE_PATH: &str = "/volumes/usage";
 pub const ANONYMOUS_VOLUMES_PATH: &str = "/containers/anonymous-volumes";
 pub const CADDY_SYNC_PATH: &str = "/caddy/sync";
@@ -311,6 +312,12 @@ pub struct LoadImageResponse {
 #[derive(Serialize, Deserialize)]
 pub struct RemoveImageRequest {
     pub image: String,
+}
+
+/// POST /volumes/remove — delete one named volume on the node.
+#[derive(Serialize, Deserialize)]
+pub struct RemoveVolumeRequest {
+    pub volume: String,
 }
 
 #[derive(Serialize, Deserialize)]
