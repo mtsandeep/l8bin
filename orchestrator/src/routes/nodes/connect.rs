@@ -47,6 +47,11 @@ pub async fn connect_node(State(state): State<AppState>, Path(id): Path<String>)
         }
     };
 
+    // Already online — return 200 OK idempotently
+    if node.status == NodeStatus::Online {
+        return (StatusCode::OK, Json(node)).into_response();
+    }
+
     // Only connect pending_setup or offline nodes
     if node.status != NodeStatus::PendingSetup && node.status != NodeStatus::Offline {
         return (

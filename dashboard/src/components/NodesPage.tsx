@@ -52,7 +52,11 @@ function formatMem(bytes: number | null) {
 
 // ── Add Agent Wizard ───────────────────────────────────────────────────────────
 
-type WizardStep = 'form' | 'instructions' | 'connecting' | 'result';
+type WizardStep = 'form' | 'instructions' | 'connecting' | 'result' | 'connected';
+
+function isAlreadyOnlineError(e: unknown): boolean {
+  return e instanceof Error && e.message.includes("node status is 'online'");
+}
 
 interface AddAgentWizardProps {
   onClose: () => void;
@@ -109,6 +113,11 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
         onAdded();
         onClose();
       } catch (e: unknown) {
+        if (isAlreadyOnlineError(e)) {
+          onAdded();
+          setStep('connected');
+          return;
+        }
         setError(e instanceof Error ? e.message : 'Connection failed');
         setStep('result');
       }
@@ -129,8 +138,13 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
     try {
       await connectNode(createdNodeId);
       onAdded();
-      onClose();
+      setStep('connected');
     } catch (e: unknown) {
+      if (isAlreadyOnlineError(e)) {
+        onAdded();
+        setStep('connected');
+        return;
+      }
       setError(e instanceof Error ? e.message : 'Connection failed');
       setStep('result');
     } finally {
@@ -159,9 +173,12 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
               <div
                 className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium
                 ${
-                  step === s || (step === 'result' && s === 'connecting')
+                  step === s || ((step === 'result' || step === 'connected') && s === 'connecting')
                     ? 'bg-violet-600 text-white'
-                    : (step === 'instructions' && s === 'form') || step === 'connecting' || step === 'result'
+                    : (step === 'instructions' && s === 'form') ||
+                        step === 'connecting' ||
+                        step === 'result' ||
+                        step === 'connected'
                       ? 'bg-violet-900/50 text-violet-400'
                       : 'bg-slate-800 text-slate-500'
                 }`}
@@ -178,7 +195,9 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
                 ? 'Install agent'
                 : step === 'connecting'
                   ? 'Connecting…'
-                  : 'Verify'}
+                  : step === 'connected'
+                    ? 'Connected'
+                    : 'Verify'}
           </span>
         </div>
 
@@ -356,6 +375,28 @@ function AddAgentWizard({ onClose, onAdded }: AddAgentWizardProps) {
                   {connecting ? 'Connecting…' : 'Connect'}
                 </button>
               </div>
+            </>
+          )}
+
+          {/* Step 4b: Connected */}
+          {step === 'connected' && (
+            <>
+              <div className="flex flex-col items-center py-4 gap-3">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                  <CheckCircle size={20} className="text-emerald-400" />
+                </div>
+                <div className="text-center">
+                  <h3 className="text-sm font-semibold text-slate-100">{name} is connected</h3>
+                  <p className="text-xs text-slate-400 mt-1">The agent is online and ready to receive deployments.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-500 transition-colors"
+              >
+                Done
+              </button>
             </>
           )}
         </div>

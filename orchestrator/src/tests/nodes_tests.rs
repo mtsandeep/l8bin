@@ -59,3 +59,13 @@ async fn create_node_returns_pending_setup() {
     // agent_secret is shown only at creation
     assert!(!body["agent_secret"].as_str().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn connect_online_node_returns_ok() {
+    let server = logged_in_server().await;
+    let resp = server.post("/nodes/local/connect").await;
+    resp.assert_status(StatusCode::OK);
+    let body: Value = resp.json();
+    assert_eq!(body["id"], "local");
+    assert_eq!(body["status"], "online");
+}
