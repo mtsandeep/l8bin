@@ -81,6 +81,10 @@ pub struct AppState {
     /// Live split-horizon DNS state (Dashboard status) + toggle wake-up.
     pub split_dns_status: Arc<std::sync::RwLock<dns_sidecar::SplitDnsStatus>>,
     pub split_dns_notify: Arc<tokio::sync::Notify>,
+    /// Coalesces concurrent /projects/stats computations.
+    pub stats_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Last computed stats response (served while fresh).
+    pub stats_cache: Arc<std::sync::RwLock<Option<(std::time::Instant, routes::stats::BatchStatsResponse)>>>,
 }
 
 #[tokio::main]
@@ -393,6 +397,8 @@ async fn main() -> anyhow::Result<()> {
             error: None,
         })),
         split_dns_notify: Arc::new(tokio::sync::Notify::new()),
+        stats_lock: Arc::new(tokio::sync::Mutex::new(())),
+        stats_cache: Arc::new(std::sync::RwLock::new(None)),
     };
 
     backup::spawn_daily_snapshots(state.db.clone(), state.config.clone(), state.docker.clone());

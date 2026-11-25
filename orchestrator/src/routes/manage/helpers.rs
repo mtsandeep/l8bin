@@ -214,6 +214,23 @@ pub(crate) async fn image_referenced_by_other_projects(
     Ok(count > 0)
 }
 
+/// True when the node's heartbeat status is Online; local (NULL/'local') is
+/// always true. Read/poll paths use this to skip offline agents.
+pub(crate) async fn node_is_online(db: &sqlx::SqlitePool, node_id: &str) -> bool {
+    if node_id == "local" {
+        return true;
+    }
+    matches!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM nodes WHERE id = ?")
+            .bind(node_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten(),
+        Some(status) if status == "online"
+    )
+}
+
 /// Remove an image from the node only once no project on that node still references
 /// it (and no container is using it — checked by the agent as a node-local safety
 /// net). All errors are logged and swallowed — cleanup must never block the caller.
@@ -606,6 +623,51 @@ B=\"changed\"
 
             assert!(image_referenced_by_other_projects(&db, "local", "sha256:d1").await.unwrap());
             assert!(image_referenced_by_other_projects(&db, "local", "sha256:d2").await.unwrap());
+        }
+    }
+
+    /// Tests for `node_is_online` — the gate that lets read/poll paths skip
+    /// agents the heartbeat has marked offline.
+    mod node_online_tests {
+        use super::super::node_is_online;
+        use sqlx::SqlitePool;
+
+        async fn setup_db() -> SqlitePool {
+            let db = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            sqlx::migrate!("src/db/migrations").run(&db).await.unwrap();
+            db
+        }
+
+        async fn insert_node(db: &SqlitePool, id: &str, status: &str) {
+            sqlx::query(
+                "INSERT INTO nodes (id, name, host, agent_port, status, fail_count, created_at, updated_at)
+                 VALUES (?, ?, 'h', 0, ?, 0, 0, 0)",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(status)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+
+        #[tokio::test]
+        async fn local_is_always_online() {
+            let db = setup_db().await;
+            assert!(node_is_online(&db, "local").await);
+        }
+
+        #[tokio::test]
+        async fn online_and_offline_status_respected() {
+            let db = setup_db().await;
+            insert_node(&db, "up", "online").await;
+            insert_node(&db, "down", "offline").await;
+            insert_node(&db, "pending", "pending_setup").await;
+
+            assert!(node_is_online(&db, "up").await);
+            assert!(!node_is_online(&db, "down").await);
+            assert!(!node_is_online(&db, "pending").await);
+            assert!(!node_is_online(&db, "missing").await);
         }
     }
 }

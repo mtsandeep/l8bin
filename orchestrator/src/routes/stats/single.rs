@@ -58,6 +58,7 @@ pub async fn project_stats(
         &project_id,
         if node_id == "local" { None } else { Some(&node_id) },
         &mut services_raw,
+        None,
     )
     .await;
 
@@ -162,13 +163,13 @@ pub async fn project_disk_usage(
     let mut total: i64 = 0;
     for (scoped, _) in volumes {
         if litebin_common::types::classify_volume(&scoped) != litebin_common::types::VolumeKind::AbsoluteBindMount
-            && let Some(bytes) = super::helpers::volume_bytes(&state, node, &scoped).await
+            && let Some(bytes) = super::helpers::volume_bytes(&state, node, &scoped, None).await
         {
             total += bytes;
         }
     }
     for cid in load_project_container_ids(&state.db, &project).await.unwrap_or_default() {
-        if let Some((_, root_fs)) = super::helpers::container_disk(&state, node, &cid).await {
+        if let Some((_, root_fs)) = super::helpers::container_disk(&state, node, &cid, None).await {
             total += root_fs;
         }
     }

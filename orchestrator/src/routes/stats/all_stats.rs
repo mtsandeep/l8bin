@@ -1,6 +1,9 @@
-use axum::{Json, extract::State, http::StatusCode};
+use std::time::{Duration, Instant};
 
-use super::super::manage::{get_node_from_db, sync_caddy};
+use axum::{Json, extract::State, http::StatusCode};
+use futures_util::future::join_all;
+
+use super::super::manage::{get_node_from_db, node_is_online, sync_caddy};
 use super::helpers::{
     batch_load_services, compose_service_ports, enrich_services, inactive_project_status, make_stats_response,
     project_container_ids,
@@ -10,6 +13,14 @@ use crate::AppState;
 use crate::nodes;
 use crate::status;
 use litebin_common::types::ProjectStatus;
+
+/// A cached response younger than this is served without recomputing.
+const STATS_CACHE_FRESH: Duration = Duration::from_secs(3);
+/// Per-call bound for the stats poll path (interactive endpoints use longer defaults).
+const STATS_POLL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Per-service row with its container_id, as loaded by batch_load_services.
+type ServicesRaw = Vec<(ServiceInfo, Option<String>)>;
 
 #[utoipa::path(
     get,
@@ -25,7 +36,31 @@ use litebin_common::types::ProjectStatus;
 pub async fn all_project_stats(
     State(state): State<AppState>,
 ) -> Result<Json<BatchStatsResponse>, (StatusCode, String)> {
-    let t_total = std::time::Instant::now();
+    // Fresh cache serves overlapping polls directly.
+    if let Some(resp) = fresh_stats_cache(&state) {
+        return Ok(Json(resp));
+    }
+    // Coalesce: polls arriving mid-computation wait, then hit the fresh cache below.
+    let _guard = state.stats_lock.lock().await;
+    if let Some(resp) = fresh_stats_cache(&state) {
+        return Ok(Json(resp));
+    }
+    let resp = compute_all_project_stats(&state).await?;
+    *state.stats_cache.write().unwrap() = Some((Instant::now(), resp.clone()));
+    Ok(Json(resp))
+}
+
+fn fresh_stats_cache(state: &AppState) -> Option<BatchStatsResponse> {
+    state
+        .stats_cache
+        .read()
+        .unwrap()
+        .as_ref()
+        .and_then(|(at, resp)| (at.elapsed() < STATS_CACHE_FRESH).then(|| resp.clone()))
+}
+
+async fn compute_all_project_stats(state: &AppState) -> Result<BatchStatsResponse, (StatusCode, String)> {
+    let t_total = Instant::now();
 
     // Periodic background sync (60s) handles Docker reconciliation.
     // Stats endpoint just reads DB — no need to sync on every poll.
@@ -88,7 +123,14 @@ pub async fn all_project_stats(
             if node_id == "local" {
                 disk_lookups.push((project.id.clone(), services_raw));
             } else {
-                super::helpers::apply_data_usage(&state, &project.id, Some(node_id), &mut services_raw).await;
+                super::helpers::apply_data_usage(
+                    state,
+                    &project.id,
+                    Some(node_id),
+                    &mut services_raw,
+                    Some(STATS_POLL_TIMEOUT),
+                )
+                .await;
                 results.push(make_stats_response(
                     project.id.clone(),
                     project.status.clone(),
@@ -124,7 +166,7 @@ pub async fn all_project_stats(
     // Handle per-service disk lookups for stopped local containers
     let stopped_count = disk_lookups.len();
     for (project_id, mut services_raw) in disk_lookups {
-        super::helpers::apply_data_usage(&state, &project_id, None, &mut services_raw).await;
+        super::helpers::apply_data_usage(state, &project_id, None, &mut services_raw, None).await;
         let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(svc, _)| svc).collect();
         // Use the actual project status — preserve transient/setup states
         // and only derive stopped/degraded when the project is in a stable terminal state
@@ -139,11 +181,9 @@ pub async fn all_project_stats(
         ));
     }
 
-    // Fetch local stats — parallelize all Docker API calls across all containers
-    let t2 = std::time::Instant::now();
+    // Fetch local stats — all Docker API calls across all containers at once
+    let t2 = Instant::now();
 
-    /// Per-service row with its container_id, as loaded by batch_load_services.
-    type ServicesRaw = Vec<(ServiceInfo, Option<String>)>;
     /// (container_id, live cpu/mem triple) — None when stats collection failed.
     type ContainerStatsEntry = (String, Option<(f64, u64, u64)>);
 
@@ -155,24 +195,21 @@ pub async fn all_project_stats(
         }
     }
 
-    // Parallel Docker calls for all containers at once
-    let mut handles = Vec::with_capacity(all_local_containers.len());
-    for (_project_id, cid) in &all_local_containers {
+    let container_results: Vec<ContainerStatsEntry> = join_all(all_local_containers.iter().map(|(_pid, cid)| {
         let docker = state.docker.clone();
         let cid = cid.clone();
-        handles.push(async move {
+        async move {
             let stats_res = docker.container_stats(&cid).await;
             (cid, stats_res)
-        });
-    }
-    let mut container_results: Vec<ContainerStatsEntry> = Vec::with_capacity(handles.len());
-    for handle in handles {
-        let (cid, stats_res) = handle.await;
-        match stats_res {
-            Ok(s) => container_results.push((cid, Some((s.cpu_percent, s.memory_usage, s.memory_limit)))),
-            Err(_) => container_results.push((cid, None)),
         }
-    }
+    }))
+    .await
+    .into_iter()
+    .map(|(cid, stats_res)| match stats_res {
+        Ok(s) => (cid, Some((s.cpu_percent, s.memory_usage, s.memory_limit))),
+        Err(_) => (cid, None),
+    })
+    .collect();
 
     // Build per-project results from container data
     let container_running: std::collections::HashSet<String> =
@@ -180,7 +217,7 @@ pub async fn all_project_stats(
 
     for (project_id, container_ids) in &local_projects {
         let mut services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-        super::helpers::apply_data_usage(&state, project_id, None, &mut services_raw).await;
+        super::helpers::apply_data_usage(state, project_id, None, &mut services_raw, None).await;
         let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
         let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut any_running = false;
@@ -248,172 +285,21 @@ pub async fn all_project_stats(
 
     tracing::info!(elapsed_ms = t2.elapsed().as_millis(), "stats: local docker stats");
 
-    // Fetch remote stats — one POST per node with all container IDs
-    let t3 = std::time::Instant::now();
-    for (node_id, projects_containers) in &remote_by_node {
-        // Flatten all container IDs for the batch request
-        let all_container_ids: Vec<String> =
-            projects_containers.iter().flat_map(|(_, cids)| cids.iter().cloned()).collect();
-
-        // Map container_id -> project_id
-        let cid_to_pid: std::collections::HashMap<String, String> = projects_containers
-            .iter()
-            .flat_map(|(pid, cids)| cids.iter().map(move |cid| (cid.clone(), pid.clone())))
-            .collect();
-
-        let client = match nodes::client::get_node_client(&state.node_clients, node_id) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(node_id = %node_id, error = %e, "batch stats: node client unavailable");
-                for (project_id, _) in projects_containers {
-                    let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                    results.push(make_stats_response(
-                        project_id.clone(),
-                        ProjectStatus::Running,
-                        last_active_map.get(project_id).copied().flatten(),
-                        services_raw.into_iter().map(|(s, _)| s).collect(),
-                    ));
-                }
-                continue;
-            }
-        };
-
-        let node = match get_node_from_db(&state.db, node_id).await {
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!(node_id = %node_id, error = ?e, "batch stats: node not found");
-                for (project_id, _) in projects_containers {
-                    let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                    results.push(make_stats_response(
-                        project_id.clone(),
-                        ProjectStatus::Running,
-                        last_active_map.get(project_id).copied().flatten(),
-                        services_raw.into_iter().map(|(s, _)| s).collect(),
-                    ));
-                }
-                continue;
-            }
-        };
-
-        let agent = nodes::client::AgentClient::new(client, &node, &state.config);
-
-        let items =
-            match agent.stats(&litebin_common::agent_api::BatchStatsRequest { container_ids: all_container_ids }).await
-            {
-                Ok(items) => items,
-                Err(nodes::client::AgentClientError::Parse(e)) => {
-                    // Unparseable body: keep going with no live samples — projects on
-                    // this node fall back to Stopped below.
-                    tracing::warn!(node_id = %node_id, error = %e, "batch stats: failed to parse response");
-                    Vec::new()
-                }
-                Err(nodes::client::AgentClientError::Status { body, .. }) => {
-                    tracing::warn!(node_id = %node_id, body = %body, "batch stats: agent returned error");
-                    for (project_id, _) in projects_containers {
-                        let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                        results.push(make_stats_response(
-                            project_id.clone(),
-                            ProjectStatus::Running,
-                            last_active_map.get(project_id).copied().flatten(),
-                            services_raw.into_iter().map(|(s, _)| s).collect(),
-                        ));
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!(node_id = %node_id, error = %e, "batch stats: agent unreachable");
-                    for (project_id, _) in projects_containers {
-                        let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-                        results.push(make_stats_response(
-                            project_id.clone(),
-                            ProjectStatus::Running,
-                            last_active_map.get(project_id).copied().flatten(),
-                            services_raw.into_iter().map(|(s, _)| s).collect(),
-                        ));
-                    }
-                    continue;
-                }
-            };
-
-        // Collect per-container stats and group by project
-        let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
-        let mut project_stats: std::collections::HashMap<String, (f64, u64, u64, f64)> =
-            std::collections::HashMap::new();
-        let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        {
-            // Collect container states per project for DB sync
-            let mut container_states_by_project: std::collections::HashMap<String, Vec<(String, bool)>> =
-                std::collections::HashMap::new();
-
-            for item in &items {
-                let cid = item.container_id.as_str();
-                let project_id = cid_to_pid.get(cid).cloned().unwrap_or_default();
-                let is_running = item.state != "stopped";
-                let disk_gb = item.disk_gb;
-
-                container_states_by_project.entry(project_id.clone()).or_default().push((cid.to_string(), is_running));
-
-                if disk_gb > 0.0 {
-                    state.disk_cache.insert(cid.to_string(), (disk_gb * 1024.0 * 1024.0 * 1024.0) as i64);
-                }
-
-                if !is_running {
-                    stopped_cids.insert(cid.to_string());
-                    caddy_dirty = true;
-                    continue;
-                }
-
-                let cpu = item.cpu_percent;
-                let mem_usage = item.memory_usage;
-                let mem_limit = item.memory_limit;
-                let cpu_limit = item.cpu_limit;
-
-                per_container.insert(cid.to_string(), (cpu, mem_usage, mem_limit, disk_gb, cpu_limit));
-
-                let entry = project_stats.entry(project_id.clone()).or_insert((0.0, 0, 0, 0.0));
-                entry.0 += cpu;
-                entry.1 += mem_usage;
-                entry.2 += mem_limit;
-                entry.3 += disk_gb;
-            }
-
-            // Sync remote project statuses from agent-reported container states
-            for (pid, states) in &container_states_by_project {
-                let result = status::update_status_from_container_states(&state.db, pid, states).await;
-                if result.caddy_dirty {
-                    caddy_dirty = true;
-                }
-            }
-        }
-
-        // Build results for each project on this node
-        for (project_id, _) in projects_containers {
-            let mut services_raw = services_map.get(project_id).cloned().unwrap_or_default();
-            super::helpers::apply_data_usage(&state, project_id, Some(node_id), &mut services_raw).await;
-            if project_stats.contains_key(project_id) {
-                let services = enrich_services(&services_raw, &per_container, &stopped_cids);
-                results.push(make_stats_response(
-                    project_id.clone(),
-                    ProjectStatus::Running,
-                    last_active_map.get(project_id).copied().flatten(),
-                    services,
-                ));
-            } else {
-                let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(svc, _)| svc).collect();
-                results.push(make_stats_response(
-                    project_id.clone(),
-                    ProjectStatus::Stopped,
-                    last_active_map.get(project_id).copied().flatten(),
-                    services,
-                ));
-            }
-        }
+    // Fetch remote stats — one POST per node, in parallel. Offline nodes are
+    // skipped and their projects served from DB state.
+    let t3 = Instant::now();
+    let node_results = join_all(remote_by_node.iter().map(|(node_id, projects_containers)| {
+        fetch_node_stats(state, node_id, projects_containers, &services_map, &last_active_map)
+    }))
+    .await;
+    for (node_stats, node_caddy_dirty) in node_results {
+        results.extend(node_stats);
+        caddy_dirty |= node_caddy_dirty;
     }
     tracing::info!(elapsed_ms = t3.elapsed().as_millis(), "stats: remote node stats");
 
     if caddy_dirty {
-        sync_caddy(&state).await;
+        sync_caddy(state).await;
     }
 
     tracing::info!(
@@ -425,5 +311,168 @@ pub async fn all_project_stats(
         "stats: total"
     );
 
-    Ok(Json(BatchStatsResponse { stats: results }))
+    Ok(BatchStatsResponse { stats: results })
+}
+
+/// Batched stats for one remote node; offline nodes fall back to DB-only rows.
+/// Returns (responses, caddy_dirty).
+async fn fetch_node_stats(
+    state: &AppState,
+    node_id: &str,
+    projects_containers: &[(String, Vec<String>)],
+    services_map: &std::collections::HashMap<String, ServicesRaw>,
+    last_active_map: &std::collections::HashMap<String, Option<i64>>,
+) -> (Vec<StatsResponse>, bool) {
+    let mut results: Vec<StatsResponse> = Vec::new();
+    let mut caddy_dirty = false;
+
+    let db_only = |project_id: &str| {
+        let services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+        make_stats_response(
+            project_id.to_string(),
+            ProjectStatus::Running,
+            last_active_map.get(project_id).copied().flatten(),
+            services_raw.into_iter().map(|(s, _)| s).collect(),
+        )
+    };
+
+    if !node_is_online(&state.db, node_id).await {
+        for (project_id, _) in projects_containers {
+            results.push(db_only(project_id));
+        }
+        return (results, false);
+    }
+
+    // Flatten all container IDs for the batch request
+    let all_container_ids: Vec<String> =
+        projects_containers.iter().flat_map(|(_, cids)| cids.iter().cloned()).collect();
+
+    // Map container_id -> project_id
+    let cid_to_pid: std::collections::HashMap<String, String> = projects_containers
+        .iter()
+        .flat_map(|(pid, cids)| cids.iter().map(move |cid| (cid.clone(), pid.clone())))
+        .collect();
+
+    let client = match nodes::client::get_node_client(&state.node_clients, node_id) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(node_id = %node_id, error = %e, "batch stats: node client unavailable");
+            for (project_id, _) in projects_containers {
+                results.push(db_only(project_id));
+            }
+            return (results, false);
+        }
+    };
+
+    let node = match get_node_from_db(&state.db, node_id).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(node_id = %node_id, error = ?e, "batch stats: node not found");
+            for (project_id, _) in projects_containers {
+                results.push(db_only(project_id));
+            }
+            return (results, false);
+        }
+    };
+
+    let agent = nodes::client::AgentClient::new(client, &node, &state.config);
+
+    let items = match agent
+        .stats_within(
+            &litebin_common::agent_api::BatchStatsRequest { container_ids: all_container_ids },
+            STATS_POLL_TIMEOUT,
+        )
+        .await
+    {
+        Ok(items) => items,
+        Err(nodes::client::AgentClientError::Parse(e)) => {
+            // No live samples — projects on this node fall back to Stopped below.
+            tracing::warn!(node_id = %node_id, error = %e, "batch stats: failed to parse response");
+            Vec::new()
+        }
+        Err(e) => {
+            tracing::warn!(node_id = %node_id, error = %e, "batch stats: agent unreachable");
+            for (project_id, _) in projects_containers {
+                results.push(db_only(project_id));
+            }
+            return (results, false);
+        }
+    };
+
+    // Collect per-container stats and group by project
+    let mut per_container: std::collections::HashMap<String, LiveStats> = std::collections::HashMap::new();
+    let mut project_stats: std::collections::HashMap<String, (f64, u64, u64, f64)> = std::collections::HashMap::new();
+    let mut stopped_cids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    {
+        // Collect container states per project for DB sync
+        let mut container_states_by_project: std::collections::HashMap<String, Vec<(String, bool)>> =
+            std::collections::HashMap::new();
+
+        for item in &items {
+            let cid = item.container_id.as_str();
+            let project_id = cid_to_pid.get(cid).cloned().unwrap_or_default();
+            let is_running = item.state != "stopped";
+            let disk_gb = item.disk_gb;
+
+            container_states_by_project.entry(project_id.clone()).or_default().push((cid.to_string(), is_running));
+
+            if disk_gb > 0.0 {
+                state.disk_cache.insert(cid.to_string(), (disk_gb * 1024.0 * 1024.0 * 1024.0) as i64);
+            }
+
+            if !is_running {
+                stopped_cids.insert(cid.to_string());
+                caddy_dirty = true;
+                continue;
+            }
+
+            let cpu = item.cpu_percent;
+            let mem_usage = item.memory_usage;
+            let mem_limit = item.memory_limit;
+            let cpu_limit = item.cpu_limit;
+
+            per_container.insert(cid.to_string(), (cpu, mem_usage, mem_limit, disk_gb, cpu_limit));
+
+            let entry = project_stats.entry(project_id.clone()).or_insert((0.0, 0, 0, 0.0));
+            entry.0 += cpu;
+            entry.1 += mem_usage;
+            entry.2 += mem_limit;
+            entry.3 += disk_gb;
+        }
+
+        // Sync remote project statuses from agent-reported container states
+        for (pid, states) in &container_states_by_project {
+            let result = status::update_status_from_container_states(&state.db, pid, states).await;
+            if result.caddy_dirty {
+                caddy_dirty = true;
+            }
+        }
+    }
+
+    // Build results for each project on this node
+    for (project_id, _) in projects_containers {
+        let mut services_raw = services_map.get(project_id).cloned().unwrap_or_default();
+        super::helpers::apply_data_usage(state, project_id, Some(node_id), &mut services_raw, Some(STATS_POLL_TIMEOUT))
+            .await;
+        if project_stats.contains_key(project_id) {
+            let services = enrich_services(&services_raw, &per_container, &stopped_cids);
+            results.push(make_stats_response(
+                project_id.clone(),
+                ProjectStatus::Running,
+                last_active_map.get(project_id).copied().flatten(),
+                services,
+            ));
+        } else {
+            let services: Vec<ServiceInfo> = services_raw.into_iter().map(|(svc, _)| svc).collect();
+            results.push(make_stats_response(
+                project_id.clone(),
+                ProjectStatus::Stopped,
+                last_active_map.get(project_id).copied().flatten(),
+                services,
+            ));
+        }
+    }
+
+    (results, caddy_dirty)
 }

@@ -461,19 +461,36 @@ impl AgentClient {
     /// GET /containers/{id}/disk-usage.
     /// GET /volumes/usage?name= — on-disk bytes of a named volume on the agent.
     pub async fn volume_usage(&self, volume: &str) -> Result<u64, AgentClientError> {
+        self.volume_usage_within(volume, DEFAULT_AGENT_TIMEOUT).await
+    }
+
+    /// [`AgentClient::volume_usage`] with a per-call timeout (stats poll path).
+    pub async fn volume_usage_within(
+        &self,
+        volume: &str,
+        timeout: std::time::Duration,
+    ) -> Result<u64, AgentClientError> {
         #[derive(serde::Deserialize)]
         struct UsageResponse {
             bytes: u64,
         }
-        let resp: UsageResponse = self
-            .get_json(format!("{}?name={volume}", litebin_common::agent_api::VOLUME_USAGE_PATH), DEFAULT_AGENT_TIMEOUT)
-            .await?;
+        let resp: UsageResponse =
+            self.get_json(format!("{}?name={volume}", litebin_common::agent_api::VOLUME_USAGE_PATH), timeout).await?;
         Ok(resp.bytes)
     }
 
     /// GET /containers/anonymous-volumes?container_id= — anonymous volume hash
     /// names attached to a container on the agent.
     pub async fn anonymous_volume_names(&self, container_id: &str) -> Result<Vec<String>, AgentClientError> {
+        self.anonymous_volume_names_within(container_id, DEFAULT_AGENT_TIMEOUT).await
+    }
+
+    /// [`AgentClient::anonymous_volume_names`] with a per-call timeout (stats poll path).
+    pub async fn anonymous_volume_names_within(
+        &self,
+        container_id: &str,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<String>, AgentClientError> {
         #[derive(serde::Deserialize)]
         struct Response {
             volumes: Vec<String>,
@@ -481,22 +498,33 @@ impl AgentClient {
         let resp: Response = self
             .get_json(
                 format!("{}?container_id={container_id}", litebin_common::agent_api::ANONYMOUS_VOLUMES_PATH),
-                DEFAULT_AGENT_TIMEOUT,
+                timeout,
             )
             .await?;
         Ok(resp.volumes)
     }
 
     pub async fn disk_usage(&self, container_id: &str) -> Result<litebin_common::docker::DiskUsage, AgentClientError> {
-        self.get_json(self.url(&format!("/containers/{container_id}/disk-usage")), LIFECYCLE_TIMEOUT).await
+        self.disk_usage_within(container_id, LIFECYCLE_TIMEOUT).await
+    }
+
+    /// [`AgentClient::disk_usage`] with a per-call timeout (stats poll path).
+    pub async fn disk_usage_within(
+        &self,
+        container_id: &str,
+        timeout: std::time::Duration,
+    ) -> Result<litebin_common::docker::DiskUsage, AgentClientError> {
+        self.get_json(self.url(&format!("/containers/{container_id}/disk-usage")), timeout).await
     }
 
     /// POST /containers/stats — batch stats for the given container IDs.
-    pub async fn stats(
+    /// Callers pass their per-call timeout.
+    pub async fn stats_within(
         &self,
         req: &litebin_common::agent_api::BatchStatsRequest,
+        timeout: std::time::Duration,
     ) -> Result<Vec<litebin_common::agent_api::ContainerStatsResponse>, AgentClientError> {
-        self.post_json(litebin_common::agent_api::CONTAINER_STATS_PATH, req, DEFAULT_AGENT_TIMEOUT).await
+        self.post_json(litebin_common::agent_api::CONTAINER_STATS_PATH, req, timeout).await
     }
 
     /// GET /containers/scan — foreign container groups present on the node.

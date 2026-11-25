@@ -94,6 +94,10 @@ pub async fn project_logs(
 
     let lines = if is_remote {
         let node_id = project.node_id.as_deref().unwrap();
+        // Offline node: fail fast instead of timing out on every poll.
+        if !crate::routes::manage::node_is_online(&state.db, node_id).await {
+            return Err((StatusCode::SERVICE_UNAVAILABLE, format!("node '{node_id}' is offline")));
+        }
         let client = nodes::client::get_node_client(&state.node_clients, node_id)
             .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
         let node = get_node_from_db(&state.db, node_id).await?;

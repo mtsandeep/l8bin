@@ -100,6 +100,8 @@ pub(crate) async fn build_test_state(config: Config) -> (AppState, SqlitePool) {
             error: None,
         })),
         split_dns_notify: Arc::new(tokio::sync::Notify::new()),
+        stats_lock: Arc::new(tokio::sync::Mutex::new(())),
+        stats_cache: Arc::new(std::sync::RwLock::new(None)),
         usage_cache: Arc::new(DashMap::new()),
         upload_store: Arc::new(
             litebin_common::upload::UploadStore::new(
@@ -148,6 +150,7 @@ pub fn build_router(state: AppState) -> Router {
     // Read routes (session OR deploy token with scope >= read)
     let read_routes = Router::new()
         .route("/projects", get(routes::projects::list_projects))
+        .route("/projects/stats", get(routes::stats::all_project_stats))
         .route("/projects/{id}", get(routes::projects::get_project))
         .route("/projects/{id}/stats", get(routes::stats::project_stats))
         .route("/projects/{id}/logs", get(routes::stats::project_logs))

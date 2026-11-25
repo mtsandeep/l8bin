@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 // `routes::stats::` paths used by openapi.rs and projects stay stable.
 pub use litebin_common::types::{ServiceInfo, ServiceVolumeInfo};
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 pub struct StatsResponse {
     pub project_id: String,
     pub status: String,
@@ -15,7 +15,7 @@ pub struct StatsResponse {
     pub services: Vec<ServiceInfo>,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 pub struct BatchStatsResponse {
     pub stats: Vec<StatsResponse>,
 }

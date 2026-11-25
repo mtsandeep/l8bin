@@ -83,13 +83,23 @@ pub(super) async fn scoped_volume_list(
     volumes
 }
 
+/// Resolve the agent for a remote node; None when the heartbeat has it offline.
+async fn resolved_online_agent(state: &crate::AppState, node: &str) -> Option<crate::nodes::client::AgentClient> {
+    if !crate::routes::manage::node_is_online(&state.db, node).await {
+        return None;
+    }
+    crate::nodes::client::AgentClient::resolve(state, node).await.ok()
+}
+
 /// Per-service disk: `data_gb` = volumes + writable layer, `disk_gb` = that
 /// plus image layers (size_root_fs). Cached for 10 minutes.
+/// `timeout` bounds remote probes on the poll path; None uses method defaults.
 pub(super) async fn apply_data_usage(
     state: &crate::AppState,
     project_id: &str,
     node_id: Option<&str>,
     services: &mut [(ServiceInfo, Option<String>)],
+    timeout: Option<std::time::Duration>,
 ) {
     let node = node_id.unwrap_or("local");
     let fallback_service = services.first().map(|(svc, _)| svc.service_name.clone());
@@ -100,7 +110,7 @@ pub(super) async fn apply_data_usage(
         if classify_volume(&scoped) == VolumeKind::AbsoluteBindMount {
             continue;
         }
-        if let Some(bytes) = volume_bytes(state, node, &scoped).await {
+        if let Some(bytes) = volume_bytes(state, node, &scoped, timeout).await {
             *per_service.entry(service_name).or_default() += bytes;
         }
     }
@@ -108,12 +118,12 @@ pub(super) async fn apply_data_usage(
     for (svc, cid) in services.iter_mut() {
         let vol = per_service.get(&svc.service_name).copied().unwrap_or(0);
         let ephemeral = match cid {
-            Some(c) => ephemeral_bytes(state, node, c).await.unwrap_or(0),
+            Some(c) => ephemeral_bytes(state, node, c, timeout).await.unwrap_or(0),
             None => 0,
         };
         svc.ephemeral_gb = Some(ephemeral as f64 / (1024.0 * 1024.0 * 1024.0));
         if let Some(cid) = cid
-            && let Some((rw, root_fs)) = container_disk(state, node, cid).await
+            && let Some((rw, root_fs)) = container_disk(state, node, cid, timeout).await
         {
             svc.data_gb = Some((vol + rw) as f64 / (1024.0 * 1024.0 * 1024.0));
             svc.disk_gb = Some((vol + root_fs + ephemeral) as f64 / (1024.0 * 1024.0 * 1024.0));
@@ -126,14 +136,19 @@ pub(super) async fn apply_data_usage(
 
 /// Total bytes of a container's anonymous volumes (names cached with the same
 /// TTL as the sizes; each volume is du'd through volume_bytes).
-async fn ephemeral_bytes(state: &crate::AppState, node: &str, container_id: &str) -> Option<i64> {
+async fn ephemeral_bytes(
+    state: &crate::AppState,
+    node: &str,
+    container_id: &str,
+    timeout: Option<std::time::Duration>,
+) -> Option<i64> {
     let key = format!("{node}|anonnames|{container_id}");
     let names: Vec<String> = if let Some(entry) = state.usage_cache.get(&key)
         && entry.at.elapsed().as_secs() < USAGE_TTL_SECS
     {
         entry.names.clone()?
     } else {
-        let names = fetch_anon_names(state, node, container_id).await?;
+        let names = fetch_anon_names(state, node, container_id, timeout).await?;
         state
             .usage_cache
             .insert(key, UsageEntry { bytes: 0, at: std::time::Instant::now(), names: Some(names.clone()) });
@@ -142,25 +157,34 @@ async fn ephemeral_bytes(state: &crate::AppState, node: &str, container_id: &str
 
     let mut total = 0;
     for name in &names {
-        total += volume_bytes(state, node, name).await.unwrap_or(0);
+        total += volume_bytes(state, node, name, timeout).await.unwrap_or(0);
     }
     Some(total)
 }
 
-async fn fetch_anon_names(state: &crate::AppState, node: &str, container_id: &str) -> Option<Vec<String>> {
+async fn fetch_anon_names(
+    state: &crate::AppState,
+    node: &str,
+    container_id: &str,
+    timeout: Option<std::time::Duration>,
+) -> Option<Vec<String>> {
     if node == "local" {
         state.docker.anonymous_volume_names(container_id).await.ok()
     } else {
-        crate::nodes::client::AgentClient::resolve(state, node)
-            .await
-            .ok()?
-            .anonymous_volume_names(container_id)
-            .await
-            .ok()
+        let agent = resolved_online_agent(state, node).await?;
+        match timeout {
+            Some(t) => agent.anonymous_volume_names_within(container_id, t).await.ok(),
+            None => agent.anonymous_volume_names(container_id).await.ok(),
+        }
     }
 }
 
-pub(super) async fn volume_bytes(state: &crate::AppState, node: &str, scoped: &str) -> Option<i64> {
+pub(super) async fn volume_bytes(
+    state: &crate::AppState,
+    node: &str,
+    scoped: &str,
+    timeout: Option<std::time::Duration>,
+) -> Option<i64> {
     let key = format!("{node}|{scoped}");
     if let Some(entry) = state.usage_cache.get(&key)
         && entry.at.elapsed().as_secs() < USAGE_TTL_SECS
@@ -183,14 +207,24 @@ pub(super) async fn volume_bytes(state: &crate::AppState, node: &str, scoped: &s
     let bytes = if node == "local" {
         state.docker.volume_usage_bytes(&mount).await.ok()? as i64
     } else {
-        crate::nodes::client::AgentClient::resolve(state, node).await.ok()?.volume_usage(&mount).await.ok()? as i64
+        let agent = resolved_online_agent(state, node).await?;
+        let fetched = match timeout {
+            Some(t) => agent.volume_usage_within(&mount, t).await.ok()?,
+            None => agent.volume_usage(&mount).await.ok()?,
+        };
+        fetched as i64
     };
     state.usage_cache.insert(key, UsageEntry { bytes, at: std::time::Instant::now(), names: None });
     Some(bytes)
 }
 
 /// (writable layer, rootfs incl. image layers) for a container's host node.
-pub(super) async fn container_disk(state: &crate::AppState, node: &str, container_id: &str) -> Option<(i64, i64)> {
+pub(super) async fn container_disk(
+    state: &crate::AppState,
+    node: &str,
+    container_id: &str,
+    timeout: Option<std::time::Duration>,
+) -> Option<(i64, i64)> {
     let rw_key = format!("{node}|rw|{container_id}");
     let fs_key = format!("{node}|fs|{container_id}");
     if let (Some(rw), Some(fs)) = (state.usage_cache.get(&rw_key), state.usage_cache.get(&fs_key))
@@ -202,7 +236,11 @@ pub(super) async fn container_disk(state: &crate::AppState, node: &str, containe
     let usage = if node == "local" {
         state.docker.disk_usage(container_id).await.ok()?
     } else {
-        crate::nodes::client::AgentClient::resolve(state, node).await.ok()?.disk_usage(container_id).await.ok()?
+        let agent = resolved_online_agent(state, node).await?;
+        match timeout {
+            Some(t) => agent.disk_usage_within(container_id, t).await.ok()?,
+            None => agent.disk_usage(container_id).await.ok()?,
+        }
     };
     let now = std::time::Instant::now();
     let rw = usage.size_rw as i64;

@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - The `network_mode: host` rejection now says what to do: it requires a background project (no public URL) — enable background mode or remove the field.
 
 ### Fixed
+- **Stats endpoint stalls when an agent node is down** — read paths skip agents the heartbeat marked offline, stats computations are coalesced with a short cache, remote fetches run in parallel with a 10s per-call bound, and the dashboard skips a poll while the previous one is in flight.
 - **Image cleanup is reference-aware** — an image digest is only removed once no remaining project on the node references it (duplicates, demo instances, and sleeping services share digests); the agent-side check now also scans stopped containers.
 - **Agent wake deadlock** — concurrent retries of a failed wake could deadlock workers on the wake-lock shard and wedge the whole runtime until restart.
 - **Already-online agent connection** — clicking Connect in the Add Agent modal (or calling `POST /nodes/{id}/connect`) on an agent that already came online via heartbeat now returns `200 OK` and shows a connected success state instead of failing with `node status is 'online'`.

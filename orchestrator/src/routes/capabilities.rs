@@ -389,6 +389,8 @@ mod tests {
                 error: None,
             })),
             split_dns_notify: Arc::new(tokio::sync::Notify::new()),
+            stats_lock: Arc::new(tokio::sync::Mutex::new(())),
+            stats_cache: Arc::new(std::sync::RwLock::new(None)),
             usage_cache: Arc::new(DashMap::new()),
             upload_store: Arc::new(litebin_common::upload::UploadStore::new(
                 std::env::temp_dir().join("l8b-test-upload-store"),

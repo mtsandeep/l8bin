@@ -1,5 +1,10 @@
 const API_BASE = '';
 
+/** fetch with a hard timeout so a hung request can't stall a polling loop. */
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 10_000): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
 // ── Shared Types ──────────────────────────────────────────────────────────────
 
 export const ProjectStatus = {
@@ -109,7 +114,7 @@ export interface ProjectStats {
 }
 
 export async function fetchProjects(): Promise<Project[]> {
-  const res = await fetch(`${API_BASE}/projects`, { credentials: 'include' });
+  const res = await fetchWithTimeout(`${API_BASE}/projects`, { credentials: 'include' });
   if (!res.ok) throw new Error('Failed to fetch projects');
   return res.json();
 }
@@ -129,7 +134,7 @@ export async function createProject(id: string): Promise<Project> {
 }
 
 export async function fetchAllStats(): Promise<ProjectStats[]> {
-  const res = await fetch(`${API_BASE}/projects/stats`, { credentials: 'include' });
+  const res = await fetchWithTimeout(`${API_BASE}/projects/stats`, { credentials: 'include' });
   if (!res.ok) throw new Error('Failed to fetch stats');
   const data = await res.json();
   return data.stats;
@@ -1045,7 +1050,7 @@ export interface LogsResponse {
 export async function fetchLogs(projectId: string, tail = 100, service?: string): Promise<LogsResponse> {
   const params = new URLSearchParams({ tail: String(tail) });
   if (service) params.set('service', service);
-  const res = await fetch(`${API_BASE}/projects/${projectId}/logs?${params}`, { credentials: 'include' });
+  const res = await fetchWithTimeout(`${API_BASE}/projects/${projectId}/logs?${params}`, { credentials: 'include' });
   if (!res.ok) throw new Error('Failed to fetch logs');
   return res.json();
 }
@@ -1074,7 +1079,7 @@ export interface ServiceStats {
 }
 
 export async function fetchSystemStats(): Promise<ServiceStats[]> {
-  const res = await fetch(`${API_BASE}/system/stats`, { credentials: 'include' });
+  const res = await fetchWithTimeout(`${API_BASE}/system/stats`, { credentials: 'include' });
   if (!res.ok) return [];
   const data = await res.json();
   return data.services;
