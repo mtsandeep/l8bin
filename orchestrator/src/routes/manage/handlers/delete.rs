@@ -123,24 +123,30 @@ pub async fn delete_project(
         }
     }
 
-    // Clean up all per-service images if no longer in use
-    let service_images: Vec<String> = sqlx::query_scalar("SELECT image FROM project_services WHERE project_id = ?")
+    // Capture image refs (single-service + per-service) before the rows go, delete
+    // the rows, then reclaim — the reference check in cleanup_unused_image must see
+    // post-deletion state.
+    let mut image_refs: Vec<String> = sqlx::query_scalar("SELECT image FROM project_services WHERE project_id = ?")
         .bind(&project_id)
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
-
-    let unique_images: std::collections::HashSet<String> = service_images.into_iter().collect();
-    for image in &unique_images {
-        cleanup_unused_image(&state, project.node_id.as_deref(), image).await;
+    if let Some(img) = &project.image {
+        image_refs.push(img.clone());
     }
+    let unique_images: std::collections::HashSet<String> = image_refs.into_iter().collect();
 
-    // Delete from DB
+    // Delete from DB (cascades project_services)
     sqlx::query("DELETE FROM projects WHERE id = ?")
         .bind(&project_id)
         .execute(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?;
+
+    // Clean up images that no longer have any referencing project
+    for image in &unique_images {
+        cleanup_unused_image(&state, project.node_id.as_deref(), image).await;
+    }
 
     // Clear in-memory deploy logs
     crate::routes::deploy::logs::clear_deploy_logs(&state, &project_id);

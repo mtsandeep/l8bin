@@ -439,12 +439,28 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
         };
     }
 
-    // Container is stopped — single-flight wake via Entry API
+    // Container is stopped — single-flight wake.
+    //
+    // DashMap `entry()` holds the shard write lock until the Entry is dropped, and
+    // re-acquiring the same shard from that task (`get`/`remove`) deadlocks. So the
+    // occupied path goes through `get()`, and `entry()` is only used for the insert.
+    if let Some(existing) = state.wake_locks.get(&subdomain).map(|g| g.clone()) {
+        return handle_existing_wake_guard(
+            &state,
+            &subdomain,
+            is_multi_service,
+            client,
+            existing,
+            HeldRequest { method, uri: &uri, headers: &headers, body },
+        )
+        .await;
+    }
+
     let guard = std::sync::Arc::new(WakeGuard::new());
 
     match state.wake_locks.entry(subdomain.clone()) {
         dashmap::mapref::entry::Entry::Vacant(entry) => {
-            // We're the first — insert guard and spawn background wake
+            // We're the first — insert guard and spawn background wake.
             entry.insert(guard.clone());
             let state_clone = state.clone();
             let subdomain_clone = subdomain.clone();
@@ -664,20 +680,10 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
             .await
         }
         dashmap::mapref::entry::Entry::Occupied(entry) => {
-            // Another wake in progress (or completed) — wait on the same guard.
+            // Lost the get()->entry() race — drop the Entry before further map access.
             let existing = entry.get().clone();
-            if existing.is_completed() && !existing.is_success() {
-                // Remove old lock so the next request can start a fresh wake
-                state.wake_locks.remove(&subdomain);
-                return match client {
-                    WakeClient::Document => error_page(&subdomain),
-                    _ => starting_json_response(),
-                };
-            }
-            if existing.is_completed() {
-                state.wake_locks.remove(&subdomain);
-            }
-            held_wake_response(
+            drop(entry);
+            handle_existing_wake_guard(
                 &state,
                 &subdomain,
                 is_multi_service,
@@ -688,6 +694,31 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
             .await
         }
     }
+}
+
+/// A wake guard already exists for `subdomain` — in-flight, completed-success, or
+/// completed-failed. Must be called without a live DashMap Entry: the completed
+/// branches call `wake_locks.remove()` on the same shard.
+async fn handle_existing_wake_guard(
+    state: &AgentState,
+    subdomain: &str,
+    is_multi_service: bool,
+    client: WakeClient,
+    existing: Arc<WakeGuard>,
+    req: HeldRequest<'_>,
+) -> Response<Body> {
+    if existing.is_completed() && !existing.is_success() {
+        // Remove old lock so the next request can start a fresh wake
+        state.wake_locks.remove(subdomain);
+        return match client {
+            WakeClient::Document => error_page(subdomain),
+            _ => starting_json_response(),
+        };
+    }
+    if existing.is_completed() {
+        state.wake_locks.remove(subdomain);
+    }
+    held_wake_response(state, subdomain, is_multi_service, client, existing, req).await
 }
 
 /// Container names for compose one-shot services (`service_completed_successfully`).
@@ -763,4 +794,121 @@ fn not_found_page() -> Response<Body> {
         .header("X-Robots-Tag", "noindex")
         .body(Body::from(html))
         .unwrap()
+}
+
+#[cfg(test)]
+mod wake_guard_tests {
+    //! Guards must be handled without holding a DashMap Entry — the completed
+    //! branches call `wake_locks.remove()` on the same shard, which deadlocks
+    //! if an Entry is still held.
+
+    use super::{HeldRequest, WakeClient, handle_existing_wake_guard};
+    use crate::{AgentState, WakeGuard};
+    use axum::http::{HeaderMap, Method, StatusCode, Uri};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn test_state() -> Arc<AgentState> {
+        Arc::new(AgentState {
+            config: Arc::new(crate::config::Config {
+                agent_port: 0,
+                upload_port: 0,
+                cert_path: String::new(),
+                key_path: String::new(),
+                ca_cert_path: String::new(),
+                public_ip: String::new(),
+                caddy_admin_url: "http://127.0.0.1:1".into(),
+                cert_pem: String::new(),
+                key_pem: String::new(),
+            }),
+            docker: Arc::new(litebin_common::docker::DockerManager::new_for_tests()),
+            caddy: None,
+            wake_locks: Arc::new(dashmap::DashMap::new()),
+            registration: Arc::new(std::sync::RwLock::new(None)),
+            last_caddy_config: Arc::new(std::sync::RwLock::new(None)),
+            project_meta: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+            proxy_client: reqwest::Client::new(),
+            multi_svc_health_check: Arc::new(dashmap::DashMap::new()),
+            upload_store: Arc::new(
+                litebin_common::upload::UploadStore::new(
+                    std::env::temp_dir().join(format!("l8b-wake-test-{}", std::process::id())),
+                    litebin_common::upload::DEFAULT_CHUNK_SIZE,
+                )
+                .unwrap(),
+            ),
+        })
+    }
+
+    /// A failed wake's guard lingers for the retention window; a retry in that
+    /// window takes the completed-failed branch.
+    fn seed_failed_guard(state: &AgentState, subdomain: &str) {
+        let guard = Arc::new(WakeGuard::new());
+        guard.finish(false);
+        state.wake_locks.insert(subdomain.to_string(), guard);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn completed_failed_guard_is_removed_without_deadlock() {
+        let state = test_state();
+        seed_failed_guard(&state, "frozen-app");
+
+        let uri = Uri::from_static("/");
+        let headers = HeaderMap::new();
+        let existing = state.wake_locks.get("frozen-app").map(|g| g.clone()).unwrap();
+        let fut = handle_existing_wake_guard(
+            &state,
+            "frozen-app",
+            false,
+            WakeClient::Document,
+            existing,
+            HeldRequest { method: Method::GET, uri: &uri, headers: &headers, body: axum::body::Bytes::new() },
+        );
+        // Entry-held-across-remove would deadlock; the timeout turns that into a failure.
+        let resp = tokio::time::timeout(Duration::from_secs(5), fut).await.expect("must not deadlock");
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            state.wake_locks.get("frozen-app").is_none(),
+            "completed-failed guard must be removed so the next request starts a fresh wake"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_retries_of_failed_wake_all_return() {
+        let state = test_state();
+        seed_failed_guard(&state, "frozen-app");
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let state = state.clone();
+            handles.push(tokio::spawn(async move {
+                let uri = Uri::from_static("/");
+                let headers = HeaderMap::new();
+                let existing = state.wake_locks.get("frozen-app").map(|g| g.clone());
+                match existing {
+                    Some(existing) => {
+                        let fut = handle_existing_wake_guard(
+                            &state,
+                            "frozen-app",
+                            false,
+                            WakeClient::Document,
+                            existing,
+                            HeldRequest {
+                                method: Method::GET,
+                                uri: &uri,
+                                headers: &headers,
+                                body: axum::body::Bytes::new(),
+                            },
+                        );
+                        tokio::time::timeout(Duration::from_secs(5), fut).await.expect("must not deadlock").status()
+                    }
+                    // Guard already removed by a concurrent task — that is fine.
+                    None => StatusCode::SERVICE_UNAVAILABLE,
+                }
+            }));
+        }
+        for h in handles {
+            assert_eq!(h.await.unwrap(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+        assert!(state.wake_locks.get("frozen-app").is_none());
+    }
 }

@@ -177,10 +177,62 @@ pub fn write_local_env_snapshot(project_id: &str) {
     }
 }
 
-/// Remove an image from the node if no container is using it.
-/// All errors are logged and swallowed — cleanup must never block the caller.
+/// Check whether any project row on the given node references `image` via
+/// `projects.image` (single-service) or `project_services.image` (multi-service).
+/// The DB is the source of truth for image cleanup — sleeping projects keep
+/// references with zero running containers, so a container count can't gate removal.
+pub(crate) async fn image_referenced_by_other_projects(
+    db: &sqlx::SqlitePool,
+    node_id: &str,
+    image: &str,
+) -> anyhow::Result<bool> {
+    // Local node rows use NULL node_id (the literal 'local' is tolerated defensively).
+    let count = if node_id == "local" {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM projects p
+             WHERE (p.node_id IS NULL OR p.node_id = 'local')
+               AND (p.image = ? OR EXISTS (
+                    SELECT 1 FROM project_services s WHERE s.project_id = p.id AND s.image = ?))",
+        )
+        .bind(image)
+        .bind(image)
+        .fetch_one(db)
+        .await?
+    } else {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM projects p
+             WHERE p.node_id = ?
+               AND (p.image = ? OR EXISTS (
+                    SELECT 1 FROM project_services s WHERE s.project_id = p.id AND s.image = ?))",
+        )
+        .bind(node_id)
+        .bind(image)
+        .bind(image)
+        .fetch_one(db)
+        .await?
+    };
+    Ok(count > 0)
+}
+
+/// Remove an image from the node only once no project on that node still references
+/// it (and no container is using it — checked by the agent as a node-local safety
+/// net). All errors are logged and swallowed — cleanup must never block the caller.
 pub async fn cleanup_unused_image(state: &AppState, node_id: Option<&str>, image: &str) {
     let node_id = node_id.unwrap_or("local");
+    // Callers must have already persisted/deleted their own rows so their
+    // reference is gone before this runs.
+    match image_referenced_by_other_projects(&state.db, node_id, image).await {
+        Ok(true) => {
+            tracing::info!(image = %image, node_id = %node_id, "image still referenced by another project, skipping cleanup");
+            return;
+        }
+        Err(e) => {
+            // Inconclusive check must never allow removal.
+            tracing::warn!(image = %image, node_id = %node_id, error = %e, "image reference check failed, skipping cleanup");
+            return;
+        }
+        Ok(false) => {}
+    }
     if node_id == "local" {
         match state.docker.remove_unused_image(image).await {
             Ok(true) => tracing::info!(image = %image, "cleaned up unused local image"),
@@ -416,5 +468,144 @@ B=\"changed\"
         assert_ne!(file_hash(&env_path), snapshot_hash);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// DB-backed tests for `image_referenced_by_other_projects`.
+    mod reference_tests {
+        use super::super::image_referenced_by_other_projects;
+        use sqlx::SqlitePool;
+
+        async fn setup_db() -> SqlitePool {
+            let db = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            sqlx::migrate!("src/db/migrations").run(&db).await.unwrap();
+
+            // Seed user so the projects FK constraint is satisfied, and the 'local'
+            // node row so projects with a literal 'local' node_id pass their FK.
+            let now = chrono::Utc::now().timestamp();
+            sqlx::query(
+                "INSERT INTO users (id, username, password_hash, is_admin, created_at, updated_at)
+                 VALUES ('test-user', 'testuser', 'hash', 0, ?, ?)",
+            )
+            .bind(now)
+            .bind(now)
+            .execute(&db)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT OR IGNORE INTO nodes (id, name, host, agent_port, status, fail_count, created_at, updated_at)
+                 VALUES ('local', 'Local', 'localhost', 0, 'online', 0, ?, ?)",
+            )
+            .bind(now)
+            .bind(now)
+            .execute(&db)
+            .await
+            .unwrap();
+
+            db
+        }
+
+        async fn insert_project(db: &SqlitePool, id: &str, image: Option<&str>, node_id: Option<&str>) {
+            let now = chrono::Utc::now().timestamp();
+            sqlx::query(
+                r#"INSERT INTO projects
+                   (id, user_id, image, node_id, status, created_at, updated_at)
+                   VALUES (?, 'test-user', ?, ?, 'stopped', ?, ?)"#,
+            )
+            .bind(id)
+            .bind(image)
+            .bind(node_id)
+            .bind(now)
+            .bind(now)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+
+        async fn insert_service(db: &SqlitePool, project_id: &str, service: &str, image: &str) {
+            sqlx::query("INSERT INTO project_services (project_id, service_name, image) VALUES (?, ?, ?)")
+                .bind(project_id)
+                .bind(service)
+                .bind(image)
+                .execute(db)
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn shared_service_digest_is_referenced() {
+            let db = setup_db().await;
+            insert_project(&db, "gophercrm", None, None).await;
+            insert_service(&db, "gophercrm", "bootstrap", "sha256:c2524aeb").await;
+            insert_service(&db, "gophercrm", "ui", "sha256:c2524aeb").await;
+            insert_project(&db, "gophercrm-edit-ad6b", None, None).await;
+            insert_service(&db, "gophercrm-edit-ad6b", "bootstrap", "sha256:c2524aeb").await;
+
+            assert!(
+                image_referenced_by_other_projects(&db, "local", "sha256:c2524aeb").await.unwrap(),
+                "digest shared by a second project must block removal"
+            );
+        }
+
+        #[tokio::test]
+        async fn single_service_project_image_is_referenced() {
+            let db = setup_db().await;
+            insert_project(&db, "a", Some("sha256:abc"), None).await;
+            insert_project(&db, "b", Some("sha256:abc"), None).await;
+
+            assert!(image_referenced_by_other_projects(&db, "local", "sha256:abc").await.unwrap());
+        }
+
+        #[tokio::test]
+        async fn tag_form_reference_is_detected() {
+            let db = setup_db().await;
+            insert_project(&db, "web1", None, None).await;
+            insert_service(&db, "web1", "web", "nginx:1.27").await;
+            insert_project(&db, "web2", None, None).await;
+            insert_service(&db, "web2", "web", "nginx:1.27").await;
+
+            assert!(image_referenced_by_other_projects(&db, "local", "nginx:1.27").await.unwrap());
+            assert!(!image_referenced_by_other_projects(&db, "local", "nginx:1.28").await.unwrap());
+        }
+
+        #[tokio::test]
+        async fn unreferenced_digest_is_not_referenced() {
+            let db = setup_db().await;
+            insert_project(&db, "only", None, None).await;
+            insert_service(&db, "only", "bootstrap", "sha256:solo").await;
+
+            // Own rows count while they exist — callers delete them before cleanup.
+            sqlx::query("DELETE FROM projects WHERE id = 'only'").execute(&db).await.unwrap();
+            assert!(!image_referenced_by_other_projects(&db, "local", "sha256:solo").await.unwrap());
+        }
+
+        #[tokio::test]
+        async fn reference_on_other_node_does_not_block_local_removal() {
+            let db = setup_db().await;
+            sqlx::query("INSERT INTO nodes (id, name, host, agent_port, status, fail_count, created_at, updated_at) VALUES ('remote-1', 'r1', '10.0.0.9', 0, 'online', 0, 0, 0)")
+                .execute(&db)
+                .await
+                .unwrap();
+            // Only the remote project references the digest — nothing on this node.
+            insert_project(&db, "elsewhere", None, Some("remote-1")).await;
+            insert_service(&db, "elsewhere", "web", "sha256:shared").await;
+
+            assert!(
+                !image_referenced_by_other_projects(&db, "local", "sha256:shared").await.unwrap(),
+                "a reference on another node must not block removal on this node"
+            );
+            assert!(image_referenced_by_other_projects(&db, "remote-1", "sha256:shared").await.unwrap());
+        }
+
+        #[tokio::test]
+        async fn null_and_local_node_ids_both_count_as_local() {
+            let db = setup_db().await;
+            insert_project(&db, "null-node", None, None).await;
+            insert_service(&db, "null-node", "web", "sha256:d1").await;
+            insert_project(&db, "local-literal", None, Some("local")).await;
+            insert_service(&db, "local-literal", "web", "sha256:d2").await;
+
+            assert!(image_referenced_by_other_projects(&db, "local", "sha256:d1").await.unwrap());
+            assert!(image_referenced_by_other_projects(&db, "local", "sha256:d2").await.unwrap());
+        }
     }
 }

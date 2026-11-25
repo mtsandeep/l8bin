@@ -13,6 +13,7 @@ mod env_tests;
 #[allow(clippy::await_holding_lock)]
 mod export_duplicate_tests;
 mod health_tests;
+mod image_cleanup_tests;
 mod janitor_tests;
 mod nodes_tests;
 mod orchestrator_path_tests;

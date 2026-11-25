@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file.
 - The `network_mode: host` rejection now says what to do: it requires a background project (no public URL) — enable background mode or remove the field.
 
 ### Fixed
+- **Image cleanup is reference-aware** — an image digest is only removed once no remaining project on the node references it (duplicates, demo instances, and sleeping services share digests); the agent-side check now also scans stopped containers.
+- **Agent wake deadlock** — concurrent retries of a failed wake could deadlock workers on the wake-lock shard and wedge the whole runtime until restart.
 - **Already-online agent connection** — clicking Connect in the Add Agent modal (or calling `POST /nodes/{id}/connect`) on an agent that already came online via heartbeat now returns `200 OK` and shows a connected success state instead of failing with `node status is 'online'`.
 - **Auto-wake brings stacks up in order** — services restarted on wake wait for network and health readiness before dependents start, like full starts.
 - **`ship` now asks for runtime env on redeploys** — compose redeploys and the *Recreate* action offer to push a local `.env` before the deploy auto-starts on the server (single-image redeploys already asked); previously an app whose required runtime variables were skipped at first deploy failed every subsequent redeploy/recreate with a raw interpolation error and no prompt to supply them.

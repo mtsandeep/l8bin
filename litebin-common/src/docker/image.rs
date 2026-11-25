@@ -694,8 +694,12 @@ impl DockerManager {
 
     /// Remove an image by ID or tag if it is not used by any container.
     /// Returns true if the image was removed, false if still in use or not found.
+    ///
+    /// Scans all containers (running AND stopped) rather than `ImageSummary.containers`,
+    /// which is reported as -1 by daemons negotiating an API version below 1.41.
+    /// Project-metadata reference checks live in the orchestrator.
     pub async fn remove_unused_image(&self, image_ref: &str) -> anyhow::Result<bool> {
-        // List all images to find the matching one and check if it's in use
+        // List all images to find the matching one
         let images = self.docker.list_images(Some(ListImagesOptions::default())).await?;
 
         let mut target_id: Option<String> = None;
@@ -707,10 +711,6 @@ impl DockerManager {
                 || img.repo_digests.iter().any(|d| d == image_ref);
 
             if matches {
-                if img.containers > 0 {
-                    tracing::debug!(image = %image_ref, "image still in use by {} containers, skipping removal", img.containers);
-                    return Ok(false);
-                }
                 target_id = Some(img.id.clone());
             }
         }
@@ -719,6 +719,25 @@ impl DockerManager {
             tracing::debug!(image = %image_ref, "image not found, nothing to remove");
             return Ok(false);
         };
+
+        // Fail-safe: can't verify usage, don't remove.
+        let containers = self
+            .docker
+            .list_containers(Some(ListContainersOptions { all: true, ..Default::default() }))
+            .await
+            .map_err(|e| anyhow::anyhow!("cannot verify container usage for image removal: {e}"))?;
+
+        let id_digest = id.trim_start_matches("sha256:");
+        let in_use = containers.iter().any(|c| {
+            let matches_image_id = c.image_id.as_deref().is_some_and(|v| v.trim_start_matches("sha256:") == id_digest);
+            // Fallback for daemons that don't populate ImageID.
+            let matches_ref = c.image.as_deref().is_some_and(|v| v == image_ref);
+            matches_image_id || matches_ref
+        });
+        if in_use {
+            tracing::debug!(image = %image_ref, "image still in use by containers, skipping removal");
+            return Ok(false);
+        }
 
         let opts = RemoveImageOptions::default();
         match self.docker.remove_image(&id, Some(opts), None).await {
