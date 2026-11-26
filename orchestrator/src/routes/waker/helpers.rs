@@ -137,6 +137,7 @@ pub(crate) async fn remote_proxy_response(
     let url = format!("https://agent{}", uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/"));
     let headers = node_request_headers(state, project, headers);
     let resp = proxy_url_with_retry(&client, method, &url, &headers, body, budget).await;
+    let resp = if project.demo_parent_id.is_some() { strip_cookie_domain(resp) } else { resp };
     (resp.status() != StatusCode::BAD_GATEWAY).then_some(resp)
 }
 
@@ -157,8 +158,9 @@ pub(crate) async fn remote_node_client(
     .ok()
 }
 
-/// The request's headers with the `Host` the node routes by. The node's Caddy
-/// selects the project by name.
+/// The request's headers as the node should see them: the `Host` picks the
+/// route on the node, and `Origin`/`Referer`/`X-Forwarded-Host` follow it —
+/// apps compare them against `Host` and refuse mismatches with 403.
 pub(crate) fn node_request_headers(
     state: &AppState,
     project: &crate::db::models::Project,
@@ -172,18 +174,76 @@ pub(crate) fn node_request_headers(
         project.custom_domain.as_deref(),
         visitor,
         &state.platform.domain(),
-    ) && let Ok(value) = axum::http::header::HeaderValue::from_str(&host)
-    {
-        headers.insert(axum::http::header::HOST, value);
+    ) {
+        if let Ok(value) = axum::http::header::HeaderValue::from_str(&host) {
+            headers.insert(axum::http::header::HOST, value);
+        }
+        let readdress = [
+            axum::http::header::ORIGIN,
+            axum::http::header::REFERER,
+            axum::http::header::HeaderName::from_static("x-forwarded-host"),
+        ];
+        for name in readdress {
+            if let Some(value) = headers.get(&name).and_then(|value| value.to_str().ok()) {
+                let readdressed = readdress_url(value, &host);
+                if let Ok(value) = axum::http::header::HeaderValue::from_str(&readdressed) {
+                    headers.insert(name, value);
+                }
+            }
+        }
     }
     headers
 }
 
+/// The authority of `url` replaced with `host`, keeping its scheme and path.
+fn readdress_url(url: &str, host: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else { return url.to_string() };
+    match rest.find('/') {
+        Some(at) => format!("{scheme}://{host}{}", &rest[at..]),
+        None => format!("{scheme}://{host}"),
+    }
+}
+
+/// A cookie pinned to the host the app sees is dropped by the visitor's
+/// browser, which is on the demo host — so demo responses lose the `Domain`
+/// attribute and the cookie lands on the host the visitor actually sees.
+fn strip_cookie_domain(mut resp: Response) -> Response {
+    let values: Vec<String> = resp
+        .headers()
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(str::to_string))
+        .collect();
+    if !values.iter().any(|value| strip_domain_attr(value) != *value) {
+        return resp;
+    }
+    let mut headers = resp.headers().clone();
+    headers.remove(axum::http::header::SET_COOKIE);
+    for value in values {
+        if let Ok(value) = axum::http::header::HeaderValue::from_str(&strip_domain_attr(&value)) {
+            headers.append(axum::http::header::SET_COOKIE, value);
+        }
+    }
+    *resp.headers_mut() = headers;
+    resp
+}
+
+/// Remove the `Domain=` attribute from one Set-Cookie value (never from the
+/// leading `name=value` pair).
+fn strip_domain_attr(value: &str) -> String {
+    let kept: Vec<&str> = value
+        .split(';')
+        .enumerate()
+        .filter(|(index, part)| *index == 0 || !part.trim().to_ascii_lowercase().starts_with("domain="))
+        .map(|(_, part)| part)
+        .collect();
+    kept.join(";")
+}
+
 /// The `Host` a node should see instead of the visitor's, if any. Only a demo
-/// instance is ever addressed under another project's host — its parent's, when
-/// the gatekeeper forwards to it — and the node would answer that with the
-/// parent. Any other project keeps its visitor's host: aliases and custom
-/// domains are routed by that name, and the app reads it.
+/// instance is addressed under another project's host — its parent's, when the
+/// gatekeeper forwards — and the node would answer that with the parent.
+/// Anything else is routed by its own name.
 fn demo_host_override(
     is_demo_instance: bool,
     project_id: &str,
@@ -574,7 +634,7 @@ pub(super) async fn resolve_alias_project(
 
 #[cfg(test)]
 mod tests {
-    use super::demo_host_override;
+    use super::{demo_host_override, readdress_url, strip_domain_attr};
 
     /// The gatekeeper forwards to a demo instance under the parent's host; the
     /// node must see the instance's own name instead. Nothing else is rewritten.
@@ -595,5 +655,33 @@ mod tests {
         assert_eq!(override_for(false, Some("short.example.com")), None);
         assert_eq!(override_for(false, Some("myapp.example.com")), None);
         assert_eq!(override_for(false, None), None);
+    }
+
+    /// Origin/Referer follow the Host rewrite with scheme and path intact;
+    /// anything without an authority is passed through.
+    #[test]
+    fn readdressing_keeps_scheme_and_path() {
+        assert_eq!(
+            readdress_url("https://myapp.example.com/login?next=/dashboard", "myapp-edit-1a2b.example.com"),
+            "https://myapp-edit-1a2b.example.com/login?next=/dashboard"
+        );
+        assert_eq!(readdress_url("https://myapp.example.com", "other.example.com"), "https://other.example.com");
+        assert_eq!(
+            readdress_url("http://localhost:5173", "myapp-edit-1a2b.example.com"),
+            "http://myapp-edit-1a2b.example.com"
+        );
+        assert_eq!(readdress_url("null", "other.example.com"), "null");
+    }
+
+    /// The Domain attribute goes, from any position, but never from the cookie's
+    /// own name; other attributes stay.
+    #[test]
+    fn cookie_domain_attribute_is_removed() {
+        assert_eq!(
+            strip_domain_attr("session=abc; Domain=myapp-edit-1a2b.example.com; Path=/; HttpOnly; Secure"),
+            "session=abc; Path=/; HttpOnly; Secure"
+        );
+        assert_eq!(strip_domain_attr("domain=1; Path=/"), "domain=1; Path=/");
+        assert_eq!(strip_domain_attr("session=abc; Path=/"), "session=abc; Path=/");
     }
 }
