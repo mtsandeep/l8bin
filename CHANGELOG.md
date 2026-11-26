@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.31] - 2026-11-26
+
 ### Added
 - **Variant compose stacks** — `ship` picks the compose file when a repo carries several and remembers the choice; `--compose` (repeatable, `ship`/`deploy`) or a `compose` key in the config deploys one file or several merged in order.
 - **Multiple deploy destinations** — `l8b dest` manages named targets (server + project) in `l8b.toml` and the gitignored `l8b.local.toml`; `ship` offers the list when several exist, every command follows the active one, and a deploy to an unsaved server offers to save it as a destination.
