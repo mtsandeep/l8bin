@@ -55,8 +55,13 @@ async fn remove_volumes(state: &AppState, project: &Project, project_id: &str, n
         }
         NodeRef::Agent(node_id) => {
             let agent = crate::nodes::client::AgentClient::resolve(state, node_id).await?;
+            // The instance restarts from its own files, so the node keeps the project dir.
             agent
-                .cleanup(&litebin_common::agent_api::CleanupRequest { project_id: project_id.to_string(), volumes })
+                .cleanup(&litebin_common::agent_api::CleanupRequest {
+                    project_id: project_id.to_string(),
+                    volumes,
+                    keep_project_dir: true,
+                })
                 .await
                 .map_err(|e| anyhow::anyhow!("volume cleanup on the node failed: {e}"))
         }

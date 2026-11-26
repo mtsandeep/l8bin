@@ -78,12 +78,9 @@ pub async fn recreate_project(
                 .await
                 .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
 
-            // Read compose.yaml from local disk (stored during deploy)
-            let compose_path = std::path::PathBuf::from("projects").join(&project_id).join("compose.yaml");
-            let compose_yaml = match std::fs::read_to_string(&compose_path) {
-                Ok(c) => c,
-                Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("compose.yaml not found: {e}"))),
-            };
+            // The orchestrator's copy, or the node's when a copy never reached the orchestrator.
+            let compose_yaml =
+                crate::routes::manage::helpers::remote_compose_yaml(&state, node_id, &project_id).await?;
 
             // Get service names from DB (agent will topo-sort from compose)
             let svc_names: Vec<String> = sqlx::query_scalar(

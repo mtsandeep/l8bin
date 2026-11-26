@@ -35,6 +35,44 @@ pub async fn ensure_node_reachable(state: &AppState, node_id: &str) -> Result<No
     Ok(node)
 }
 
+/// The compose file a remote start or recreate sends with its batch run. The
+/// orchestrator keeps its own copy (written at deploy); a project that reached
+/// the node without one has it taken from the node and kept from here on.
+pub async fn remote_compose_yaml(
+    state: &AppState,
+    node_id: &str,
+    project_id: &str,
+) -> Result<String, (StatusCode, String)> {
+    let not_found = |detail: String| {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("compose.yaml not found for project '{project_id}': {detail}"))
+    };
+    let compose_path = std::path::PathBuf::from("projects").join(project_id).join("compose.yaml");
+    match std::fs::read_to_string(&compose_path) {
+        Ok(yaml) => return Ok(yaml),
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("failed to read compose.yaml: {e}")));
+        }
+        Err(_) => {}
+    }
+
+    let agent = nodes::client::AgentClient::resolve(state, node_id)
+        .await
+        .map_err(|e| not_found(format!("node client unavailable: {e}")))?;
+    let dir = litebin_common::types::projects_dir().join(project_id);
+    let body = agent
+        .compose_file(&dir.to_string_lossy())
+        .await
+        .map_err(|e| not_found(format!("not on the orchestrator, and node '{node_id}' did not serve it ({e})")))?;
+    let Some(yaml) = body.compose_yaml else {
+        return Err(not_found(format!("not on the orchestrator or node '{node_id}'")));
+    };
+    ensure_project_dir_and_env(project_id);
+    std::fs::write(&compose_path, &yaml)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to write compose.yaml: {e}")))?;
+    tracing::info!(project = project_id, node = node_id, "compose.yaml restored from the node");
+    Ok(yaml)
+}
+
 /// Ensure the project-specific directory exists and has a placeholder .env if missing.
 pub fn ensure_project_dir_and_env(project_id: &str) {
     let project_dir = std::path::PathBuf::from("projects").join(project_id);

@@ -16,6 +16,7 @@ use futures_util::Stream;
 use litebin_common::docker::TransferKind;
 use litebin_common::types::scope_volume_source;
 use tokio::sync::Semaphore;
+use tokio_util::io::StreamReader;
 
 use crate::AppState;
 
@@ -247,7 +248,89 @@ pub async fn transfer_project_dir(
     } else {
         reroot::reroot(raw, old_id, new_id, include_env, tmp_dir).await?
     };
-    dst.transfer_in(state, &TransferKind::ProjectDir(new_id.to_string()), tar).await
+    import_project_dir(state, dst, new_id, tar, tmp_dir).await
+}
+
+/// Import a project-dir tar (top-level `{project_id}/`) into `dst`. A remote
+/// node also gets a copy on the orchestrator: start and recreate of a remote
+/// compose project read `projects/{id}/compose.yaml` here, not on the node.
+pub async fn import_project_dir(
+    state: &AppState,
+    dst: &NodeRef,
+    project_id: &str,
+    tar: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+    tmp_dir: &Path,
+) -> anyhow::Result<()> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    if dst == &NodeRef::Local {
+        return dst.transfer_in(state, &TransferKind::ProjectDir(project_id.to_string()), tar).await;
+    }
+
+    // Spooled once, delivered twice.
+    tokio::fs::create_dir_all(tmp_dir).await?;
+    let spool = tmp_dir.join(format!("project-dir-{}.tar", uuid::Uuid::new_v4().simple()));
+    let mut reader = StreamReader::new(tar.map(std::io::Result::Ok));
+    let written = async {
+        let mut file = tokio::fs::File::create(&spool).await?;
+        tokio::io::copy(&mut reader, &mut file).await?;
+        file.flush().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = written {
+        let _ = tokio::fs::remove_file(&spool).await;
+        return Err(e);
+    }
+
+    let result = async {
+        let file = tokio::fs::File::open(&spool).await?;
+        let stream: Pin<Box<dyn Stream<Item = Bytes> + Send>> =
+            Box::pin(tokio_util::io::ReaderStream::new(file).map(|chunk| chunk.unwrap_or_default()));
+        dst.transfer_in(state, &TransferKind::ProjectDir(project_id.to_string()), stream).await?;
+        let (spool, project_id) = (spool.clone(), project_id.to_string());
+        tokio::task::spawn_blocking(move || {
+            let dest = litebin_common::types::projects_dir().join(&project_id);
+            keep_local_copy(&spool, &project_id, &dest)
+        })
+        .await??;
+        anyhow::Ok(())
+    }
+    .await;
+    let _ = tokio::fs::remove_file(&spool).await;
+    result
+}
+
+/// Write a project-dir tar's top-level files into `dest_dir`. `.env*` is never
+/// written and sub-directories (relative binds) are skipped: the orchestrator's
+/// copy exists for `compose.yaml`, which start and recreate read from it.
+fn keep_local_copy(tar_path: &Path, project_id: &str, dest_dir: &Path) -> anyhow::Result<()> {
+    use std::io::Read;
+
+    std::fs::create_dir_all(dest_dir)?;
+    let mut archive = tar::Archive::new(std::fs::File::open(tar_path)?);
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.to_path_buf();
+        let path_str = path.to_string_lossy();
+        let normalized = path_str.strip_prefix("./").unwrap_or(&path_str);
+        // Entries outside `{project_id}/` are rejected — this doubles as the path-traversal guard.
+        let rest = Path::new(normalized)
+            .strip_prefix(project_id)
+            .map_err(|_| anyhow::anyhow!("project-dir tar entry '{normalized}' is outside '{project_id}/'"))?;
+        if rest.components().count() != 1 || !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let name = rest.to_string_lossy();
+        if name.starts_with(".env") {
+            continue;
+        }
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data)?;
+        std::fs::write(dest_dir.join(rest), data)?;
+    }
+    Ok(())
 }
 
 /// Copy an uploaded (`sha256:`) image via docker save/load. Registry refs are
@@ -377,5 +460,55 @@ mod tests {
         );
         assert_eq!(resolve_scoped_volume("projects/food/data", None), "projects/food/data");
         assert_eq!(resolve_scoped_volume("litebin_food_pgdata", Some("/srv/litebin/projects")), "litebin_food_pgdata");
+    }
+
+    #[test]
+    fn local_copy_keeps_top_level_files_only() {
+        use std::path::Path;
+
+        use super::keep_local_copy;
+
+        fn write_tar(path: &Path, entries: &[(&str, &[u8])]) {
+            let mut builder = tar::Builder::new(std::fs::File::create(path).unwrap());
+            for (name, data) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder.append_data(&mut header, name, *data).unwrap();
+            }
+            builder.finish().unwrap();
+        }
+
+        let tmp = std::env::temp_dir().join(format!("l8b-local-copy-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let dest = tmp.join("out");
+        let tar = tmp.join("dir.tar");
+        write_tar(
+            &tar,
+            &[
+                ("app/compose.yaml", b"services: {}\n"),
+                ("app/.env", b"SECRET=1\n"),
+                ("app/.env.production", b"X=1\n"),
+                ("app/README.md", b"readme"),
+                ("app/data/blob.bin", b"bind data"),
+            ],
+        );
+
+        keep_local_copy(&tar, "app", &dest).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dest.join("compose.yaml")).unwrap(), "services: {}\n");
+        assert!(dest.join("README.md").exists());
+        // No secrets and no relative-bind data on the orchestrator's copy.
+        assert!(!dest.join(".env").exists());
+        assert!(!dest.join(".env.production").exists());
+        assert!(!dest.join("data").exists());
+
+        // An entry outside the project dir is rejected.
+        let stray = tmp.join("stray.tar");
+        write_tar(&stray, &[("other/secret", b"x")]);
+        assert!(keep_local_copy(&stray, "app", &dest).is_err());
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

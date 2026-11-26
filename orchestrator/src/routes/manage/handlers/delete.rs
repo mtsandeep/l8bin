@@ -43,7 +43,11 @@ pub(crate) async fn cleanup_project_containers(
                 .await
                 .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
             if let Err(e) = agent
-                .cleanup(&litebin_common::agent_api::CleanupRequest { project_id: project_id.clone(), volumes })
+                .cleanup(&litebin_common::agent_api::CleanupRequest {
+                    project_id: project_id.clone(),
+                    volumes,
+                    keep_project_dir: false,
+                })
                 .await
             {
                 return Err(match e {
@@ -56,6 +60,8 @@ pub(crate) async fn cleanup_project_containers(
         } else {
             tracing::warn!(project = %project_id, node_id = node_id, "node unavailable; skipping remote container cleanup and deleting project record");
         }
+        // The orchestrator keeps its own copy of a remote project's dir.
+        let _ = std::fs::remove_dir_all(litebin_common::types::projects_dir().join(project_id));
     }
     Ok(())
 }

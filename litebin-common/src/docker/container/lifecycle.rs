@@ -163,6 +163,21 @@ impl DockerManager {
     /// Clean up all resources for a project: containers, volumes, network, and project directory.
     /// Used by both orchestrator (local delete) and agent (remote delete).
     pub async fn cleanup_project_resources(&self, project_id: &str, volumes: &[String]) -> anyhow::Result<()> {
+        self.cleanup_project(project_id, volumes, false).await
+    }
+
+    /// [`Self::cleanup_project_resources`] with the project directory kept —
+    /// for a reset that clears volumes and restarts from the stored files.
+    pub async fn cleanup_project_keeping_dir(&self, project_id: &str, volumes: &[String]) -> anyhow::Result<()> {
+        self.cleanup_project(project_id, volumes, true).await
+    }
+
+    async fn cleanup_project(
+        &self,
+        project_id: &str,
+        volumes: &[String],
+        keep_project_dir: bool,
+    ) -> anyhow::Result<()> {
         let mut cleanup_errors = Vec::new();
         // 1. Stop + remove this project's service containers (`litebin-<id>.<service>`)
         let [prefix, single_name] = project_cleanup_container_prefixes(project_id);
@@ -213,7 +228,8 @@ impl DockerManager {
 
         // 5. Remove project directory if it exists
         let project_dir = crate::types::projects_dir().join(project_id);
-        if project_dir.is_dir()
+        if !keep_project_dir
+            && project_dir.is_dir()
             && let Err(e) = std::fs::remove_dir_all(&project_dir)
         {
             tracing::warn!(project = %project_id, error = %e, "cleanup: failed to remove project directory");

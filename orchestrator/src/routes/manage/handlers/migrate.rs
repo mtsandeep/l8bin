@@ -252,6 +252,7 @@ async fn run_migration(
                     .cleanup(&litebin_common::agent_api::CleanupRequest {
                         project_id: project_id.to_string(),
                         volumes: Vec::new(),
+                        keep_project_dir: false,
                     })
                     .await
                 {

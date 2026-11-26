@@ -528,11 +528,17 @@ pub async fn remove_container(State(state): State<AgentState>, Json(req): Json<R
 }
 
 /// POST /containers/cleanup
-/// Remove all project resources: containers, volumes, network, and project directory.
+/// Remove all project resources: containers, volumes, network, and the project
+/// directory unless the request asks to keep it.
 pub async fn cleanup_project(State(state): State<AgentState>, Json(req): Json<CleanupRequest>) -> impl IntoResponse {
     tracing::info!(project = %req.project_id, "cleanup request received");
 
-    if let Err(e) = state.docker.cleanup_project_resources(&req.project_id, &req.volumes).await {
+    let cleaned = if req.keep_project_dir {
+        state.docker.cleanup_project_keeping_dir(&req.project_id, &req.volumes).await
+    } else {
+        state.docker.cleanup_project_resources(&req.project_id, &req.volumes).await
+    };
+    if let Err(e) = cleaned {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })).into_response();
     }
 

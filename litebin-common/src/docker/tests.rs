@@ -178,6 +178,18 @@ fn container_name_matching_is_exact_or_anchored() {
 }
 
 #[test]
+fn cleanup_request_keeps_the_project_dir_only_when_asked() {
+    use crate::agent_api::CleanupRequest;
+
+    // A caller that predates the field sends none, and means "remove it".
+    let old: CleanupRequest = serde_json::from_str(r#"{"project_id":"app","volumes":[]}"#).unwrap();
+    assert!(!old.keep_project_dir);
+    let reset: CleanupRequest =
+        serde_json::from_str(r#"{"project_id":"app","volumes":[],"keep_project_dir":true}"#).unwrap();
+    assert!(reset.keep_project_dir);
+}
+
+#[test]
 fn app_project_network_excludes_observation_and_defaults() {
     use super::image::is_app_project_network;
 

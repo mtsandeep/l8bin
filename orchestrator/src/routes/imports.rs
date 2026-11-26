@@ -610,9 +610,7 @@ async fn run_import(state: &AppState, job: &ImportJob) -> anyhow::Result<()> {
                 if name == bundle::PROJECT_ENTRY {
                     let raw = file_stream(&spool);
                     let tar = copy_engine::reroot::reroot(raw, &old_id, &new_id, include_env, &tmp).await?;
-                    target
-                        .transfer_in(&state, &litebin_common::docker::TransferKind::ProjectDir(new_id.clone()), tar)
-                        .await?;
+                    copy_engine::import_project_dir(&state, &target, &new_id, tar, &tmp).await?;
                     logs(&state, &new_id, "project files restored");
                 } else if let Some(scoped) = name.strip_prefix("volumes/").and_then(|n| n.strip_suffix(".tar")) {
                     let kind = litebin_common::types::classify_volume(scoped);

@@ -158,6 +158,10 @@ pub struct RemoveRequest {
 pub struct CleanupRequest {
     pub project_id: String,
     pub volumes: Vec<String>,
+    /// Keep the project directory (`compose.yaml`, `.env`) — for a reset that
+    /// clears volumes and restarts from those files.
+    #[serde(default)]
+    pub keep_project_dir: bool,
 }
 
 #[derive(Serialize, Deserialize)]

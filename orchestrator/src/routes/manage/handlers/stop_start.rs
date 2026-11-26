@@ -16,6 +16,32 @@ use crate::routes::manage::multi_service::{
 
 use super::shared::{can_attempt_full_stop, uses_compose_lifecycle};
 
+/// `POST /projects/{id}/stop` — [`stop_project`] with a JSON error body.
+pub async fn stop_project_route(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> axum::response::Response {
+    json_or_error(stop_project(State(state), Path(project_id)).await)
+}
+
+/// `POST /projects/{id}/start` — [`start_project`] with a JSON error body.
+pub async fn start_project_route(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> axum::response::Response {
+    json_or_error(start_project(State(state), Path(project_id)).await)
+}
+
+/// `(StatusCode, String)` failures leave as `{"error": …}`, like the other manage endpoints.
+fn json_or_error(result: Result<Json<MessageResponse>, (StatusCode, String)>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    match result {
+        Ok(ok) => ok.into_response(),
+        Err((status, message)) => (status, Json(serde_json::json!({ "error": message }))).into_response(),
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/projects/{id}/stop",
@@ -341,9 +367,7 @@ pub async fn start_project(
             .await
             .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("node client unavailable: {e}")))?;
 
-        let compose_path = std::path::PathBuf::from("projects").join(&project_id).join("compose.yaml");
-        let compose_yaml = std::fs::read_to_string(&compose_path)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("compose.yaml not found: {e}")))?;
+        let compose_yaml = crate::routes::manage::helpers::remote_compose_yaml(&state, node_id, &project_id).await?;
 
         let svc_names: Vec<String> =
             sqlx::query_scalar("SELECT service_name FROM project_services WHERE project_id = ? ORDER BY service_name")

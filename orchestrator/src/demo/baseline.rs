@@ -242,17 +242,16 @@ pub async fn restore(state: &AppState, parent_id: &str, new_id: &str, baseline: 
     }
 
     if let Some(tar) = &baseline.project_tar {
+        let tmp = copy_engine::spool_dir(state);
         let file = tokio::fs::File::open(tar).await?;
         let raw = tokio_util::io::ReaderStream::new(file).map(|c| c.unwrap_or_default());
         let tar_stream: std::pin::Pin<Box<dyn futures_util::Stream<Item = bytes::Bytes> + Send>> =
             if parent_id == new_id {
                 Box::pin(raw)
             } else {
-                let tmp = copy_engine::spool_dir(state);
                 Box::pin(copy_engine::reroot::reroot(Box::pin(raw), parent_id, new_id, true, &tmp).await?)
             };
-        node.transfer_in(state, &litebin_common::docker::TransferKind::ProjectDir(new_id.to_string()), tar_stream)
-            .await?;
+        copy_engine::import_project_dir(state, &node, new_id, tar_stream, &tmp).await?;
     }
     Ok(())
 }

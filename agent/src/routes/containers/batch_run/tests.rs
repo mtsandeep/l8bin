@@ -412,7 +412,11 @@ async fn live_one_service_compose_uses_agent_lifecycle_and_log_handlers() {
 
         let cleanup = crate::routes::containers::cleanup_project(
             State(state.clone()),
-            Json(super::super::types::CleanupRequest { project_id: project_id.clone(), volumes: Vec::new() }),
+            Json(super::super::types::CleanupRequest {
+                project_id: project_id.clone(),
+                volumes: Vec::new(),
+                keep_project_dir: false,
+            }),
         )
         .await
         .into_response();
