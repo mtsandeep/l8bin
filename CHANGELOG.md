@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - Capability reference page ([docs/topics/capabilities.md](docs/topics/capabilities.md)) and FAQ entry "Why is my deploy asking for raw-ports?".
 
 ### Changed
+- **Demo instance ids carry a `l8b` marker** — the shared, edit and session-pool instances of a demo are now `{parent}-l8b-shared`, `{parent}-l8b-edit-xxxx` and `{parent}-l8b-demo(-2, -3, …)`, so they can't collide with lookalike project names (a taken id auto-renames with `-2`). Existing instances keep their stored ids; instances created after this change use the new names.
 - Dashboard capability cards simplified — one line with Grant/Revoke, details (what it does / why it's needed / risk) collapsed behind a labeled disclosure, plain-language descriptions throughout.
 - The `network_mode: host` rejection now says what to do: it requires a background project (no public URL) — enable background mode or remove the field.
 - `POST /projects/{id}/start` and `/stop` answer errors as JSON (`{"error": …}`) instead of plain text.

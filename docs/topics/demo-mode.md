@@ -25,7 +25,7 @@ Auto-stop stays active underneath — instances sleep when idle and the waker co
 | Shared | on shared enable | all visitors | until disable/redeploy; resets restore the baseline into it |
 | Session | on demand (prewarm/spawn) | one visitor each | hard TTL, deleted at expiry |
 
-The edit instance is a private copy for preparing demo data — its id is unguessable (`{parent}-edit-{rand}`), and the link is the access control (accepted trade-off: link = access, never expires). **Recapture** freezes the edit instance's state as the new baseline (the *Publish* flow); **Discard** wipes the edit copy back to a clean boot so discarded edits can't be re-published. Prewarm/pick queries exclude edit/shared instances; they never enter the pool or the capacity count.
+The edit instance is a private copy for preparing demo data — its id is unguessable (`{parent}-l8b-edit-{rand}`), and the link is the access control (accepted trade-off: link = access, never expires). **Recapture** freezes the edit instance's state as the new baseline (the *Publish* flow); **Discard** wipes the edit copy back to a clean boot so discarded edits can't be re-published. Prewarm/pick queries exclude edit/shared instances; they never enter the pool or the capacity count.
 
 Instances live on the parent's node — no spreading across nodes.
 

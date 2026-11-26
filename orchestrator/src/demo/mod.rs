@@ -89,7 +89,7 @@ pub async fn ensure_instances(
             clone::CloneOpts {
                 start: true,
                 baseline: baseline.clone(),
-                requested_id: Some(format!("{}-edit-{suffix}", parent.id)),
+                requested_id: Some(format!("{}-l8b-edit-{suffix}", parent.id)),
             },
         )
         .await?;
@@ -112,7 +112,7 @@ pub async fn ensure_instances(
         let id = clone::create_instance(
             state,
             parent,
-            clone::CloneOpts { start: true, baseline, requested_id: Some(format!("{}-shared", parent.id)) },
+            clone::CloneOpts { start: true, baseline, requested_id: Some(format!("{}-l8b-shared", parent.id)) },
         )
         .await?;
         sqlx::query("UPDATE demo_config SET shared_instance_id = ?, updated_at = ? WHERE project_id = ?")

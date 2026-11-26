@@ -19,6 +19,7 @@
 - [Docker Images & Disk Space](#docker-images--disk-space)
 - [Memory Usage](#memory-usage)
 - [Registries & Mirrors](#registries--mirrors)
+- [Demo Mode & Project Naming](#demo-mode--project-naming)
 
 For a comprehensive view of how LiteBin handles failures at every layer, see [Failure Model](../architecture/failure-model.md). For why these architectural choices were made, see [Design Decisions](../architecture/decisions.md).
 
@@ -772,3 +773,16 @@ A mirror is a pull-through cache serving the exact same digests as the registry,
 ### What does the default registry do?
 
 Image names without a registry host — `nginx:alpine`, `myorg/app` — resolve through the starred default registry (Docker Hub out of the box), including its mirror chain. Bare names like `nginx` mean Docker Hub's `library/*` official images, which exist only on Docker Hub, so flagging a different registry as default only works if it mirrors Docker Hub's image paths. Fully-qualified names (`ghcr.io/owner/app`) always go to their own registry and ignore the default. See [Registries](registries.md).
+
+
+## Demo Mode & Project Naming
+
+### Are any project names reserved?
+
+Demo instances are sibling projects named after their parent with a `l8b` marker, and those ids are generated:
+
+- `{parent}-l8b-shared` — the shared instance (shared mode)
+- `{parent}-l8b-edit-ab12` — the edit instance, with a random suffix
+- `{parent}-l8b-demo`, `{parent}-l8b-demo-2`, … — session-mode pool instances
+
+Treat those shapes as reserved. Nothing hard-fails: when the exact id is taken, LiteBin quietly creates the instance (or your project) under a `-2` suffix, so nothing breaks — but a name ending in `-l8b-shared`, `-l8b-edit` or `-l8b-demo` invites the confusion, so don't put the `l8b` marker in your own project names. Visitors are unaffected either way: the demo URL is always the parent's own host, and instance hosts are reachable only to those who know the name (session-pool direct hits bounce back to the demo host). See [Demo mode](demo-mode.md).

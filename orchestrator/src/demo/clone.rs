@@ -27,7 +27,7 @@ pub struct CloneOpts {
 /// payload work runs in the background (status starts at `importing`).
 pub async fn create_instance(state: &AppState, parent: &Project, opts: CloneOpts) -> anyhow::Result<String> {
     let reserved = [state.platform.dashboard_subdomain(), state.platform.poke_subdomain()];
-    let base = format!("{}-demo", parent.id);
+    let base = format!("{}-l8b-demo", parent.id);
     let alloc = copy_engine::allocate_project_id(&state.db, &reserved, opts.requested_id.as_deref(), &base).await?;
 
     insert_instance_rows(state, parent, &alloc.id).await?;
