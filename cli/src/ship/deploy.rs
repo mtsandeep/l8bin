@@ -60,8 +60,7 @@ fn offer_save_destination(project_dir: &Path, project_id: &str, node: Option<&st
         .with_prompt("Destination name")
         .default(default_name)
         .validate_with(|s: &String| {
-            let ok = !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-            if ok { Ok(()) } else { Err("lowercase letters, digits, hyphens only") }
+            if crate::config::is_valid_slug(s) { Ok(()) } else { Err("lowercase letters, digits, hyphens only") }
         })
         .interact_text()
         .unwrap_or_default();

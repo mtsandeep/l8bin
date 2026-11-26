@@ -9,12 +9,7 @@ use crate::ci::CiMode;
 use crate::out::Out;
 
 pub(crate) async fn run(server: &str, ci_mode: &CiMode, out: &Out) -> Result<()> {
-    let server = if server.starts_with("http://") || server.starts_with("https://") {
-        server.to_string()
-    } else {
-        format!("https://{server}")
-    };
-    let server = server.trim_end_matches('/').to_string();
+    let server = crate::config::normalize_server(server);
 
     let client = crate::http::client();
     let resp = client

@@ -37,9 +37,11 @@ pub(crate) async fn run(args: InitArgs, ci_mode: &CiMode, out: &Out) -> Result<(
                 .with_prompt("Project ID (used as subdomain)")
                 .default(default)
                 .validate_with(|s: &String| {
-                    let ok =
-                        !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-                    if ok { Ok(()) } else { Err("lowercase letters, digits, hyphens only") }
+                    if crate::config::is_valid_slug(s) {
+                        Ok(())
+                    } else {
+                        Err("lowercase letters, digits, hyphens only")
+                    }
                 })
                 .interact_text()?
         }
@@ -92,7 +94,7 @@ pub(crate) async fn run(args: InitArgs, ci_mode: &CiMode, out: &Out) -> Result<(
 fn default_from_dir(dir: &Path) -> String {
     dir.file_name()
         .map(|n| n.to_string_lossy().to_lowercase().replace(['_', ' ', '.'], "-"))
-        .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+        .filter(|s| crate::config::is_valid_slug(s))
         .unwrap_or_else(|| "my-app".to_string())
 }
 

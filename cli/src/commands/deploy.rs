@@ -130,7 +130,7 @@ pub(crate) async fn run(
 
     let env_source = ship::EnvSource::from_flags(secret, no_env);
 
-    if !project.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if !config::is_valid_slug(&project) {
         bail!("Project name must only contain lowercase letters, numbers, and hyphens");
     }
 

@@ -83,7 +83,14 @@ pub struct CredentialStore {
 
 pub fn normalize_server(server: &str) -> String {
     let s = server.trim().trim_end_matches('/');
-    if s.starts_with("http://") || s.starts_with("https://") { s.to_string() } else { format!("https://{s}") }
+    let lower = s.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") { s.to_string() } else { format!("https://{s}") }
+}
+
+/// True when `s` is a non-empty lowercase alphanumeric/hyphen identifier
+/// (used for project IDs and destination names).
+pub fn is_valid_slug(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 impl CredentialStore {
@@ -117,6 +124,10 @@ impl CredentialStore {
 
     pub fn get(&self, server: &str) -> Option<&ServerCredential> {
         self.servers.get(&normalize_server(server)).filter(|c| c.auth_header().is_some())
+    }
+
+    pub fn is_logged_in(&self, server: &str) -> bool {
+        self.get(server).is_some()
     }
 
     pub fn upsert(&mut self, server: &str, credential: ServerCredential) {

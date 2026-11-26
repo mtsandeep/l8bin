@@ -62,12 +62,11 @@ pub(crate) fn add(args: AddArgs, dir: &Path) -> Result<(String, Destination)> {
             .with_prompt("Destination name")
             .default(crate::project_config::destination_name_from_url(&server))
             .validate_with(|s: &String| {
-                let ok = !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-                if ok { Ok(()) } else { Err("lowercase letters, digits, hyphens only") }
+                if config::is_valid_slug(s) { Ok(()) } else { Err("lowercase letters, digits, hyphens only") }
             })
             .interact_text()?,
     };
-    if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if !config::is_valid_slug(&name) {
         bail!("destination name must use lowercase letters, digits and hyphens");
     }
     let project: Option<String> = match args.project {
@@ -81,7 +80,7 @@ pub(crate) fn add(args: AddArgs, dir: &Path) -> Result<(String, Destination)> {
     };
     let node = args.node;
 
-    let dest = Destination { server: server.trim().to_string(), project, node };
+    let dest = Destination { server: config::normalize_server(&server), project, node };
     if args.commit {
         project_config::save_destination_committed(dir, &name, dest.clone())?;
         println!("  {} Saved '{}' → {} (committed file)", "✓".green(), name, project_config::FILE_NAME);
@@ -95,9 +94,7 @@ pub(crate) fn add(args: AddArgs, dir: &Path) -> Result<(String, Destination)> {
         );
         hint_gitignore(dir);
     }
-    let paired = config::CredentialStore::load()
-        .get(&config::normalize_server(&dest.server))
-        .is_some_and(|c| c.auth_header().is_some());
+    let paired = config::CredentialStore::load().is_logged_in(&dest.server);
     if !paired {
         println!("  {} Not paired with {} yet — run: l8b setup --server {}", "!".yellow(), dest.server, dest.server);
     }
