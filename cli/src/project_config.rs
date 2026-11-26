@@ -152,9 +152,32 @@ pub fn resolve_server(dir: &Path) -> Option<String> {
 }
 
 /// The project `ship` defaults to: active destination's, else the anchor.
+#[allow(dead_code)]
 pub fn resolve_stored_project(dir: &Path) -> Option<String> {
     let merged = load_merged(dir);
     merged.active_destination().and_then(|(_, d)| d.project.clone()).or(merged.project)
+}
+
+/// The project `ship` defaults to for a specific chosen `server`:
+/// active destination's project if its server matches, else any matching
+/// destination's project, else the anchor's project if the anchor server matches.
+pub fn resolve_stored_project_for_server(dir: &Path, server: &str) -> Option<String> {
+    let target = crate::config::normalize_server(server);
+    let merged = load_merged(dir);
+    if let Some((_, dest)) = merged.active_destination()
+        && crate::config::normalize_server(&dest.server) == target
+    {
+        return dest.project.clone();
+    }
+    if let Some((_, (dest, _))) =
+        merged.destinations.iter().find(|(_, (d, _))| crate::config::normalize_server(&d.server) == target)
+    {
+        return dest.project.clone();
+    }
+    if merged.server.as_deref().map(crate::config::normalize_server).as_deref() == Some(target.as_str()) {
+        return merged.project;
+    }
+    None
 }
 
 /// Name suggestion from a server URL: "http://localhost:5080" → "localhost-5080".
@@ -512,6 +535,21 @@ compose = \"docker-compose.prod.yml\"
         remove_destination(&dir, "sbx").unwrap();
         assert!(load_local(&dir).unwrap().destinations.is_empty());
         assert!(remove_destination(&dir, "sbx").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_stored_project_matches_chosen_server() {
+        let dir = temp_dir("stored-proj");
+        std::fs::write(dir.join(FILE_NAME), "server = \"https://a.io\"\nproject = \"app-a\"\n").unwrap();
+        assert_eq!(resolve_stored_project_for_server(&dir, "https://a.io/").as_deref(), Some("app-a"));
+        assert_eq!(resolve_stored_project_for_server(&dir, "https://b.io"), None);
+
+        save_destination(&dir, "staging", dest("https://b.io", Some("app-b"))).unwrap();
+        assert_eq!(resolve_stored_project_for_server(&dir, "https://b.io").as_deref(), Some("app-b"));
+        assert_eq!(resolve_stored_project_for_server(&dir, "https://a.io").as_deref(), Some("app-a"));
+        assert_eq!(resolve_stored_project_for_server(&dir, "https://c.io"), None);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

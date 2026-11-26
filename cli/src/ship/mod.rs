@@ -8,7 +8,7 @@ mod validate;
 
 pub use deploy::deploy_compose_noninteractive;
 pub(crate) use env::{EnvSource, resolve_env_files};
-pub use flow::run;
+pub use flow::{run, select_server_interactive};
 pub use ui::{detect_compose_file, detect_compose_files, resolve_compose_files, resolve_platform};
 
 /// Options for non-interactive compose deploy (used by `deploy` command).

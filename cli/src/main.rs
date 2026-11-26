@@ -624,114 +624,20 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             }
             let dir = std::path::Path::new(&path);
 
-            // One destination is used silently, several are offered (default
-            // = active); picking moves the pointer.
             let mut cfg = config::CliConfig::load(cli.server.as_deref(), None);
-            if cli.server.is_none() {
-                let merged = project_config::load_merged(dir);
-                let names: Vec<String> = merged.destinations.keys().cloned().collect();
-                let chosen: Option<String> = match names.len() {
-                    0 => None,
-                    1 => Some(names[0].clone()),
-                    _ => {
-                        let mut items: Vec<String> = names
-                            .iter()
-                            .map(|n| {
-                                let (d, _) = &merged.destinations[n];
-                                let project = d.project.as_deref().unwrap_or("(created on first deploy)");
-                                format!("{n}  {}  {project}", d.server)
-                            })
-                            .collect();
-                        let add_idx = items.len();
-                        items.push("Add a destination…".to_string());
-                        let other_idx = items.len();
-                        items.push("Other server (not saved)…".to_string());
-                        let default_idx =
-                            merged.active.as_deref().and_then(|a| names.iter().position(|n| n == a)).unwrap_or(0);
-                        let pick = dialoguer::Select::new()
-                            .with_prompt("Deploy to")
-                            .items(&items)
-                            .default(default_idx)
-                            .interact()?;
-                        if pick == add_idx {
-                            let (name, dest) = commands::dest::add(
-                                commands::dest::AddArgs {
-                                    name: None,
-                                    server: None,
-                                    project: None,
-                                    node: None,
-                                    commit: false,
-                                },
-                                dir,
-                            )?;
-                            cfg = config::CliConfig::load(Some(&dest.server), None);
-                            Some(name)
-                        } else if pick == other_idx {
-                            let server: String = dialoguer::Input::new()
-                                .with_prompt("Server URL")
-                                .default(cfg.server.clone().unwrap_or_default())
-                                .interact_text()?;
-                            cfg = config::CliConfig::load(Some(&server), None);
-                            None
-                        } else {
-                            let name = names[pick].clone();
-                            let (dest, _) = &merged.destinations[&name];
-                            cfg = config::CliConfig::load(Some(&dest.server), None);
-                            Some(name)
-                        }
-                    }
-                };
-                if let Some(name) = &chosen {
-                    let _ = project_config::set_active(dir, name);
-                }
+            if cfg.server.is_none() {
+                let server = ship::select_server_interactive(dir).await?;
+                cfg = config::CliConfig::load(Some(&server), None);
             }
-            let toml_server = project_config::resolve_server(dir);
             let target = match auth::resolve_target(&cfg, dir) {
                 Ok(t) => t,
                 Err(e) => {
-                    // Not-logged-in/ambiguous is interactive ship's cue to pair;
-                    // a repo-bound server skips the URL question.
                     let (message, _) = crate::out::split_hint(&e);
-                    let not_logged_in = message.contains("not logged in");
-                    let ambiguous = message.contains("ambiguous");
-                    if !not_logged_in && !ambiguous {
+                    if !message.contains("not logged in") {
                         return Err(e);
                     }
-                    // Ambiguous = logged in to several servers: pick one, don't re-auth.
-                    let server = if ambiguous {
-                        let mut items: Vec<String> =
-                            config::CredentialStore::load().logged_in_servers().into_iter().cloned().collect();
-                        let mut choices = items.clone();
-                        choices.push("Add a new server…".to_string());
-                        let pick = dialoguer::Select::new()
-                            .with_prompt("Which server?")
-                            .items(&choices)
-                            .default(0)
-                            .interact()?;
-                        if pick < items.len() {
-                            items.remove(pick)
-                        } else {
-                            dialoguer::Input::<String>::new()
-                                .with_prompt("Server URL")
-                                .default(cfg.server.clone().unwrap_or_default())
-                                .interact_text()?
-                        }
-                    } else if let Some(s) = toml_server {
-                        s
-                    } else {
-                        dialoguer::Input::<String>::new()
-                            .with_prompt("Server URL")
-                            .default(cfg.server.clone().unwrap_or_default())
-                            .interact_text()?
-                    };
-                    // A stored credential for this server means no login needed.
-                    let already_logged_in = config::CredentialStore::load()
-                        .get(&config::normalize_server(&server))
-                        .is_some_and(|c| c.auth_header().is_some());
-                    if !already_logged_in {
-                        auth::login_interactive(&server, "manage").await?;
-                    }
-                    let cfg = config::CliConfig::load(Some(&server), None);
+                    let server = cfg.server.clone().unwrap_or_default();
+                    auth::login_interactive(&server, "manage").await?;
                     auth::resolve_target(&cfg, dir)?
                 }
             };

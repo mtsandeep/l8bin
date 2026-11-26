@@ -41,14 +41,13 @@ async fn repair_credentials(client: &mut reqwest::Client, server: &mut String) -
         return Ok(false);
     }
     if pick == add_idx {
-        let url: String = dialoguer::Input::new().with_prompt("Server URL").interact_text()?;
-        *server = crate::config::normalize_server(&url);
+        *server = prompt_server_url()?;
     } else if !re_pair {
         *server = others[pick - 1].clone();
     }
 
     let store = crate::config::CredentialStore::load();
-    let paired = store.get(server).is_some_and(|c| c.auth_header().is_some());
+    let paired = store.is_logged_in(server);
     if re_pair || !paired {
         auth::login_interactive(server, "manage").await?;
     }
@@ -114,7 +113,7 @@ pub async fn run(
 
     // A repo already bound by l8b.toml (or the active destination) ships to
     // that project by default.
-    let stored = crate::project_config::resolve_stored_project(project_dir);
+    let stored = crate::project_config::resolve_stored_project_for_server(project_dir, &server);
     let mut choices: Vec<String> = Vec::new();
     let mut stored_idx: Option<usize> = None;
     if let Some(id) = stored.as_deref().filter(|id| projects.iter().any(|p| p.id == *id)) {
@@ -221,12 +220,16 @@ async fn deploy_existing(
         existing_node,
     )
     .await?;
+    print_deploy_result(url.as_deref(), project.is_background);
+    Ok(())
+}
+
+fn print_deploy_result(url: Option<&str>, is_background: bool) {
     if let Some(url) = url {
-        print_live_url(&url);
-    } else if project.is_background {
+        print_live_url(url);
+    } else if is_background {
         print_no_managed_url();
     }
-    Ok(())
 }
 
 /// The Resume-deployment action: env setup, then start containers.
@@ -262,7 +265,7 @@ async fn new_project_flow(
             if input.is_empty() {
                 return Err("Project name is required");
             }
-            if !input.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+            if !crate::config::is_valid_slug(input) {
                 return Err("Use only lowercase letters, numbers, and hyphens");
             }
             Ok(())
@@ -304,7 +307,11 @@ async fn new_project_flow(
         println!();
     }
 
-    let port = if is_background { None } else { Some(resolve_app_port(project_dir, port_override)?) };
+    let port = if is_background || super::ui::resolve_compose_files(project_dir, compose_file).is_some() {
+        None
+    } else {
+        Some(resolve_app_port(project_dir, port_override)?)
+    };
 
     let url = super::deploy::build_and_deploy(
         client,
@@ -320,11 +327,7 @@ async fn new_project_flow(
     )
     .await?;
 
-    if let Some(url) = url {
-        print_live_url(&url);
-    } else {
-        print_no_managed_url();
-    }
+    print_deploy_result(url.as_deref(), is_background);
     if let Some(token) = minted_token {
         println!("  {} Use this token to redeploy from CI/CD:", "💡".dimmed());
         println!("  {}", format!("L8B_TOKEN={token} l8b deploy --project {name}").dimmed());
@@ -434,18 +437,8 @@ async fn choose_action(
             println!("  {} Recreated", "✔".green());
             println!();
         }
-        "Start" => {
-            println!("  :: Starting {}...", project_id.cyan());
-            auth::api_post_json(client, server, &format!("/projects/{}/start", project_id), &json!({})).await?;
-            println!("  {} Started", "✔".green());
-            println!();
-        }
-        "Stop" => {
-            println!("  :: Stopping {}...", project_id.cyan());
-            auth::api_post_json(client, server, &format!("/projects/{}/stop", project_id), &json!({})).await?;
-            println!("  {} Stopped", "✔".green());
-            println!();
-        }
+        "Start" => run_project_action(client, server, project_id, "start", ("Starting", "Started")).await?,
+        "Stop" => run_project_action(client, server, project_id, "stop", ("Stopping", "Stopped")).await?,
         "Delete" => {
             let confirmed = Confirm::new()
                 .with_prompt(format!("Delete project {}? This cannot be undone.", project_id.red()))
@@ -463,6 +456,20 @@ async fn choose_action(
         _ => unreachable!(),
     }
 
+    Ok(())
+}
+
+async fn run_project_action(
+    client: &reqwest::Client,
+    server: &str,
+    project_id: &str,
+    action: &str,
+    (gerund, past): (&str, &str),
+) -> Result<()> {
+    println!("  :: {} {}...", gerund, project_id.cyan());
+    auth::api_post_json(client, server, &format!("/projects/{project_id}/{action}"), &json!({})).await?;
+    println!("  {} {}", "✔".green(), past);
+    println!();
     Ok(())
 }
 
@@ -751,4 +758,175 @@ async fn push_runtime_env_file(client: &reqwest::Client, server: &str, project_i
     println!("  {} Pushed {keys} variable(s) from {file}.", "✓".green());
     println!("  {}", "They take effect when the containers start.".dimmed());
     Ok(())
+}
+
+// ── Server selection for `l8b ship` ──────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ServerOption {
+    pub label: String,
+    pub server: String,
+    pub destination: Option<String>,
+}
+
+/// Build the consistent server picker list and default index from `l8b.toml` /
+/// `l8b.local.toml` and stored logins.
+pub(crate) fn build_server_menu(
+    merged: &crate::project_config::Merged,
+    logged_in: &[String],
+) -> (Vec<ServerOption>, usize) {
+    let mut options: Vec<ServerOption> = Vec::new();
+    let mut default_idx: Option<usize> = None;
+
+    for (name, (dest, _)) in &merged.destinations {
+        let server = crate::config::normalize_server(&dest.server);
+        let project_hint = dest.project.as_deref().unwrap_or("(new project)");
+        if merged.active.as_deref() == Some(name.as_str()) {
+            default_idx = Some(options.len());
+        }
+        options.push(ServerOption {
+            label: format!("{name}  {server}  {project_hint}"),
+            server,
+            destination: Some(name.clone()),
+        });
+    }
+
+    if let Some(anchor_server) = &merged.server {
+        let norm = crate::config::normalize_server(anchor_server);
+        if let Some(existing) = options.iter().position(|o| o.server == norm) {
+            if default_idx.is_none() {
+                default_idx = Some(existing);
+            }
+        } else {
+            let project_hint = merged.project.as_deref().map(|p| format!("  {p}")).unwrap_or_default();
+            if default_idx.is_none() {
+                default_idx = Some(options.len());
+            }
+            options.push(ServerOption {
+                label: format!("{norm}{project_hint} (from {})", crate::project_config::FILE_NAME),
+                server: norm,
+                destination: None,
+            });
+        }
+    }
+
+    for srv in logged_in {
+        let norm = crate::config::normalize_server(srv);
+        if !options.iter().any(|o| o.server == norm) {
+            options.push(ServerOption { label: norm.clone(), server: norm, destination: None });
+        }
+    }
+
+    (options, default_idx.unwrap_or(0))
+}
+
+/// Prompt for a server URL, validate it is non-empty, and normalize to https:// by default.
+fn prompt_server_url() -> Result<String> {
+    let url: String = Input::new()
+        .with_prompt("Server URL")
+        .validate_with(|s: &String| -> Result<(), &str> {
+            if s.trim().is_empty() { Err("Server URL is required") } else { Ok(()) }
+        })
+        .interact_text()?;
+    Ok(crate::config::normalize_server(&url))
+}
+
+/// Prompt the user to pick a known server (defaulting to `l8b.toml` / active
+/// destination if present) or add a new server.
+pub async fn select_server_interactive(dir: &Path) -> Result<String> {
+    let merged = crate::project_config::load_merged(dir);
+    let logged_in: Vec<String> =
+        crate::config::CredentialStore::load().logged_in_servers().into_iter().cloned().collect();
+    let (options, default_idx) = build_server_menu(&merged, &logged_in);
+
+    let chosen_server = if options.is_empty() {
+        prompt_server_url()?
+    } else {
+        let mut items: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
+        let add_idx = items.len();
+        items.push("Add a new server…".to_string());
+        let pick = Select::new().with_prompt("Server").items(&items).default(default_idx).interact()?;
+        if pick == add_idx {
+            prompt_server_url()?
+        } else {
+            let opt = &options[pick];
+            if let Some(dest_name) = &opt.destination {
+                let _ = crate::project_config::set_active(dir, dest_name);
+            }
+            opt.server.clone()
+        }
+    };
+
+    if !crate::config::CredentialStore::load().is_logged_in(&chosen_server) {
+        auth::login_interactive(&chosen_server, "manage").await?;
+    }
+
+    Ok(chosen_server)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project_config::{Destination, Merged, Origin};
+
+    #[test]
+    fn server_menu_empty_when_no_toml_and_no_logins() {
+        let (opts, def) = build_server_menu(&Merged::default(), &[]);
+        assert!(opts.is_empty());
+        assert_eq!(def, 0);
+    }
+
+    #[test]
+    fn server_menu_defaults_to_toml_anchor_and_includes_other_logins() {
+        let merged = Merged {
+            server: Some("https://toml.example/".into()),
+            project: Some("my-app".into()),
+            ..Default::default()
+        };
+        let logged_in = vec!["https://other.example".to_string(), "https://toml.example".to_string()];
+        let (opts, def) = build_server_menu(&merged, &logged_in);
+        assert_eq!(opts.len(), 2);
+        assert_eq!(def, 0);
+        assert_eq!(opts[0].server, "https://toml.example");
+        assert!(opts[0].label.contains("my-app"));
+        assert_eq!(opts[1].server, "https://other.example");
+    }
+
+    #[test]
+    fn server_menu_defaults_to_active_destination_and_dedups() {
+        let mut merged = Merged { active: Some("staging".into()), ..Default::default() };
+        merged.destinations.insert(
+            "prod".into(),
+            (
+                Destination { server: "https://prod.example".into(), project: Some("app".into()), node: None },
+                Origin::Committed,
+            ),
+        );
+        merged.destinations.insert(
+            "staging".into(),
+            (Destination { server: "https://stg.example".into(), project: None, node: None }, Origin::Local),
+        );
+        let logged_in = vec!["https://prod.example".to_string(), "https://extra.example".to_string()];
+        let (opts, def) = build_server_menu(&merged, &logged_in);
+        assert_eq!(opts.len(), 3);
+        assert_eq!(def, 1); // "staging" comes after "prod" in BTreeMap
+        assert_eq!(opts[1].destination.as_deref(), Some("staging"));
+        assert_eq!(opts[2].server, "https://extra.example");
+    }
+
+    #[test]
+    fn server_menu_keeps_single_destination_as_selectable_option() {
+        let mut merged = Merged::default();
+        merged.destinations.insert(
+            "prod".into(),
+            (
+                Destination { server: "https://prod.example".into(), project: Some("app".into()), node: None },
+                Origin::Committed,
+            ),
+        );
+        let (opts, def) = build_server_menu(&merged, &[]);
+        assert_eq!(opts.len(), 1);
+        assert_eq!(def, 0);
+        assert_eq!(opts[0].destination.as_deref(), Some("prod"));
+    }
 }
