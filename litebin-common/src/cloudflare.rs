@@ -70,6 +70,12 @@ fn is_duplicate_error(errors: &[CfError]) -> bool {
         .any(|e| e.code == Some(81057) || e.message.to_ascii_lowercase().contains("identical record already exists"))
 }
 
+/// A delete whose record is already gone — Cloudflare reports it as 81044,
+/// matched by code or message like duplicates.
+fn is_missing_record_error(errors: &[CfError]) -> bool {
+    errors.iter().any(|e| e.code == Some(81044) || e.message == "Record does not exist.")
+}
+
 impl CloudflareClient {
     pub fn new(api_token: &str, zone_id: &str) -> Self {
         // Bounded so a hung Cloudflare API can't stall route sync or domain jobs.
@@ -355,8 +361,8 @@ impl CloudflareClient {
         }
     }
 
-    /// Delete a DNS record by ID from the configured zone; 81047 ("record
-    /// does not exist") is success.
+    /// Delete a DNS record by ID from the configured zone; a record that is
+    /// already gone (81044) is success.
     pub async fn delete_record(&self, record_id: &str) -> anyhow::Result<()> {
         self.delete_record_in_zone(&self.zone_id, record_id).await
     }
@@ -378,7 +384,7 @@ impl CloudflareClient {
             let missing = serde_json::from_str::<CfResponse<serde_json::Value>>(&body)
                 .ok()
                 .and_then(|r| r.errors)
-                .is_some_and(|errs| errs.iter().any(|e| e.code == Some(81047)));
+                .is_some_and(|errs| is_missing_record_error(&errs));
             if missing {
                 tracing::info!(record_id, "DNS record already gone");
                 return Ok(());
@@ -395,21 +401,33 @@ impl CloudflareClient {
 mod tests {
     use super::*;
 
+    fn reports_missing(body: &str) -> bool {
+        let parsed: CfResponse<serde_json::Value> = serde_json::from_str(body).unwrap();
+        parsed.errors.is_some_and(|errs| is_missing_record_error(&errs))
+    }
+
+    /// The body Cloudflare answers a delete of a vanished record with.
     #[test]
     fn delete_not_found_body_is_detected() {
-        let body = r#"{"success":false,"errors":[{"code":81047,"message":"Record does not exist."}]}"#;
-        let parsed: CfResponse<serde_json::Value> = serde_json::from_str(body).unwrap();
-        let missing = parsed.errors.is_some_and(|errs| errs.iter().any(|e| e.code == Some(81047)));
-        assert!(missing);
+        assert!(reports_missing(
+            r#"{"result":null,"success":false,"errors":[{"code":81044,"message":"Record does not exist."}],"messages":[]}"#
+        ));
     }
 
     #[test]
     fn delete_auth_error_body_is_not_not_found() {
-        let body =
-            r#"{"success":false,"errors":[{"code":9109,"message":"Unauthorized to access requested resource"}]}"#;
-        let parsed: CfResponse<serde_json::Value> = serde_json::from_str(body).unwrap();
-        let missing = parsed.errors.is_some_and(|errs| errs.iter().any(|e| e.code == Some(81047)));
-        assert!(!missing);
+        assert!(!reports_missing(
+            r#"{"success":false,"errors":[{"code":9109,"message":"Unauthorized to access requested resource"}]}"#
+        ));
+    }
+
+    /// 81047 is "a record with that host already exists" — the record is
+    /// very much there, so its ledger row must stay.
+    #[test]
+    fn duplicate_record_error_is_not_a_missing_record() {
+        assert!(!reports_missing(
+            r#"{"success":false,"errors":[{"code":81047,"message":"An A, AAAA or CNAME record already exists with that host"}]}"#
+        ));
     }
 
     #[test]

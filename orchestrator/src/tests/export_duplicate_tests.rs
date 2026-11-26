@@ -1,12 +1,48 @@
-use axum::http::StatusCode;
-use axum_test::TestServer;
-use sqlx::SqlitePool;
+use std::sync::Arc;
 
-use crate::tests::helpers::test_server_with_db;
+use axum::http::StatusCode;
+use axum_test::{TestServer, TestServerConfig};
+use sqlx::SqlitePool;
+use tokio::sync::Semaphore;
+
+use crate::tests::helpers::{build_router, build_test_state, test_config, test_server_with_db};
 
 // Env-var-backed folders are process-global; tests that repoint them serialize.
 static EXPORTS_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static IMPORTS_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Points `EXPORTS_DIR` at a fresh temp dir for the duration of a test, to the
+/// exclusion of the other tests that repoint it. A poisoned lock is taken over
+/// — it only excludes, it guards no invariant — and the env var is restored on
+/// drop, so a failed assertion can neither fail the next test nor leak the
+/// folder into it.
+struct ExportsDir {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    dir: std::path::PathBuf,
+}
+
+impl ExportsDir {
+    fn new(tag: &str) -> Self {
+        let lock = EXPORTS_DIR_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("{tag}-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: EXPORTS_DIR is process-global; this test holds EXPORTS_DIR_LOCK.
+        unsafe {
+            std::env::set_var("EXPORTS_DIR", &dir);
+        }
+        Self { _lock: lock, dir }
+    }
+}
+
+impl Drop for ExportsDir {
+    fn drop(&mut self) {
+        // SAFETY: EXPORTS_DIR is process-global; this test holds EXPORTS_DIR_LOCK.
+        unsafe {
+            std::env::remove_var("EXPORTS_DIR");
+        }
+        std::fs::remove_dir_all(&self.dir).ok();
+    }
+}
 
 async fn insert_project(db: &SqlitePool, id: &str, name: Option<&str>, status: &str, deploy_type: Option<&str>) {
     let user_id: String = sqlx::query_scalar("SELECT id FROM users LIMIT 1")
@@ -241,20 +277,25 @@ async fn export_conflicts_while_transient() {
 
 #[tokio::test]
 async fn export_starts_job_and_reports_status() {
-    let _guard = EXPORTS_DIR_LOCK.lock().unwrap();
-    let (server, db) = test_server_with_db().await;
+    let _exports = ExportsDir::new("l8b-export-job");
+    let (state, db) = build_test_state(test_config()).await;
+    let server = TestServer::new_with_config(
+        build_router(state.clone()),
+        TestServerConfig { save_cookies: true, ..TestServerConfig::new() },
+    )
+    .unwrap();
     login(&server).await;
-    // The job may reach the real local Docker daemon and actually write a
-    // bundle — point the exports folder at a temp dir so nothing lands in the
-    // repo's data dir. Assertions stick to the deterministic parts (job
-    // registration + status flip).
-    let dir = std::env::temp_dir().join(format!("l8b-export-job-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
-    // SAFETY: EXPORTS_DIR is process-global; this test holds EXPORTS_DIR_LOCK.
-    unsafe {
-        std::env::set_var("EXPORTS_DIR", &dir);
-    }
     insert_project(&db, "idle", Some("Idle"), "stopped", Some("compose")).await;
+
+    // The job's first step stops the source under the project's operation lock.
+    // Holding that lock keeps the job in flight, so "exporting" is observed
+    // rather than raced: the project goes back to "stopped" once the job ends,
+    // and whether that beats the reads below is up to the scheduler and to how
+    // fast the local Docker daemon answers.
+    let operation_lock =
+        state.project_locks.entry("idle".to_string()).or_insert_with(|| Arc::new(Semaphore::new(1))).clone();
+    let hold = operation_lock.acquire_owned().await.unwrap();
+
     let res = server.post("/projects/idle/export").json(&serde_json::json!({})).await;
     assert_eq!(res.status_code(), StatusCode::ACCEPTED);
     let body: serde_json::Value = res.json();
@@ -265,33 +306,45 @@ async fn export_starts_job_and_reports_status() {
     assert_eq!(job.status_code(), StatusCode::OK);
     let j: serde_json::Value = job.json();
     assert_eq!(j["project_id"], "idle");
-    assert!(matches!(j["status"].as_str(), Some("running") | Some("completed") | Some("failed")));
-
+    assert_eq!(j["status"], "running");
     let status: String =
         sqlx::query_scalar("SELECT status FROM projects WHERE id = 'idle'").fetch_one(&db).await.unwrap();
     assert_eq!(status, "exporting");
 
-    // SAFETY: see above.
-    unsafe {
-        std::env::remove_var("EXPORTS_DIR");
-    }
-    std::fs::remove_dir_all(&dir).ok();
+    // Released, the job runs to its end. It may reach the real local Docker
+    // daemon and write a bundle, or fail without one — either way it settles
+    // and the project returns to the status it had before the export. A failed
+    // job is reported just before its project status is restored, so wait for
+    // both rather than read the project the moment the job settles.
+    drop(hold);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    let j = loop {
+        let j: serde_json::Value = server.get(&format!("/exports/jobs/{job_id}")).await.json();
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM projects WHERE id = 'idle'").fetch_one(&db).await.unwrap();
+        if j["status"] != "running" && status == "stopped" {
+            break j;
+        }
+        // Until then the export is the only thing that may have moved the project.
+        assert!(status == "exporting", "project is '{status}' while its export job is {}", j["status"]);
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "export job '{job_id}' did not settle: job {}, project '{status}'",
+            j["status"]
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert!(matches!(j["status"].as_str(), Some("completed") | Some("failed")), "{j}");
 }
 
 #[tokio::test]
 async fn exports_folder_list_and_delete() {
-    let _guard = EXPORTS_DIR_LOCK.lock().unwrap();
+    let exports = ExportsDir::new("l8b-exports-test");
     let (server, _db) = test_server_with_db().await;
     login(&server).await;
 
-    // Point the exports folder at a temp dir with one bundle in it.
-    let dir = std::env::temp_dir().join(format!("l8b-exports-test-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("demo-20260101-000000.l8b.tar.gz"), b"fake").unwrap();
-    // SAFETY: tests touching EXPORTS_DIR run serially in practice; restore after.
-    unsafe {
-        std::env::set_var("EXPORTS_DIR", &dir);
-    }
+    // One bundle in the exports folder.
+    std::fs::write(exports.dir.join("demo-20260101-000000.l8b.tar.gz"), b"fake").unwrap();
 
     let list: serde_json::Value = server.get("/exports").await.json();
     let files: Vec<String> =
@@ -306,12 +359,6 @@ async fn exports_folder_list_and_delete() {
     assert_eq!(res.status_code(), StatusCode::NO_CONTENT);
     let res = server.delete("/exports/demo-20260101-000000.l8b.tar.gz").await;
     assert_eq!(res.status_code(), StatusCode::NOT_FOUND);
-
-    // SAFETY: see above.
-    unsafe {
-        std::env::remove_var("EXPORTS_DIR");
-    }
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 // ── Import ───────────────────────────────────────────────────────────────────
