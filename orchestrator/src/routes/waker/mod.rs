@@ -1,6 +1,8 @@
 mod handler;
 mod helpers;
 
+#[cfg(test)]
+pub(crate) use handler::wake_for_host;
 pub use handler::{wake, waker_intercept};
 
 // Proxy paths shared with the demo gatekeeper.

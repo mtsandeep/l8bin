@@ -687,18 +687,54 @@ pub async fn wake_for_host(
     state.wake_guards.insert(project_id.clone(), guard.clone());
 
     let is_stopped = project.status == ProjectStatus::Stopped || project.status == ProjectStatus::Degraded;
+    // A compose project on a node wakes as its stack, through the same start a
+    // dashboard click uses. That start takes the project lock itself, so the
+    // waker's permit is released first.
+    let start_as_stack = is_remote && project.deploy_type == Some(litebin_common::types::DeployType::Compose);
     let state_clone = state.clone();
     let project_clone = project.clone();
     let project_probe = project.clone(); // wake_fut's local branch moves project_clone
     let project_id_bg = project_id.clone();
     let guard_task = guard.clone();
+    let mut permit = Some(permit);
 
     tracing::info!(project = %project_id, host = %host, "waker: spawning background wake");
 
     tokio::spawn(async move {
         use futures_util::FutureExt;
 
-        let wake_fut = if is_remote {
+        let stack_start = if start_as_stack {
+            drop(permit.take());
+            let state_for_start = state_clone.clone();
+            let id = project_clone.id.clone();
+            // Detached on purpose: the start must run to completion even once
+            // the wait below gives up — cancelling it would strand the project
+            // half-started.
+            Some(tokio::spawn(async move {
+                crate::routes::manage::handlers::start_project(
+                    axum::extract::State(state_for_start),
+                    axum::extract::Path(id.clone()),
+                )
+                .await
+                .map(|_| ())
+                .map_err(|(status, message)| {
+                    tracing::warn!(project = %id, status = %status, error = %message, "waker: stack start failed");
+                    (status, message).into_response()
+                })
+            }))
+        } else {
+            None
+        };
+
+        let wake_fut = if let Some(start) = stack_start {
+            async move {
+                match start.await {
+                    Ok(result) => result,
+                    Err(_) => Err((StatusCode::INTERNAL_SERVER_ERROR, "start task was cancelled").into_response()),
+                }
+            }
+            .boxed()
+        } else if is_remote {
             if is_stopped {
                 super::helpers::start_stopped_container(&state_clone, &project_clone).boxed()
             } else {
@@ -726,7 +762,10 @@ pub async fn wake_for_host(
             .boxed()
         };
 
-        let result = tokio::time::timeout(std::time::Duration::from_secs(60), wake_fut).await;
+        // A stack start pulls images and waits on healthchecks; it takes longer than one container.
+        let budget =
+            if start_as_stack { std::time::Duration::from_secs(300) } else { std::time::Duration::from_secs(60) };
+        let result = tokio::time::timeout(budget, wake_fut).await;
 
         let mut success = matches!(result, Ok(Ok(())));
 

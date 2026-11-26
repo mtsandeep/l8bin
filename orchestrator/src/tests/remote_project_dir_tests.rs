@@ -1,7 +1,8 @@
 //! A project on an agent node keeps its project dir on the orchestrator too:
 //! start and recreate of a remote compose project read `projects/<id>/compose.yaml`
 //! there, not on the node. A copy that only reached the node failed every start
-//! with "compose.yaml not found".
+//! with "compose.yaml not found". Auto-wake of such a project goes through that
+//! same start, never the single-container one.
 
 use std::sync::{Arc, Mutex};
 
@@ -268,4 +269,56 @@ async fn remote_start_takes_a_missing_compose_file_from_the_node() {
     requests.lock().unwrap().clear();
     let _ = crate::routes::manage::handlers::start_project_route(State(state), Path(id)).await;
     assert!(!asked_the_node(&requests));
+}
+
+/// Auto-wake of a compose project on a node starts the whole stack, through the
+/// same start a dashboard click makes. The single-container start would launch
+/// the public service's image alone, which exits at once without its
+/// dependencies.
+#[tokio::test]
+async fn stopped_compose_project_on_a_node_wakes_as_its_stack() {
+    let (state, db) = build_test_state(test_config()).await;
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    let requests: Requests = Arc::default();
+    let node = register_agent(&state, &db, spawn_stand_in_agent(requests.clone()).await).await;
+    let id = format!("remote-wake-{}", uuid::Uuid::new_v4().simple());
+    // The start keeps the compose file it fetched from the node; drop the copy.
+    let _local_dir = LocalProjectDir(std::path::PathBuf::from("projects").join(&id));
+    insert_remote_compose_project(&server, &db, &id, &node).await;
+    sqlx::query("UPDATE projects SET auto_start_enabled = 1 WHERE id = ?").bind(&id).execute(&db).await.unwrap();
+
+    let host = format!("{id}.{}", state.platform.domain());
+    let wake = tokio::spawn({
+        let state = state.clone();
+        async move {
+            crate::routes::waker::wake_for_host(
+                state,
+                &host,
+                litebin_common::proxy::WakeClient::Document,
+                axum::http::Method::GET,
+                &"/".parse().unwrap(),
+                &axum::http::HeaderMap::new(),
+                Bytes::new(),
+            )
+            .await
+        }
+    });
+
+    // The stand-in fails the stack start; what matters is what it was asked.
+    tokio::time::timeout(std::time::Duration::from_secs(30), wake).await.unwrap().unwrap();
+    let posts: Vec<String> = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(request, _)| request.starts_with("POST "))
+        .map(|(request, _)| request.to_string())
+        .collect();
+    assert!(
+        posts.iter().any(|request| request.starts_with("POST /containers/batch-run")),
+        "the node was never asked for the stack: {posts:?}"
+    );
+    assert!(
+        posts.iter().all(|request| request.starts_with("POST /containers/batch-run")),
+        "a compose project was started container by container: {posts:?}"
+    );
 }
