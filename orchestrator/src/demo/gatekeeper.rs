@@ -588,15 +588,28 @@ fn spawn_start(state: &AppState, project_id: &str) {
 /// Does the instance's app actually answer? A DB "running" row can lag a
 /// slow boot or a crash-loop; "ready" must reflect a responding app.
 async fn instance_answers(state: &AppState, instance: &Project) -> bool {
-    // Remote instances proxy through the agent's TLS caddy — probe the same
-    // way the proxy does (any HTTP response counts as up).
-    let url = if instance.node_id.as_deref().map(|n| n != "local").unwrap_or(false) {
-        let node_id = instance.node_id.as_deref().unwrap_or("local");
-        match crate::routing_helpers::lookup_node_host(&state.db, node_id).await {
-            Ok(Some((host, _))) => format!("https://{host}/"),
-            _ => return false,
-        }
-    } else if instance.deploy_type == Some(litebin_common::types::DeployType::Compose) {
+    if instance.node_id.as_deref().map(|n| n != "local").unwrap_or(false) {
+        // Remote instances answer through their node's Caddy — the proxy's own
+        // hop, under the instance's host. 404 is that node's "no such project";
+        // 502/503/504 its "no upstream" (container down, still waking).
+        return match crate::routes::waker::remote_node_client(state, instance).await {
+            Some(client) => {
+                let host = crate::routes::waker::node_request_headers(state, instance, &HeaderMap::new())
+                    .get(header::HOST)
+                    .cloned();
+                let Some(host) = host else { return false };
+                client
+                    .get("https://agent/")
+                    .header(header::HOST, host)
+                    .timeout(std::time::Duration::from_millis(1500))
+                    .send()
+                    .await
+                    .is_ok_and(|resp| !matches!(resp.status().as_u16(), 404 | 502 | 503 | 504))
+            }
+            None => false,
+        };
+    }
+    let url = if instance.deploy_type == Some(litebin_common::types::DeployType::Compose) {
         match crate::routes::waker::resolve_request_upstream(state, instance, "/").await {
             Some(upstream) => format!("http://{}/", upstream),
             None => return false,

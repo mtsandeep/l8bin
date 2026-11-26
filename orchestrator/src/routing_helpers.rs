@@ -165,6 +165,7 @@ pub async fn resolve_routes(projects: &[Project], db: &SqlitePool, domain: &str)
             host_rewrite: None,
             upstream_tls: project.node_id.as_deref() != Some("local") && project.node_id.is_some(),
             container_upstream,
+            gatekeeper: false,
             custom_routes,
         });
     }
@@ -207,7 +208,8 @@ async fn resolve_sleeping_custom_domain_routes(
             host_rewrite: Some(format!("{}.{}", project.id, domain)),
             upstream_tls: false,      // sleeping routes proxy to local orchestrator
             container_upstream: None, // sleeping projects have no running container
-            custom_routes: vec![],    // sleeping projects don't need custom routes
+            gatekeeper: false,
+            custom_routes: vec![], // sleeping projects don't need custom routes
         });
     }
 
@@ -251,7 +253,9 @@ pub(crate) async fn resolve_routes_for_domain(
 
     // Demo mode: the parent's host is the gatekeeper's surface and instance
     // hosts must not be reachable container-direct (they'd bypass session
-    // capacity) — both route through the orchestrator, never to containers.
+    // capacity) — both route through the orchestrator on the master. The
+    // container upstream stays: it is how the orchestrator itself reaches an
+    // instance once the gatekeeper lets a request through.
     {
         let mut demo_ids: std::collections::HashSet<String> =
             sqlx::query_scalar("SELECT project_id FROM demo_config").fetch_all(db).await?.into_iter().collect();
@@ -264,8 +268,8 @@ pub(crate) async fn resolve_routes_for_domain(
             if demo_ids.contains(&route.project_id) {
                 route.upstream = orchestrator_upstream.to_string();
                 route.upstream_tls = false;
-                route.container_upstream = None;
                 route.host_rewrite = None;
+                route.gatekeeper = true;
             }
         }
     }
@@ -283,6 +287,7 @@ pub(crate) async fn resolve_routes_for_domain(
             host_rewrite: None,
             upstream_tls: false,
             container_upstream: None,
+            gatekeeper: false,
             custom_routes: vec![],
         });
     }
@@ -323,6 +328,7 @@ pub(crate) async fn resolve_routes_for_domain(
             host_rewrite: if is_local { None } else { Some(format!("{}.{}", project.id, domain)) },
             upstream_tls: !is_local && project.node_id.is_some(),
             container_upstream: None,
+            gatekeeper: false,
             custom_routes: vec![],
         });
     }
@@ -396,5 +402,72 @@ pub async fn run_route_sync(
         {
             tracing::error!(error = %e, "route sync: failed to push routes");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Demo hosts lead to the orchestrator (the gatekeeper) from the master and
+    /// keep the container address their node dials once it forwards; every other
+    /// project keeps its plain node route.
+    #[tokio::test]
+    async fn demo_routes_go_through_the_gatekeeper_and_keep_the_container_upstream() {
+        let db = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("src/db/migrations").run(&db).await.unwrap();
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES ('u1', 'u1', 'x', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO nodes (id, name, host, public_ip, created_at, updated_at) VALUES ('node-1', 'node-1', '10.0.0.1', '203.0.113.10', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+        for (id, demo_parent_id) in [("myapp", None), ("myapp-edit-1a2b", Some("myapp")), ("plain", None)] {
+            sqlx::query(
+                "INSERT INTO projects (id, user_id, name, status, node_id, demo_parent_id, internal_port, deploy_type, is_background,              auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, allow_raw_ports,              allow_docker_access, created_at, updated_at)              VALUES (?, 'u1', ?, 'running', 'node-1', ?, 80, 'compose', 0, 1, 15, 0, 0, 0, ?, ?)",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(demo_parent_id)
+            .bind(now)
+            .bind(now)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO demo_config (project_id, updated_at) VALUES ('myapp', ?)")
+            .bind(now)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let routes = resolve_routes_for_domain(&db, "example.com", "litebin-orchestrator:5080").await.unwrap();
+        let route =
+            |id: &str| routes.iter().find(|route| route.project_id == id).unwrap_or_else(|| panic!("{id} is routed"));
+
+        for id in ["myapp", "myapp-edit-1a2b"] {
+            let demo = route(id);
+            assert!(demo.gatekeeper, "{id}");
+            assert_eq!(demo.upstream, "litebin-orchestrator:5080", "{id}");
+            assert!(!demo.upstream_tls, "{id}");
+            let container = format!("litebin-{id}:80");
+            assert_eq!(demo.container_upstream.as_deref(), Some(container.as_str()), "{id}");
+        }
+
+        let plain = route("plain");
+        assert!(!plain.gatekeeper);
+        assert_eq!(plain.upstream, "10.0.0.1:443");
+        assert!(plain.upstream_tls);
     }
 }

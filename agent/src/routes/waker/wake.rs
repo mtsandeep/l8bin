@@ -275,22 +275,40 @@ pub async fn wake(State(state): State<AgentState>, req: Request<Body>) -> Respon
         return wake_wait_response(&state, &subdomain).await;
     }
 
-    // Try to find the container — single-service name first, then multi-service prefix
-    let container_id =
-        if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}", subdomain)).await {
-            id
-        } else if let Ok(Some(id)) = state.docker.find_container_by_name(&format!("litebin-{}.", subdomain)).await {
-            id
-        } else {
-            return not_found_page();
-        };
-
     // A Docker observation sidecar does not make a single-image project
     // multi-service. The persisted Compose file is the source of truth.
     let is_multi_service = litebin_common::docker::DockerManager::read_compose(&subdomain).is_some();
 
-    // Check if container is running
-    let is_running = state.docker.is_container_running(&container_id).await.unwrap_or(false);
+    // The project's containers: `litebin-{id}` — a single-service project's
+    // only one, or a compose project's `web` service — plus, for a compose
+    // project, its other services `litebin-{id}.{service}`. A single-service
+    // project is its own container alone: a sidecar sharing the prefix must not
+    // be woken in its place.
+    let single = state.docker.find_container_by_name(&format!("litebin-{subdomain}")).await.ok().flatten();
+    let containers: Vec<String> = if is_multi_service {
+        let mut ids = single.iter().cloned().collect::<Vec<_>>();
+        ids.extend(state.docker.list_containers_by_prefix(&format!("litebin-{subdomain}.")).await.unwrap_or_default());
+        ids
+    } else {
+        single.into_iter().collect()
+    };
+    let Some(container_id) = containers.first().cloned() else {
+        return not_found_page();
+    };
+
+    // A compose project is up while any of its services is.
+    let is_running = if is_multi_service {
+        let mut any = false;
+        for id in &containers {
+            if state.docker.is_container_running(id).await.unwrap_or(false) {
+                any = true;
+                break;
+            }
+        }
+        any
+    } else {
+        state.docker.is_container_running(&container_id).await.unwrap_or(false)
+    };
 
     if is_running && is_multi_service {
         // Wake still in progress: wait on its guard.

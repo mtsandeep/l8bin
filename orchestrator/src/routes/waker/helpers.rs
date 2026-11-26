@@ -133,19 +133,76 @@ pub(crate) async fn remote_proxy_response(
     body: axum::body::Bytes,
     budget: std::time::Duration,
 ) -> Option<Response> {
+    let client = remote_node_client(state, project).await?;
+    let url = format!("https://agent{}", uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/"));
+    let headers = node_request_headers(state, project, headers);
+    let resp = proxy_url_with_retry(&client, method, &url, &headers, body, budget).await;
+    (resp.status() != StatusCode::BAD_GATEWAY).then_some(resp)
+}
+
+/// Client for app traffic to `project`'s node: TLS with SNI `agent`, address pinned.
+pub(crate) async fn remote_node_client(
+    state: &AppState,
+    project: &crate::db::models::Project,
+) -> Option<reqwest::Client> {
     let node_id = project.node_id.as_deref()?;
     let (host, _) = crate::routing_helpers::lookup_node_host(&state.db, node_id).await.ok()??;
-    let client = nodes::client::build_remote_proxy_client(
+    nodes::client::build_remote_proxy_client(
         &state.config.ca_cert_path,
         &state.config.client_cert_path,
         &state.config.client_key_path,
         &host,
     )
     .await
-    .ok()?;
-    let url = format!("https://agent{}", uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/"));
-    let resp = proxy_url_with_retry(&client, method, &url, headers, body, budget).await;
-    (resp.status() != StatusCode::BAD_GATEWAY).then_some(resp)
+    .ok()
+}
+
+/// The request's headers with the `Host` the node routes by. The node's Caddy
+/// selects the project by name.
+pub(crate) fn node_request_headers(
+    state: &AppState,
+    project: &crate::db::models::Project,
+    headers: &HeaderMap,
+) -> HeaderMap {
+    let mut headers = headers.clone();
+    let visitor = headers.get(axum::http::header::HOST).and_then(|value| value.to_str().ok());
+    if let Some(host) = demo_host_override(
+        project.demo_parent_id.is_some(),
+        &project.id,
+        project.custom_domain.as_deref(),
+        visitor,
+        &state.platform.domain(),
+    ) && let Ok(value) = axum::http::header::HeaderValue::from_str(&host)
+    {
+        headers.insert(axum::http::header::HOST, value);
+    }
+    headers
+}
+
+/// The `Host` a node should see instead of the visitor's, if any. Only a demo
+/// instance is ever addressed under another project's host — its parent's, when
+/// the gatekeeper forwards to it — and the node would answer that with the
+/// parent. Any other project keeps its visitor's host: aliases and custom
+/// domains are routed by that name, and the app reads it.
+fn demo_host_override(
+    is_demo_instance: bool,
+    project_id: &str,
+    custom_domain: Option<&str>,
+    visitor: Option<&str>,
+    domain: &str,
+) -> Option<String> {
+    is_demo_instance.then(|| {
+        let own_host = format!("{project_id}.{domain}");
+        // A host may carry a port; only the name matters.
+        let visitor = visitor.map(|host| host.split(':').next().unwrap_or(host));
+        let names_this = visitor.is_some_and(|host| {
+            host == own_host
+                || custom_domain.is_some_and(|custom| {
+                    host == custom || host == format!("www.{custom}") || Some(host) == custom.strip_prefix("www.")
+                })
+        });
+        (!names_this).then_some(own_host)
+    })?
 }
 
 /// Recreate a container on a remote agent (no image pull).
@@ -513,4 +570,30 @@ pub(super) async fn resolve_alias_project(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::demo_host_override;
+
+    /// The gatekeeper forwards to a demo instance under the parent's host; the
+    /// node must see the instance's own name instead. Nothing else is rewritten.
+    #[test]
+    fn only_a_demo_instance_is_readdressed_to_its_own_host() {
+        let override_for = |is_demo_instance: bool, visitor: Option<&str>| {
+            demo_host_override(is_demo_instance, "myapp-edit-1a2b", Some("app.customer.org"), visitor, "example.com")
+        };
+        let own = Some("myapp-edit-1a2b.example.com");
+
+        assert_eq!(override_for(true, Some("myapp.example.com")).as_deref(), own);
+        assert_eq!(override_for(true, None).as_deref(), own);
+        assert_eq!(override_for(true, Some("myapp-edit-1a2b.example.com:443")), None);
+        assert_eq!(override_for(true, Some("app.customer.org")), None);
+        assert_eq!(override_for(true, Some("www.app.customer.org")), None);
+
+        // An alias or custom domain of any other project reaches the node as it is.
+        assert_eq!(override_for(false, Some("short.example.com")), None);
+        assert_eq!(override_for(false, Some("myapp.example.com")), None);
+        assert_eq!(override_for(false, None), None);
+    }
 }

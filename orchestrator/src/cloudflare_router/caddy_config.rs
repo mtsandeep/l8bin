@@ -509,4 +509,46 @@ mod tests {
         assert!(dashboard["handle"][0].get("subroute").is_none(), "no subroute split");
         assert!(dashboard["match"][0].get("path").is_none(), "no path matcher");
     }
+
+    /// A demo host on a node: the master never dials its container — visitors go
+    /// through the gatekeeper — while the node's own Caddy takes the orchestrator's
+    /// forwarded request to that container.
+    #[test]
+    fn demo_routes_dial_the_container_only_on_the_node() {
+        let route = ProjectRoute {
+            project_id: "myapp-edit-1a2b".into(),
+            upstream: "litebin-orchestrator:5080".into(),
+            subdomain_host: "myapp-edit-1a2b.example.com".into(),
+            custom_domain: None,
+            node_id: Some("node-1".into()),
+            node_public_ip: Some("203.0.113.10".into()),
+            host_rewrite: None,
+            upstream_tls: false,
+            container_upstream: Some("litebin-myapp-edit-1a2b.web:80".into()),
+            gatekeeper: true,
+            custom_routes: vec![],
+        };
+        let dial = |config: &Value| {
+            config["apps"]["http"]["servers"]["srv0"]["routes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["match"][0]["host"] == json!(["myapp-edit-1a2b.example.com"]))
+                .expect("route for the demo host exists")["handle"][0]["upstreams"][0]["dial"]
+                .clone()
+        };
+
+        let node = CloudflareDnsRouter::build_agent_caddy_config(&[&route], "example.com", None, "203.0.113.1");
+        assert_eq!(dial(&node), "litebin-myapp-edit-1a2b.web:80");
+
+        let master = CloudflareDnsRouter::build_master_caddy_config(
+            &[&route],
+            "example.com",
+            None,
+            "litebin-orchestrator:5080",
+            "l8bin",
+            "poke",
+        );
+        assert_eq!(dial(&master), "litebin-orchestrator:5080");
+    }
 }

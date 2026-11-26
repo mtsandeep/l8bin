@@ -73,6 +73,10 @@ pub struct ProjectRoute {
     /// Docker-network upstream for direct container access: "litebin-{id}:{port}".
     /// Used by agent Caddy in cloudflare_dns mode to proxy to local containers.
     pub container_upstream: Option<String>,
+    /// Demo hosts enter through the orchestrator's gatekeeper: the master's Caddy
+    /// dials `upstream` (the orchestrator) and never the container. The node's own
+    /// Caddy still dials `container_upstream` — that is the orchestrator's way in.
+    pub gatekeeper: bool,
     /// Custom routing rules (path-based and subdomain-based) for this project.
     pub custom_routes: Vec<ProjectCustomRoute>,
 }
@@ -177,7 +181,7 @@ impl MasterProxyRouter {
         for p in projects {
             // Use container_upstream (direct Docker network) when available,
             // otherwise fall back to host upstream.
-            let dial = p.container_upstream.as_deref().unwrap_or(&p.upstream);
+            let dial = if p.gatekeeper { &p.upstream } else { p.container_upstream.as_deref().unwrap_or(&p.upstream) };
 
             // 0. Custom routes: path-based and subdomain-based (sorted by priority within
             //    this project). Must come BEFORE the catch-all host route.
@@ -558,6 +562,7 @@ mod tests {
             host_rewrite: None,
             upstream_tls: false,
             container_upstream: None,
+            gatekeeper: false,
             custom_routes: vec![],
         };
         let config = router.build_config(&[project], "example.com", None, "litebin-orchestrator:5080", "l8bin", "poke");
@@ -571,5 +576,45 @@ mod tests {
         assert_eq!(redirect["handle"][0]["handler"], "static_response");
         assert_eq!(redirect["handle"][0]["status_code"], 301);
         assert_eq!(redirect["handle"][0]["headers"]["Location"][0], "https://app.customer.com{uri}");
+    }
+
+    /// The master's Caddy takes a demo host to the orchestrator's gatekeeper even
+    /// when the project has a container upstream; every other project goes to its
+    /// container when it has one.
+    #[test]
+    fn gatekeeper_routes_dial_the_orchestrator_not_the_container() {
+        let router = MasterProxyRouter::new(CaddyClient::new("http://127.0.0.1:1"), String::new());
+        let route = |id: &str, gatekeeper: bool| ProjectRoute {
+            project_id: id.into(),
+            upstream: "litebin-orchestrator:5080".into(),
+            subdomain_host: format!("{id}.example.com"),
+            custom_domain: None,
+            node_id: Some("node-1".into()),
+            node_public_ip: None,
+            host_rewrite: None,
+            upstream_tls: false,
+            container_upstream: Some(format!("litebin-{id}.web:80")),
+            gatekeeper,
+            custom_routes: vec![],
+        };
+        let config = router.build_config(
+            &[route("plain-app", false), route("myapp-edit-1a2b", true)],
+            "example.com",
+            None,
+            "litebin-orchestrator:5080",
+            "l8bin",
+            "poke",
+        );
+        let routes = config["apps"]["http"]["servers"]["srv0"]["routes"].as_array().unwrap();
+        let dial = |host: &str| {
+            routes
+                .iter()
+                .find(|r| r["match"][0]["host"] == json!([host]))
+                .unwrap_or_else(|| panic!("route for {host} exists"))["handle"][0]["upstreams"][0]["dial"]
+                .clone()
+        };
+
+        assert_eq!(dial("plain-app.example.com"), "litebin-plain-app.web:80");
+        assert_eq!(dial("myapp-edit-1a2b.example.com"), "litebin-orchestrator:5080");
     }
 }

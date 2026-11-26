@@ -30,14 +30,20 @@ pub(crate) async fn desired_dns_records(
             }
         };
 
-    // Demo-enabled projects route through the master (gatekeeper) — their
-    // records target the master IP wherever the project itself runs.
-    let demo_parents: HashSet<String> = sqlx::query_scalar("SELECT project_id FROM demo_config")
+    // Demo hosts — the parent and every instance — enter through the master's
+    // gatekeeper, so their records target the master IP wherever the project runs.
+    let mut demo_hosts: HashSet<String> = sqlx::query_scalar("SELECT project_id FROM demo_config")
         .fetch_all(db)
         .await
         .unwrap_or_default()
         .into_iter()
         .collect();
+    demo_hosts.extend(
+        sqlx::query_scalar::<_, String>("SELECT id FROM projects WHERE demo_parent_id IS NOT NULL")
+            .fetch_all(db)
+            .await
+            .unwrap_or_default(),
+    );
 
     for (project_id, node_id, custom_domain, is_background) in &all_projects {
         let mut ip = match (*is_background, node_id.as_deref()) {
@@ -80,7 +86,7 @@ pub(crate) async fn desired_dns_records(
         };
 
         // Demo hosts route through the master's gatekeeper.
-        if demo_parents.contains(project_id) {
+        if demo_hosts.contains(project_id) {
             if public_ip.is_empty() {
                 continue;
             }
@@ -419,6 +425,55 @@ mod tests {
         let no_ip = desired_dns_records(&db, "", "example.com", "dash", "poke").await;
         assert!(!no_ip.contains_key("dash.example.com"));
         assert!(!no_ip.contains_key("app.example.com"));
+    }
+
+    /// A demo parent and its instances enter through the master's gatekeeper
+    /// wherever they run; any other project on a node resolves to that node.
+    #[tokio::test]
+    async fn demo_hosts_on_a_node_resolve_to_the_master() {
+        let db = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("src/db/migrations").run(&db).await.unwrap();
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES ('u1', 'u1', 'x', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO nodes (id, name, host, public_ip, created_at, updated_at) VALUES ('node-1', 'node-1', '10.0.0.1', '203.0.113.10', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&db)
+        .await
+        .unwrap();
+        for (id, demo_parent_id) in [("myapp", None), ("myapp-edit-1a2b", Some("myapp")), ("plain", None)] {
+            sqlx::query(
+                "INSERT INTO projects (id, user_id, name, status, node_id, demo_parent_id, deploy_type, is_background,              auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, allow_raw_ports,              allow_docker_access, created_at, updated_at)              VALUES (?, 'u1', ?, 'running', 'node-1', ?, 'compose', 0, 1, 15, 0, 0, 0, ?, ?)",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(demo_parent_id)
+            .bind(now)
+            .bind(now)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO demo_config (project_id, updated_at) VALUES ('myapp', ?)")
+            .bind(now)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let desired = desired_dns_records(&db, "1.2.3.4", "example.com", "dash", "poke").await;
+
+        assert_eq!(desired.get("myapp.example.com").map(String::as_str), Some("1.2.3.4"));
+        assert_eq!(desired.get("myapp-edit-1a2b.example.com").map(String::as_str), Some("1.2.3.4"));
+        assert_eq!(desired.get("plain.example.com").map(String::as_str), Some("203.0.113.10"));
     }
 
     #[test]
