@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Demo bar** — wraps full banner text on mobile instead of truncating, hides the reset clock time on shared demos (countdown timer is session-only), and adds `Minimize demo bar` / `Expand demo bar` tooltips.
+
 ## [0.4.31] - 2026-11-26
 
 ### Added
