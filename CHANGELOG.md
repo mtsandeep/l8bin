@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`l8b build` and `l8b deploy --image`** — `l8b build` builds a project locally (Dockerfile or Railpack) with optional `--tag`, `--push` (OCI via `skopeo` when available, or `docker push`), `--insecure`, `--platform`, and `--keep-tar` without requiring a LiteBin server login; `l8b deploy --image <ref>` deploys an existing registry image directly without rebuilding or uploading.
+
 ### Changed
 - **Demo bar** — wraps full banner text on mobile instead of truncating, hides the reset clock time on shared demos (countdown timer is session-only), and adds `Minimize demo bar` / `Expand demo bar` tooltips.
 

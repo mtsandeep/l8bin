@@ -129,6 +129,56 @@ enum Commands {
         /// (client → master → agent).
         #[arg(long, value_enum, default_value_t = upload::UploadMode::Auto)]
         upload: upload::UploadMode,
+
+        /// Deploy an existing registry image reference directly (skips local build and upload)
+        #[arg(long)]
+        image: Option<String>,
+    },
+    /// Build an app image locally (Dockerfile or Railpack) and optionally push to an OCI registry
+    Build {
+        /// Image tag (default: <project-or-dir>:latest, prefixed with $L8B_REGISTRY if set)
+        #[arg(long, short)]
+        tag: Option<String>,
+
+        /// Path to project directory (default: current dir)
+        #[arg(long, default_value = ".")]
+        path: std::path::PathBuf,
+
+        /// Dockerfile path (auto-detected if not specified; uses Railpack when absent)
+        #[arg(long)]
+        dockerfile: Option<String>,
+
+        /// Target platform (e.g. linux/amd64, linux/arm64)
+        #[arg(long)]
+        platform: Option<String>,
+
+        /// Push the built image to the registry in --tag (uses skopeo OCI when available)
+        #[arg(long)]
+        push: bool,
+
+        /// Allow insecure HTTP/self-signed TLS when pushing with skopeo
+        #[arg(long)]
+        insecure: bool,
+
+        /// Registry username (or set L8B_REGISTRY_USER)
+        #[arg(long)]
+        registry_user: Option<String>,
+
+        /// Registry password (or set L8B_REGISTRY_PASS)
+        #[arg(long)]
+        registry_pass: Option<String>,
+
+        /// Include this .env file in the build (repeatable; overrides .env auto-discovery)
+        #[arg(long)]
+        secret: Vec<std::path::PathBuf>,
+
+        /// Exclude build-time env files entirely (skip .env auto-discovery)
+        #[arg(long = "no-env", conflicts_with = "secret")]
+        no_env: bool,
+
+        /// Keep the saved Docker image tarball at this path instead of deleting it
+        #[arg(long)]
+        keep_tar: Option<std::path::PathBuf>,
     },
     /// Interactive deploy — the one command that runs everything: projects, destinations, env, capabilities, lifecycle
     Ship {
@@ -581,6 +631,7 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
             defer_capability,
             strip_host_ports,
             upload,
+            image,
         } => {
             let defaults = project_config::load(&path);
             let project = project_config::resolve_project(project.as_deref(), &path)?;
@@ -607,9 +658,42 @@ async fn run(cli: Cli, out: &out::Out, ci_mode: &ci::CiMode) -> Result<()> {
                     defer_capability,
                     strip_host_ports,
                     upload,
+                    image,
                 },
                 cli.server.as_deref(),
                 cli.token.as_deref(),
+                ci_mode,
+                out,
+            )
+            .await?;
+        }
+        Commands::Build {
+            tag,
+            path,
+            dockerfile,
+            platform,
+            push,
+            insecure,
+            registry_user,
+            registry_pass,
+            secret,
+            no_env,
+            keep_tar,
+        } => {
+            commands::build::run(
+                commands::build::BuildArgs {
+                    tag,
+                    path,
+                    dockerfile,
+                    platform,
+                    push,
+                    insecure,
+                    registry_user,
+                    registry_pass,
+                    secret,
+                    no_env,
+                    keep_tar,
+                },
                 ci_mode,
                 out,
             )

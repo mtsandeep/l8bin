@@ -95,6 +95,7 @@ pub(crate) struct DeployArgs {
     pub defer_capability: Vec<String>,
     pub strip_host_ports: bool,
     pub upload: upload::UploadMode,
+    pub image: Option<String>,
 }
 
 pub(crate) async fn run(
@@ -126,6 +127,7 @@ pub(crate) async fn run(
         defer_capability,
         strip_host_ports,
         upload,
+        image,
     } = args;
 
     let env_source = ship::EnvSource::from_flags(secret, no_env);
@@ -275,39 +277,42 @@ pub(crate) async fn run(
             }
         };
 
-        let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
+        let (image_id, effective_node, built_tar) = if let Some(image_ref) = image {
+            (image_ref, effective_node, None)
+        } else {
+            let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
 
-        // Resolve target platform from node architecture
-        let nodes = auth::fetch_online_nodes(&client, &server).await;
-        let platform = ship::resolve_platform(&nodes, effective_node.as_deref());
+            // Resolve target platform from node architecture
+            let nodes = auth::fetch_online_nodes(&client, &server).await;
+            let platform = ship::resolve_platform(&nodes, effective_node.as_deref());
 
-        let env_files = ship::resolve_env_files(&path, &env_source, false, ci_mode.enabled)?;
-        let build_env = build::BuildEnv { context_files: env_files, external_files: Vec::new() };
-        let image = build::build_project(
-            &path,
-            dockerfile.as_deref(),
-            &image_tag,
-            build_env,
-            ci_mode.enabled,
-            platform.as_deref(),
-        )
-        .await?;
+            let env_files = ship::resolve_env_files(&path, &env_source, false, ci_mode.enabled)?;
+            let build_env = build::BuildEnv { context_files: env_files, external_files: Vec::new() };
+            let built = build::build_project(
+                &path,
+                dockerfile.as_deref(),
+                &image_tag,
+                build_env,
+                ci_mode.enabled,
+                platform.as_deref(),
+            )
+            .await?;
 
-        ci_mode.println("Uploading image...");
-        let uploaded = upload::upload_image(
-            &client,
-            &server,
-            &project,
-            std::path::Path::new(&image.path),
-            &image.image_id,
-            effective_node.as_deref(),
-            upload,
-            ci_mode.enabled,
-        )
-        .await?;
-        let image_id = uploaded.image_id;
-        // Echo the broker's node so the deploy lands where the image did.
-        let effective_node = uploaded.node_id.or(effective_node);
+            ci_mode.println("Uploading image...");
+            let uploaded = upload::upload_image(
+                &client,
+                &server,
+                &project,
+                std::path::Path::new(&built.path),
+                &built.image_id,
+                effective_node.as_deref(),
+                upload,
+                ci_mode.enabled,
+            )
+            .await?;
+            // Echo the broker's node so the deploy lands where the image did.
+            (uploaded.image_id, uploaded.node_id.or(effective_node), Some(built.path))
+        };
 
         ci_mode.println("Deploying...");
         let response = deploy_cmd::deploy_or_redeploy(
@@ -353,7 +358,9 @@ pub(crate) async fn run(
         }
 
         // Clean up
-        let _ = std::fs::remove_file(&image.path);
+        if let Some(tar_path) = built_tar {
+            let _ = std::fs::remove_file(&tar_path);
+        }
     }
 
     Ok(())
