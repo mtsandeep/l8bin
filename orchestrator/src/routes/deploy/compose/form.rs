@@ -16,4 +16,6 @@ pub(super) struct ComposeForm {
     pub compose_yaml: String,
     pub target_services_raw: Option<String>,
     pub stage_only_requested: bool,
+    pub memory_limit_mb: Option<i64>,
+    pub cpu_limit: Option<f64>,
 }

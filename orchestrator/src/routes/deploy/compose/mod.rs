@@ -61,6 +61,8 @@ pub async fn deploy_compose(
     let mut compose_content = None;
     let mut target_services_raw = None;
     let mut stage_only_requested = false;
+    let mut memory_limit_mb = None;
+    let mut cpu_limit = None;
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let field_name = match field.name() {
@@ -116,6 +118,12 @@ pub async fn deploy_compose(
             }
             "stage_only" => {
                 stage_only_requested = field.text().await.ok().and_then(|v| v.parse::<bool>().ok()).unwrap_or(false);
+            }
+            "memory_limit_mb" => {
+                memory_limit_mb = field.text().await.ok().and_then(|v| v.parse::<i64>().ok());
+            }
+            "cpu_limit" => {
+                cpu_limit = field.text().await.ok().and_then(|v| v.parse::<f64>().ok());
             }
             _ => {
                 tracing::debug!(field = %field_name, "ignoring unknown multipart field");
@@ -173,6 +181,8 @@ pub async fn deploy_compose(
         compose_yaml,
         target_services_raw,
         stage_only_requested,
+        memory_limit_mb,
+        cpu_limit,
     };
 
     let v = match validate_compose_request(&state, &form).await {

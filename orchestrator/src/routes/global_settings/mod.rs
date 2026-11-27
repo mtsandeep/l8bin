@@ -93,23 +93,23 @@ pub async fn update_settings(
     }
 
     if let Some(mem) = payload.default_memory_limit_mb {
-        if mem < 64 {
-            return Err((StatusCode::BAD_REQUEST, "memory must be at least 64 MB".into()));
+        if mem != 0 && mem < 64 {
+            return Err((StatusCode::BAD_REQUEST, "memory must be 0 (unlimited) or at least 64 MB".into()));
         }
         upsert_setting(&state.db, "default_memory_limit_mb", &mem.to_string()).await?;
     }
     if let Some(cpu) = payload.default_cpu_limit {
-        if cpu <= 0.0 {
-            return Err((StatusCode::BAD_REQUEST, "cpu_limit must be > 0".into()));
+        if cpu < 0.0 || (cpu > 0.0 && cpu < 0.1) {
+            return Err((StatusCode::BAD_REQUEST, "cpu_limit must be 0 (unlimited) or at least 0.1".into()));
         }
         upsert_setting(&state.db, "default_cpu_limit", &cpu.to_string()).await?;
     }
 
     // Update DockerManager defaults so new containers use the latest values
     let mem_setting: i64 =
-        get_setting(&state.db, "default_memory_limit_mb").await?.as_deref().unwrap_or("256").parse().unwrap_or(256);
+        get_setting(&state.db, "default_memory_limit_mb").await?.as_deref().unwrap_or("1024").parse().unwrap_or(1024);
     let cpu_setting: f64 =
-        get_setting(&state.db, "default_cpu_limit").await?.as_deref().unwrap_or("0.5").parse().unwrap_or(0.5);
+        get_setting(&state.db, "default_cpu_limit").await?.as_deref().unwrap_or("1").parse().unwrap_or(1.0);
     state.docker.update_defaults(mem_setting * 1024 * 1024, cpu_setting);
 
     if let Some(dns_target) = payload.dns_target {
@@ -168,9 +168,8 @@ pub async fn update_settings(
 
 pub async fn load_settings(state: &AppState) -> Result<GlobalSettings, (StatusCode, String)> {
     let mem: i64 =
-        get_setting(&state.db, "default_memory_limit_mb").await?.as_deref().unwrap_or("256").parse().unwrap_or(256);
-    let cpu: f64 =
-        get_setting(&state.db, "default_cpu_limit").await?.as_deref().unwrap_or("0.5").parse().unwrap_or(0.5);
+        get_setting(&state.db, "default_memory_limit_mb").await?.as_deref().unwrap_or("1024").parse().unwrap_or(1024);
+    let cpu: f64 = get_setting(&state.db, "default_cpu_limit").await?.as_deref().unwrap_or("1").parse().unwrap_or(1.0);
     let routing_mode: String =
         get_setting(&state.db, "routing_mode").await?.unwrap_or_else(|| state.config.routing_mode.to_string());
     let cloudflare_api_token: String = get_setting(&state.db, "cloudflare_api_token")

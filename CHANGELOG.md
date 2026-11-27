@@ -10,6 +10,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - **Demo bar** — wraps full banner text on mobile instead of truncating, hides the reset clock time on shared demos (countdown timer is session-only), and adds `Minimize demo bar` / `Expand demo bar` tooltips.
+- **Resource limit controls and defaults** — replaced the memory/CPU sliders with side-by-side stepper inputs (`256 MB` / `0.5 vCPU` steps) and a `Max` (unlimited) checkbox; initial setup now defaults to `1024 MB` / `1.0 vCPU` (or `256 MB` / `0.5 vCPU` on `< 1 GB` RAM hosts)
+
+### Fixed
+- **Multi-service resource limits & redeploy persistence** — editing memory/CPU on a project card now applies to all services in the stack, dashboard overrides persist across compose redeploys while `compose.yaml` values still apply initially, and compose deploys from the dashboard save their chosen resource limits.
 
 ## [0.4.31] - 2026-11-26
 

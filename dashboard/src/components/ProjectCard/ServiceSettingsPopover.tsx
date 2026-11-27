@@ -19,8 +19,8 @@ export default function ServiceSettingsPopover({
   onRefresh,
   onClose,
 }: ServiceSettingsPopoverProps) {
-  const [memMb, setMemMb] = useState(service.memory_limit_mb ?? 256);
-  const [cpuLimit, setCpuLimit] = useState(service.cpu_limit ?? 0.5);
+  const [memMb, setMemMb] = useState(service.memory_limit_mb ?? 1024);
+  const [cpuLimit, setCpuLimit] = useState(service.cpu_limit ?? 1);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -29,8 +29,8 @@ export default function ServiceSettingsPopover({
 
   // Sync from service prop
   useEffect(() => {
-    setMemMb(service.memory_limit_mb ?? 256);
-    setCpuLimit(service.cpu_limit ?? 0.5);
+    setMemMb(service.memory_limit_mb ?? 1024);
+    setCpuLimit(service.cpu_limit ?? 1);
   }, [service.memory_limit_mb, service.cpu_limit]);
 
   // Close on outside click
@@ -111,37 +111,30 @@ export default function ServiceSettingsPopover({
         </div>
       )}
 
-      <ResourceLimitInput
-        label="Memory limit"
-        value={memMb}
-        onChange={setMemMb}
-        unit="MB"
-        min={64}
-        normalMax={4096}
-        absoluteMax={65536}
-        normalStep={64}
-        overStep={1024}
-        highLabel="high memory"
-        minLabel="64 MB"
-        normalMaxLabel="4 GB"
-        inputClass="bg-slate-700"
-      />
+      <div className="grid grid-cols-2 gap-2.5">
+        <ResourceLimitInput
+          label="Memory"
+          value={memMb}
+          onChange={setMemMb}
+          unit="MB"
+          min={64}
+          step={256}
+          defaultValue={1024}
+          inputClass="bg-slate-700"
+        />
 
-      <ResourceLimitInput
-        label="CPU limit"
-        value={cpuLimit}
-        onChange={setCpuLimit}
-        unit="vCPU"
-        min={0.1}
-        normalMax={4}
-        absoluteMax={32}
-        normalStep={0.1}
-        overStep={1}
-        highLabel="high cpu"
-        minLabel="0.1"
-        normalMaxLabel="4 vCPU"
-        inputClass="bg-slate-700"
-      />
+        <ResourceLimitInput
+          label="CPU"
+          value={cpuLimit}
+          onChange={setCpuLimit}
+          unit="vCPU"
+          min={0.1}
+          step={0.5}
+          defaultValue={1}
+          decimals={2}
+          inputClass="bg-slate-700"
+        />
+      </div>
 
       <div className="flex gap-2">
         <button

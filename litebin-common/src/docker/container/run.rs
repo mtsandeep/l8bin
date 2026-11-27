@@ -175,13 +175,21 @@ impl DockerManager {
         let image_user = self.inspect_image_user(&image).await;
         self.chown_bind_mounts(config, filtered_binds.as_ref(), image_user.as_deref());
 
-        // Per-service resource limits (fall back to global defaults when not specified)
+        // Per-service resource limits (fall back to global defaults when not specified).
+        // A value <= 0 means explicitly unlimited (no Docker resource cap).
         let default_mem = self.memory_limit.load(std::sync::atomic::Ordering::Relaxed);
         let default_cpu = f64::from_bits(self.cpu_limit.load(std::sync::atomic::Ordering::Relaxed));
-        let memory = config.memory_limit_mb.map(|mb| mb * 1024 * 1024).unwrap_or(default_mem);
-        let nano_cpus = match config.cpu_limit {
-            Some(cpus) => (cpus * 1_000_000_000.0) as i64,
-            None => (default_cpu * 1_000_000_000.0) as i64,
+        let memory: Option<i64> = match config.memory_limit_mb {
+            Some(mb) if mb <= 0 => None,
+            Some(mb) => Some(mb * 1024 * 1024),
+            None if default_mem <= 0 => None,
+            None => Some(default_mem),
+        };
+        let nano_cpus: Option<i64> = match config.cpu_limit {
+            Some(cpus) if cpus <= 0.0 => None,
+            Some(cpus) => Some((cpus * 1_000_000_000.0) as i64),
+            None if default_cpu <= 0.0 => None,
+            None => Some((default_cpu * 1_000_000_000.0) as i64),
         };
 
         // Build LiteBin security overrides (shared by both paths)
@@ -192,8 +200,8 @@ impl DockerManager {
             } else if !port_bindings.is_empty() {
                 host.port_bindings = Some(port_bindings.clone());
             }
-            host.memory = Some(memory);
-            host.nano_cpus = Some(nano_cpus);
+            host.memory = memory;
+            host.nano_cpus = nano_cpus;
             // Only override restart policy if compose didn't specify one
             if host.restart_policy.is_none() {
                 host.restart_policy =

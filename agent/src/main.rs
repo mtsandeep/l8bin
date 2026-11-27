@@ -66,8 +66,8 @@ async fn main() -> Result<()> {
     // Init Docker manager (defaults from env vars, set by orchestrator/install.sh)
     let docker_network = std::env::var("DOCKER_NETWORK").unwrap_or_else(|_| DEFAULT_DOCKER_NETWORK.into());
     let memory_limit: i64 =
-        std::env::var("DEFAULT_MEMORY_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(256) * 1024 * 1024;
-    let cpu_limit: f64 = std::env::var("DEFAULT_CPU_LIMIT").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5);
+        std::env::var("DEFAULT_MEMORY_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(1024) * 1024 * 1024;
+    let cpu_limit: f64 = std::env::var("DEFAULT_CPU_LIMIT").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
     let mut docker = DockerManager::new(docker_network, memory_limit, cpu_limit)?;
     docker.detect_host_projects_dir().await;
     // Clear helpers left by a predecessor killed mid-transfer.

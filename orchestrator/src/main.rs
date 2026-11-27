@@ -191,9 +191,15 @@ async fn main() -> anyhow::Result<()> {
     // Ensure projects directory exists
     std::fs::create_dir_all("projects")?;
 
-    // Seed global settings if not already set
-    let seed_mem_mb: i64 = 256;
-    let seed_cpu_limit: f64 = 0.5;
+    // Seed global settings if not already set.
+    // Default to 1 GB / 1 vCPU, or 256 MB / 0.5 vCPU on low-RAM (< 1 GB) hosts.
+    let total_mem_mb = {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        sys.total_memory() / (1024 * 1024)
+    };
+    let (seed_mem_mb, seed_cpu_limit): (i64, f64) =
+        if total_mem_mb > 0 && total_mem_mb < 1024 { (256, 0.5) } else { (1024, 1.0) };
     sqlx::query(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_memory_limit_mb', ?), ('default_cpu_limit', ?), ('routing_mode', ?), ('cloudflare_api_token', ?), ('cloudflare_zone_id', ?), ('dashboard_subdomain', ?), ('poke_subdomain', ?)"
     )

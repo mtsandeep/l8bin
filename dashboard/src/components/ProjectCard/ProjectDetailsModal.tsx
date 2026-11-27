@@ -134,14 +134,21 @@ export default function ProjectDetailsModal({ project, nodes, onClose }: Project
             <Row
               label="Memory limit"
               value={
-                primary?.memory_limit_mb != null
-                  ? formatBytes(primary.memory_limit_mb * 1024 * 1024)
-                  : project.public_stats?.memory_limit_mb != null
-                    ? formatBytes(project.public_stats.memory_limit_mb * 1024 * 1024)
-                    : '—'
+                (primary?.memory_limit_mb ?? project.public_stats?.memory_limit_mb) === 0
+                  ? 'Unlimited'
+                  : primary?.memory_limit_mb != null
+                    ? formatBytes(primary.memory_limit_mb * 1024 * 1024)
+                    : project.public_stats?.memory_limit_mb != null
+                      ? formatBytes(project.public_stats.memory_limit_mb * 1024 * 1024)
+                      : '—'
               }
             />
-            <Row label="CPU limit" value={primary?.cpu_limit !== undefined ? `${primary.cpu_limit}` : '—'} />
+            <Row
+              label="CPU limit"
+              value={
+                primary?.cpu_limit === 0 ? 'Unlimited' : primary?.cpu_limit !== undefined ? `${primary.cpu_limit}` : '—'
+              }
+            />
           </Section>
 
           <Section icon={Network} title="Networking">

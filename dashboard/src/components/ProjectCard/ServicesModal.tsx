@@ -1,4 +1,4 @@
-import { Cpu, Database, HardDrive, Loader2, MemoryStick, Play, RotateCcw, Square, Terminal, X } from 'lucide-react';
+import { Cpu, Database, HardDrive, Loader2, MemoryStick, Play, RotateCcw, Settings, Square, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Project, ServiceInfo } from '../../api';
 import { formatBytes, ProjectStatus, restartService, startService, stopService } from '../../api';
@@ -69,7 +69,7 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
             const isRunning = svc.status === ProjectStatus.Running;
             const isCompleted = svc.status === ProjectStatus.Completed;
             const memPercent =
-              svc.memory_limit_mb && svc.memory_usage
+              svc.memory_limit_mb && svc.memory_limit_mb > 0 && svc.memory_usage
                 ? (svc.memory_usage / (svc.memory_limit_mb * 1024 * 1024)) * 100
                 : 0;
 
@@ -109,7 +109,7 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                         }`}
                         title="Settings"
                       >
-                        <Terminal size={12} />
+                        <Settings size={12} />
                       </button>
                       {isCompleted ? null : isRunning ? (
                         <>
@@ -184,12 +184,16 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                           {svc.cpu_percent.toFixed(1)}
                           <span className="text-slate-500">%</span>
                           {svc.cpu_limit !== undefined && (
-                            <span className="text-slate-600 ml-1">/ {svc.cpu_limit.toFixed(1)}</span>
+                            <span className="text-slate-600 ml-1">
+                              / {svc.cpu_limit === 0 ? '∞' : svc.cpu_limit.toFixed(1)}
+                            </span>
                           )}
                         </p>
                       ) : (
                         <p className="text-[11px] text-slate-600">
-                          {svc.cpu_limit !== undefined ? `— / ${svc.cpu_limit.toFixed(1)}` : '—'}
+                          {svc.cpu_limit !== undefined
+                            ? `— / ${svc.cpu_limit === 0 ? '∞' : svc.cpu_limit.toFixed(1)}`
+                            : '—'}
                         </p>
                       )}
                     </div>
@@ -205,16 +209,18 @@ export default function ServicesModal({ project, services, onClose, onRefresh }:
                           {formatBytes(svc.memory_usage)}
                           {svc.memory_limit_mb != null && (
                             <span className="text-slate-600 ml-1">
-                              / {formatBytes(svc.memory_limit_mb * 1024 * 1024)}
+                              / {svc.memory_limit_mb === 0 ? '∞' : formatBytes(svc.memory_limit_mb * 1024 * 1024)}
                             </span>
                           )}
                         </p>
                       ) : (
                         <p className="text-[11px] text-slate-600">
-                          {svc.memory_limit_mb != null ? `— / ${formatBytes(svc.memory_limit_mb * 1024 * 1024)}` : '—'}
+                          {svc.memory_limit_mb != null
+                            ? `— / ${svc.memory_limit_mb === 0 ? '∞' : formatBytes(svc.memory_limit_mb * 1024 * 1024)}`
+                            : '—'}
                         </p>
                       )}
-                      {isRunning && svc.memory_limit_mb && memPercent > 0 && (
+                      {isRunning && svc.memory_limit_mb != null && svc.memory_limit_mb > 0 && memPercent > 0 && (
                         <div className="mt-1 h-0.5 bg-slate-700 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-violet-500 rounded-full"

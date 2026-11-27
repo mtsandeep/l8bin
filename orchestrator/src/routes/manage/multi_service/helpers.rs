@@ -159,8 +159,8 @@ pub(crate) async fn build_batch_run_payload(
         })
         .collect();
 
-    let default_memory_limit_mb = read_setting(db, "default_memory_limit_mb", 256).await;
-    let default_cpu_limit = read_setting(db, "default_cpu_limit", 0.5).await;
+    let default_memory_limit_mb = read_setting(db, "default_memory_limit_mb", 1024).await;
+    let default_cpu_limit = read_setting(db, "default_cpu_limit", 1.0).await;
 
     let registry_config = match inputs.node_id.as_deref().filter(|node| *node != "local") {
         Some(node_id) => crate::nodes::registry_auth::registry_config_for_node(db, node_id).await?,

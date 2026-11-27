@@ -261,16 +261,17 @@ pub async fn update_project_settings(
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
-    // For multi-service projects, also update the public service in project_services
-    if (has_memory_limit_mb || has_cpu_limit) && existing.as_ref().unwrap().deploy_type == Some(DeployType::Compose) {
-        let mut set_svc: Vec<&str> = Vec::new();
+    // Propagate project-level resource limit edits to every service in project_services,
+    // marking them as overridden so compose redeploys preserve the dashboard setting.
+    if has_memory_limit_mb || has_cpu_limit {
+        let mut set_svc: Vec<&str> = vec!["limits_overridden = 1"];
         if has_memory_limit_mb {
             set_svc.push("memory_limit_mb = ?");
         }
         if has_cpu_limit {
             set_svc.push("cpu_limit = ?");
         }
-        let sql = format!("UPDATE project_services SET {} WHERE project_id = ? AND is_public = 1", set_svc.join(", "));
+        let sql = format!("UPDATE project_services SET {} WHERE project_id = ?", set_svc.join(", "));
         let mut svc_query = sqlx::query(&sql);
         if has_memory_limit_mb {
             svc_query = svc_query.bind(payload.memory_limit_mb.unwrap());
@@ -414,6 +415,8 @@ pub async fn update_service_settings(
     if !has_memory && !has_cpu {
         return (StatusCode::OK, Json(serde_json::json!({"updated": true}))).into_response();
     }
+
+    set_clauses.push("limits_overridden = 1".to_string());
 
     let sql =
         format!("UPDATE project_services SET {} WHERE project_id = ? AND service_name = ?", set_clauses.join(", "));

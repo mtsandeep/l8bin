@@ -33,6 +33,7 @@ import {
   updateSplitDns,
   validateCloudflare,
 } from '../../api';
+import ResourceLimitInput from '../ResourceLimitInput';
 import { useToast } from '../ToastContext';
 import SettingsCard from './SettingsCard';
 
@@ -76,8 +77,8 @@ const CHECK_LABELS: Record<string, string> = {
 
 export default function GeneralPanel() {
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
-  const [memMb, setMemMb] = useState(256);
-  const [cpu, setCpu] = useState(0.5);
+  const [memMb, setMemMb] = useState(1024);
+  const [cpu, setCpu] = useState(1);
   const [domain, setDomain] = useState('');
   const [dnsTarget, setDnsTarget] = useState('');
   const [routingMode, setRoutingMode] = useState<RoutingMode>(RoutingMode.MasterProxy);
@@ -763,46 +764,28 @@ export default function GeneralPanel() {
         title="Deployment defaults"
         description="Applied to every new deployment. Per-app overrides live in each project's App Settings."
       >
-        <div className="space-y-5">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-slate-300">Default memory limit</span>
-              <span className="text-xs font-mono text-violet-300">{memMb} MB</span>
-            </div>
-            <input
-              type="range"
-              min={64}
-              max={4096}
-              step={64}
-              value={memMb}
-              onChange={(e) => setMemMb(Number(e.target.value))}
-              className="w-full accent-violet-500"
-            />
-            <div className="flex justify-between text-xs text-slate-600 mt-1">
-              <span>64 MB</span>
-              <span>4096 MB</span>
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-slate-300">Default CPU limit</span>
-              <span className="text-xs font-mono text-violet-300">{cpu.toFixed(2)} vCPU</span>
-            </div>
-            <input
-              type="range"
-              min={0.1}
-              max={4}
-              step={0.1}
-              value={cpu}
-              onChange={(e) => setCpu(Number(e.target.value))}
-              className="w-full accent-violet-500"
-            />
-            <div className="flex justify-between text-xs text-slate-600 mt-1">
-              <span>0.1</span>
-              <span>4.0</span>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <ResourceLimitInput
+            label="Default memory limit"
+            value={memMb}
+            onChange={setMemMb}
+            unit="MB"
+            min={64}
+            step={256}
+            defaultValue={1024}
+            inputClass="bg-slate-900"
+          />
+          <ResourceLimitInput
+            label="Default CPU limit"
+            value={cpu}
+            onChange={setCpu}
+            unit="vCPU"
+            min={0.1}
+            step={0.5}
+            defaultValue={1}
+            decimals={2}
+            inputClass="bg-slate-900"
+          />
         </div>
       </SettingsCard>
 

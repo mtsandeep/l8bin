@@ -198,8 +198,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
   const [runtimeEnv, setRuntimeEnv] = useState('');
   const [memMb, setMemMb] = useState<number | null>(null); // null = use global default
   const [cpuLimit, setCpuLimit] = useState<number | null>(null);
-  const [globalMemMb, setGlobalMemMb] = useState(256);
-  const [globalCpu, setGlobalCpu] = useState(0.5);
+  const [globalMemMb, setGlobalMemMb] = useState(1024);
+  const [globalCpu, setGlobalCpu] = useState(1);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [domain, setDomain] = useState(domainProp);
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -312,6 +312,8 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
           grant_capabilities: approvedCapabilityIds.length > 0 ? approvedCapabilityIds : undefined,
           defer_capabilities: deferredCapabilityIds.length > 0 ? deferredCapabilityIds : undefined,
           strip_host_ports: stripHostPorts || undefined,
+          memory_limit_mb: memMb,
+          cpu_limit: cpuLimit,
         });
         for (const w of warnings) showToast(w, 'warning');
       } else {
@@ -965,20 +967,15 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
             )}
 
             {/* Resource limits */}
-            <div className="pt-1 border-t border-slate-700/50 space-y-3">
+            <div className="pt-1 border-t border-slate-700/50 grid grid-cols-2 gap-3">
               <ResourceLimitInput
                 label="Memory limit"
                 value={memMb ?? globalMemMb}
                 onChange={setMemMb}
                 unit="MB"
                 min={64}
-                normalMax={4096}
-                absoluteMax={65536}
-                normalStep={64}
-                overStep={1024}
-                highLabel="high memory"
-                minLabel="64 MB"
-                normalMaxLabel="4 GB"
+                step={256}
+                defaultValue={globalMemMb || 1024}
               />
               <ResourceLimitInput
                 label="CPU limit"
@@ -986,13 +983,9 @@ export default function DeployForm({ onDeploy, onClose, domain: domainProp }: De
                 onChange={setCpuLimit}
                 unit="vCPU"
                 min={0.1}
-                normalMax={4}
-                absoluteMax={32}
-                normalStep={0.1}
-                overStep={1}
-                highLabel="high cpu"
-                minLabel="0.1"
-                normalMaxLabel="4 vCPU"
+                step={0.5}
+                defaultValue={globalCpu || 1}
+                decimals={2}
               />
             </div>
 

@@ -142,8 +142,8 @@ pub(super) async fn persist_compose_deploy(
     // Upsert project row
     let result = sqlx::query(
         r#"
-        INSERT INTO projects (id, user_id, name, description, is_background, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, allow_raw_ports, allow_docker_access, service_count, service_summary, deploy_type, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, user_id, name, description, is_background, image, internal_port, status, auto_stop_enabled, auto_stop_timeout_mins, auto_start_enabled, custom_domain, allow_raw_ports, allow_docker_access, memory_limit_mb, cpu_limit, service_count, service_summary, deploy_type, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id = excluded.user_id,
             is_background = excluded.is_background,
@@ -160,6 +160,8 @@ pub(super) async fn persist_compose_deploy(
             custom_domain = CASE WHEN excluded.custom_domain IS NOT NULL THEN excluded.custom_domain ELSE COALESCE(projects.custom_domain, excluded.custom_domain) END,
             allow_raw_ports = excluded.allow_raw_ports,
             allow_docker_access = excluded.allow_docker_access,
+            memory_limit_mb = CASE WHEN excluded.memory_limit_mb IS NOT NULL THEN excluded.memory_limit_mb ELSE projects.memory_limit_mb END,
+            cpu_limit = CASE WHEN excluded.cpu_limit IS NOT NULL THEN excluded.cpu_limit ELSE projects.cpu_limit END,
             service_count = excluded.service_count,
             service_summary = excluded.service_summary,
             deploy_type = excluded.deploy_type,
@@ -180,6 +182,8 @@ pub(super) async fn persist_compose_deploy(
     .bind(&custom_domain)
     .bind(allow_raw_ports)
     .bind(false)
+    .bind(form.memory_limit_mb)
+    .bind(form.cpu_limit)
     .bind(service_count)
     .bind(&service_summary)
     .bind(DeployType::Compose)
@@ -271,9 +275,10 @@ pub(super) async fn persist_compose_deploy(
         let compose_cpu: Option<f64> =
             svc.cpus.as_ref().and_then(|val| val.as_f64().or_else(|| val.as_str().and_then(|s| s.parse::<f64>().ok())));
 
-        // On redeploy, preserve DB overrides when compose file doesn't specify memory/CPU
-        let existing_override: Option<(Option<i64>, Option<f64>)> = sqlx::query_as(
-            "SELECT memory_limit_mb, cpu_limit FROM project_services WHERE project_id = ? AND service_name = ?",
+        // On redeploy, preserve dashboard overrides; otherwise let compose.yaml win
+        // (falling back to project-level deploy limits or existing DB values).
+        let existing_override: Option<(Option<i64>, Option<f64>, bool)> = sqlx::query_as(
+            "SELECT memory_limit_mb, cpu_limit, limits_overridden FROM project_services WHERE project_id = ? AND service_name = ?",
         )
         .bind(project_id)
         .bind(svc_name)
@@ -281,8 +286,13 @@ pub(super) async fn persist_compose_deploy(
         .await
         .ok()
         .flatten();
-        let memory_limit_mb = compose_mem.or_else(|| existing_override.as_ref().and_then(|(m, _)| *m));
-        let cpu_limit = compose_cpu.or_else(|| existing_override.as_ref().and_then(|(_, c)| *c));
+        let (memory_limit_mb, cpu_limit, limits_overridden) = match existing_override {
+            Some((m, c, true)) => (m, c, true),
+            Some((m, c, false)) => {
+                (compose_mem.or(form.memory_limit_mb).or(m), compose_cpu.or(form.cpu_limit).or(c), false)
+            }
+            None => (compose_mem.or(form.memory_limit_mb), compose_cpu.or(form.cpu_limit), false),
+        };
 
         // On partial redeploy, only mark targeted services as 'deploying'
         let svc_status = if v.stage_only {
@@ -294,8 +304,8 @@ pub(super) async fn persist_compose_deploy(
             ProjectStatus::Running
         };
         if let Err(e) = sqlx::query(
-            "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, is_public, depends_on, memory_limit_mb, cpu_limit, status, is_oneshot)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO project_services (project_id, service_name, image, port, is_public, depends_on, memory_limit_mb, cpu_limit, limits_overridden, status, is_oneshot)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(project_id)
         .bind(svc_name)
@@ -305,6 +315,7 @@ pub(super) async fn persist_compose_deploy(
         .bind(&depends_on)
         .bind(memory_limit_mb)
         .bind(cpu_limit)
+        .bind(limits_overridden)
         .bind(svc_status)
         .bind(is_oneshot)
         .execute(&state.db)

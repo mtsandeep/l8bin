@@ -1331,6 +1331,8 @@ export interface ComposeDeployPayload {
   /** Rewrite HOST:CONTAINER mappings to container-only so the compose stops
    *  requiring the raw-ports capability. */
   strip_host_ports?: boolean;
+  memory_limit_mb?: number | null;
+  cpu_limit?: number | null;
 }
 
 export async function deployComposeProject(payload: ComposeDeployPayload): Promise<string[]> {
@@ -1354,6 +1356,12 @@ export async function deployComposeProject(payload: ComposeDeployPayload): Promi
   }
   if (payload.strip_host_ports) {
     form.append('strip_host_ports', 'true');
+  }
+  if (payload.memory_limit_mb !== undefined && payload.memory_limit_mb !== null) {
+    form.append('memory_limit_mb', String(payload.memory_limit_mb));
+  }
+  if (payload.cpu_limit !== undefined && payload.cpu_limit !== null) {
+    form.append('cpu_limit', String(payload.cpu_limit));
   }
 
   const res = await fetch(`${API_BASE}/deploy/compose`, {
