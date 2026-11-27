@@ -81,6 +81,9 @@ pub struct CreateRegistryRequest {
     /// Make this the registry for image names without a registry host.
     #[serde(default)]
     pub is_default: Option<bool>,
+    /// Make this the default push target for `l8b build --push` / `l8b deploy`.
+    #[serde(default)]
+    pub is_push_default: Option<bool>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -110,6 +113,10 @@ pub struct UpdateRegistryRequest {
     /// the daemon's docker.io).
     #[serde(default)]
     pub is_default: Option<bool>,
+    /// Make (Some(true)) or drop (Some(false)) this registry as the default
+    /// push target for `l8b build --push` / `l8b deploy`.
+    #[serde(default)]
+    pub is_push_default: Option<bool>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -178,6 +185,10 @@ fn serialize_mirrors(mirrors: &[litebin_common::registry::MirrorConfig]) -> Stri
 /// Exactly one registry may be the default; setting one unsets the rest.
 async fn unset_other_defaults(db: &sqlx::SqlitePool, keep_id: &str) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE registries SET is_default = 0 WHERE id != ?").bind(keep_id).execute(db).await.map(|_| ())
+}
+
+async fn unset_other_push_defaults(db: &sqlx::SqlitePool, keep_id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE registries SET is_push_default = 0 WHERE id != ?").bind(keep_id).execute(db).await.map(|_| ())
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -255,6 +266,7 @@ pub async fn create_registry(
         None => None,
     };
     let is_default = payload.is_default.unwrap_or(false);
+    let is_push_default = payload.is_push_default.unwrap_or(false);
 
     let now = chrono::Utc::now().timestamp();
     let registry = Registry {
@@ -264,6 +276,7 @@ pub async fn create_registry(
         auth_b64,
         mirrors: mirror_configs.as_deref().map(serialize_mirrors),
         is_default,
+        is_push_default,
         is_builtin: false,
         created_at: now,
         updated_at: now,
@@ -272,13 +285,18 @@ pub async fn create_registry(
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("failed to set default: {e}")})))
             .into_response();
     }
-    match sqlx::query("INSERT INTO registries (id, name, url, auth_b64, mirrors, is_default, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)")
+    if is_push_default && let Err(e) = unset_other_push_defaults(&state.db, &registry.id).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("failed to set push default: {e}")})))
+            .into_response();
+    }
+    match sqlx::query("INSERT INTO registries (id, name, url, auth_b64, mirrors, is_default, is_push_default, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)")
         .bind(&registry.id)
         .bind(&registry.name)
         .bind(&registry.url)
         .bind(&registry.auth_b64)
         .bind(&registry.mirrors)
         .bind(registry.is_default)
+        .bind(registry.is_push_default)
         .bind(registry.created_at)
         .bind(registry.updated_at)
         .execute(&state.db)
@@ -381,14 +399,27 @@ pub async fn update_registry(
     } else if payload.is_default == Some(false) {
         registry.is_default = false;
     }
+    if payload.is_push_default == Some(true) {
+        registry.is_push_default = true;
+        if let Err(e) = unset_other_push_defaults(&state.db, &id).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("failed to set push default: {e}")})),
+            )
+                .into_response();
+        }
+    } else if payload.is_push_default == Some(false) {
+        registry.is_push_default = false;
+    }
     registry.updated_at = chrono::Utc::now().timestamp();
 
-    match sqlx::query("UPDATE registries SET name = ?, url = ?, auth_b64 = ?, mirrors = ?, is_default = ?, updated_at = ? WHERE id = ?")
+    match sqlx::query("UPDATE registries SET name = ?, url = ?, auth_b64 = ?, mirrors = ?, is_default = ?, is_push_default = ?, updated_at = ? WHERE id = ?")
         .bind(&registry.name)
         .bind(&registry.url)
         .bind(&registry.auth_b64)
         .bind(&registry.mirrors)
         .bind(registry.is_default)
+        .bind(registry.is_push_default)
         .bind(registry.updated_at)
         .bind(&id)
         .execute(&state.db)
@@ -456,6 +487,68 @@ pub async fn delete_registry(
     (StatusCode::OK, Json(json!({"deleted": id}))).into_response()
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PushDefaultResponse {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    /// Canonical registry host (e.g. `zot.litebin.dev` or `localhost:5010`).
+    pub host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    pub insecure: bool,
+}
+
+fn decode_auth_b64(auth_b64: Option<&str>) -> (Option<String>, Option<String>) {
+    match auth_b64.and_then(litebin_common::registry::decode_auth) {
+        Some((u, p)) => (Some(u), Some(p)),
+        None => (None, None),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/registries/push-default",
+    description = "Return the default push registry (if configured) for CLI builds/deploys.",
+    responses(
+        (status = 200, description = "Default push registry", body = PushDefaultResponse),
+        (status = 204, description = "No default push registry configured"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    tag = "registries",
+    security(("session_auth" = []), ("bearer_auth" = [])),
+)]
+pub async fn get_push_default(
+    auth_session: AuthSession<PasswordBackend>,
+    headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if auth_session.user.is_none() && crate::auth::extract_deploy_token(&state, &headers, "").await.is_none() {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Authentication required"}))).into_response();
+    }
+    match sqlx::query_as::<_, Registry>("SELECT * FROM registries WHERE is_push_default = 1 LIMIT 1")
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(r)) => {
+            let host = litebin_common::registry::host_from_url(&r.url).unwrap_or_else(|| r.url.clone());
+            let insecure = r.url.starts_with("http://");
+            let (username, password) = decode_auth_b64(r.auth_b64.as_deref());
+            (
+                StatusCode::OK,
+                Json(PushDefaultResponse { id: r.id, name: r.name, url: r.url, host, username, password, insecure }),
+            )
+                .into_response()
+        }
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("database error: {e}")}))).into_response()
+        }
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/registries/{id}/test",
@@ -520,7 +613,7 @@ pub async fn test_registry(
                 && let Some(challenge) = resp.headers().get("www-authenticate").and_then(|value| value.to_str().ok())
                 && challenge.to_ascii_lowercase().contains("bearer")
             {
-                let result = match stored_auth {
+                let mut result = match stored_auth {
                     Some(auth) => token_auth_check(&client, challenge, auth, &ping_url).await,
                     None => RegistryTestResponse {
                         status: "ok".into(),
@@ -528,9 +621,12 @@ pub async fn test_registry(
                         message: "registry reachable — public images pull anonymously; private ones need credentials (none stored)".into(),
                     },
                 };
+                if result.status == "ok" && registry.is_push_default {
+                    result = push_probe(&client, scheme, &host, stored_auth).await;
+                }
                 return (StatusCode::OK, Json(result)).into_response();
             }
-            let result = match status {
+            let mut result = match status {
                 200 => RegistryTestResponse {
                     status: "ok".into(),
                     http_status: Some(status),
@@ -551,6 +647,9 @@ pub async fn test_registry(
                     message: format!("registry answered with HTTP {other} for /v2/ — verify the URL"),
                 },
             };
+            if result.status == "ok" && registry.is_push_default {
+                result = push_probe(&client, scheme, &host, stored_auth).await;
+            }
             (StatusCode::OK, Json(result)).into_response()
         }
         Err(e) => (
@@ -562,6 +661,131 @@ pub async fn test_registry(
             }),
         )
             .into_response(),
+    }
+}
+
+/// Verify push permission by initiating (and cancelling) an empty blob upload.
+async fn push_probe(
+    client: &reqwest::Client,
+    scheme: &str,
+    host: &str,
+    stored_auth: Option<&str>,
+) -> RegistryTestResponse {
+    let upload_url = format!("{scheme}://{host}/v2/litebin-probe/blobs/uploads/");
+    let mut req = client.post(&upload_url);
+    if let Some(auth) = stored_auth {
+        req = req.header("Authorization", format!("Basic {auth}"));
+    }
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return RegistryTestResponse {
+                status: "unreachable".into(),
+                http_status: None,
+                message: format!("push probe failed reaching {upload_url}: {e}"),
+            };
+        }
+    };
+    let status = resp.status().as_u16();
+    if status == 401
+        && let Some(challenge) = resp.headers().get("www-authenticate").and_then(|v| v.to_str().ok())
+        && challenge.to_ascii_lowercase().contains("bearer")
+    {
+        let Some(auth) = stored_auth else {
+            return RegistryTestResponse {
+                status: "unauthorized".into(),
+                http_status: Some(status),
+                message: "reachable for pulls, but push target requires credentials (none stored)".into(),
+            };
+        };
+        let Some(realm) = auth_param(challenge, "realm") else {
+            return RegistryTestResponse {
+                status: "unauthorized".into(),
+                http_status: Some(status),
+                message: "push target returned Bearer challenge without realm".into(),
+            };
+        };
+        let mut token_url = format!("{realm}?scope=repository:litebin-probe:push,pull");
+        if let Some(service) = auth_param(challenge, "service") {
+            token_url.push_str(&format!("&service={service}"));
+        }
+        let Ok(tok_resp) = client.get(&token_url).header("Authorization", format!("Basic {auth}")).send().await else {
+            return RegistryTestResponse {
+                status: "unreachable".into(),
+                http_status: None,
+                message: "could not reach registry token endpoint for push probe".into(),
+            };
+        };
+        if !tok_resp.status().is_success() {
+            return RegistryTestResponse {
+                status: "unauthorized".into(),
+                http_status: Some(tok_resp.status().as_u16()),
+                message: "read works, but push token request was rejected".into(),
+            };
+        }
+        let tok_json = tok_resp.json::<serde_json::Value>().await.unwrap_or_default();
+        let Some(bearer) = tok_json.get("token").or_else(|| tok_json.get("access_token")).and_then(|v| v.as_str())
+        else {
+            return RegistryTestResponse {
+                status: "unauthorized".into(),
+                http_status: Some(status),
+                message: "push token response did not contain a token".into(),
+            };
+        };
+        let Ok(retry) = client.post(&upload_url).header("Authorization", format!("Bearer {bearer}")).send().await
+        else {
+            return RegistryTestResponse {
+                status: "unreachable".into(),
+                http_status: None,
+                message: "push probe retry failed".into(),
+            };
+        };
+        let retry_status = retry.status().as_u16();
+        if retry_status == 202 || retry_status == 201 {
+            if let Some(loc) = retry.headers().get("location").and_then(|v| v.to_str().ok()) {
+                let del_url = if loc.starts_with("http") { loc.to_string() } else { format!("{scheme}://{host}{loc}") };
+                let _ = client.delete(&del_url).header("Authorization", format!("Bearer {bearer}")).send().await;
+            }
+            return RegistryTestResponse {
+                status: "ok".into(),
+                http_status: Some(retry_status),
+                message: "registry reachable, credentials accepted, push verified".into(),
+            };
+        }
+        return RegistryTestResponse {
+            status: if retry_status == 401 || retry_status == 403 { "unauthorized" } else { "unexpected_status" }
+                .into(),
+            http_status: Some(retry_status),
+            message: format!("read works, but push probe returned HTTP {retry_status}"),
+        };
+    }
+
+    if status == 202 || status == 201 {
+        if let Some(loc) = resp.headers().get("location").and_then(|v| v.to_str().ok()) {
+            let del_url = if loc.starts_with("http") { loc.to_string() } else { format!("{scheme}://{host}{loc}") };
+            let mut del = client.delete(&del_url);
+            if let Some(auth) = stored_auth {
+                del = del.header("Authorization", format!("Basic {auth}"));
+            }
+            let _ = del.send().await;
+        }
+        RegistryTestResponse {
+            status: "ok".into(),
+            http_status: Some(status),
+            message: "registry reachable, credentials accepted, push verified".into(),
+        }
+    } else if status == 401 || status == 403 {
+        RegistryTestResponse {
+            status: "unauthorized".into(),
+            http_status: Some(status),
+            message: "read works, but push permission was rejected (401/403)".into(),
+        }
+    } else {
+        RegistryTestResponse {
+            status: "unexpected_status".into(),
+            http_status: Some(status),
+            message: format!("read works, but push probe returned HTTP {status}"),
+        }
     }
 }
 
@@ -618,7 +842,7 @@ fn auth_param(challenge: &str, key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{auth_param, resolve_auth_input};
+    use super::{auth_param, decode_auth_b64, resolve_auth_input, unset_other_push_defaults};
 
     #[test]
     fn parses_bearer_challenge_params() {
@@ -644,5 +868,38 @@ mod tests {
         assert_eq!(resolve_auth_input(None, None, None).unwrap(), None);
         // Empty strings mean "not provided", not "clear".
         assert_eq!(resolve_auth_input(Some("  "), None, Some("  ")).unwrap(), None);
+    }
+
+    #[test]
+    fn decode_auth_b64_handles_valid_and_empty() {
+        assert_eq!(decode_auth_b64(Some("dXNlcjpwYTpzcw==")), (Some("user".into()), Some("pa:ss".into())));
+        assert_eq!(decode_auth_b64(Some("")), (None, None));
+        assert_eq!(decode_auth_b64(None), (None, None));
+    }
+
+    #[tokio::test]
+    async fn unset_other_push_defaults_keeps_only_selected() {
+        let pool = crate::db::init_pool("sqlite::memory:").await.unwrap();
+        let now = 1_700_000_000_i64;
+        for (id, push_def) in [("r1", 1), ("r2", 1)] {
+            sqlx::query(
+                "INSERT INTO registries (id, name, url, is_default, is_push_default, is_builtin, created_at, updated_at) VALUES (?, ?, 'http://localhost:5010', 0, ?, 0, ?, ?)",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(push_def)
+            .bind(now)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        unset_other_push_defaults(&pool, "r2").await.unwrap();
+        let rows: Vec<(String, bool)> =
+            sqlx::query_as("SELECT id, is_push_default FROM registries WHERE id IN ('r1', 'r2') ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(rows, vec![("r1".into(), false), ("r2".into(), true)]);
     }
 }

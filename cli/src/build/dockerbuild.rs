@@ -25,6 +25,7 @@ pub(super) async fn build_with_docker(
     if let Some(df) = dockerfile {
         cmd.args(["-f", df]);
     }
+    cmd.args(["--label", "org.opencontainers.image.vendor=LiteBin"]);
     cmd.args(["-t", image_tag, "."]);
     cmd.current_dir(project_dir);
 

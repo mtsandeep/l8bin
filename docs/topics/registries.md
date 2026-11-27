@@ -46,6 +46,20 @@ The **Test** button checks the registry:
 - **Token-auth registries** (Docker Hub, ghcr.io, quay…): LiteBin completes the token exchange the way `docker login` does and reports whether the credentials were verified. Without stored credentials, a reachable registry reports OK with a note that public images pull anonymously while private ones need credentials — public/private is per-package, not per-registry.
 - **Basic-auth registries** (e.g. zot with htpasswd): 401 means the stored credentials were rejected, or none are stored.
 - **Unreachable** — wrong URL or network problem; the message includes the failing URL.
+- **Push verification** — when **push target** (`is_push_default`) is enabled on the registry, **Test** also sends a probe upload (`POST /v2/litebin-probe/blobs/uploads/` and cancels it with `DELETE`) to confirm write/push permission, not just read access.
+
+## Pushing images (`push target`, `l8b build`, `l8b deploy --image`)
+
+Click the **upload icon (`push target`)** on any registry row in **Settings → Registries** to make it the default push target (`is_push_default`). Only one registry can be the push target at a time.
+
+When a push target is enabled:
+- **`l8b deploy`** and **`l8b ship`** (single-container and Compose, when `--upload auto` is active) build locally, push the image to that registry, and tell the target node to pull and run it instead of uploading a `.tar.gz` archive. Pass `--upload direct` or `--upload relay` to force a tarball upload for a single deploy.
+- **`l8b build --push`** uses the server's push target automatically when logged in and `--tag` omits a registry host.
+- **Image naming:** `<host>[/<username>]/<project>:<tag>` (normalizing `index.docker.io` to `docker.io`; Compose services use `<project>-<service>`). The tag is resolved in order: exact Git tag (`v0.4.31`), Git short SHA (`383bb7d68`), or UTC timestamp (`20261127-160820`) outside a Git repo. Whenever a non-`latest` tag is pushed, `:latest` is also tagged and pushed alongside it.
+
+For external CI runners or standalone builds without a LiteBin server login:
+- **`l8b build`** builds locally (Dockerfile or Railpack) with optional `--tag`, `--push`, `--insecure`, `--platform`, `--registry-user`/`--registry-pass` (or `L8B_REGISTRY_USER`/`L8B_REGISTRY_PASS`), and `--keep-tar`. Pushes use `skopeo copy --format oci` (falling back to `quay.io/skopeo/stable` via Docker when `skopeo` is not on `PATH`) so OCI-strict registries such as Zot accept the manifest.
+- **`l8b deploy --image <ref>`** deploys (or rolls back to) an existing registry image reference directly without rebuilding or uploading.
 
 ## How pulls resolve
 
@@ -56,23 +70,24 @@ Docker only applies registry credentials when they match the registry being pull
 
 Nodes are expected to run the same LiteBin version as the orchestrator. An out-of-date agent ignores the registry config field, so a private-registry deploy fails with a pull error until the agent is upgraded.
 
-## API (session)
+## API (session + deploy token for push target)
 
 ```
-GET    /registries            → list; credentials masked (has_auth + last characters)
-POST   /registries            → { name, url, auth_b64?, mirrors?, is_default? }
-PUT    /registries/{id}       → { name?, url?, auth_b64?, clear_auth?, mirrors?, is_default? } — omitted fields are kept
-DELETE /registries/{id}       → built-ins are rejected
-POST   /registries/{id}/test  → { status: ok|unauthorized|unexpected_status|unreachable, http_status?, message }
+GET    /registries               → list; credentials masked (has_auth + last characters)
+POST   /registries               → { name, url, auth_b64?, mirrors?, is_default?, is_push_default? }
+PUT    /registries/{id}          → { name?, url?, auth_b64?, clear_auth?, mirrors?, is_default?, is_push_default? } — omitted fields are kept
+DELETE /registries/{id}          → built-ins are rejected
+POST   /registries/{id}/test     → { status: ok|unauthorized|unexpected_status|unreachable, http_status?, message }
+GET    /registries/push-default  → (session or deploy token) { id, name, url, host, username?, password?, insecure } or 204
 ```
 
-Setting `is_default: true` unsets the previous default. Setting `is_default: false` leaves no default — bare image names then use the daemon's own docker.io resolution.
+Setting `is_default: true` unsets the previous default. Setting `is_default: false` leaves no default — bare image names then use the daemon's own docker.io resolution. Setting `is_push_default: true` unsets the previous push target.
 
 ## Security notes
 
-- Credentials are stored in the platform SQLite database in plaintext — the same trust level as the Cloudflare API token in Settings. `GET` responses never include the full value; the dashboard only ever shows it after you type it.
+- Credentials are stored in the platform SQLite database in plaintext — the same trust level as the Cloudflare API token in Settings. `GET /registries` never includes the full value; the dashboard only ever shows it after you type it.
 - Credentials travel to agents only inside mTLS-encrypted deploy requests and are never persisted agent-side.
-- Registries require a dashboard session — deploy tokens cannot read or change them.
+- Registry management (`GET/POST/PUT/DELETE /registries`) requires a dashboard session. `GET /registries/push-default` also accepts a deploy token so `l8b build --push`, `l8b deploy`, and `l8b ship` can push to the configured push target.
 
 ## Migrating from the old environment variables
 

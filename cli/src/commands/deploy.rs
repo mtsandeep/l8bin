@@ -280,7 +280,16 @@ pub(crate) async fn run(
         let (image_id, effective_node, built_tar) = if let Some(image_ref) = image {
             (image_ref, effective_node, None)
         } else {
-            let image_tag = format!("{}/{}:latest", config::IMAGE_PREFIX, project);
+            let push_reg = if matches!(upload, upload::UploadMode::Auto) {
+                super::build::fetch_push_default(&client, &server).await
+            } else {
+                None
+            };
+            let image_tag = if let Some(ref pd) = push_reg {
+                pd.image_tag(&project, &path)
+            } else {
+                format!("{}/{}:latest", config::IMAGE_PREFIX, project)
+            };
 
             // Resolve target platform from node architecture
             let nodes = auth::fetch_online_nodes(&client, &server).await;
@@ -298,20 +307,27 @@ pub(crate) async fn run(
             )
             .await?;
 
-            ci_mode.println("Uploading image...");
-            let uploaded = upload::upload_image(
-                &client,
-                &server,
-                &project,
-                std::path::Path::new(&built.path),
-                &built.image_id,
-                effective_node.as_deref(),
-                upload,
-                ci_mode.enabled,
-            )
-            .await?;
-            // Echo the broker's node so the deploy lands where the image did.
-            (uploaded.image_id, uploaded.node_id.or(effective_node), Some(built.path))
+            if let Some(ref pd) = push_reg {
+                let (user, pass) = pd.credentials();
+                ci_mode.println(&format!("Pushing {image_tag} to registry..."));
+                super::build::push_image_with_latest(&image_tag, user.as_deref(), pass.as_deref(), pd.insecure)?;
+                (image_tag, effective_node, Some(built.path))
+            } else {
+                ci_mode.println("Uploading image...");
+                let uploaded = upload::upload_image(
+                    &client,
+                    &server,
+                    &project,
+                    std::path::Path::new(&built.path),
+                    &built.image_id,
+                    effective_node.as_deref(),
+                    upload,
+                    ci_mode.enabled,
+                )
+                .await?;
+                // Echo the broker's node so the deploy lands where the image did.
+                (uploaded.image_id, uploaded.node_id.or(effective_node), Some(built.path))
+            }
         };
 
         ci_mode.println("Deploying...");

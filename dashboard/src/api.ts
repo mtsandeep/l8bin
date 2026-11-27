@@ -1476,6 +1476,7 @@ export interface RegistryInfo {
   auth_hint?: string | null;
   mirrors: MirrorInfo[];
   is_default: boolean;
+  is_push_default: boolean;
   is_builtin: boolean;
   created_at: number;
   updated_at: number;
@@ -1505,6 +1506,7 @@ export interface RegistryChanges {
   clear_auth?: boolean;
   mirrors?: MirrorInput[];
   is_default?: boolean;
+  is_push_default?: boolean;
 }
 
 export async function fetchRegistries(): Promise<RegistryInfo[]> {

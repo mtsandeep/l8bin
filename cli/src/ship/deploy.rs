@@ -154,7 +154,16 @@ pub(super) async fn build_and_deploy(
         }
     }
 
-    let image_tag = format!("{}/{}:latest", crate::config::IMAGE_PREFIX, project_id);
+    let push_reg = if matches!(upload_mode, crate::upload::UploadMode::Auto) {
+        crate::commands::build::fetch_push_default(client, server).await
+    } else {
+        None
+    };
+    let image_tag = if let Some(ref pd) = push_reg {
+        pd.image_tag(project_id, project_dir)
+    } else {
+        format!("{}/{}:latest", crate::config::IMAGE_PREFIX, project_id)
+    };
     let platform = {
         let p = resolve_platform(&nodes, selected_node.as_deref());
         if let Some(ref plat) = p {
@@ -172,20 +181,26 @@ pub(super) async fn build_and_deploy(
         println!("  🗜️  Compressed to {}", HumanBytes(image.compressed_size));
     }
 
-    let uploaded = crate::upload::upload_image(
-        client,
-        server,
-        project_id,
-        Path::new(&image.path),
-        &image.image_id,
-        selected_node.as_deref(),
-        upload_mode,
-        false,
-    )
-    .await?;
-    let image_id = uploaded.image_id;
-    // Echo the broker's node so the deploy lands where the image did.
-    let selected_node = uploaded.node_id.or(selected_node);
+    let (image_id, selected_node) = if let Some(ref pd) = push_reg {
+        let (user, pass) = pd.credentials();
+        println!("  {} Pushing {} to registry...", "::".dimmed(), image_tag.cyan());
+        crate::commands::build::push_image_with_latest(&image_tag, user.as_deref(), pass.as_deref(), pd.insecure)?;
+        (image_tag, selected_node)
+    } else {
+        let uploaded = crate::upload::upload_image(
+            client,
+            server,
+            project_id,
+            Path::new(&image.path),
+            &image.image_id,
+            selected_node.as_deref(),
+            upload_mode,
+            false,
+        )
+        .await?;
+        // Echo the broker's node so the deploy lands where the image did.
+        (uploaded.image_id, uploaded.node_id.or(selected_node))
+    };
 
     let deploy_spinner = spinner("  🚢 {spinner} {msg}");
     deploy_spinner.set_message(if is_new_project { "Staging deployment..." } else { "Deploying..." });

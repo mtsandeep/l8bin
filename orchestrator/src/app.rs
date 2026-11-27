@@ -174,6 +174,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route("/deploy", post(crate::routes::deploy::single::deploy_create))
         .route("/deploy", put(crate::routes::deploy::single::deploy_update))
         .route("/deploy/compose", post(crate::routes::deploy::compose::deploy_compose))
+        .route("/registries/push-default", get(crate::routes::registries::get_push_default))
         .route("/compose/validate", post(crate::routes::capabilities::validate_compose))
         .route("/images/upload", post(crate::routes::images::upload_image))
         // Chunked resumable upload (local + relay). Direct uploads are minted by

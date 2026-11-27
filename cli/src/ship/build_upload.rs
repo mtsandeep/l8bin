@@ -82,6 +82,12 @@ pub(super) async fn build_and_upload_services(
     // First concrete node the broker placed an image on; the compose submit pins to it.
     let mut resolved_node: Option<String> = None;
 
+    let push_reg = if matches!(mode, crate::upload::UploadMode::Auto) {
+        crate::commands::build::fetch_push_default(client, server).await
+    } else {
+        None
+    };
+
     // Services sharing an identical (context, dockerfile) produce the same image;
     // build + upload once per group and share the resulting image ID.
     for group in group_build_infos(build_infos) {
@@ -96,7 +102,11 @@ pub(super) async fn build_and_upload_services(
             context_files: service_env_files(&svc_dir),
             external_files: root_env_paths.to_vec(),
         };
-        let image_tag = format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, primary.svc_name);
+        let image_tag = if let Some(ref pd) = push_reg {
+            pd.image_tag(&format!("{project_id}-{}", primary.svc_name), &svc_dir)
+        } else {
+            format!("{}/{}-{}", crate::config::IMAGE_PREFIX, project_id, primary.svc_name)
+        };
         let names: Vec<&str> = group.iter().map(|g| g.svc_name.as_str()).collect();
         let label =
             if group.len() > 1 { format!("{} (shared image)", names.join(", ")) } else { primary.svc_name.clone() };
@@ -113,22 +123,30 @@ pub(super) async fn build_and_upload_services(
         .await?;
         println!("    {} {} — {}", "  ✓".green(), names.join(", "), HumanBytes(saved_image.compressed_size));
 
-        let uploaded = crate::upload::upload_image(
-            client,
-            server,
-            project_id,
-            Path::new(&saved_image.path),
-            &saved_image.image_id,
-            node_id,
-            mode,
-            ci_mode,
-        )
-        .await?;
+        let resolved_id = if let Some(ref pd) = push_reg {
+            let (user, pass) = pd.credentials();
+            println!("    {} Pushing {} to registry...", "→".dimmed(), image_tag.cyan());
+            crate::commands::build::push_image_with_latest(&image_tag, user.as_deref(), pass.as_deref(), pd.insecure)?;
+            image_tag
+        } else {
+            let uploaded = crate::upload::upload_image(
+                client,
+                server,
+                project_id,
+                Path::new(&saved_image.path),
+                &saved_image.image_id,
+                node_id,
+                mode,
+                ci_mode,
+            )
+            .await?;
+            resolved_node = resolved_node.or(uploaded.node_id);
+            uploaded.image_id
+        };
         let _ = std::fs::remove_file(&saved_image.path);
-        resolved_node = resolved_node.or(uploaded.node_id);
 
         for info in &group {
-            resolved_images.insert(info.svc_name.clone(), uploaded.image_id.clone());
+            resolved_images.insert(info.svc_name.clone(), resolved_id.clone());
         }
     }
 

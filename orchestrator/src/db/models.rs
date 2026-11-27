@@ -66,6 +66,7 @@ pub struct Registry {
     /// Ordered mirror endpoints as a JSON array; NULL/empty = none.
     pub mirrors: Option<String>,
     pub is_default: bool,
+    pub is_push_default: bool,
     pub is_builtin: bool,
     pub created_at: i64,
     pub updated_at: i64,
@@ -117,6 +118,7 @@ pub struct RegistryResponse {
     pub mirrors: Vec<MirrorResponse>,
     /// Whether image names without a registry host resolve through this registry.
     pub is_default: bool,
+    pub is_push_default: bool,
     pub is_builtin: bool,
     pub created_at: i64,
     pub updated_at: i64,
@@ -137,6 +139,7 @@ impl From<Registry> for RegistryResponse {
                 .map(str::to_string),
             mirrors,
             is_default: r.is_default,
+            is_push_default: r.is_push_default,
             is_builtin: r.is_builtin,
             created_at: r.created_at,
             updated_at: r.updated_at,

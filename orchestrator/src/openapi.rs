@@ -101,6 +101,7 @@ use utoipa::OpenApi;
         crate::routes::registries::update_registry,
         crate::routes::registries::delete_registry,
         crate::routes::registries::test_registry,
+        crate::routes::registries::get_push_default,
         // Global settings
         crate::routes::global_settings::get_settings,
         crate::routes::global_settings::update_settings,

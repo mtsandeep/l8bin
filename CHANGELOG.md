@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Default push registry (`push target`)** — Settings → Registries now lets you mark one registry as the default push target (`is_push_default`); `POST /registries/{id}/test` also verifies push permission (`POST /v2/litebin-probe/blobs/uploads/`) when enabled. When set, `l8b build --push`, `l8b deploy`, and `l8b ship` (single-container and Compose) automatically push built images to that registry and deploy from it instead of uploading tarballs.
 - **`l8b build` and `l8b deploy --image`** — `l8b build` builds a project locally (Dockerfile or Railpack) with optional `--tag`, `--push` (OCI via `skopeo` when available, or `docker push`), `--insecure`, `--platform`, and `--keep-tar` without requiring a LiteBin server login; `l8b deploy --image <ref>` deploys an existing registry image directly without rebuilding or uploading.
 
 ### Changed

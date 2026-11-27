@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Box, ChevronDown, ChevronRight, Key, Plus, Star, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Box, ChevronDown, ChevronRight, Key, Plus, Star, Trash2, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import {
   createRegistry,
@@ -114,6 +114,22 @@ export default function RegistriesPanel() {
       showToast(`"${updated.name}" is now the default registry`, 'success');
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Failed to set default');
+    }
+  };
+
+  const handleTogglePushDefault = async (registry: RegistryInfo) => {
+    const next = !registry.is_push_default;
+    try {
+      const updated = await updateRegistry(registry.id, { is_push_default: next });
+      setRegistries((prev) =>
+        prev.map((r) => (r.id === updated.id ? updated : next ? { ...r, is_push_default: false } : r)),
+      );
+      showToast(
+        next ? `"${updated.name}" is now the default push registry for CLI deploys` : `Cleared default push registry`,
+        'success',
+      );
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to update push default');
     }
   };
 
@@ -332,6 +348,11 @@ export default function RegistriesPanel() {
                           default
                         </span>
                       )}
+                      {registry.is_push_default && (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-500/15 text-emerald-300">
+                          push target
+                        </span>
+                      )}
                       {registry.mirrors.length > 0 && (
                         <span
                           className="shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-500/15 text-cyan-300"
@@ -372,6 +393,22 @@ export default function RegistriesPanel() {
                       }
                     >
                       <Star size={13} fill={registry.is_default ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTogglePushDefault(registry)}
+                      className={
+                        registry.is_push_default
+                          ? 'p-1 rounded text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 transition-colors cursor-pointer'
+                          : 'p-1 rounded text-slate-500 hover:text-emerald-300 hover:bg-slate-700/50 transition-colors cursor-pointer'
+                      }
+                      title={
+                        registry.is_push_default
+                          ? 'Default push target for l8b deploy / build --push (click to disable)'
+                          : 'Use as default push target for l8b deploy / build --push'
+                      }
+                    >
+                      <Upload size={13} />
                     </button>
                     <button
                       type="button"
